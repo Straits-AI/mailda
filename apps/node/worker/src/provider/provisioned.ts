@@ -17,7 +17,8 @@ export interface ProvisionedAct {
   domain: string;
   at: string;
   /** Who acted: the Node's grant, or an operator's own token; "unknown" for an entry from before this field. */
-  authority: "grant" | "operator" | "unknown";
+  /** `grant` is historical: entries written while the credential was an OAuth grant (before 26 September 2026). */
+  authority: "token" | "grant" | "operator" | "unknown";
   address: string | null;
 }
 
@@ -40,7 +41,7 @@ export async function provisionedFacts(env: Env, orgId: string): Promise<Provisi
     if (row === undefined || row.subject === null) return null;
     let detail: Record<string, unknown> = {};
     try { detail = JSON.parse(row.detail ?? "{}") as Record<string, unknown>; } catch { detail = {}; }
-    const authority = detail.authority === "grant" || detail.authority === "operator" ? detail.authority : "unknown";
+    const authority = detail.authority === "token" || detail.authority === "grant" || detail.authority === "operator" ? detail.authority : "unknown";
     return { domain: row.subject, at: row.at, authority, address: typeof detail.address === "string" ? detail.address : null };
   };
   return {

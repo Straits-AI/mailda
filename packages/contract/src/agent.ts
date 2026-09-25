@@ -423,28 +423,21 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      *     the operator waiting on that redirect would meet `E_PROVIDER_STATE_CONSUMED` from a request they
      *     did not make. A `GET` that changes something is exactly what the exceptions list is for.
      */
-    "The Node's own Cloudflare grant. Registering the OAuth client and beginning a consent cannot be "
-    + "completed by a machine — both require a person in Cloudflare's dashboard past its own sign-in "
-    + "challenge — and reporting an unselectable account is the one fact here recorded as reported rather "
-    + "than observed, so only somebody who looked at the consent screen may assert it. The two reads are "
-    + "declared because the derivation rule would otherwise offer them: one is the map of the infrastructure "
-    + "the mail sits on, and the other consumes a single-use nonce.",
+    "The Node's own Cloudflare credential. Registering the API token cannot be completed by a machine — the "
+    + "token is made by a person in Cloudflare's dashboard past its own sign-in challenge — and forgetting it "
+    + "is an act of running the Node. The read is declared because the derivation rule would otherwise offer "
+    + "it: it is the map of the infrastructure the mail sits on.",
     "GET /api/provider",
-    "PUT /api/provider/client",
-    // Creating the client from an API token: the token is a person's, made in the dashboard, and handing
-    // one to a machine to spend is the thing the grant exists to make unnecessary.
-    "POST /api/provider/client",
-    "POST /api/provider/authorize",
-    // Spends the grant: renews a token and reads the account. An act of running the Node, and one a machine
-    // has no errand for — L1 provisions nothing, so nothing an agent may do needs the account's name.
+    "PUT /api/provider/token",
+    "DELETE /api/provider/token",
     /*
-     * A `GET` that spends the grant — three Cloudflare calls per domain, and possibly a token renewal. The
+     * A `GET` that spends the credential — three Cloudflare calls per domain. The
      * derivation rule would offer it as an ordinary read, and an agent polling it would spend the account's
      * authority to answer a question nothing it may do depends on.
      */
     "GET /api/provider/email-routing",
     /*
-     * The same kind of `GET` and the same reason: it spends the grant, listing the account's event
+     * The same kind of `GET` and the same reason: it spends the credential, listing the account's event
      * subscriptions and reading a queue. It answers an installation question an operator acts on, and
      * nothing an agent may do turns on it.
      */
@@ -517,9 +510,6 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/provider/domains/purchase",
     "POST /api/provider/sending",
     "POST /api/provider/subscription",
-    "POST /api/provider/resolve-account",
-    "POST /api/provider/unselectable",
-    "GET /oauth/cloudflare/callback",
   ),
   ...changing("governed",
     "Releasing a quarantined delivery is a person deciding that mail the sender's own domain disowned goes "

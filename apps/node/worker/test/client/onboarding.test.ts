@@ -12,8 +12,7 @@ import type { DeliveryRow, DoctorReport, ProviderBinding, Provisioned, RoutingRo
  */
 
 const binding = (overrides: Partial<ProviderBinding> = {}): ProviderBinding => ({
-  state: "consent_granted", evidence: "observed", clientId: "c", redirectUri: "https://n/cb",
-  registeredAt: null, accountId: "acc", grantedAt: null, scopesGranted: [], scopesMissing: [], refusedDetail: null,
+  state: "token_held", accountId: "acc", accountName: "Example", registeredAt: null, verifiedAt: null,
   ...overrides,
 });
 const doctor = (addressOk: boolean): DoctorReport => ({
@@ -43,21 +42,21 @@ describe("onboarding steps", () => {
       .toEqual({ connected: "done", address: "done", routed: "done", sending: "done", outcomes: "done" });
   });
 
-  it("is not connected while a scope is missing, and without a record the later steps are unknown, not to do", () => {
-    const steps = byId({ provider: binding({ scopesMissing: ["dns.write"] }), doctor: doctor(false) });
-    expect(steps).toEqual({ connected: "todo", address: "todo", routed: "unknown", sending: "unknown", outcomes: "unknown" });
+  it("is optional when no token is held, and the later steps are unknown, not to do", () => {
+    const steps = byId({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(false) });
+    expect(steps).toEqual({ connected: "optional", address: "todo", routed: "unknown", sending: "unknown", outcomes: "unknown" });
   });
 
   it("calls the connection optional, not to do, when there is no client at all", () => {
-    expect(byId({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: NONE }).connected).toBe("optional");
+    expect(byId({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: NONE }).connected).toBe("optional");
     // The count leaves it out: four steps, and the fifth is optional.
-    const counted = onboardingSteps({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: NONE })
+    const counted = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: NONE })
       .filter((step) => step.state !== "optional");
     expect(counted.map((step) => step.id)).toEqual(["address", "routed", "sending", "outcomes"]);
   });
 
   it("stands the audit trail's record in for the account when there is no grant, and calls it a record", () => {
-    const steps = onboardingSteps({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: RECORD });
+    const steps = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: RECORD });
     const routed = steps.find((step) => step.id === "routed")!;
     expect(routed.state).toBe("done");
     expect(routed.detail).toContain("at install");
@@ -96,9 +95,9 @@ describe("onboarding steps", () => {
 describe("readiness", () => {
   it("is ready only with an address and mail routed here; sending and outcomes do not gate", async () => {
     const { readinessOf } = await import("../../src/client/app/onboarding.tsx");
-    const steps = onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(true), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } });
+    const steps = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } });
     expect(readinessOf(steps)).toBe("ready");
-    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(true), provisioned: { receiving: null, sending: null, deliveryEvents: null } }))).toBe("not-ready");
-    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(false), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } }))).toBe("not-ready");
+    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: { receiving: null, sending: null, deliveryEvents: null } }))).toBe("not-ready");
+    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(false), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } }))).toBe("not-ready");
   });
 });

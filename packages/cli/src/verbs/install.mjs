@@ -4,9 +4,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
-import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
+import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir, wrapAt } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
-import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, wranglerToken, zonesOf } from "./provision.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -27,11 +27,13 @@ import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
  * **Since 25 September 2026 the account work happens here, with wrangler's login**, and the grant is
  * optional. After the claim, one question — which domain receives — and the Node is set up to receive, send
  * and observe outcomes through its own provisioning routes, carrying wrangler's token for each request
- * (`provision.mjs`). The grant, one API token the operator makes by hand, is only for changing that setup
- * from the browser later; Enter skips it and nothing below needs it. Under `--yes`, `CLOUDFLARE_API_TOKEN`
- * is the operator token for the account work and `MAILDA_GRANT_TOKEN` is the grant step's. Every step still has its own verb
- * (`mailda claim-secret`, `mailda provider`) and the Setup screen keeps the printed steps, for the deploy
- * button path and for an operator who declines here.
+ * (`provision.mjs`). The Node's own token, one API token the operator makes by hand (26 September 2026; it
+ * replaced the OAuth client), is only for changing that setup from the browser later; Enter skips it and
+ * nothing below needs it. Under `--yes`, `CLOUDFLARE_API_TOKEN` is the operator token for the account work
+ * and `MAILDA_GRANT_TOKEN` is the Node's. A hostname of the operator's own (`--hostname`, or the question)
+ * goes into the derived config as a custom domain, which the first deploy attaches (measured 25 September
+ * 2026: live within a minute; kept across the canary path; `wrangler triggers deploy` adds one to an
+ * existing Worker). Every step still has its own verb (`mailda claim-secret`, `mailda provider`).
  */
 export async function install(argv) {
   process.stdout.write("\n== mailda install\n   One Node, in your Cloudflare account. Nothing is changed until the deploy step.\n");
@@ -57,10 +59,12 @@ export async function install(argv) {
     ]);
     name = picked !== "" ? picked : ((await ask(`   name for the new Node [${suggested}]: `)).trim() || suggested);
   }
-  const nameArgs = name === base ? [] : ["--name", name];
+  const hostname = await hostnameQuestion(argv);
+  const nameArgs = [...(name === base ? [] : ["--name", name]), ...(hostname === null ? [] : ["--hostname", hostname])];
   useConfig(configFor(nameArgs));
   const upgrading = !firstInstall();
   process.stdout.write(`\n   node      ${name}  ${upgrading ? "(exists: this run upgrades it)" : "(new)"}\n`);
+  if (hostname !== null) process.stdout.write(`   hostname  ${hostname}  (a custom domain on the Worker; the workers.dev address keeps working)\n`);
 
   //    An upgrade uploads a version and checks it as a canary on the Node's own hostname, so it needs the
   //    URL. Asked once per Node on this machine and remembered in a git-ignored file, because a Node's URL
@@ -80,7 +84,7 @@ export async function install(argv) {
   const go = argv.includes("--yes") ? "y" : await ask(`\n   ${upgrading ? "upgrade" : "deploy"} now? [y/N]: `);
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed.\n\n"); return; }
   await deploy(nameArgs);
-  const url = installedUrl ?? process.env.MAILDA_URL ?? null;
+  const url = hostname !== null ? `https://${hostname}` : installedUrl ?? process.env.MAILDA_URL ?? null;
   if (url !== null) rememberUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name, url);
 
   // 4. The claim secret. Printed once by the script, captured here so it can sit beside the URL.
@@ -131,20 +135,18 @@ export async function install(argv) {
     token: await wranglerToken(), yes, ask,
   });
 
-  // 7. The Cloudflare grant, optional: the OAuth client, created through the API from one token.
-  const connected = await grant(url, name, claimed.cookie, yes, !argv.includes("--no-open"));
+  // 7. The Node's own Cloudflare token, optional.
+  const held = await tokenStep(url, claimed.cookie, yes);
 
   process.stdout.write(
     "\n== done\n"
     + `   your Node   ${url}\n`
     + `   signed in   ${claimed.email}\n`
-    + (connected === null
-      ? "   grant       not yet: the Setup screen in the Node prints the steps, or re-run this install\n"
-      : `   grant       consent opened in the browser; if it did not open, visit\n               ${connected}\n`)
+    + `   token       ${held === null ? "not held: the Setup screen offers the field, or `mailda provider --token`" : "held"}\n`
     + "\n",
   );
   printNext(url, setUp);
-  if (!argv.includes("--no-open")) openInBrowser(connected ?? url);
+  if (!argv.includes("--no-open")) openInBrowser(url);
 }
 
 /**
@@ -181,14 +183,13 @@ async function claim(origin, secret, yes) {
 }
 
 /**
- * Creates the Node's private OAuth client in the operator's account and registers it with the Node, then
- * begins the consent and returns the URL to open — or `null` when the operator gave no token.
- *
- * The scopes and the redirect URI come from the Node's own `GET /api/provider`, never from here: the Node
- * is the one source of what it needs, and a list typed into the CLI would be the drift the contract exists
- * to prevent. The token is read with echo off, used for one request, and not kept.
+ * The Node's own Cloudflare credential, optional: an API token the operator makes in the dashboard with the
+ * permissions the Node lists (26 September 2026; it replaced the OAuth client, one act instead of three).
+ * Only for changing the Cloudflare setup from the browser later; the install already did the account work
+ * with wrangler's login. Enter skips it. The token is read with echo off and sent once to the Node, which
+ * keeps it wrapped like the sending token; nothing here keeps a copy.
  */
-export async function grant(origin, name, cookie, yes, open = true) {
+export async function tokenStep(origin, cookie, yes) {
   const node = async (method, template, body) => {
     const path = api(method, template);
     const response = await fetch(`${origin}${path}`, {
@@ -199,37 +200,46 @@ export async function grant(origin, name, cookie, yes, open = true) {
     if (!response.ok) fail(`${method} ${path} answered ${response.status}:\n${text}`);
     return JSON.parse(text);
   };
-  // The Node's own ceremony: the token page link, the permission's name, and what is unverified about it.
-  const { ceremony } = await node("GET", "/api/provider");
+  const { permissions, note } = await node("GET", "/api/provider");
   process.stdout.write(
-    "\n== the Cloudflare grant (optional)\n"
+    "\n== the Node's Cloudflare token (optional)\n"
     + "   Only to change this Node's Cloudflare setup from the browser later: another domain, a sending\n"
-    + "   domain, buying a domain. Enter skips it; nothing below needs it. The Node acts through a private\n"
-    + "   OAuth client only members of your account can authorize; with an API token the Node creates it\n"
-    + "   exactly, spends the token on one request, and never stores it.\n\n"
-    + "   1. a token form opens in your browser with the one permission filled in\n"
-    + `      (${ceremony.token.permission}; pick this account when asked, and check the permission is ticked)\n`
-    + `      ${ceremony.token.url}\n`
-    + "   2. Continue, Create Token, copy it\n"
-    + "   3. paste it below, and delete the token afterwards; nothing needs it again\n\n"
-    + "   While it exists, that token can edit or delete every OAuth client in the account, not only this\n"
-    + "   one. If the account runs other services, press Enter instead: the Node's Setup screen prints the\n"
-    + "   dashboard steps, and no token ever exists.\n\n",
+    + "   domain, buying a domain. Enter skips it; nothing below needs it.\n\n"
+    + "   open https://dash.cloudflare.com/profile/api-tokens and create a token with exactly these,\n"
+    + "   restricted to this account:\n",
   );
-  if (open && !yes) openInBrowser(ceremony.token.url);
-  const token = yes ? (process.env.MAILDA_GRANT_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
-  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen offers the same field whenever it is wanted.\n"); return null; }
-
-  // The account the CLI already settled, so the Node does not have to ask the token which it can see.
-  const { provider } = await node("POST", "/api/provider/client", {
+  for (const one of permissions ?? []) process.stdout.write(`     ${one.scope.padEnd(8)} ${one.name}${one.optional ? "  (optional)" : ""}\n`);
+  if (typeof note === "string" && note !== "") for (const line of wrapAt(note, 72)) process.stdout.write(`   ${line}\n`);
+  const token = yes ? (process.env.MAILDA_GRANT_TOKEN ?? "") : await readSecret("\n   API token (Enter to skip): ");
+  if (token.trim() === "") { process.stdout.write("   skipped; the Setup screen offers the same field whenever it is wanted.\n"); return null; }
+  const { provider } = await node("PUT", "/api/provider/token", {
     token: token.trim(), ...(process.env.CLOUDFLARE_ACCOUNT_ID ? { accountId: process.env.CLOUDFLARE_ACCOUNT_ID } : {}),
   });
-  process.stdout.write(`   client ${provider.clientId} created and registered; state: ${provider.state}\n`);
-  const { authorize } = await node("POST", "/api/provider/authorize", {});
-  process.stdout.write("   delete the API token now, on the page it came from; the Node holds the client and needs nothing else.\n");
-  return authorize.url;
+  process.stdout.write(`   held; state: ${provider.state}${provider.accountName ? `, account ${provider.accountName}` : ""}\n`);
+  return provider;
 }
 
+
+/**
+ * A hostname of the operator's own for the Node, or null for the workers.dev address. `--hostname` and
+ * `MAILDA_HOSTNAME` first; otherwise a picker of the zones wrangler's token can see, then the label, the
+ * way the receiving domain is picked. The Worker's code needs nothing for it: it reads `url.origin`.
+ */
+export async function hostnameQuestion(argv) {
+  const given = flag(argv, "hostname") ?? process.env.MAILDA_HOSTNAME ?? null;
+  if (given !== null || argv.includes("--yes")) return given === null || given.trim() === "" ? null : given.trim().toLowerCase();
+  const zones = await zonesOf(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", await wranglerToken());
+  const picked = await choose("\n   a hostname of your own for this Node?", [
+    { label: "the workers.dev address (default)", value: "" },
+    ...zones.map((zone) => ({ label: `a name under ${zone.name}, typed next (e.g. mail)`, value: zone.name })),
+  ]);
+  if (picked === "") return null;
+  const label = (await ask(`   the name under ${picked} (e.g. mail; Enter for none): `)).trim().toLowerCase().replace(/\.$/, "");
+  if (label === "") return null;
+  const host = label.endsWith(`.${picked}`) ? label : `${label}.${picked}`;
+  if (!/^[a-z0-9.-]+$/.test(host)) fail(`"${host}" is not a hostname.`);
+  return host;
+}
 
 /**
  * Steps one and two of an install, shared with `mailda upgrade`: signed in to Cloudflare, and which account.

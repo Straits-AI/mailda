@@ -97,8 +97,10 @@ questions a first install has (the account, if several; the Node's name; and its
 is one the account already has and the run is an upgrade), claims the Node from the terminal, asks which
 domain it receives at, and sets up receiving, sending and delivery outcomes with wrangler's login
 (25 September 2026), so the run ends with a Node that receives, and no dashboard, token or OAuth client
-was needed. The Node's own grant, one API token and a consent, is optional and only for changing that setup
-from the browser later; the Setup screen offers it and says what it is for. Updating is one command too (`curl -fsSL https://mailda.site/update.sh |
+was needed. A credential of the Node's own, one API token pasted on Setup (26 September 2026; it replaced
+the OAuth client and consent, ADR 42), is optional and only for changing that setup from the browser later.
+The install also asks for a hostname of the operator's own and the deploy attaches it
+(`docs/receipts/worker-custom-domain.md`). Updating is one command too (`curl -fsSL https://mailda.site/update.sh |
 bash` in the same directory, 24 September 2026): it pulls the release, joins a deploy-button clone to the
 release history when it has none, backs the Node up, lists what the schema will do, and redeploys through
 the canary, with no git command typed. Whether a run of the installer is an install or a redeploy is

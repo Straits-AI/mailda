@@ -12,6 +12,9 @@ export function catchAllLine(catchAll: { action: string; destinations: string[];
 /** The rows of the domain picker: every zone, then a typed subdomain, then an explicit skip. */
 export function domainChoices(zones: ReadonlyArray<{ name: string }>): Array<{ label: string; value: string }>;
 
+/** The zones an account holds, as wrangler's token sees them; an unreachable API reads as none. */
+export function zonesOf(accountId: string, token: string): Promise<Array<{ name: string }>>;
+
 export interface ProvisionOutcome {
   receiving: string | null;
   sending: string | null;

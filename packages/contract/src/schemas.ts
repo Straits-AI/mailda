@@ -216,50 +216,29 @@ export const transportConfiguredResponse = z.object({
 
 /* ---------------------------------------- the Node's Cloudflare grant (#162 L1, ADR 42) ------------- */
 
-export const providerState = z.enum([
-  "no_client", "awaiting_consent", "account_not_selectable", "consent_granted", "grant_refused",
-]);
+export const providerState = z.enum(["no_token", "token_held"]);
 
 /**
- * The connection state and the guided ceremony.
- *
- * `.strict()` is load-bearing for `transportResponse`'s reason and one more. This route reads a row holding
- * **four** secrets — the client secret, the access token, the refresh token, and by association the PKCE
- * verifier — and must return none of them. A schema tolerating extra keys would pass a handler that had grown
- * an `accessToken` field, which is the one mistake this surface cannot afford.
- *
- * `evidence` is in the contract rather than left to prose. `account_not_selectable` is a state the Node
- * **cannot observe** — an administrator disabling public OAuth app access produces a consent screen missing
- * an account, with no error and no response the Node ever sees — so every generated surface has to be able to
- * say which of the two kinds of fact it is showing. A field nobody can omit is how that stays true.
+ * The connection state. `.strict()` is load-bearing for `transportResponse`'s reason: this route reads a row
+ * holding the API token and must return no field of it. A schema tolerating extra keys would pass a handler
+ * that had grown a `token` field, which is the one mistake this surface cannot afford.
  */
 export const providerStateResponse = z.object({
   provider: z.object({
     state: providerState,
-    evidence: z.enum(["observed", "reported"]),
-    clientId: z.string().nullable(),
-    redirectUri: z.string().nullable(),
-    registeredAt: isoDate.nullable(),
     accountId: z.string().nullable(),
-    grantedAt: isoDate.nullable(),
-    scopesGranted: z.array(z.string()).nullable(),
-    scopesMissing: z.array(z.string()),
-    refusedDetail: z.string().nullable(),
+    accountName: z.string().nullable(),
+    registeredAt: isoDate.nullable(),
+    verifiedAt: isoDate.nullable(),
   }).strict(),
 }).strict();
 
-/**
- * The state **and** the guided ceremony, which only the read route returns.
- *
- * Two schemas rather than one with an optional `ceremony`, and the reason is what optional means here: a
- * writer that forgot to return the steps and a reader that has none would be the same shape, so the route an
- * operator reaches for guidance could stop carrying it without anything failing.
- */
 /** One provisioning act as the audit trail recorded it: the domain, when, and which credential acted. */
 export const provisionedAct = z.object({
   domain: z.string().min(1),
   at: isoDate,
-  authority: z.enum(["grant", "operator", "unknown"]),
+  /** `grant` is historical: acts recorded while the credential was an OAuth grant, before 26 September 2026. */
+  authority: z.enum(["token", "grant", "operator", "unknown"]),
   address: z.string().nullable(),
 }).strict();
 
@@ -276,69 +255,19 @@ export const providerResponse = z.object({
     sending: provisionedAct.nullable(),
     deliveryEvents: provisionedAct.nullable(),
   }).strict(),
-  ceremony: z.object({
-    steps: z.array(z.string().min(1)).min(1),
-    redirectUri: z.string().min(1),
-    /**
-     * The scopes to select, as `<group>:<verb>` strings.
-     *
-     * Was `capabilities` — prose descriptions and no scope names, because
-     * `GET /client/v4/oauth/scopes` needs a token this Node does not have. Two real consents killed that:
-     * a request naming no scope is granted none, so the Node must enumerate them
-     * (`docs/receipts/cloudflare-oauth-scopes.md`).
-     *
-     * `readOnlyExists` is in the contract rather than the prose because four of these have no `:read` form
-     * in Cloudflare's vocabulary — so a surface showing an operator four write permissions can say which of
-     * them were the provider's only option, instead of leaving the Node looking like it over-asked.
-     */
-    scopes: z.array(z.object({
-      /*
-       * `<group>.<verb>` — a dot. Cloudflare's API reference states it: *"Colon-delimited scopes are not
-       * accepted. Dot-delimited scopes are validated against available OAuth API scopes; simple identity
-       * scopes are allowed."* This was a colon until 9 September 2026, copied from wrangler's first-party
-       * shorthand rather than read off the reference.
-       *
-       * The alternation is that last clause: `offline_access` and `openid` are **protocol** scopes with no
-       * group and no dot, which the same sentence calls simple identity scopes.
-       */
-      scope: z.string().regex(/^([a-z0-9-]+\.[a-z_]+|offline_access|openid)$/),
-      why: z.string().min(1),
-      readOnlyExists: z.boolean(),
-    }).strict()).min(1),
-    /*
-     * Not optional, and that is the point. The scope names are not measured, and an operator following
-     * printed steps is entitled to know which parts of them this Node has verified — so the admission is a
-     * required field rather than a sentence somebody may forget to render.
-     */
-    unmeasured: z.string().min(1),
-    /**
-     * The shorter path (24 September 2026): one API token, and the Node creates the client itself through
-     * Cloudflare's OAuth Clients API. `url` is Cloudflare's token page with the one permission prefilled,
-     * `permission` its name, and `unmeasured` what this repository has not verified about that prefill —
-     * required, for the reason the field above is.
-     */
-    token: z.object({
-      url: z.string().url(),
-      permission: z.string().min(1),
-      unmeasured: z.string().min(1),
-    }).strict(),
-  }).strict(),
-}).strict();
-
-/**
- * Which account the grant covers, and how many were visible.
- *
- * `accountId` is null when the answer was not one — Cloudflare's token response does not name the account
- * (measured), and a person may belong to several. `found` is in the contract so a surface can say *"three
- * accounts, none recorded"* rather than showing an empty field, because the column a deployment plan reads
- * names the account it would provision into.
- */
-export const providerAccountResponse = z.object({
-  account: z.object({
-    accountId: z.string().nullable(),
-    found: z.number().int().nonnegative(),
-    error: z.string().nullable(),
-  }).strict(),
+  /**
+   * The permissions to tick in Cloudflare's token form, in the dashboard's own names, each with why this
+   * Node asks for it. `optional` marks the one only a domain purchase needs. The list is here rather than in
+   * prose so every surface prints the same words and a permission added to the Node reaches them all.
+   */
+  permissions: z.array(z.object({
+    name: z.string().min(1),
+    scope: z.enum(["account", "zone"]),
+    why: z.string().min(1),
+    optional: z.boolean(),
+  }).strict()).min(1),
+  /** What is and is not verified about the token. Required, so a surface cannot show the list without it. */
+  note: z.string().min(1),
 }).strict();
 
 /**
@@ -740,50 +669,14 @@ export const providerRoutingRulePutBackRequest = z.object({
   ruleId: z.string().min(1).max(64),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
-/** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
-export const providerClientRequest = z.object({
-  clientId: z.string().min(1).max(128),
-  clientSecret: z.string().min(1).max(512),
-}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
-
 /**
- * Create the OAuth client through Cloudflare's API from a token used once (`POST /api/provider/client`).
- *
- * `token` is never stored: the Node spends it on one or two calls and discards it. `accountId` is only
- * needed when the token can see several accounts; the Node lists them and refuses with their names.
+ * An API token for the Node to hold (`PUT /api/provider/token`). Verified with `GET /user/tokens/verify`
+ * and bound to the one account it sees; `accountId` only when it sees several and the Node refused to guess.
  */
-export const providerClientCreateRequest = z.object({
+export const providerTokenRequest = z.object({
   token: z.string().min(1).max(512),
   accountId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
-
-export const providerAuthorizeRequest = z.object({
-  /*
-   * The operator supplies these because this repository has not measured Cloudflare's scope names: they
-   * correspond to API-token permission names and are enumerated from an endpoint needing a token. The
-   * operator selected them in Cloudflare's own picker when they created the client, so they are the only
-   * party who knows the strings.
-   */
-  scopes: z.array(z.string().min(1)).max(64),
-}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
-
-export const providerAuthorizeResponse = z.object({
-  /** The URL to open, and when the state inside it stops being accepted — thirty minutes, single use. */
-  authorize: z.object({ url: z.string().min(1), expiresAt: isoDate }).strict(),
-}).strict();
-
-/** What the callback did. Carries no token, by the same `.strict()` argument. */
-export const providerConsentResponse = z.object({
-  consent: z.object({
-    ok: z.boolean(),
-    error: z.string().nullable(),
-    detail: z.string().nullable(),
-    accountId: z.string().nullable(),
-    scopesGranted: z.array(z.string()),
-    /** Asked for and not granted. Computed by this Node, because Cloudflare reports only what it gave. */
-    scopesDeclined: z.array(z.string()),
-  }).strict(),
-}).strict();
 
 /* ------------------------------------------------------------------ Butlers (#49, #87) -------------- */
 

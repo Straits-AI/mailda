@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 import { catchAllLine } from "./provision.mjs";
-import { grant, openInBrowser, signInAndChooseAccount } from "./install.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -72,27 +71,23 @@ export async function provider(argv) {
   };
 
   /*
-   * `--connect`: the grant step of `mailda install`, for a Node that was claimed before that step existed or
-   * whose install declined it. Same function, same one API token, same consent; the account id the API call
-   * needs comes from wrangler's login, which is why this signs in first.
+   * `--token`: the Node's browser-side credential, an API token the operator made in the dashboard with the
+   * permissions `GET /api/provider` lists (26 September 2026; it replaced the OAuth client). Read from
+   * stdin, never argv, which is in `ps` and the shell's history; `MAILDA_GRANT_TOKEN` under `--yes`. The
+   * account the CLI settled rides along so the Node does not have to ask the token which it can see.
    */
-  if (argv.includes("--connect")) {
-    await signInAndChooseAccount();
-    const consent = await grant(origin, flag(argv, "name") ?? "mailda", cookie, argv.includes("--yes"), !argv.includes("--no-open"));
-    if (consent === null) return;
-    process.stdout.write(`\n   open this to consent (opening it now):\n   ${consent}\n\n`);
-    if (!argv.includes("--no-open")) openInBrowser(consent);
+  if (argv.includes("--token")) {
+    const token = (argv.includes("--yes") ? process.env.MAILDA_GRANT_TOKEN ?? "" : readFileSync(0, "utf8")).trim();
+    if (token === "") fail("pipe the token in: `echo -n <token> | mailda provider --token --url <origin>`");
+    const { provider: after } = await call("PUT", "/api/provider/token", {
+      token, ...(process.env.CLOUDFLARE_ACCOUNT_ID ? { accountId: process.env.CLOUDFLARE_ACCOUNT_ID } : {}),
+    });
+    process.stdout.write(`\n   held. state: ${after.state}${after.accountName ? `, account ${after.accountName}` : ""}\n`);
     return;
   }
-
-  const clientId = flag(argv, "client-id");
-  if (clientId !== null) {
-    // Cloudflare shows the secret once, so it arrives on stdin rather than in argv — which is in `ps` and in
-    // the shell's history file.
-    const secret = readFileSync(0, "utf8").trim();
-    if (secret === "") fail("pipe the client secret in: `echo -n <secret> | mailda provider --client-id <id>`");
-    const { provider: after } = await call("PUT", "/api/provider/client", { clientId, clientSecret: secret });
-    process.stdout.write(`\n   registered. state: ${after.state}\n`);
+  if (argv.includes("--forget-token")) {
+    const { provider: after } = await call("DELETE", "/api/provider/token");
+    process.stdout.write(`\n   forgotten. state: ${after.state}. Revoke it in the dashboard too; forgetting is local.\n`);
     return;
   }
 
@@ -542,54 +537,16 @@ export async function provider(argv) {
     return;
   }
 
-  if (argv.includes("--resolve-account")) {
-    /*
-     * The first act that *spends* the grant rather than describing it. Deliberate rather than automatic:
-     * Cloudflare's token response does not name the account, so this costs a call and possibly a token
-     * renewal, and `doctor` should not be doing either as a side effect of reporting.
-     */
-    const { account } = await call("POST", "/api/provider/resolve-account");
-    process.stdout.write(
-      account.accountId === null
-        ? `\n   ${account.found} account(s) visible to this grant — not recorded, because a column a deploy\n`
-          + "   plan reads must name the account it would provision into rather than a guess.\n"
-        : `\n   account: ${account.accountId}\n`,
-    );
-    return;
-  }
-
-  const scopes = flag(argv, "scopes");
-  if (scopes !== null) {
-    const { authorize } = await call("POST", "/api/provider/authorize", { scopes: scopes.split(",") });
-    process.stdout.write(
-      `\n   open this to consent — valid until ${new Date(authorize.expiresAt).toLocaleTimeString()}, once:\n\n`
-      + `   ${authorize.url}\n`,
-    );
-    return;
-  }
-
-  const { provider: state, ceremony: steps } = await call("GET", "/api/provider");
-  process.stdout.write(`\n== provider: ${state.state} (${state.evidence})\n`);
+  const { provider: state, permissions, note } = await call("GET", "/api/provider");
+  process.stdout.write(`\n== provider: ${state.state}\n`);
   for (const [key, value] of Object.entries(state)) {
-    if (key !== "state" && key !== "evidence" && value !== null) {
-      process.stdout.write(`   ${key}: ${JSON.stringify(value)}\n`);
-    }
+    if (key !== "state" && value !== null && value !== undefined) process.stdout.write(`   ${key}: ${JSON.stringify(value)}\n`);
   }
-  if (state.scopesMissing.length > 0) {
-    process.stdout.write(
-      `\n   this grant predates a scope this Node now asks for: ${state.scopesMissing.join(", ")}\n`
-      + `   first add it to the OAuth client in the dashboard — a client may request only what it was\n`
-      + `   registered with, and consenting before that answers invalid_scope. Then authorize again:\n`
-      + `   mailda provider --scopes ${steps.scopes.map((one) => one.scope).join(",")}\n`,
-    );
+  process.stdout.write("\n   an API token for this Node carries exactly these, restricted to this account:\n");
+  for (const one of permissions ?? []) {
+    process.stdout.write(`     ${one.scope.padEnd(8)} ${one.name}${one.optional ? "  (optional)" : ""}\n`);
+    for (const line of wrapAt(one.why, 66)) process.stdout.write(`              ${line}\n`);
   }
-  if (state.state === "no_client") {
-    process.stdout.write(`\n   redirect URI: ${steps.redirectUri}\n\n`);
-    steps.steps.forEach((line, at) => process.stdout.write(`   ${at + 1}. ${line}\n`));
-    process.stdout.write("\n   capabilities to cover with scopes:\n");
-    for (const one of steps.capabilities) {
-      process.stdout.write(`     [${one.layer}] ${one.capability}\n`);
-    }
-    process.stdout.write(`\n   ${steps.unmeasured}\n`);
-  }
+  if (typeof note === "string" && note !== "") for (const line of wrapAt(note, 72)) process.stdout.write(`   ${line}\n`);
+  process.stdout.write("\n   create it at https://dash.cloudflare.com/profile/api-tokens, then: echo -n <token> | mailda provider --token --url <origin>\n");
 }

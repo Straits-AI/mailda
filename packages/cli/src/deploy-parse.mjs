@@ -206,11 +206,24 @@ export function deployExitCode(verdict) {
  *
  * Pure, so it can be tested without writing a file, and so the test can hand it the real config.
  */
-export function deriveConfig(source, name) {
-  return source
+export function deriveConfig(source, name, hostname = null) {
+  const renamed = source
     .replace(/"name"\s*:\s*"[^"]+"/, `"name": "${name}"`)
     .replace(/("workflows"[\s\S]{0,400}?"name"\s*:\s*")[^"]+(")/, `$1${name}-butler-runs$2`)
     .replace(/"WORKER_NAME"\s*:\s*"[^"]+"/, `"WORKER_NAME": "${name}"`);
+  if (hostname === null) return renamed;
+  /*
+   * A hostname of the operator's own, as a custom domain on the Worker (measured 25 September 2026: a
+   * first `wrangler deploy` attaches it, the canary path keeps it, `wrangler triggers deploy` adds one to an
+   * existing Worker). Placed before the object's closing brace, after the last top-level key, which the
+   * source ends without a trailing comma.
+   */
+  return renamed.replace(/\n}\s*$/, `,\n  "routes": [{ "pattern": "${hostname}", "custom_domain": true }]\n}\n`);
+}
+
+/** The custom domain a config carries, or null: the `pattern` beside `custom_domain: true`. */
+export function hostnameIn(config) {
+  return /"pattern"\s*:\s*"([^"]+)"\s*,\s*"custom_domain"\s*:\s*true/.exec(config)?.[1] ?? null;
 }
 
 /** The Worker's name as the config states it. */

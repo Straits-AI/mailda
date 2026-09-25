@@ -60,7 +60,10 @@ export function deployExitCode(verdict: string | undefined): number;
  * `wrangler.jsonc` as a second Node would have it (`mailda deploy --name`): the Worker's `name`, the
  * Workflow's `name` (`<worker>-butler-runs`) and `vars.WORKER_NAME` rewritten, comments kept.
  */
-export function deriveConfig(source: string, name: string): string;
+export function deriveConfig(source: string, name: string, hostname?: string | null): string;
+
+/** The custom domain a config carries (`pattern` beside `custom_domain: true`), or null. */
+export function hostnameIn(config: string): string | null;
 
 /** The Worker's name as the config states it, or null when the config names none. */
 export function workerNameIn(config: string): string | null;

@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are eighteen", () => {
+  it("derives read for every GET but the named exceptions, and there are twenty", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -133,7 +133,7 @@ describe("every route is classified, and a new one cannot default", () => {
       "GET /api/provider/domains/purchase", "GET /api/provider/domains/purchase/status",
       "GET /api/provider/email-routing", "GET /api/provider/handover", "GET /api/provider/ownership",
       "GET /api/provider/receiving", "GET /api/provider/routing-rules", "GET /api/provider/sending",
-      "GET /api/provider/subscription", "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
+      "GET /api/provider/subscription", "GET /api/search/failed", "GET /index.html",
     ]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {

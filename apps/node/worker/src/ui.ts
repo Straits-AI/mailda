@@ -739,7 +739,7 @@ tbody td {
 code, pre, kbd, samp { font-family: inherit; }
 /*
   The two tone classes the screens have used all along and the sheet never defined: .dim on every
-  explanatory paragraph in /setup and the consent page, .bad on a failed cell in the routing table. Both
+  explanatory paragraph in /setup, .bad on a failed cell in the routing table. Both
   rendered at full Ink until 16 September 2026 (found by the design audit), so explanation and instruction
   carried the same weight. Both colours are receipted: contrast-tokens.md measures --dim at 5.44:1 on the
   worst ground and --alarm at 6.10:1.
@@ -1499,90 +1499,6 @@ export function page(): string {
 </html>`;
 }
 
-/**
- * The five characters, because this page reflects text this Node did not write.
- *
- * `errorDescription` on the callback is a **query parameter** — whatever is in the URL the browser arrived
- * with, which anybody can set by sending somebody a link. It reaches the page below as prose. Interpolating
- * it raw would be a stored-nothing, reflected-everything XSS on the one route that has no session check,
- * which is a combination worth stating rather than leaving to a reader to notice.
- *
- * `'` as `&#39;` rather than `&apos;`: the named form is XML, and older HTML parsers do not know it.
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
-/**
- * What Cloudflare's redirect lands a person on.
- *
- * The callback is reached by a **browser**, always — it is where Cloudflare sends the operator after they
- * agree — and it answered with raw JSON. So the last step of connecting a Node showed
- * `{"consent":{"ok":true,…}}` to somebody who had been following a screen in plain English up to that point,
- * with no way back other than the browser's own back button.
- *
- * Content negotiation rather than a second route: `mailda provider` and the tests read this with a `fetch`
- * whose `Accept` is not HTML and still get the JSON they parse. A person gets a sentence.
- *
- * No inline script and no inline style, like every other document this Node serves — `security-headers.ts`
- * permits neither, and a page that needed an exception would cost the CSP its meaning for one screen.
- */
-export function consentPage(
-  outcome: { ok: boolean; error: string | null; detail: string | null; accountId: string | null },
-): string {
-  /*
-   * The same skeleton as sign-in and the claim page — a wordmark rack, then `main > .split` with a lede and a
-   * panel — rather than the copy stacked inside the rack, which is what this page did until the design audit
-   * of 16 September 2026 put every sentence in a header bar with an empty page beneath. The state is the h1,
-   * in the display face, because it is the one fact an operator came back from Cloudflare to learn.
-   */
-  const heading = outcome.ok ? "Connected." : "Cloudflare refused.";
-  const lede = outcome.ok
-    ? "This Node holds a grant to your Cloudflare account, and can do the account work setup describes "
-      + "without the dashboard."
-    : "Cloudflare did not grant this Node access. Its own words are below; they name what to change.";
-  // Cloudflare's own words when there are any. The `detail` on a refusal names what to change, and a page
-  // that replaced it with an apology would be the one screen in this flow that tells an operator nothing.
-  const body = outcome.ok
-    ? (outcome.accountId === null
-      ? `<p class="notice" role="status">The account could not be determined — open setup and ask again.</p>`
-      : `<dl class="setup-facts"><dt>Cloudflare account</dt><dd class="mono">${escapeHtml(outcome.accountId)}</dd></dl>`)
-    : `<p class="notice bad" role="alert">${escapeHtml(outcome.detail ?? outcome.error ?? "No reason was given.")}</p>`;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<link rel="icon" type="image/svg+xml" href="${faviconDataUri()}">
-<title>Mailda</title>
-<link rel="stylesheet" href="/app/app.css">
-</head>
-<body>
-<div class="rack">
-  <div class="rack-inner">
-    <p class="wordmark">${MARK_IS_AUTHORED ? markSvg({ size: 26 }) : ""}<span>Mailda</span></p>
-  </div>
-</div>
-<main>
-  <div class="split">
-    <div class="split-lede" data-reveal>
-      <h1>${escapeHtml(heading)}</h1>
-      <p>${escapeHtml(lede)}</p>
-    </div>
-    <section class="panel" data-reveal>
-      <h2>Cloudflare</h2>
-      ${body}
-      <a class="primary" href="/setup">${outcome.ok ? "Continue setup" : "Back to setup"}</a>
-      <p class="dim">You can close this tab. If setup is open in another, press <em>check again</em> there.</p>
-    </section>
-  </div>
-</main>
-</body>
-</html>`;
-}
 
 /**
  * Browser assets, served as real files rather than inlined.

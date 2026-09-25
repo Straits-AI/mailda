@@ -3,9 +3,9 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  beginAuthorization, completeAuthorization, deliveryEventsState, onboardSending, ownershipFacts,
-  registerClient, sendingProposalFor,
+  deliveryEventsState, onboardSending, ownershipFacts, sendingProposalFor,
 } from "../src/provider/cloudflare-grant.ts";
+import { holdToken } from "./support/provider-token.ts";
 
 /**
  * A Node acts on **its own** Cloudflare account and no other (#165).
@@ -22,11 +22,11 @@ import {
  * #108 asks for — *"mutation-proven"* rather than observed — and the reason this file exists: the safety was
  * a property of one consent, not of the code.
  *
- * ## Why the multi-account case is a refusal and not a default
+ * ## Why the no-credential case is a refusal and not a default
  *
- * `resolveAccount` records nothing when a grant covers several accounts, calling that *"a real answer and
- * not an error"*. So `account_id` is null exactly when the ambiguity is real — and a null that meant *search
- * all of them* would turn the one case that needs a boundary into the one case with none.
+ * Since 26 September 2026 a stored token is bound to one account at registration, so the bound account is
+ * null exactly when the Node holds no credential at all — and a null that meant *search all of them* would
+ * turn the one case that needs a boundary into the one case with none.
  */
 
 const testEnv = env as unknown as Env;
@@ -44,8 +44,7 @@ function atTime(millis: number): Ctx {
 
 beforeEach(async () => {
   await testEnv.CATALOG.batch([
-    testEnv.CATALOG.prepare("DELETE FROM provider_authorizations"),
-    testEnv.CATALOG.prepare("DELETE FROM provider_binding"),
+    testEnv.CATALOG.prepare("DELETE FROM provider_token"),
     testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
   ]);
@@ -56,24 +55,9 @@ beforeEach(async () => {
 
 afterEach(() => vi.restoreAllMocks());
 
-/** A grant good for an hour. `accountId` null is the multi-account case `resolveAccount` leaves behind. */
+/** A token bound to `accountId`. Null is the no-credential case: nothing is held at all. */
 async function granted(accountId: string | null) {
-  vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
-    access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
-  }), { status: 200, headers: { "content-type": "application/json" } }));
-  await registerClient(testEnv, atTime(AT), ORG, ADMIN, {
-    clientId: "a-client", clientSecret: "a-secret",
-    redirectUri: "https://node.example.test/oauth/cloudflare/callback",
-  });
-  const { state } = await beginAuthorization(testEnv, atTime(AT + 1000), ADMIN, ["a"]);
-  await completeAuthorization(testEnv, atTime(AT + 2000), ORG, {
-    state, code: "the-code", error: null, errorDescription: null,
-  });
-  if (accountId !== null) {
-    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = ? WHERE id = 1")
-      .bind(accountId).run();
-  }
-  vi.restoreAllMocks();
+  if (accountId !== null) await holdToken(testEnv, accountId, AT);
 }
 
 /**
@@ -157,18 +141,17 @@ describe("a Node resolves zones only inside the account it is bound to", () => {
     expect(calls.filter((one) => one.method === "POST")).toEqual([]);
   });
 
-  it("refuses rather than searching every account when the grant covers more than one", async () => {
+  it("refuses rather than searching every account when it holds no credential", async () => {
     /*
-     * `account_id` is null exactly when a grant spans several accounts, which `resolveAccount` treats as a
-     * real answer. Falling back to an unfiltered search here would give the one case that needs a boundary
-     * no boundary at all.
+     * The bound account is null exactly when no credential is held. Falling back to an unfiltered search
+     * here would give the one case that needs a boundary no boundary at all.
      */
     await granted(null);
     const calls = serving(THEIRS);
 
     const proposal = await sendingProposalFor(testEnv, atTime(AT + 3000), ORG, "theirs.test");
     expect(proposal.zone).toBeNull();
-    expect(proposal.error).toContain("/api/provider/resolve-account");
+    expect(proposal.error).toContain("PUT /api/provider/token");
     // And it spent nothing finding out — no zone lookup happened at all.
     expect(calls.filter((one) => one.url.startsWith("/zones?name="))).toEqual([]);
   });
@@ -181,7 +164,7 @@ describe("a Node resolves zones only inside the account it is bound to", () => {
     serving(THEIRS);
 
     const [seen] = await deliveryEventsState(testEnv, atTime(AT + 3000), ORG);
-    expect(seen!.error).toContain("/api/provider/resolve-account");
+    expect(seen!.error).toContain("PUT /api/provider/token");
   });
 });
 
@@ -230,7 +213,7 @@ describe("who owns this installation, and where each answer came from", () => {
     expect(answerTo(facts, "Cloudflare account holds").source).toBe("provider");
     expect(answerTo(facts, "Cloudflare account holds").answer).toContain("A Customer");
     // This Node's own record of its own act — true about the Node, not confirmed by the account.
-    expect(answerTo(facts, "OAuth client").source).toBe("node");
+    expect(answerTo(facts, "given its token").source).toBe("node");
     // True by construction rather than by configuration.
     expect(answerTo(facts, "Mailda holds").source).toBe("structural");
 
@@ -244,9 +227,9 @@ describe("who owns this installation, and where each answer came from", () => {
     }
   });
 
-  it("names what this grant cannot answer instead of leaving it out", async () => {
+  it("names what this token cannot answer instead of leaving it out", async () => {
     /*
-     * Billing. `/accounts/{id}/subscriptions` answers 403 on the narrowed grant, and a page that silently
+     * Billing. `/accounts/{id}/subscriptions` answers 403 on a token with these permissions, and a page that silently
      * omitted *who pays* would be a page whose completeness is a claim.
      */
     await granted(OURS);

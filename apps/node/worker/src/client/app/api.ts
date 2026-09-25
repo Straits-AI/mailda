@@ -1649,53 +1649,26 @@ export function useSponsorMailboxes(userId: string | null): UseQueryResult<
  * words. That is the parity ADR 12 asks for, and the CLI stays the surface for anyone who prefers it.
  */
 
-export type ProviderState =
-  | "no_client" | "awaiting_consent" | "account_not_selectable" | "consent_granted" | "grant_refused";
+export type ProviderState = "no_token" | "token_held";
 
+/**
+ * The credential this Node holds toward Cloudflare (26 September 2026): one API token, or none. The token
+ * itself never comes back; what does is which account it was verified against and when.
+ */
 export interface ProviderBinding {
   state: ProviderState;
-  /**
-   * Whether this Node saw the fact or was told it.
-   *
-   * `account_not_selectable` is the state a Node **cannot observe** — an administrator who has disabled
-   * public OAuth app access produces a consent screen with no account on it, and Cloudflare sends no error
-   * anywhere this Node can read. So the screen has to say which kind of fact it is showing, and a field that
-   * is always present is how that survives somebody forgetting.
-   */
-  evidence: "observed" | "reported";
-  clientId: string | null;
-  redirectUri: string | null;
-  registeredAt: string | null;
   accountId: string | null;
-  grantedAt: string | null;
-  scopesGranted: string[] | null;
-  /** Asked for today and not held: a grant from before the ceremony's list grew. Re-consent clears it. */
-  scopesMissing: string[];
-  refusedDetail: string | null;
+  accountName: string | null;
+  registeredAt: string | null;
+  verifiedAt: string | null;
 }
 
-/** One permission to tick in Cloudflare's picker, and why this Node is asking for it. */
-export interface CeremonyScope {
-  scope: string;
+/** One permission to tick on Cloudflare's token form, and what this Node does with it. */
+export interface Permission {
+  name: string;
+  scope: "account" | "zone";
   why: string;
-  /**
-   * Whether Cloudflare publishes a read-only form of this permission.
-   *
-   * False for four of them, and the screen says so where it shows them. Otherwise an operator reading a list
-   * with `zone-settings.write` on it concludes this Node asked for more than it needed, when write was the
-   * only shape the permission comes in.
-   */
-  readOnlyExists: boolean;
-}
-
-export interface ProviderCeremony {
-  steps: string[];
-  redirectUri: string;
-  scopes: CeremonyScope[];
-  /** What in the printed steps this repository has not measured. Required by the contract, shown here. */
-  unmeasured: string;
-  /** The one-token path: Cloudflare's token page prefilled, the permission's name, what is unverified. */
-  token: { url: string; permission: string; unmeasured: string };
+  optional: boolean;
 }
 
 /**
@@ -1715,12 +1688,18 @@ export interface Provisioned {
   deliveryEvents: ProvisionedAct | null;
 }
 
-export function useProvider(): UseQueryResult<
-  { provider: ProviderBinding; provisioned: Provisioned; ceremony: ProviderCeremony }, Error
-> {
+export interface ProviderRead {
+  provider: ProviderBinding;
+  provisioned: Provisioned;
+  permissions: Permission[];
+  /** What in the permission list this repository has not measured. Required by the contract, shown as is. */
+  note: string;
+}
+
+export function useProvider(): UseQueryResult<ProviderRead, Error> {
   return useQuery({
     queryKey: ["provider"],
-    queryFn: () => read<{ provider: ProviderBinding; provisioned: Provisioned; ceremony: ProviderCeremony }>(GET("/api/provider")),
+    queryFn: () => read<ProviderRead>(GET("/api/provider")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -1846,36 +1825,15 @@ export interface SendingProposal {
 }
 
 
-/** The client id and secret from the dashboard. The secret is never returned, and this discards any grant. */
-export const setProviderClient = (clientId: string, clientSecret: string) =>
-  act<{ provider: ProviderBinding }>(at("PUT", "/api/provider/client"), "PUT", {
-    clientId, clientSecret,
-  });
-
-/** The Node creates the client itself from a token it spends once; `accountId` only when the token sees several. */
-export const createProviderClient = (token: string, accountId?: string) =>
-  act<{ provider: ProviderBinding }>(at("POST", "/api/provider/client"), "POST", {
+/** Stores one API token, verified against Cloudflare first; `accountId` only when the token sees several. */
+export const registerProviderToken = (token: string, accountId?: string) =>
+  act<{ provider: ProviderBinding }>(at("PUT", "/api/provider/token"), "PUT", {
     token, ...(accountId === undefined ? {} : { accountId }),
   });
 
-/** Begins a consent and answers with the URL to send a browser to. Nothing is granted by asking. */
-export const beginConsent = (scopes: string[]) =>
-  act<{ authorize: { url: string; expiresAt: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
-
-/**
- * Records that Cloudflare's consent screen listed no account.
- *
- * The operator's report, because this Node has no way to see it. Kept as a distinct act rather than folded
- * into a generic failure so the state it produces stays labelled `reported` rather than `observed`.
- */
-export const reportUnselectable = () =>
-  act<{ provider: ProviderBinding }>(at("POST", "/api/provider/unselectable"), "POST");
-
-/** Asks Cloudflare which account this grant covers. Now also done during consent; this is the retry. */
-export const resolveProviderAccount = () =>
-  act<{ account: { accountId: string | null; found: number; error: string | null } }>(
-    at("POST", "/api/provider/resolve-account"), "POST",
-  );
+/** Forgets the held token here. The token itself stays valid in Cloudflare until revoked there. */
+export const forgetProviderToken = () =>
+  act<{ provider: ProviderBinding }>(at("DELETE", "/api/provider/token"), "DELETE");
 
 async function proposalFor<T>(
   path: string,

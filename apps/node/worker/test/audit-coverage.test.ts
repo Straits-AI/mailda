@@ -221,51 +221,38 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    */
   sending_transport: { actions: ["transport.configured"] },
   /*
-   * The Node's own Cloudflare grant (#162 L1, ADR 42), audited for `sending_transport`'s reason and a wider
-   * one: this decides which Cloudflare account the Node can act in, and every later provisioning act
-   * inherits it. The question an investigator has is *when did this Node gain the ability to change
-   * infrastructure, and who gave it that*.
-   *
-   * `provider.consent_granted` names the account and the scopes and neither token. `actorUserId` on it is
-   * null and that is accurate rather than a gap — the callback arrives from Cloudflare, and the person who
-   * authorized it did so in Cloudflare's own session. Who *started* the authorization is on the
-   * `provider_authorizations` row.
+   * The Node's Cloudflare credential (#162 L1, ADR 42 as reopened 26 September 2026). Registering and
+   * forgetting the token land here; the provisioning acts below land here too, because what they produce
+   * lives in Cloudflare's account rather than in a row of this Node, and the question an investigator
+   * brings is *which credential made records appear in our DNS* — a question about the credential.
+   * `provider.token_registered` names the account and never the token.
    */
-  provider_binding: {
+  provider_token: {
     actions: [
-      "provider.client_registered", "provider.consent_granted",
-      "provider.account_reported_unselectable",
-      // A grant that existed and stopped working, which is a different history from one never granted.
-      "provider.grant_refused",
-      /*
-       * The first act this grant *spends* on a change rather than a read (#163 L2). It belongs against the
-       * binding rather than a table of its own: what onboarding a sending domain produces lives in
-       * Cloudflare's account, not in this Node — and the question an investigator brings is *which grant
-       * made records appear in our DNS*, which is a question about the binding.
-       */
+      "provider.token_registered", "provider.token_forgotten",
       "provider.sending_onboarded",
       "provider.delivery_events_subscribed",
-      /*
-       * A purchase started (#164). Against the binding for `sending_onboarded`'s reason and one more: what
-       * it produces is a registration in Cloudflare's account, not a row here, and the question an
-       * investigator brings is *which grant agreed to spend our money*.
-       */
+      // A purchase started (#164): a registration in Cloudflare's account, not a row here.
       "provider.domain_purchase_attempted",
-      // DNS written on a customer's zone, against the binding whose grant authorized it.
+      // DNS written on a customer's zone, against the credential that authorized it.
       "provider.receiving_onboarded",
       "provider.routing_rule_taken_over",
       "provider.routing_rule_put_back",
-      // The zone's catch-all pointed here and restored (25 September 2026), against the binding for the same reason.
       "provider.catch_all_taken_over",
       "provider.catch_all_put_back",
     ],
   },
   /*
-   * A consent in flight. The only entry that lands against it is the refusal, because a consent that
-   * *succeeds* is recorded against the binding it produced — the row here is spent either way, and an
-   * authorization is not a thing an investigator asks about except when it did not become a grant.
+   * Migration 0053's two tables, unread since the OAuth client left (26 September 2026) and dropped by a
+   * later contract-phase migration. No action lands against them any more.
    */
-  provider_authorizations: { actions: ["provider.consent_refused"] },
+  provider_binding: {
+    exempt: "Migration 0053's OAuth client row, unread since the token replaced it on 26 September 2026 and "
+      + "dropped by a later contract-phase migration. No act lands against it any more.",
+  },
+  provider_authorizations: {
+    exempt: "Migration 0053's consent-in-flight row, unread for the same reason and going the same way.",
+  },
   /*
    * A passkey is a **way into an account**, so both ends of its life are audited: `access.granted` is the
    * shape, not `auth.signed_in`. Using an existing credential is an operational event and stays in the log;
@@ -747,28 +734,10 @@ describe("audit coverage", () => {
     // What is left is a broad, expensive act whose result an operator acts on: record it, never fail the
     // request for it. Same direction as a lockout and a blocked deletion.
     //
-    // `provider.consent_refused` (#162) earns it, and the reason is `hold.blocked`'s asymmetry rather than
-    // `evidence.verified`'s breadth.
-    //
-    // A consent that does not produce a grant writes **nothing to the binding** — that is the whole point of
-    // the state staying `awaiting_consent`. There is one write nearby, the `consumed_at` on the nonce, and it
-    // is deliberately *not* in the same transaction as this entry: the nonce must be spent whether or not the
-    // entry lands. A Node that rolled back the consumption because it could not append would leave a live
-    // state and a replayable PKCE verifier, which is a worse outcome than an unrecorded refusal — the same
-    // direction `hold.blocked` fails in, where the preserving act happens even if nothing records it.
-    //
-    // The refusal after the token endpoint answers is standalone for a simpler reason: by then the code is
-    // already spent and the decision is made, exactly like a lockout.
-    //
-    // `provider.grant_refused` (#162 L2) earns it the same way `provider.consent_refused` does, with one
-    // extra reason. The refusal is discovered while *renewing* a token on some other errand — a plan being
-    // read, an inventory fetched — so the act that provoked it is not an act about the grant, and there is
-    // no transaction of its own for the entry to ride in. The row update beside it is the record; failing
-    // the errand because the note could not be written would be the wrong direction, since the errand has
-    // already failed for a reason the caller is about to be told.
+    // Two provider refusals (`provider.consent_refused`, `provider.grant_refused`) earned it until the OAuth
+    // client left on 26 September 2026; a stored token has no consent and no renewal to refuse.
     expect(standalone).toEqual([
       "auth.locked_out", "evidence.verified", "hold.blocked",
-      "provider.consent_refused", "provider.grant_refused",
     ]);
   });
 

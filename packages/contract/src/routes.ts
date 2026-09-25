@@ -601,33 +601,26 @@ export const ROUTES = [
     request: S.transportRequest, response: S.transportConfiguredResponse,
   },
 
-  // ---- the Node's own Cloudflare grant (#162 L1, ADR 42) -------------------------------------------
+  // ---- the Node's own Cloudflare credential (#162 L1, ADR 42 as reopened 26 September 2026) --------
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider",
-    summary: "Whether this Node holds a Cloudflare grant, and the guided steps to give it one",
+    summary: "Whether this Node holds a Cloudflare API token, what has been set up, and the permissions a "
+      + "token needs",
     response: S.providerResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
-    method: "PUT", path: "/api/provider/client",
-    summary: "Supply the OAuth client id and secret. The secret is never returned, and this discards any "
-      + "grant the previous client obtained",
-    request: S.providerClientRequest, response: S.providerStateResponse,
+    method: "PUT", path: "/api/provider/token",
+    summary: "Verify an API token with Cloudflare, bind it to the one account it sees, and hold it wrapped. "
+      + "The token is never returned",
+    request: S.providerTokenRequest, response: S.providerStateResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
-    method: "POST", path: "/api/provider/client",
-    summary: "Create the OAuth client through Cloudflare's API from an API token used once and never stored, "
-      + "with this Node's own redirect URI and scopes, and register it. Discards any grant the previous "
-      + "client obtained",
-    request: S.providerClientCreateRequest, response: S.providerStateResponse,
-  },
-  {
-    authority: { scope: "organization", allOf: ["org.admin"] },
-    method: "POST", path: "/api/provider/authorize",
-    summary: "Begin a consent: answers with the URL to send a browser to",
-    request: S.providerAuthorizeRequest, response: S.providerAuthorizeResponse,
+    method: "DELETE", path: "/api/provider/token",
+    summary: "Forget the held token. The token stays valid in Cloudflare until deleted there",
+    response: S.providerStateResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
@@ -788,34 +781,6 @@ export const ROUTES = [
     summary: "Create the email.sending subscription for a domain through the grant, refusing unless the "
       + "digest matches the proposal this Node would now apply",
     request: S.providerSubscriptionRequest, response: S.providerSubscriptionProposalResponse,
-  },
-  {
-    authority: { scope: "organization", allOf: ["org.admin"] },
-    method: "POST", path: "/api/provider/resolve-account",
-    summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
-    response: S.providerAccountResponse,
-  },
-  {
-    authority: { scope: "organization", allOf: ["org.admin"] },
-    method: "POST", path: "/api/provider/unselectable",
-    summary: "Record that Cloudflare's consent screen did not list the operator's account — their report, "
-      + "which this Node cannot observe",
-    response: S.providerStateResponse,
-  },
-  {
-    /*
-     * **The one route here with no authority, and it is a decision rather than an omission.**
-     *
-     * The callback arrives from Cloudflare through the operator's browser. Requiring a Mailda session would
-     * fail whenever the consent was completed in a different browser profile — common, because an operator
-     * may hold their Cloudflare account somewhere other than where they administer their mail. What protects
-     * it is the `state` nonce: a callback carrying a state this Node did not issue is refused, and one
-     * carrying a state already spent is refused by the row rather than by a check in the handler. That is
-     * what the parameter is *for*, and a session check would be a second gate answering a different question.
-     */
-    method: "GET", path: "/oauth/cloudflare/callback", authority: { scope: "public" },
-    summary: "Where Cloudflare sends the authorization response. Guarded by the state nonce, not a session",
-    response: S.providerConsentResponse,
   },
 
   // ---- the MCP server (#89, ADR 12) ------------------------------------------------------------------

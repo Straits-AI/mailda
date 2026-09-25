@@ -18,6 +18,11 @@ values:
   oauth.omitted_scope_defaults_to_client_scopes: 0
 ---
 
+> **Superseded 26 September 2026.** The Node no longer holds an OAuth client or a grant: ADR 42 (as amended
+> that day) replaced it with a stored API token, the same custody as the Email Sending token, because both
+> cost the operator the same dashboard act. The measurements below stand as the record of what the OAuth
+> path was and did; nothing in the code reads them now.
+
 ## Correction, 9 September 2026 (amended the same day): the encoding was **not** the cause
 
 The section below diagnosed `invalid_client` as a missing form-url-encoding of the Basic credential and

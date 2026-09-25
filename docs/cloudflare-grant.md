@@ -1,369 +1,92 @@
-# The Node's own Cloudflare grant
+# The Node's Cloudflare credential
 
-How a Node comes to hold authority in its operator's Cloudflare account, what states that connection can be
-in, and which of those states the Node **cannot observe**.
+How a Node comes to act in its operator's Cloudflare account, which credential it uses when, and what it
+stores. Decision record: **ADR 42**, amended 25 and 26 September 2026; [#108][108] for the chart it belongs
+to and [#162][162] for this layer.
 
-Implemented by `apps/node/worker/src/provider/cloudflare-grant.ts` with `migrations/0053_provider_binding.sql`,
-surfaced by five routes in `src/routes/provider.ts` and two `doctor` findings. Decision record: **ADR 42**, with
-[#108][108] for the chart it belongs to and [#162][162] for this layer. Measured facts:
-[`cloudflare-oauth-node-as-client.md`][r167] (#167) and [`cloudflare-oauth-endpoints.md`][r168].
+## Two credentials, both the operator's, and only one is ever stored
 
-## Why the Node is the OAuth client
+**At install and upgrade: wrangler's login, carried on one request.** Every provisioning route
+(`GET`/`POST /api/provider/receiving`, `/sending`, `/subscription`, the email-routing and delivery-events
+reads, the routing-rule routes) accepts two request headers, `x-cloudflare-token` and
+`x-cloudflare-account`. When they are present the Node reads and writes the account with that token,
+inside that account, for that request, and never stores either. `mailda install` and `mailda upgrade` send
+wrangler's login token this way, which the operator consented to before anything was deployed and which
+reaches every endpoint the Node needs but the registrar ([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)).
+After the claim the install asks which domain the Node receives at and sets up receiving, sending and the
+delivery-events subscription; a Node is receiving when the install ends, with no dashboard visit. This is
+the ordinary path.
 
-ADR 42 struck `provision_and_claim` as unavailable to this product and dropped the bootstrap orchestrator with
-it. What replaced both is the Node holding its own grant as a **private OAuth client its operator creates**.
+**Later, from the browser: a stored API token, optional.** The Setup screen and `mailda provider --token`
+take an API token the operator made in the dashboard (`PUT /api/provider/token`). The Node verifies it
+against `GET /user/tokens/verify`, binds itself to the one account the token can see (`GET /accounts`;
+several is refused, naming them, unless `accountId` says which), and stores it wrapped under the ADR 28
+credential key, exactly as the Email Sending token of `PUT /api/transport` is stored. `DELETE
+/api/provider/token` forgets it. It exists for what a browser needs later and a terminal does not have:
+another receiving domain, a sending domain, taking over a routing rule, buying a domain.
 
-The shape is forced by two platform facts rather than chosen:
+The seam is the two functions that turn a request context into a credential, `accessTokenFor` and
+`boundAccount`: the operator's headers first, else the stored token, else a refusal
+(`E_PROVIDER_NO_TOKEN`) that names both ways to give one. The provisioning code above them does not know
+which it was given; the audit entry does, in its detail (`authority: "operator"` or `"token"`).
 
-- Cloudflare supports only the Authorization Code flow for third-party clients (no client credentials, no
-  device flow), so a grant requires a browser redirect, and the Node has a browser interface.
-- A shared Mailda-owned **public** client cannot serve it. `redirect_uris` are enumerated per client, every
-  Node has its own hostname, there is no wildcard, and public visibility requires domain-ownership
-  verification. A shared client would land the authorization code on a Mailda-operated redirect, making
-  Mailda the custodian **by construction rather than by choice**.
+### The permissions the token carries
 
-A private client is authorizable only by members of the account that created it, which is the customer, so
-**no Mailda-operated service holds a Cloudflare grant at any point.** That is the only shape in which §1's
-promise that disconnecting Mailda stops nothing needs no argument, because there was never anything to
-disconnect.
+Cloudflare's token form names them; the Setup screen prints the same list with why each is asked for:
 
-## The ceremony, reduced rather than eliminated
+| permission | why this Node needs it |
+|:--|:--|
+| Account Settings Read | which account this is, so a plan names where it would provision |
+| Zone Read | which zone carries a domain, before anything is created |
+| Zone Settings Edit | turning Email Routing on for a zone, and reading its own records |
+| Email Routing Rules Edit | the rule that sends an address, or a zone's catch-all, to this Worker |
+| Queues Edit | the `email.sending` subscription that makes a send's outcome reach this Node |
+| the Email Sending group | onboarding a domain for sending; the form's exact name is not published |
+| Registrar Domains Read | only for buying a domain from the Node; leave it off otherwise |
 
-The full list of what a Node needs from the account (what this grant can do, what a person still must, and
-how `doctor` checks each) is [`cloudflare-settings.md`](./cloudflare-settings.md).
+Restrict the token to the account the Node runs in, and give it a TTL if one is wanted; a token Cloudflare
+no longer accepts is reported at the act that tried it, in Cloudflare's own words (`10000 Authentication
+error`), with the fix naming this section, and the Node keeps running,
+because nothing about mail depends on it (drilled 10 September 2026 against the grant this replaced, and
+the argument is unchanged: no mail, sign-in, Butler, backup or recovery path touches it).
 
-The cost ADR 42 accepts, stated plainly: the operator creates an OAuth client in the Cloudflare dashboard and
-gives the Node two values. It is reduced by being *guided*. The Node prints the steps with its own redirect
-URI filled in and verifies the result, which is the difference between learning the dashboard and following
-five printed steps.
+### Why a token, and not the OAuth client this replaced
 
-**Since 23 September 2026 the ordinary path is one API token, and the Node creates the client itself.**
-`POST /api/provider/client` takes a token carrying one permission, *OAuth App Registrations Write*, calls
-Cloudflare's OAuth Clients API (`POST /accounts/{account_id}/oauth_clients`) with the redirect URI this Node
-was reached on and `REQUIRED_SCOPES` minus `offline_access`, which Cloudflare adds itself, registers what
-comes back exactly as `PUT /api/provider/client` would, and discards the token. It is never stored: not in
-the binding, not in the audit trail, not in a refusal, and a test holds that. The ceremony carries the link
-to Cloudflare's token page with that permission prefilled, so the operator's part is pick the account,
-Continue, Create, copy, paste, delete. The Setup screen, `mailda install` and `mailda provider --connect`
-are three surfaces on that one route (the CLI passes the account id it already settled, so the Node does
-not have to ask the token which it can see). The token is read with echo off, used for that one request, never
-stored, and the installer ends by saying to delete it. wrangler's own login cannot do this: none of its
-scopes governs OAuth clients (receipt: [`cloudflare-oauth-endpoints.md`](./receipts/cloudflare-oauth-endpoints.md)).
-The printed steps below remain for the deploy button, whose install has no terminal, and for an operator
-who declines the token. A Node claimed before this existed, or whose install declined, runs the same step
-later with `mailda provider --connect --url <origin>`.
+From 3 to 26 September 2026 the Node was its own private OAuth client: a client the operator created in the
+dashboard, a consent, an access token renewed hourly against a refresh token, five connection states, a
+scope ceremony, a redirect URI tied to the Node's hostname. The measurements that built it are kept as
+receipts, marked superseded: [`cloudflare-oauth-node-as-client.md`][r167],
+[`cloudflare-oauth-endpoints.md`][r168], [`cloudflare-oauth-scopes.md`](./receipts/cloudflare-oauth-scopes.md).
 
-`GET /api/provider` returns those steps beside the state, so an operator with no client sees what to do and an
-operator already connected can check that the redirect URI Cloudflare holds is still the hostname this Node is
-reachable on.
-
-### The scope list is printed now, and for four months it was not
-
-This section used to say the scope list *"is not printed, and that is deliberate"*, arguing that Cloudflare's
-scope names are enumerated from an endpoint needing a token and that printing plausible ones would be a
-fabrication. That argument was sound and it has been settled: fourteen scopes were probed individually and
-all fourteen granted, recorded in [`cloudflare-oauth-scopes.md`][r-scopes]. `ceremony.scopes` carries the
-strings, and two real consents proved it had to: **a request naming no scope is granted none.**
-
-`readOnlyExists` rides beside each one because four have no `:read` form in Cloudflare's vocabulary. Without
-it an operator reading `zone-settings.write` on the list concludes this Node asked for more than it needed,
-(`dns.write` left the list on 26 September 2026, when receiving moved to Email Routing's own record
-endpoints, which plan and read back a subdomain's records without raw DNS; the trade, stated plainly, is
-that a subdomain whose MX already points at a foreign mail host is no longer detectable before Cloudflare's
-records are written beside it, because only raw DNS showed foreign records and the install's credential
-cannot read it. `docs/receipts/wrangler-login-reach.md` carries the measurement.)
-when write was the only shape the permission comes in.
-
-`unmeasured` remains a **required** field: an operator following printed steps is entitled to know which
-parts of them this Node has verified, and a required field is how that survives a surface being rewritten.
-The `/setup` screen renders it under the scope table rather than in a document nobody opened.
-
-Read capabilities belong to this layer. Write authority belongs to the layer that provisions. An operator
-asked for write access to their whole Workers platform in order to display a read-only inventory would be
-right to refuse.
-
-[r-scopes]: receipts/cloudflare-oauth-scopes.md
-
-### The screen, and the nineteen routes that did not have one
-
-Every route in this document was, until #210, reachable only through `mailda provider …`. The person these
-routes exist for is whoever owns the Cloudflare account, and requiring them to install a CLI and hold an API
-token is requiring them to be somebody else. So the honest answer to *"can a non-technical operator run
-this?"* was no, regardless of how carefully each refusal was worded.
-
-`/setup` is the screen. It adds no endpoint: it sends what the CLI sends and renders the same refusals in the
-same words. Two steps stay in the dashboard because they cannot leave it: an OAuth client this Node is not
-allowed to create for itself, and a consent only a human may give.
-
-`GET /oauth/cloudflare/callback` negotiates on `Accept`: a page for a browser, JSON for everything else. That
-route is *always* reached by a browser (it is the redirect URI), and it answered with
-`{"consent":{"ok":true,…}}`, ending a flow written in English at a parse error a person has no way to read.
-Content negotiation rather than a second path, because Cloudflare holds exactly one redirect URI and a second
-would be one more thing to register wrongly. `error_description` is a query parameter reflected onto that
-page, on the one route here with no session check, so it is escaped. That is this route's one untrusted
-input, not a hygiene measure.
-
-The page wears the theme (16 September 2026). Its first version stacked every sentence inside the wordmark's
-header band with an empty page beneath, which is what an operator described as *"does not match our
-theme"*. It is the pre-authentication skeleton now: wordmark rack, lede with the state as the heading,
-a panel with Cloudflare's own words as a refusal or the account as a fact, and a primary control to
-continue. The same audit found two tone classes the screens used and the sheet never defined (`.dim`,
-`.bad`) and a duplicate `.ledger-head` rule that rendered every ledger heading at weight 400; all three are
-fixed in the sheet. The logo is absent by decision, not omission: `MARK_IS_AUTHORED` is false until the
-traced mark reads as an M at 26px (`docs/history.md`, *the mark is not shipped, because it does not work*).
-
-## Five states, and one of them is not a measurement
-
-| state | evidence | what it is |
-|:--|:--|:--|
-| `no_client` | observed | no row. This Node has never been given a client |
-| `awaiting_consent` | observed | a client is registered and nobody has consented. A place, not a failure |
-| `account_not_selectable` | **reported** | the operator says their account was not listed on the consent screen |
-| `consent_granted` | observed | a grant is held. Nothing has been read with it |
-| `grant_refused` | observed | Cloudflare rejected the grant this Node holds |
-
-Not `connecting / success / failed`, which is a lie about a flow with this many outcomes.
-
-**`account_not_selectable` is the one the Node cannot observe.** An account administrator can disable public
-OAuth app access under **Manage Account → Members → Settings**, and the consequence is that the consent screen
-simply does not list the account the operator means. No error, and no response the Node ever sees, because
-the authorization request never comes back. Inferring it from a consent that did not return would mean telling
-an operator who closed the tab that their administrator had disabled OAuth apps.
-
-So it is reported, the columns are named `unselectable_reported_at` and `unselectable_reported_by`, the API
-carries `evidence: "reported"` as a required field, the audit entry says in its own detail that it is somebody's
-account rather than a measurement, and `doctor`'s finding says it again in prose. Four places, because a
-reported fact read months later is exactly where it gets mistaken for a measured one.
-
-**`grant_refused` is deliberately distinct from `awaiting_consent`**, and the tokens stay in the row. *Never
-granted* and *granted and then refused* are different questions, and clearing the row on a refusal would erase
-the second one.
-
-### Four states this layer does not have
-
-`inventory_read`, `plan_produced`, `partially_provisioned`, `provisioned_unverified` and `verified` are facts
-about an inventory and a deployment plan that this layer does not build. They are **not** declared: a state
-nothing can construct is a branch no test can reach, and declaring all nine would look like coverage of a flow
-that does not exist. The union grows with the layer that reaches them, and
-`test/provider-grant.test.ts` asserts their absence rather than trusting this paragraph.
+It was replaced because both mechanisms cost the operator the same thing, one dashboard form, and two
+ways to make one browser-side credential was one too many; the founder's rule was keep the simpler. The
+argument ADR 42 had made against a pasted token, that a refreshable grant with visible scopes and one
+revocation list is better hygiene, is answered by what an API token is: account-restricted, its
+permissions visible on the dashboard's token page, an optional expiry, one revocation list, and no state
+machine or hourly renewal to keep it alive. What is lost is nothing a Node ever used: the consent screen's
+account picker, and a grant that dies on its own.
 
 ## What is stored, and what never leaves
 
-`provider_binding` holds one row. A Node is deployed *into* one Cloudflare account, and two rows would be two
-answers to *whose account is this*. Three secrets live in it, every one wrapped under the ADR 28 credential
-key: the client secret, the access token and the refresh token. A fourth, the PKCE verifier, is wrapped on the
-`provider_authorizations` row while a consent is in flight.
+`provider_token` holds one row. A Node is deployed *into* one Cloudflare account, and two rows would be
+two answers to *whose account is this*. The token is wrapped under the ADR 28 credential key; the row
+carries the account it was bound to, when it was verified, and who registered it. The status read
+decrypts nothing, and the response schema is `.strict()`, which is a security property here rather than
+tidiness: a handler that grew a `token` field fails the contract suite instead of leaking.
 
-`providerStatus` is what `doctor` and every surface read, and it **decrypts nothing**. Its column list is
-exported so a test can assert the absence of every token column rather than trust a comment. The response
-schemas are `.strict()`, which is the third place in this product where that is a security property rather
-than tidiness: a handler that grew an `accessToken` field fails the contract suite instead of leaking.
+`GET /api/provider` reports `no_token` or `token_held` (with the account and the verification date),
+beside `provisioned`, the latest receiving, sending and
+subscription act from the audit trail with its date and which credential did it. The progress list reads
+those as a record of an act, not a live read, and says so.
 
-## The flow
+## Withheld from machines
 
-1. `PUT /api/provider/client`: the operator pastes the client id and secret. The **redirect URI is derived
-   from the request's origin and not taken from the body**: one the caller could choose is one an attacker
-   could choose.
-2. `POST /api/provider/authorize`: mints a 32-byte `state` and a PKCE verifier, stores both, and answers with
-   the URL. PKCE is used although Cloudflare calls it optional for a confidential client: the code arrives
-   through the operator's browser to a public hostname, so a code in a history, a proxy log or a referrer is a
-   code somebody else holds, and with a verifier it is worth nothing to them. The cost is one SHA-256.
-3. `GET /oauth/cloudflare/callback`: validates the nonce, consumes it, exchanges the code with
-   `client_secret_basic`, and stores the grant.
-4. `doctor` reports the state and compares the four endpoints against Cloudflare's discovery document.
+`PUT` and `DELETE /api/provider/token` are `operator` in the agent registry: a token is a person's, made in
+the dashboard, and handing one to a machine to spend is what the install's own credential makes
+unnecessary. `GET /api/provider` is withheld too, for the reason it always was: it is the map of the
+infrastructure the mail sits on.
 
-Re-registering the client **discards any grant with it**. A grant belongs to the client that obtained it;
-keeping the tokens would leave a row whose `client_id` did not issue its `refresh_token`, and the first
-refresh would be refused with an error about the client that an operator would read as a revocation.
-
-### The callback is the only route here with no authority, and that is a decision
-
-It arrives from Cloudflare through the operator's browser. Requiring a Mailda session would fail whenever the
-consent was completed in a different browser profile, which is common, because an operator may hold their Cloudflare
-account somewhere other than where they administer their mail.
-
-What protects it is the `state` nonce, three ways: a state this Node never issued is refused, a state already
-spent is refused, and an expired one is refused. The second is enforced by the row (the claim is
-`UPDATE … WHERE consumed_at IS NULL` and the handler checks `changes`), so two callbacks racing for one state
-resolve to exactly one, rather than to whichever handler happened to run first. A session check would be a
-second gate answering a different question.
-
-The nonce is consumed **before** the exchange. If the exchange fails the code is already spent at Cloudflare's
-end, so a state left open would only permit a retry that could not succeed, and it would leave a verifier alive
-after its redirect.
-
-## Four ways a callback does not become a connection
-
-Each writes nothing to the binding, and conflating any of them with a grant is the failure the state list
-exists to prevent.
-
-| what happened | refusal | resulting state |
-|:--|:--|:--|
-| the operator declined | 200, `ok: false`, Cloudflare's own `error` | `awaiting_consent` |
-| the token endpoint refused | 200, `ok: false`, e.g. `invalid_grant` | `awaiting_consent` |
-| a 200 with no `access_token` | 200, `ok: false`, `http_200` | `awaiting_consent` |
-| the token endpoint was unreachable | `E_PROVIDER_EXCHANGE_UNREACHABLE` | `awaiting_consent` |
-
-The last is an **unknown** rather than a failure and is recorded as neither: the code is spent and the Node
-cannot tell whether a grant was issued. ADR 40's distinction between a refusal and an unknown, reached in a
-second place.
-
-A token-endpoint refusal is not `grant_refused`. That state means Cloudflare rejected a grant this Node
-*held*; a failed exchange means it never got one, and conflating them would tell an operator their connection
-had been revoked when it had never been made.
-
-## The endpoints are constants with a receipt, checked by `doctor`
-
-| purpose | endpoint |
-|:--|:--|
-| issuer | `https://dash.cloudflare.com` |
-| authorization | `https://dash.cloudflare.com/oauth2/auth` |
-| token | `https://dash.cloudflare.com/oauth2/token` |
-| revocation | `https://dash.cloudflare.com/oauth2/revoke` |
-
-Read from Cloudflare's discovery document, recorded in [`cloudflare-oauth-endpoints.md`][r168], and **not
-fetched at runtime**: `dash.cloudflare.com` answers the RFC 8414 path with a **200 carrying HTML**, the
-dashboard's own shell. A Node discovering its endpoints by trusting that 200 would parse a web page and fail
-on the authorization path, at the moment an operator was trying to connect. `doctor` compares them against
-live discovery instead, which puts the drift check in the thing whose job is detecting drift, and reports a
-network failure as `ok`, because a report that degrades when a third party is briefly unreachable is a report
-an operator learns to ignore.
-
-`state` must be at least **8 characters**, measured: a shorter one is answered by a redirect carrying
-`error=invalid_state` and a message about entropy, which does not read like a configuration problem. The Node
-uses 32 random bytes and asserts the minimum anyway.
-
-## Nothing about mail depends on this grant, drilled 10 September 2026
-
-Against the live Node: its grant was put into `grant_refused` and the same four things were asked before and
-after.
-
-| | before | with the grant refused |
-|:--|:--|:--|
-| `/health` | claimed, 0 pending | unchanged |
-| sign-in (CLI session) | works | works |
-| search | answers | answers |
-| `doctor` | exit 0 | **exit 0**, the grant reported as a note |
-
-Then restored, and the state read back `consent_granted`.
-
-**A drill is a fact about one afternoon.** What keeps the claim true is that nothing outside two files can
-reach the grant at all, and `test/node/provider-blast-radius.test.ts` holds that as a closed world over the
-whole source tree, by import *and* by raw reference to `provider_binding`, since SQL would reach the same row
-without naming the module. Permitted: `routes/provider.ts`, which manages it, and `doctor/node.ts`, which reports it. An
-import added to `dispatch.ts` fails the test; so does raising the finding's severity to `degraded`, which
-would make `mailda deploy` fail on a revocation an operator performed deliberately.
-
-Both were mutated and both fail.
-
-**What the drill does not cover:** revoking at Cloudflare's end (*My Profile → Manage OAuth authorizations →
-Revoke*), which is one click and would make the stored refresh token stop working for real. This drilled the
-Node's behaviour in that state, which is the half #162 asks about; whether Cloudflare's revocation produces
-exactly this state is inferred from the error it returns, not observed.
-
-## Superseded: nothing about mail depends on this grant
-
-Revoking it in Cloudflare leaves mail, users, Butlers, schedules, the API and CLI, backup and recovery
-working, because none of those paths touch it. `doctor` therefore reports `grant_refused` as **`report` with
-`ok: false`** rather than `degraded`, the first finding in that file to use the pair. `degraded` escalates the
-verdict, which `mailda deploy` reads as a failure, and a Node that failed a deploy because its operator
-revoked a grant on purpose would be failing for a deliberate act.
-
-That the finding is not `ok` says a person may want to act; that the verdict does not move says nothing is
-broken. **Drilled rather than asserted is still owed**; see below.
-
-## Withheld from machines, all five routes
-
-Every route here is `operator` tier in `packages/contract/src/agent.ts`, and two of them are `GET`s that the
-derivation rule would otherwise have offered.
-
-Registering the client and beginning a consent are **unfinishable by a machine**: the id and secret exist only
-after a person has created them in Cloudflare's dashboard, and the authorization URL has to be opened by
-whoever holds the account, past Cloudflare's own sign-in challenge. An agent offered these would read a
-printed ceremony and have nowhere to perform it.
-
-Reporting an unselectable account is withheld for a sharper reason. It is the one fact in this product recorded
-as *reported rather than observed*, and a machine permitted to assert it could write an unfalsifiable claim
-about an administrator's account settings into the audit trail, whose whole value is that the two kinds of
-fact stay distinguishable.
-
-`GET /oauth/cloudflare/callback` is withheld because it is **not a read at all**: it consumes a single-use
-nonce, so a machine that fetched it would spend an operator's consent in flight.
-
-## The grant needs `refresh_token` in the client's grant types, or it dies in an hour
-
-Measured 9 September 2026: fourteen scopes granted, and an access token valid for **one hour with no refresh
-token**. The cause was the client, not the platform.
-
-Cloudflare's API reference for `oauth_clients`:
-
-> Protocol scopes `offline_access` and `openid` are **added or removed automatically** based on `grant_types`
-> and `response_types`.
-
-So `offline_access` is absent from the dashboard's scope picker and from `GET /oauth/scopes` because it is
-**derived, not chosen**. A client registered `grant_types: ['authorization_code']` can never request it; one
-with `refresh_token` alongside gets it added automatically:
-
-```text
-PATCH /accounts/{acc}/oauth_clients/{id}  {"grant_types":["authorization_code","refresh_token"]}
-  -> grant_types: ['authorization_code', 'refresh_token']
-  -> offline_access auto-added: True   (scopes 14 -> 15)
-```
-
-**This is why the ceremony's second step names both grant types.** An operator who sets only Authorization
-Code gets a Node that reconnects every hour, and the failure appears an hour after everything looked fine.
-The Node requests `offline_access`, so a client missing it is refused with `invalid_scope` **naming that
-scope**, which points at the grant type instead of at a mystery.
-
-### A word on secret rotation, since it cost several consents
-
-Cloudflare allows **two** secrets per client so one can be rotated before the old is deleted, and
-`GET` on the client reports `has_rotated_secret`. This Node holds one at a time, so while two are live an
-exchange fails `invalid_client` if the Node holds the older. The guide is explicit: *"if the value is true,
-delete the old secret before you create another."*
-
-`DELETE /accounts/{acc}/oauth_clients/{id}/rotate_secret` clears it.
-
-## Spending the grant
-
-L1 obtained a grant and deliberately spent none of it. `doctor` said *"nothing has been read with it yet"*,
-which was honest and not a place to stay. `cloudflareGet` is the one door.
-
-**Renewing is not an optimisation.** The access token lives an hour, measured, so a caller using the stored
-token without checking would work for an hour after each consent and fail silently after, which would make
-ADR 42's *one ceremony* hourly in practice while claiming otherwise. Renewal happens **a minute before**
-expiry: a token that expires between the check and the request it was fetched for produces a failure the
-caller cannot tell from a revocation.
-
-**A rejected renewal is what makes `grant_refused` real.** L1 could describe that state and not reach it.
-The revocation drill had to write the row by hand. Now Cloudflare answering `invalid_grant` to a refresh
-records it, in Cloudflare's own words, with the tokens kept so *never granted* and *granted and then refused*
-stay different questions.
-
-A network failure is deliberately **not** a refusal. An unreachable token endpoint says nothing about the
-grant, and recording one would tell an operator their authorization was revoked because a request timed out.
-ADR 40's distinction, in a third place.
-
-**A renewal that returns no refresh token keeps the old one.** Rotation is at the server's discretion, and
-overwriting it with an absent field would discard the durable half of the authorization on a *successful*
-renewal: the grant would work for one more hour and then be unrecoverable.
-
-### `POST /api/provider/resolve-account`, and why it is its own route
-
-The token response does not name the account (measured), so it costs a `GET /accounts`. That is a separate
-route from `GET /api/provider` on purpose. A status read that renewed a token and called Cloudflare as a
-side effect of being *displayed* would make every page showing the connection a consumer of the account's
-authority. `doctor` names the command rather than running it, for the same reason.
-
-**More than one account is a real answer, not an error.** A person may belong to several, and the grant is
-scoped to what they chose on the consent screen. The id is recorded only when there is exactly one, because
-the column a deployment plan reads names the account it would provision into, and a guess there is worse
-than *not yet determined*.
-
-Run against the live Node on 10 September 2026, it resolved `1e0170aa…`, the first act this Node has
-performed with its own grant.
-
-## Reading Email Routing through the grant (#163 L2)
+## Reading Email Routing through the credential (#163 L2)
 
 `mailda provider --email-routing`, run against the live Node on 10 September 2026:
 
@@ -639,50 +362,19 @@ read side matches an apex as covering a subdomain, because for sending it does; 
 exact name, because onboarding does. Reusing either match for the other would be wrong in a different
 direction each way.
 
-## The operator's own credential, for one request, and the grant made optional (25 September 2026)
-
-Every provisioning route (`GET`/`POST /api/provider/receiving`, `/sending`, `/subscription`, the
-email-routing and delivery-events reads, the routing-rule routes and `resolve-account`) accepts two request
-headers, `x-cloudflare-token` and `x-cloudflare-account`. When they are present the Node reads and writes
-the account with that token, inside that account, for that request, and never stores either. The seam is
-the two functions that turn a request context into a credential, `accessTokenFor` and `boundAccount`; the
-provisioning code above them does not know which it was given. The audit entry does: its detail carries
-`authority: "operator"` or `"grant"`.
-
-`mailda install` uses it with wrangler's login token, which the operator consented to before anything was
-deployed and which reaches every endpoint the grant does but raw DNS and the registrar
-([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)). After the claim it asks which domain the
-Node receives at and an address, and does receiving, sending and the delivery-events subscription. A Node is
-receiving when the install ends. `mailda upgrade` offers the same to a Node that was never set up.
-
-That takes the grant off the critical path. It stays the Node's own credential for what a browser needs
-later and a terminal does not have: another receiving domain, a sending domain, taking over a routing rule,
-buying a domain. The Setup screen calls the connection optional and says what it is for. Its ceremony is
-unchanged, and so is everything above about what a person must still do to make one.
-
-Headers rather than body fields, so the proposal `GET`s can carry the credential without a token in a query
-string. Administrator-only, as the routes already were. The same trust as `POST /api/provider/client`'s
-token: the operator's, sent to the operator's own Node, once.
-
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:
 
-- ~~**The scope matrix**~~. Measured. Fourteen scopes, listed in `cloudflare-oauth-scopes.md` with each
-  id's picker name, every one probed individually and all fourteen granted.
-- ~~**Whether the token response names the account**~~. Measured: it does not
-  (`oauth.token_response_names_account: 0`). The code left the column null rather than inventing a field,
-  which was the right call and is now a fact. Resolving it costs one `GET /client/v4/accounts`.
-- **The revocation drill.** The paragraph above is an argument from what the code touches, not a measurement.
-- **Whether a private client can use `client_credentials`.** Cloudflare's discovery document advertises it and
-  its documentation says third-party clients cannot use it. If the document is right, ADR 42's browser
-  ceremony is unnecessary. [`cloudflare-oauth-endpoints.md`][r168] names the two-call probe that would settle
-  it. Until then the Node does authorization-code, because trusting the document over the documentation would
-  fail inside the token exchange with an error about the client rather than about the flow.
-- **Inventory read through the grant.** `deploy --plan` below reads the account through the operator's own
-  `wrangler` rather than through this grant, because a plan for a *first install* runs before there is a Node
-  to hold one. Reading zones and Email Service state through the grant, for a Node that already exists, is
-  what the ownership page needs and is not built.
+- **A live token refused.** There is no stored "refused" state: a token revoked in the dashboard is found
+  out at the next act, which Cloudflare refuses with `10000` and the Node reports whole with the fix naming
+  this section. The drill that revokes a token and reads the refusal back is not yet run.
+- **The Email Sending permission's form name.** Cloudflare's permissions reference does not list it; the
+  Setup screen says "the Email Sending group" and the first token that carries it is the measurement.
+- **Inventory read through the stored token.** `deploy --plan` below reads the account through the
+  operator's own `wrangler`, because a plan for a *first install* runs before there is a Node to hold
+  anything. Reading zones and Email Service state through the stored token, for a Node that already
+  exists, is what the ownership page needs and is not built.
 
 [108]: https://github.com/Straits-AI/mailda/issues/108
 [162]: https://github.com/Straits-AI/mailda/issues/162
@@ -694,7 +386,7 @@ Stated here rather than left to be discovered:
 `mailda deploy --plan` prints the plan and acts on nothing. It exits 0 for `install` and `redeploy`, and 1 for
 `blocked` or `unknown`, so it is usable as a gate.
 
-**It reads the account through the operator's own `wrangler`, not through the grant above.** A plan for a first
+**It reads the account through the operator's own `wrangler`, not through the credential above.** A plan for a first
 install runs before there is a Node to hold a grant, so the chicken-and-egg is resolved by using the
 credentials the operator already has. The grant is for a Node that exists.
 

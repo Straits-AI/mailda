@@ -4,33 +4,6 @@ import { unprocessable } from "../errors.ts";
 import { operatorOf, cloudflareGet } from "./cloudflare-api.ts";
 
 /**
- * Which account this grant covers.
- *
- * **Measured as absent from the token response** (`oauth.token_response_names_account: 0`), so it costs a
- * call. `provider_binding.account_id` is filled from here the first time anything needs it rather than at
- * consent, which is why the column is nullable and why every surface says *not yet determined* instead of
- * showing an empty account.
- *
- * More than one account is a real answer and not an error: a person may belong to several, and a grant is
- * scoped to what they chose on the consent screen. Recorded only when there is exactly one, because writing
- * a guess into the column a deployment plan reads is worse than leaving it null.
- */
-export async function resolveAccount(
-  env: Env, ctx: Ctx, orgId: string,
-): Promise<{ accountId: string | null; found: number; error: string | null }> {
-  const answer = await cloudflareGet<Array<{ id: string; name: string }>>(
-    env, ctx, orgId, "/accounts?per_page=50",
-  );
-  if (!answer.ok) return { accountId: null, found: 0, error: answer.error };
-
-  const only = answer.result.length === 1 ? answer.result[0]!.id : null;
-  if (only !== null) {
-    await env.CATALOG.prepare("UPDATE provider_binding SET account_id = ? WHERE id = 1").bind(only).run();
-  }
-  return { accountId: only, found: answer.result.length, error: null };
-}
-
-/**
  * What Cloudflare says about receiving mail for one domain this Node routes (#163 L2).
  *
  * ## Why this is the read side and stops there
@@ -44,7 +17,7 @@ export async function resolveAccount(
  * `GET /zones/{id}/email/routing/dns` answers **which records it needs**. So the proposal is Cloudflare's
  * list against Cloudflare's verdict, and this Node's job is to ask and to say.
  *
- * Both need `Zone Settings Read`, which the grant carries as `zone-settings.read`. Nothing here writes.
+ * Both need `Zone Settings: Read`, which `Zone Settings: Edit` on the token covers. Nothing here writes.
  *
  * ## The zone is not the domain, and finding it is most of the work
  *
@@ -73,15 +46,15 @@ export interface RoutingState {
  * The Cloudflare account this Node is bound to, which is the boundary every other read is kept inside.
  *
  * Null is **not** "search everywhere" — it is a refusal, and the only caller that treats it otherwise would
- * be a bug. `resolveAccount` fills it, and deliberately leaves it null when a grant covers more than one
- * account, which its own comment calls *"a real answer and not an error"*.
+ * be a bug. An operator's credential names its account on the request; a stored token was bound to one at
+ * registration (`credential.ts`), so null now means exactly *no credential at all*.
  */
 export async function boundAccount(env: Env, ctx?: Ctx): Promise<string | null> {
   const operator = ctx === undefined ? null : operatorOf(ctx);
   if (operator !== null) return operator.accountId;
   const row = await env.CATALOG.prepare(
-    "SELECT account_id FROM provider_binding WHERE id = 1",
-  ).first<{ account_id: string | null }>();
+    "SELECT account_id FROM provider_token WHERE id = 1",
+  ).first<{ account_id: string }>().catch(() => null);
   return row?.account_id ?? null;
 }
 
@@ -96,10 +69,9 @@ export async function boundAccountFor(env: Env, ctx?: Ctx): Promise<string> {
   const accountId = await boundAccount(env, ctx);
   if (accountId === null) {
     throw unprocessable("E_PROVIDER_NO_ACCOUNT", {
-      what: "this Node has not determined which Cloudflare account it is bound to",
-      why: "a grant covering more than one account records none, and asking the registry on behalf of an "
-        + "unspecified account is a question with no answer",
-      fix: "POST /api/provider/resolve-account",
+      what: "this Node holds no Cloudflare credential, so it is bound to no account",
+      why: "asking the registry on behalf of an unspecified account is a question with no answer",
+      fix: "PUT /api/provider/token, or send the operator headers with the request",
     });
   }
   return accountId;
@@ -107,7 +79,8 @@ export async function boundAccountFor(env: Env, ctx?: Ctx): Promise<string> {
 
 /** What every surface says when the boundary is not known, so the sentence cannot drift between them. */
 export const NO_BOUND_ACCOUNT =
-  "this Node has not determined its Cloudflare account yet — POST /api/provider/resolve-account";
+  "this Node holds no Cloudflare credential and no operator credential came with the request — "
+  + "PUT /api/provider/token, or send the operator headers";
 
 /**
  * The zone carrying a domain, which is usually a **parent** of it — **within this Node's own account**.
@@ -124,7 +97,7 @@ export const NO_BOUND_ACCOUNT =
  * consent rather than a property of this code, which is exactly the kind of safety #165 asks to be proven
  * rather than observed: `test/provider-isolation.test.ts` removes this filter and watches a test fail.
  *
- * A null `account_id` **refuses**. It is the multi-account case — `resolveAccount` records nothing when a
+ * A null `account_id` **refuses**. It is the no-credential case — nothing to read with (formerly also when a
  * grant covers several — and searching all of them is the hole itself rather than a fallback.
  *
  * ## The walk

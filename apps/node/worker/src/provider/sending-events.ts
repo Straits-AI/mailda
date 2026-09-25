@@ -206,9 +206,8 @@ export async function deliveryEventsState(
   const accountId = await boundAccount(env, ctx);
   if (accountId === null) {
     /*
-     * Not an error about Cloudflare — an error about this Node. The account id is filled lazily by
-     * `resolveAccount`, so naming the step is the difference between an operator running one command and an
-     * operator re-doing the consent.
+     * Not an error about Cloudflare — an error about this Node. No credential means no account, and the
+     * sentence names the two ways to give it one rather than blaming the provider.
      */
     return domains.map((domain) => ({ ...blank(domain), error: NO_BOUND_ACCOUNT }));
   }
@@ -467,7 +466,7 @@ export async function onboardSending(
      */
     detail: {
       zone: proposal.zone, creates: proposal.creates, leavesBehind: proposal.leavesBehind,
-      authority: operatorOf(ctx) === null ? "grant" : "operator",
+      authority: operatorOf(ctx) === null ? "token" : "operator",
     },
   }, (entry) => [entry]);
 
@@ -701,7 +700,7 @@ export async function subscribeDeliveryEvents(
       zone: proposal.zone, sendingDomain: proposal.sendingDomain, queue: proposal.queueName,
       subscriptionId: created?.id ?? proposal.subscribed, events: proposal.events,
       consumerAttached: attached === null ? "already" : attached.consumer_id ?? "attached",
-      authority: operatorOf(ctx) === null ? "grant" : "operator",
+      authority: operatorOf(ctx) === null ? "token" : "operator",
     },
   }, (entry) => [entry]);
 

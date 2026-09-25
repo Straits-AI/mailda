@@ -237,11 +237,11 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(reported).not.toContain("a-token-value");
   });
 
-  it("the Cloudflare grant's five routes, and none of them returns a secret", async () => {
+  it("the Cloudflare credential's three routes, and none of them returns a secret", async () => {
     /*
-     * The third place `.strict()` is a security property, and the widest: the binding row holds a client
-     * secret, an access token and a refresh token, and `GET /api/provider` reads it to derive a state. The
-     * schema has no field for any of the three, so a handler that grew one fails here rather than leaking.
+     * The third place `.strict()` is a security property, and the widest: the token row holds the API
+     * token, and `GET /api/provider` reads it to derive a state. The schema has no field for it, so a
+     * handler that grew one fails here rather than leaking.
      *
      * Driven end to end rather than named in `response-drivers-world.test.ts`'s exception list, because an
      * undriven route's success shape is unchecked — and the shape is what the protection *is*.
@@ -249,74 +249,44 @@ describe("every schema-bearing route answers what the contract says it does", ()
     const held = await cookie();
 
     const before = await answers("GET", "/api/provider", { cookie: held }) as {
-      provider: { state: string; evidence: string };
-      ceremony: { redirectUri: string; unmeasured: string; scopes: { scope: string }[] };
+      provider: { state: string };
+      permissions: { name: string; optional: boolean }[];
+      note: string;
     };
-    expect(before.provider.state).toBe("no_client");
-    // The ceremony's redirect URI is this Node's own origin, which is the one value only the request knows.
-    expect(before.ceremony.redirectUri).toBe(`${ORIGIN}/oauth/cloudflare/callback`);
-    // The admission is a required field, so a surface cannot render the steps and drop it.
-    expect(before.ceremony.unmeasured.length).toBeGreaterThan(40);
-    // Real scope strings, because a request naming none is granted none.
-    expect(before.ceremony.scopes.map((one) => one.scope)).toContain("account-settings.read");
+    expect(before.provider.state).toBe("no_token");
+    // The list is real dashboard names, and the admission is a required field a surface cannot drop.
+    expect(before.permissions.map((one) => one.name)).toContain("Zone: Read");
+    expect(before.note.length).toBeGreaterThan(40);
 
-    /*
-     * The token path first, with Cloudflare stubbed: the Node creates the client itself. The response is the
-     * same state shape, and `.strict()` holds the same secret out of it. The `PUT` below then replaces it,
-     * which is the documented behaviour of registering a different client.
-     */
+    // Registration, with Cloudflare stubbed: verify says active, the token sees one account.
     const realFetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-      if (String(url).startsWith("https://api.cloudflare.com/")) {
-        return Response.json({ success: true, result: { client_id: "cf-api-made", client_secret: "made-secret" } });
+      const path = String(url);
+      if (path.endsWith("/user/tokens/verify")) {
+        return Response.json({ success: true, result: { id: "tok", status: "active" } });
+      }
+      if (path.includes("/client/v4/accounts")) {
+        return Response.json({ success: true, result: [{ id: "1e0170aaabc90ecf5f466128d1f0466a", name: "Contract" }] });
       }
       return realFetch(url, init);
     });
     try {
-      const made = await answers("POST", "/api/provider/client", {
-        body: { token: "one-use-token", accountId: "1e0170aaabc90ecf5f466128d1f0466a" }, cookie: held,
-      }) as { provider: { state: string; clientId: string } };
-      expect(made.provider.state).toBe("awaiting_consent");
-      expect(made.provider.clientId).toBe("cf-api-made");
+      const registered = await answers("PUT", "/api/provider/token", {
+        body: { token: "contract-token-plain" }, cookie: held,
+      }) as { provider: { state: string; accountId: string; accountName: string } };
+      expect(registered.provider.state).toBe("token_held");
+      expect(registered.provider.accountId).toBe("1e0170aaabc90ecf5f466128d1f0466a");
+      expect(registered.provider.accountName).toBe("Contract");
+      expect(JSON.stringify(registered)).not.toContain("contract-token-plain");
     } finally {
       vi.stubGlobal("fetch", realFetch);
     }
 
-    const registered = await answers("PUT", "/api/provider/client", {
-      body: { clientId: "cf-contract-client", clientSecret: "the-contract-secret" }, cookie: held,
-    }) as { provider: { state: string; clientId: string } };
-    expect(registered.provider.state).toBe("awaiting_consent");
-    expect(registered.provider.clientId).toBe("cf-contract-client");
-
-    const authorized = await answers("POST", "/api/provider/authorize", {
-      body: { scopes: ["a-scope"] }, cookie: held,
-    }) as { authorize: { url: string } };
-    const authorizeUrl = new URL(authorized.authorize.url);
-    expect(authorizeUrl.host).toBe("dash.cloudflare.com");
-    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
-    const state = authorizeUrl.searchParams.get("state")!;
-
-    /*
-     * The callback, driven with an `error` so nothing has to reach Cloudflare. It is the branch that matters
-     * most anyway: a declined consent must answer 200 with `ok: false` rather than write a grant, because a
-     * refusal reported as a connection is the failure #162's honest states exist to prevent.
-     */
-    const consent = await answers("GET", "/oauth/cloudflare/callback", {
-      params: {},
-    }, `?state=${encodeURIComponent(state)}&error=access_denied&error_description=declined`) as {
-      consent: { ok: boolean; error: string; scopesDeclined: string[] };
+    const forgotten = await answers("DELETE", "/api/provider/token", { cookie: held }) as {
+      provider: { state: string };
     };
-    expect(consent.consent.ok).toBe(false);
-    expect(consent.consent.error).toBe("access_denied");
-    expect(consent.consent.scopesDeclined).toContain("a-scope");
+    expect(forgotten.provider.state).toBe("no_token");
 
-    /*
-     * The one route that *spends* the grant. There is no grant on this fixture, so it refuses — which is
-     * the case a caller meets before connecting, and the refusal is the assertion: a route that answered
-     * something cheerful with no authorization would be the state confusion #162 is about.
-     */
-    await expect(answers("POST", "/api/provider/resolve-account", { cookie: held }))
-      .rejects.toThrow(/E_PROVIDER_NO_GRANT|answered 409/);
     /*
      * The routing read answers `[]` here rather than refusing, and that is the right way round: this fixture
      * routes no addresses, so there are **no domains to report on** — which is a different fact from "no
@@ -418,7 +388,7 @@ describe("every schema-bearing route answers what the contract says it does", ()
       () => answers("POST", "/api/provider/domains/check", {
         cookie: held, body: { domains: ["mailda.example"] },
       }),
-    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_TOKEN|answered 4/);
 
     /*
      * Receiving. Both refuse here — no account is determined — and the `POST` being refused is the one that
@@ -486,7 +456,7 @@ describe("every schema-bearing route answers what the contract says it does", ()
       () => answers("POST", "/api/provider/domains/purchase", {
         cookie: held, body: { domain: "mailda.example", digest: "0".repeat(64), autoRenew: false },
       }),
-    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_TOKEN|answered 4/);
 
     /*
      * The handover manifest. Verified here the way a client would — the key comes from this Node's own
@@ -511,7 +481,7 @@ describe("every schema-bearing route answers what the contract says it does", ()
     ) as { proposal: { domain: string; zone: string | null; error: string | null; digest: string } };
     expect(proposed.proposal.domain).toBe("onboard.example.test");
     expect(proposed.proposal.zone).toBeNull();
-    expect(proposed.proposal.error).toContain("/api/provider/resolve-account");
+    expect(proposed.proposal.error).toContain("PUT /api/provider/token");
     expect(proposed.proposal.digest).toHaveLength(64);
 
     await expect(answers("POST", "/api/provider/sending", {
@@ -525,22 +495,14 @@ describe("every schema-bearing route answers what the contract says it does", ()
     ) as { proposal: { domain: string; queueId: string | null; error: string | null; digest: string } };
     expect(subscription.proposal.domain).toBe("onboard.example.test");
     expect(subscription.proposal.queueId).toBeNull();
-    expect(subscription.proposal.error).toContain("/api/provider/resolve-account");
+    expect(subscription.proposal.error).toContain("PUT /api/provider/token");
     expect(subscription.proposal.digest).toHaveLength(64);
     await expect(answers("POST", "/api/provider/subscription", {
       cookie: held, body: { domain: "onboard.example.test", digest: subscription.proposal.digest },
     })).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_UNREADABLE/);
 
-    const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
-      provider: { state: string; evidence: string };
-    };
-    expect(reported.provider.state).toBe("account_not_selectable");
-    // The contract carries `evidence`, so no generated surface can show this state as a measurement.
-    expect(reported.provider.evidence).toBe("reported");
-
-    // And no secret anywhere in any of the five responses.
-    const everything = JSON.stringify([before, registered, authorized, consent, reported]);
-    expect(everything).not.toContain("the-contract-secret");
+    // And no secret anywhere in the responses driven above.
+    expect(JSON.stringify([before, forgotten])).not.toContain("contract-token-plain");
   });
 
   it("the Butler authoring routes", async () => {
@@ -2179,24 +2141,23 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * have a referent row carrying its objects' SHA-256, so a restored copy is checkable object by object
      * rather than in aggregate.
      *
-     * The 105th through 109th are #162 L1's, and they arrived as a set because a grant is not usable in
-     * pieces: `GET /api/provider`, `PUT /api/provider/client`, `POST /api/provider/authorize`,
-     * `POST /api/provider/unselectable` and `GET /oauth/cloudflare/callback`.
+     * The 105th through 109th were #162 L1's five OAuth routes. On 26 September 2026 they became three:
+     * `GET /api/provider`, `PUT /api/provider/token` and `DELETE /api/provider/token`, and the six OAuth
+     * routes (those five plus `POST /api/provider/client` and `POST /api/provider/resolve-account`) left,
+     * which is where 140 became 136.
      *
-     * They matter to this count more than most, because the binding row holds **three** secrets — a client
-     * secret, an access token and a refresh token — and `GET /api/provider` reads it to derive a state. That
-     * makes `.strict()` a security property here for the third time in this file, and an undescribed route's
-     * success shape is exactly what nothing would have been checking.
+     * They matter to this count more than most, because the token row holds a secret and
+     * `GET /api/provider` reads it to derive a state. That makes `.strict()` a security property here for
+     * the third time in this file, and an undescribed route's success shape is exactly what nothing would
+     * have been checking.
      *
      * The 111th is `GET /api/provider/email-routing` (#163 L2) — Cloudflare's own verdict on whether each
      * domain this Node routes can receive, and the records it says are needed. The diff a proposal is built
      * from therefore comes from Cloudflare rather than from Mailda's idea of what Email Routing requires,
      * which would be a second copy that is right the day it is written.
      *
-     * The 110th is `POST /api/provider/resolve-account` (#162 L2) — the first route that **spends** the
-     * grant rather than describing it. Separate from `GET /api/provider` for that reason: a status read that
-     * renewed a token and called Cloudflare as a side effect of being displayed would make every page that
-     * shows the connection a consumer of the account's authority.
+     * The 110th was `POST /api/provider/resolve-account` (#162 L2), gone with the OAuth client: a token is
+     * bound to its account at registration, so there is nothing left to resolve.
      *
      * The 112th is `GET /api/provider/delivery-events` (#163 L2) — whether an outbound send's outcome would
      * ever be *seen*, per domain. Three objects have to line up for it to be, and a single boolean over them
@@ -2272,7 +2233,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(140);
+    expect(coverage.total).toBe(136);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

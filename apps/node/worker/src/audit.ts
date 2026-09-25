@@ -833,71 +833,16 @@ export const AUDIT_ACTIONS = {
    * half worth having later, because a URI that is not this Node's hostname is the shape of a grant pointed
    * somewhere else.
    */
-  "provider.client_registered": {
-    says: "An administrator gave this Node its own Cloudflare OAuth client.",
+  "provider.token_registered": {
+    says: "An administrator gave this Node a Cloudflare API token, bound to the account named in the entry. "
+      + "The token itself is on no entry.",
   },
 
-  /**
-   * A consent that produced a grant.
-   *
-   * `actorUserId` is null, and that is accurate rather than a gap: the callback arrives from Cloudflare, and
-   * the person who authorized it did so in Cloudflare's own session. Who *started* the authorization is in
-   * `provider_authorizations.started_by`; who granted it is a fact only Cloudflare holds.
-   *
-   * **The entry names the scopes granted and those declined, and neither token.** The scopes are the half that
-   * matters later — the question is what this Node was permitted to do, not that it was permitted something.
-   */
-  "provider.consent_granted": {
-    says: "This Node obtained a Cloudflare grant for an account, with the scopes named in the entry.",
+  "provider.token_forgotten": {
+    says: "An administrator made this Node forget its Cloudflare API token. The token stays valid in "
+      + "Cloudflare until deleted there.",
   },
 
-  /**
-   * A consent that did not.
-   *
-   * Recorded because a declined consent and a consent that was never attempted are different histories, and
-   * only one of them means somebody looked at what this Node asked for and said no. Carries Cloudflare's own
-   * error code rather than a paraphrase.
-   */
-  "provider.consent_refused": {
-    standalone: true,
-    says: "A Cloudflare consent did not produce a grant, and the entry carries Cloudflare's own reason.",
-  },
-
-  /**
-   * An operator reporting that the consent screen did not list their account (#162).
-   *
-   * **The one entry in this table recording something the Node cannot observe**, and it says so in its own
-   * detail. An account administrator can disable public OAuth app access, and the consequence is an account
-   * that is simply absent from the consent screen — no error, and no response this Node ever sees.
-   *
-   * It is here rather than in a log because it is the operator's account of why a connection did not happen,
-   * and an audit trail read months later is exactly where a reported fact gets mistaken for a measured one.
-   */
-  /**
-   * Cloudflare refusing to renew this Node's grant (#162 L2).
-   *
-   * Distinct from `provider.consent_refused`, which is a consent that never produced a grant. This is a
-   * grant that **existed and stopped working** — revoked in the dashboard, or past its session — and the
-   * question an investigator has is when this Node lost the ability to act in the account, which the two
-   * answer differently.
-   *
-   * Carries Cloudflare's own error text. A network failure is deliberately **not** recorded here: an
-   * unreachable token endpoint says nothing about the grant, and an entry saying otherwise would tell
-   * somebody their authorization had been revoked because a request timed out.
-   */
-  "provider.grant_refused": {
-    standalone: true,
-    says: "Cloudflare refused to renew this Node's grant, so it can no longer act in the account.",
-  },
-
-  /**
-   * The first write this Node makes to the Cloudflare account it is installed in (#163 L2).
-   *
-   * **The entry names the zone and what the act causes**, because the question it has to answer months later
-   * is *"who made these records appear in our DNS"* — and `leavesBehind` is in it for a sharper reason: the
-   * `_dmarc` record survives un-onboarding, so the trail has to name it while somebody is still connecting
-   * it to an act, rather than leaving it to be found on a name Cloudflare no longer manages.
-   */
   "provider.sending_onboarded": {
     says: "An administrator onboarded a domain for sending, and Cloudflare placed records under it.",
   },
@@ -962,11 +907,6 @@ export const AUDIT_ACTIONS = {
   "provider.receiving_onboarded": {
     says: "An administrator pointed a subdomain at this Node to receive mail, and this Node wrote the MX "
       + "records Cloudflare's Email Routing requires.",
-  },
-
-  "provider.account_reported_unselectable": {
-    says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
-      + "account of it, not this Node's measurement.",
   },
 } as const;
 

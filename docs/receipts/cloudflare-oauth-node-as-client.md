@@ -13,6 +13,11 @@ values:
   oauth.min_state_length: 8
 ---
 
+> **Superseded 26 September 2026.** The Node no longer holds an OAuth client or a grant: ADR 42 (as amended
+> that day) replaced it with a stored API token, the same custody as the Email Sending token, because both
+> cost the operator the same dashboard act. The measurements below stand as the record of what the OAuth
+> path was and did; nothing in the code reads them now.
+
 # A Node's own hostname is an acceptable OAuth redirect target
 
 **ADR 42** rests on one platform fact it could not assume: that Cloudflare will send an authorization

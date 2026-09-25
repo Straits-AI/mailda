@@ -19,7 +19,7 @@ would come to disagree about which acts are safe, which is the worst thing they 
 | `read` | yes | answers a question, changes nothing | 41 |
 | `act` | yes | changes something, and a person can undo it | 12 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 33 |
-| `operator` | **no** | installation, credentials, maintenance | 59 |
+| `operator` | **no** | installation, credentials, maintenance | 55 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
@@ -32,7 +32,7 @@ this route, and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |
 |:--|--:|:--|
-| the tier | 93 | `POST /api/sends`; sealing a send is the one act nobody can undo |
+| the tier | 89 | `POST /api/sends`; sealing a send is the one act nobody can undo |
 | `org.admin`, which no mint confers | 22 | `GET /api/people`, `POST /api/butlers` |
 | a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys`: 200, and an empty list, for ever |
 | requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |
@@ -56,12 +56,12 @@ is in `test/node/agent-exposure-world.test.ts`; they fall into three kinds:
 - **a map of how to escalate**: `GET /api/agents`, `GET /api/agent-capabilities`,
   `GET /api/people/:userId/mailboxes`, `GET /api/audit`, `GET /api/logs`,
   `GET /api/evidence/inventory`, and `GET /api/provider`, which names the Cloudflare account the mail sits in.
-- **a `GET` that changes something**: `GET /api/search/failed` exists only to feed the repair beside it, and
-  `GET /oauth/cloudflare/callback` (#162) is not a read at all: it consumes a single-use nonce and exchanges
-  an authorization code, so fetching it spends an operator's consent in flight. The derivation rule cannot see
-  that difference, which is the clearest argument for why an exception list has to exist.
+- **a `GET` that changes something**: `GET /api/search/failed` exists only to feed the repair beside it. (Until
+  26 September 2026 `GET /oauth/cloudflare/callback` sat here too: not a read at all, it consumed a single-use
+  nonce and exchanged an authorization code. It left with the OAuth client, but it remains the clearest
+  argument for why an exception list has to exist: the derivation rule cannot see that difference.)
 - **a `GET` that spends somebody else's authority**: `GET /api/provider/email-routing` (#163) reads, and
-  reads *through the Cloudflare grant*: three calls per domain, possibly renewing a token. An agent polling it
+  reads *through the Node's Cloudflare token*: three calls per domain. An agent polling it
   would spend the account's own authority to answer a question nothing it may do depends on, and the cost
   would land on the operator's bill rather than in this Node.
 

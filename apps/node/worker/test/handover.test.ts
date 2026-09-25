@@ -34,7 +34,7 @@ function atTime(millis: number): Ctx {
 }
 
 beforeEach(async () => {
-  await testEnv.CATALOG.prepare("DELETE FROM provider_binding").run();
+  await testEnv.CATALOG.prepare("DELETE FROM provider_token").run();
 });
 afterEach(() => vi.restoreAllMocks());
 

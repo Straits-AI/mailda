@@ -6,33 +6,28 @@ import { unwrapCredential } from "../src/auth/kek.ts";
 import { auditedBatch } from "../src/audit.ts";
 import { accessTokenFor } from "../src/provider/cloudflare-api.ts";
 import {
-  beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  cloudflareGet, createClientThroughApi, deliveryEventsState, OAUTH_CLIENTS_PERMISSION, REQUIRED_SCOPE_NAMES, REQUIRED_SCOPES, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
-  boundAccount, operatorOf, provisionedFacts, withOperator,
-  reportUnselectable, resolveAccount, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor,
-  STATUS_COLUMNS,
+  cloudflareGet, deliveryEventsState, forgetToken, onboardSending, PROVIDER_NOTE, PROVIDER_STATES,
+  providerStatus, REQUIRED_PERMISSIONS, registerToken, boundAccount, operatorOf, provisionedFacts,
+  withOperator, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor, STATUS_COLUMNS,
   type ProviderState,
 } from "../src/provider/cloudflare-grant.ts";
+import { holdToken } from "./support/provider-token.ts";
 
 /**
- * The Node's own Cloudflare grant (#162 L1, ADR 42).
+ * The Node's own Cloudflare credential (#162 L1, ADR 42 as reopened on 26 September 2026).
  *
- * ## What these tests are about, which is not "does the OAuth dance work"
+ * ## What these tests are about, which is not "does the API call work"
  *
  * Three properties, and all three are honesty rather than mechanism:
  *
- * 1. **A state means what it says.** #162's whole point is that `connecting / success / failed` is a lie about
- *    a flow with nine outcomes. The one that matters most is `account_not_selectable`, which the Node **cannot
- *    observe** — an administrator disabling public OAuth app access produces an account absent from a consent
- *    screen, with no error and no response the Node ever sees. So it is reported, and a test has to hold the
- *    line that it is never inferred.
- * 2. **No secret leaves.** The client secret, the access token, the refresh token and the PKCE verifier are
- *    wrapped, and the status surface is the thing an operator and `doctor` both read. A status read that
- *    decrypted anything, or returned it, would put the account's provisioning authority in every place a
- *    status is displayed.
- * 3. **A refusal is not a connection.** A declined consent, an expired nonce, a replayed code and an
- *    unreachable token endpoint are four different things, and three of them must leave the binding exactly as
- *    it was. The dangerous direction is the one where any of them writes a grant.
+ * 1. **A state means what it says.** `token_held` is written only after Cloudflare said the token is active
+ *    and named the one account it sees. A token that failed either read leaves the Node in `no_token`,
+ *    because a stored token that cannot act would report a connection that every act refuses.
+ * 2. **No secret leaves.** The token is wrapped under the credential key, the status is read from a column
+ *    list that does not select it, and the audit entry names the account and never the token.
+ * 3. **A refusal is not a connection.** An inactive token, a token seeing two accounts, a token seeing none
+ *    and an unreachable API are four different refusals, and every one of them leaves the row exactly as
+ *    it was.
  */
 
 const testEnv = env as unknown as Env;
@@ -40,6 +35,8 @@ const testEnv = env as unknown as Env;
 const ORG = "org_provider";
 const ADMIN = "usr_provider_admin";
 const SEPTEMBER_3 = Date.parse("2026-09-03T10:00:00.000Z");
+const ACCOUNT = "1e0170aaabc90ecf5f466128d1f0466a";
+const OTHER = "2f1281bbbcd01fdf6f577239e2f1577b";
 
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
@@ -48,8 +45,8 @@ function atTime(millis: number): Ctx {
 
 beforeEach(async () => {
   await testEnv.CATALOG.batch([
-    testEnv.CATALOG.prepare("DELETE FROM provider_authorizations"),
-    testEnv.CATALOG.prepare("DELETE FROM provider_binding"),
+    testEnv.CATALOG.prepare("DELETE FROM provider_token"),
+    testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
   ]);
   await testEnv.CATALOG.prepare(
@@ -60,16 +57,6 @@ beforeEach(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-const REDIRECT = "https://mailda.example.workers.dev/oauth/cloudflare/callback";
-
-async function register(at = SEPTEMBER_3): Promise<void> {
-  await registerClient(testEnv, atTime(at), ORG, ADMIN, {
-    clientId: "cf-client-id",
-    clientSecret: "cf-client-secret",
-    redirectUri: REDIRECT,
-  });
-}
 
 /** A `fetch` that records what it was asked and answers what the test wants. */
 function answering(status: number, body: unknown): { calls: Array<{ url: string; init: RequestInit }> } {
@@ -84,873 +71,227 @@ function answering(status: number, body: unknown): { calls: Array<{ url: string;
   return { calls };
 }
 
-describe("the states, and which of them the Node can observe", () => {
-  it("reports no_client before anything, without inventing a client", async () => {
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("no_client");
-    expect(status.evidence).toBe("observed");
-    expect(status.clientId).toBeNull();
-    expect(status.accountId).toBeNull();
+/**
+ * Cloudflare answering the two reads a registration makes: the token's status, and the accounts it sees.
+ * Anything else is refused, so a registration that reached a third endpoint fails here.
+ */
+function cloudflare(
+  verify: { status?: number; body: unknown },
+  accounts: Array<{ id: string; name: string }>,
+): Array<{ url: string; authorization: string | undefined }> {
+  const calls: Array<{ url: string; authorization: string | undefined }> = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+    calls.push({ url: path, authorization: (init?.headers as Record<string, string> | undefined)?.authorization });
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    if (path === "/user/tokens/verify") return json(verify.status ?? 200, verify.body);
+    if (path.startsWith("/accounts?")) return json(200, { success: true, result: accounts });
+    return json(404, { success: false, errors: [{ code: 7003, message: `no route for ${path}` }] });
   });
+  return calls;
+}
 
-  it("reports awaiting_consent once a client exists, which is a place and not a failure", async () => {
-    await register();
+const ACTIVE = { body: { success: true, result: { id: "tok_1", status: "active" } } };
+
+async function register(input: { token: string; accountId?: string }, at = SEPTEMBER_3) {
+  return registerToken(testEnv, atTime(at), ORG, ADMIN, input);
+}
+
+async function entries(action: string) {
+  const { results } = await testEnv.CATALOG.prepare(
+    "SELECT subject, detail, actor_user_id FROM audit_entries WHERE org_id = ? AND action = ? ORDER BY at",
+  ).bind(ORG, action).all<{ subject: string; detail: string; actor_user_id: string | null }>();
+  return results;
+}
+
+describe("the two states, and what makes token_held true", () => {
+  it("reports no_token before anything, without inventing an account", async () => {
     const status = await providerStatus(testEnv);
-    expect(status.state).toBe("awaiting_consent");
-    expect(status.evidence).toBe("observed");
-    expect(status.clientId).toBe("cf-client-id");
-    expect(status.redirectUri).toBe(REDIRECT);
-    // No grant, and the surface says so rather than showing an empty account.
-    expect(status.accountId).toBeNull();
-    expect(status.grantedAt).toBeNull();
-    expect(status.scopesGranted).toBeNull();
-  });
-
-  it("marks account_not_selectable as reported rather than observed", async () => {
-    await register();
-    await reportUnselectable(testEnv, atTime(SEPTEMBER_3 + 1000), ORG, ADMIN);
-
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("account_not_selectable");
-    /*
-     * The assertion this whole state exists for. An administrator disabling public OAuth app access produces
-     * a consent screen missing an account, with no error and no response the Node sees — so a Node that
-     * returned `evidence: "observed"` here would be claiming a measurement it cannot make, and would tell an
-     * operator who simply closed the tab that their administrator had disabled OAuth apps.
-     */
-    expect(status.evidence).toBe("reported");
-  });
-
-  it("refuses the report when a grant already exists, because it cannot be true", async () => {
-    await register();
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "a offline_access" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
+    expect(status).toEqual({
+      state: "no_token", accountId: null, accountName: null, registeredAt: null, verifiedAt: null,
     });
-
-    await expect(
-      reportUnselectable(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, ADMIN),
-    ).rejects.toThrow("E_PROVIDER_ALREADY_GRANTED");
   });
 
-  it("keeps grant_refused distinct from awaiting_consent, tokens still in the row", async () => {
-    await register();
-    answering(200, {
-      access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "a offline_access",
-      account_id: "acc_revoked_later",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
+  it("registers a token Cloudflare calls active and binds it to the one account it sees", async () => {
+    const calls = cloudflare(ACTIVE, [{ id: ACCOUNT, name: "Whyme Labs" }]);
+    const status = await register({ token: "cf-token-plain" });
+    expect(status.state).toBe("token_held");
+    expect(status.accountId).toBe(ACCOUNT);
+    expect(status.accountName).toBe("Whyme Labs");
+    expect(status.registeredAt).toBe(new Date(SEPTEMBER_3).toISOString());
+    expect(status.verifiedAt).toBe(status.registeredAt);
+    // Both reads, with the token being registered and nothing else.
+    expect(calls.map((one) => one.url)).toEqual(["/user/tokens/verify", "/accounts?per_page=50"]);
+    expect(calls.every((one) => one.authorization === "Bearer cf-token-plain")).toBe(true);
+    expect(await boundAccount(testEnv)).toBe(ACCOUNT);
+  });
 
-    // What a revocation in Cloudflare looks like from here: the grant is held and no longer works.
-    await testEnv.CATALOG.prepare(
-      "UPDATE provider_binding SET refused_at = ?, refused_detail = ? WHERE id = 1",
-    ).bind(new Date(SEPTEMBER_3 + 3000).toISOString(), "invalid_grant").run();
+  it("has a closed world of states, both reachable and named", async () => {
+    const reached: Record<ProviderState, true> = { no_token: true, token_held: true };
+    expect(PROVIDER_STATES).toEqual(Object.keys(reached));
+    expect((await providerStatus(testEnv)).state).toBe("no_token");
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }]);
+    expect((await register({ token: "t" })).state).toBe("token_held");
+  });
 
+  it("replaces a held token with the next one registered, and rebinds the account", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }]);
+    await register({ token: "first" });
+    cloudflare(ACTIVE, [{ id: OTHER, name: "B" }]);
+    await register({ token: "second" }, SEPTEMBER_3 + 1000);
     const status = await providerStatus(testEnv);
-    expect(status.state).toBe("grant_refused");
-    // Cloudflare's own words, not a paraphrase.
-    expect(status.refusedDetail).toBe("invalid_grant");
-    /*
-     * The distinction the state exists for. *Never granted* and *granted and then refused* are different
-     * questions, and a Node that cleared the row on a refusal would erase the second one — so `grantedAt`
-     * survives, and it is what makes the difference legible.
-     */
-    expect(status.grantedAt).not.toBeNull();
-    expect(status.accountId).not.toBeNull();
-  });
-
-  it("has a closed world of states, every member reachable and named", () => {
-    /*
-     * Not a restatement of the union. Five of #162's nine states belong to the layer that builds an inventory
-     * and a plan, and this asserts they are **absent** — a state nothing can construct is a branch no test
-     * can reach, and declaring all nine here would look like coverage of a flow that does not exist yet.
-     */
-    expect([...PROVIDER_STATES].sort()).toEqual([
-      "account_not_selectable", "awaiting_consent", "consent_granted", "grant_refused", "no_client",
-    ]);
-    const notYet: string[] = [
-      "inventory_read", "plan_produced", "partially_provisioned", "provisioned_unverified", "verified",
-    ];
-    for (const later of notYet) {
-      expect(
-        (PROVIDER_STATES as readonly string[]).includes(later),
-        `${later} is declared but nothing in this layer can reach it`,
-      ).toBe(false);
-    }
-    // And the union and the list agree, which a hand-maintained pair does not do for free.
-    const exhaustive: Record<ProviderState, true> = {
-      no_client: true, awaiting_consent: true, account_not_selectable: true,
-      consent_granted: true, grant_refused: true,
-    };
-    expect(Object.keys(exhaustive).sort()).toEqual([...PROVIDER_STATES].sort());
+    expect(status.accountId).toBe(OTHER);
+    expect(status.registeredAt).toBe(new Date(SEPTEMBER_3 + 1000).toISOString());
+    expect(await accessTokenFor(testEnv, atTime(SEPTEMBER_3 + 2000), ORG)).toBe("second");
+    const { count } = (await testEnv.CATALOG.prepare("SELECT COUNT(*) AS count FROM provider_token").first<{ count: number }>())!;
+    expect(count).toBe(1);
   });
 });
 
 describe("what never leaves", () => {
-  it("stores the client secret wrapped and never returns it", async () => {
-    await register();
+  it("stores the token wrapped and returns it from no surface", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }]);
+    const status = await register({ token: "cf-token-plain" });
+    expect(JSON.stringify(status)).not.toContain("cf-token-plain");
 
-    const row = await testEnv.CATALOG.prepare(
-      "SELECT client_secret FROM provider_binding WHERE id = 1",
-    ).first<{ client_secret: string }>();
-    expect(row?.client_secret).not.toBe("cf-client-secret");
-    expect(row?.client_secret).toMatch(/^v\d+\./);
-    expect(await unwrapCredential(testEnv, row!.client_secret)).toBe("cf-client-secret");
-
-    // The surface an operator and `doctor` both read. Every field, checked against the secret's value.
-    const status = await providerStatus(testEnv);
-    expect(JSON.stringify(status)).not.toContain("cf-client-secret");
+    const row = await testEnv.CATALOG.prepare("SELECT token FROM provider_token WHERE id = 1")
+      .first<{ token: string }>();
+    expect(row!.token).not.toBe("cf-token-plain");
+    expect(row!.token.startsWith("v")).toBe(true);
+    expect(await unwrapCredential(testEnv, row!.token)).toBe("cf-token-plain");
   });
 
-  it("stores both grant tokens wrapped, and the status carries neither", async () => {
-    await register();
-    answering(200, {
-      access_token: "the-access-token", refresh_token: "the-refresh-token",
-      expires_in: 3600, scope: "a offline_access", account_id: "acc_from_response",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    const row = await testEnv.CATALOG.prepare(
-      "SELECT access_token, refresh_token FROM provider_binding WHERE id = 1",
-    ).first<{ access_token: string; refresh_token: string }>();
-    expect(await unwrapCredential(testEnv, row!.access_token)).toBe("the-access-token");
-    expect(await unwrapCredential(testEnv, row!.refresh_token)).toBe("the-refresh-token");
-
-    const serialised = JSON.stringify(await providerStatus(testEnv));
-    expect(serialised).not.toContain("the-access-token");
-    expect(serialised).not.toContain("the-refresh-token");
+  it("reads the status from a column list holding no secret", () => {
+    expect(STATUS_COLUMNS.split(",").map((one) => one.trim())).not.toContain("token");
   });
 
-  it("stores the PKCE verifier wrapped, so a D1 dump plus a code is not an exchange", async () => {
-    await register();
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    const row = await testEnv.CATALOG.prepare(
-      "SELECT code_verifier FROM provider_authorizations WHERE state = ?",
-    ).bind(state).first<{ code_verifier: string }>();
-    expect(row?.code_verifier).toMatch(/^v\d+\./);
-  });
-
-  it("reads the status from a column list holding no secret", async () => {
-    /*
-     * Not a claim about performance. `providerStatus` is what `doctor` and every surface call, so a token
-     * column arriving in its query would put the account's provisioning authority on the path that renders a
-     * page, and would make the key vault a dependency of displaying one.
-     *
-     * Asserted against the exported constant rather than the module's text, because the first version of this
-     * test regex-matched a source file it could not read in workerd, caught the failure, and passed on an
-     * empty string — a test that checked nothing and reported green.
-     */
-    for (const secret of ["client_secret", "access_token", "refresh_token", "code_verifier"]) {
-      expect(STATUS_COLUMNS, `${secret} is in the status query`).not.toContain(secret);
-    }
-    // And it is not vacuous: the columns the state *is* derived from are there.
-    for (const needed of ["client_id", "granted_at", "refused_at", "unselectable_reported_at"]) {
-      expect(STATUS_COLUMNS).toContain(needed);
-    }
+  it("audits the registration with the account and never the token", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "Whyme Labs" }]);
+    await register({ token: "cf-token-plain" });
+    const [entry] = await entries("provider.token_registered");
+    expect(entry!.subject).toBe(ACCOUNT);
+    expect(entry!.actor_user_id).toBe(ADMIN);
+    expect(JSON.parse(entry!.detail)).toEqual({ accountId: ACCOUNT, accountName: "Whyme Labs" });
+    expect(entry!.detail).not.toContain("cf-token-plain");
   });
 });
 
-describe("the authorization URL", () => {
-  it("is built from the measured endpoint with PKCE and a long state", async () => {
-    await register();
-    const { url, state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a", "b"]);
-    const parsed = new URL(url);
-
-    expect(`${parsed.origin}${parsed.pathname}`).toBe(CLOUDFLARE_OAUTH.authorize);
-    expect(parsed.searchParams.get("response_type")).toBe("code");
-    expect(parsed.searchParams.get("client_id")).toBe("cf-client-id");
-    // The registered URI, not one recomputed from a request — RFC 6749 requires the exchange to match it.
-    expect(parsed.searchParams.get("redirect_uri")).toBe(REDIRECT);
-    expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(parsed.searchParams.get("code_challenge")).not.toBeNull();
-    // The verifier is never in the URL; that is the whole of what PKCE buys.
-    expect(url).not.toContain("code_verifier");
-    /*
-     * Cloudflare enforces a minimum of 8 and answers a shorter state by redirecting with
-     * `error=invalid_state` and a message about entropy — which does not read like a configuration problem
-     * (`cloudflare-oauth-node-as-client.md`).
-     */
-    expect(state.length).toBeGreaterThanOrEqual(MIN_STATE_LENGTH);
-    expect(parsed.searchParams.get("state")).toBe(state);
-  });
-
-  it("adds no scope of its own, which one real consent settled", async () => {
-    /*
-     * This test asserted the opposite until 8 September 2026: `beginAuthorization` appended
-     * `offline_access` to every request, on the argument that discovery's `scopes_supported` lists it and
-     * that a refresh token needs it.
-     *
-     * A real consent refused the whole authorization:
-     *
-     *   invalid_scope — The OAuth 2.0 Client is not allowed to request scope 'offline_access'.
-     *
-     * `scopes_supported` describes the **server**; a client may request only what it was registered with,
-     * and the dashboard's picker offers permission names rather than OIDC scopes. So the append did not add
-     * a capability — it made every request refusable, for every operator following the Node's own steps.
-     */
-    await register();
-    const { url } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    expect(new URL(url).searchParams.get("scope")).toBe("a");
-  });
-
-  it("omits the scope parameter entirely when it has none, rather than sending an empty one", async () => {
-    /*
-     * Not the same as `scope=`. RFC 6749 leaves a request that names no scope to the authorization server,
-     * so Cloudflare applies the client's own registered scopes — which the operator chose in the dashboard's
-     * picker, and which this Node deliberately does not know the names of.
-     */
-    await register();
-    const { url } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["", " "]);
-    expect(new URL(url).searchParams.has("scope")).toBe(false);
-  });
-
-  it("refuses to build one with no client, rather than producing a URL that cannot work", async () => {
-    await expect(
-      beginAuthorization(testEnv, atTime(SEPTEMBER_3), ADMIN, ["a"]),
-    ).rejects.toThrow("E_PROVIDER_NO_CLIENT");
-  });
-
-  it("mints a different state and challenge every time", async () => {
-    await register();
-    const first = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    const second = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ADMIN, ["a"]);
-    expect(first.state).not.toBe(second.state);
-    expect(new URL(first.url).searchParams.get("code_challenge"))
-      .not.toBe(new URL(second.url).searchParams.get("code_challenge"));
-  });
-});
-
-describe("the callback, and the four ways it does not become a connection", () => {
-  it("exchanges a code and records the scopes as granted", async () => {
-    await register();
-    const stub = answering(200, {
-      access_token: "at", refresh_token: "rt", expires_in: 3600,
-      // Cloudflare permits optional scopes to be declined: `b` was asked for and is not here.
-      scope: "a offline_access",
-      account_id: "acc_from_response",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a", "b"]);
-    const outcome = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    expect(outcome.ok).toBe(true);
-    expect(outcome.scopesGranted).toEqual(["a", "offline_access"]);
-    /*
-     * The half a Node that recorded its *request* would get wrong: it would report an authority it does not
-     * have, and the plan would be built from scopes nobody granted.
-     */
-    expect(outcome.scopesDeclined).toEqual(["b"]);
-
-    expect(stub.calls[0]?.url).toBe(CLOUDFLARE_OAUTH.token);
-    const headers = stub.calls[0]?.init.headers as Record<string, string>;
-    // `client_secret_basic`, which discovery lists among the supported methods.
-    expect(headers.authorization).toBe(`Basic ${btoa("cf-client-id:cf-client-secret")}`);
-    const sent = new URLSearchParams(String(stub.calls[0]?.init.body));
-    expect(sent.get("grant_type")).toBe("authorization_code");
-    expect(sent.get("redirect_uri")).toBe(REDIRECT);
-    expect(sent.get("code_verifier")).not.toBeNull();
-
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("consent_granted");
-    expect(status.accountId).toBe("acc_from_response");
-  });
-
-  it("form-url-encodes the credential before base64, which the spec requires", async () => {
-    /*
-     * RFC 6749 §2.3.1: both the client id and the secret are encoded with the
-     * `application/x-www-form-urlencoded` algorithm **before** they are joined and base64'd.
-     *
-     * The first version did not, and a real exchange answered `invalid_client` — *"client authentication
-     * failed"* — **after a consent had already succeeded**. That is the worst place in this flow to fail: the
-     * authorization code is single-use, so there is no retry and the operator has to consent again.
-     *
-     * It bites because a Cloudflare secret is base64-ish and routinely carries `+`, `/` and `=`. This server
-     * is Ory Hydra, which enforces the encoding rather than decoding leniently — so the assertion uses a
-     * secret containing exactly those characters.
-     */
-    await registerClient(testEnv, atTime(SEPTEMBER_3 + 100), ORG, ADMIN, {
-      clientId: "cf/client+id", clientSecret: "sec+ret/with=chars", redirectUri: REDIRECT,
-    });
-    const stub = answering(200, { access_token: "at", scope: "a" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 200), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 300), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    const sent = (stub.calls[0]?.init.headers as Record<string, string>).authorization;
-    expect(sent).toBe(`Basic ${btoa("cf%2Fclient%2Bid:sec%2Bret%2Fwith%3Dchars")}`);
-    // And not the raw form, which is what failed against the real server.
-    expect(sent).not.toBe(`Basic ${btoa("cf/client+id:sec+ret/with=chars")}`);
-  });
-
-  it("leaves the account null when the response does not name one, rather than guessing", async () => {
-    await register();
-    // Whether Cloudflare's token response carries the account is **not measured** — no Node has held a grant.
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "offline_access" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    const outcome = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    expect(outcome.ok).toBe(true);
-    expect(outcome.accountId).toBeNull();
-    const status = await providerStatus(testEnv);
-    // Connected, and honest that it does not yet know which account. Not an empty string standing in for one.
-    expect(status.state).toBe("consent_granted");
-    expect(status.accountId).toBeNull();
-  });
-
-  it("a declined consent writes no grant and leaves the operator where they were", async () => {
-    await register();
-    const stub = answering(200, { access_token: "should-never-be-requested" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    const outcome = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: null, error: "access_denied", errorDescription: "The user denied the request",
-    });
-
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toBe("access_denied");
-    // The token endpoint was never called: there was nothing to exchange.
-    expect(stub.calls).toHaveLength(0);
-    // And the binding is untouched. `awaiting_consent` is exactly where the operator is.
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("awaiting_consent");
-    expect(status.grantedAt).toBeNull();
-  });
-
-  it("a token endpoint that refuses writes no grant", async () => {
-    await register();
-    answering(400, { error: "invalid_grant", error_description: "the code has expired" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    const outcome = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toBe("invalid_grant");
-    expect(outcome.detail).toBe("the code has expired");
-    /*
-     * Not `grant_refused`. That state means Cloudflare rejected a grant this Node *held*; a failed exchange
-     * means it never got one, and conflating the two would tell an operator their connection had been revoked
-     * when it had never been made.
-     */
-    expect((await providerStatus(testEnv)).state).toBe("awaiting_consent");
-  });
-
-  it("a 200 with no access token is a refusal, not a connection", async () => {
-    await register();
-    // The shape that would slip through a check on `response.ok` alone.
-    answering(200, { token_type: "bearer" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    const outcome = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error).toBe("http_200");
-    expect((await providerStatus(testEnv)).state).toBe("awaiting_consent");
-  });
-
-  it("an unreachable token endpoint is an unknown and is recorded as neither", async () => {
-    await register();
-    vi.stubGlobal("fetch", async () => { throw new Error("socket closed"); });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_EXCHANGE_UNREACHABLE");
-
-    /*
-     * The code is spent at Cloudflare's end and this Node cannot tell whether a grant was issued. Neither
-     * `consent_granted` nor `grant_refused` is true, and the refusal says so rather than picking one — ADR
-     * 40's distinction between a refusal and an unknown, in a second place.
-     */
-    expect((await providerStatus(testEnv)).state).toBe("awaiting_consent");
-  });
-
-  it("refuses a state it never issued", async () => {
-    await register();
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ORG, {
-      state: "not-a-state-this-node-issued", code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_STATE_UNKNOWN");
-  });
-
-  it("refuses a replayed code, and the row is what refuses it", async () => {
-    await register();
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "offline_access" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_STATE_CONSUMED");
-  });
-
-  it("lets exactly one of two racing callbacks through, and the row is what decides", async () => {
-    await register();
-    const stub = answering(200, {
-      access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "offline_access",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-
-    /*
-     * **This is the test the `AND consumed_at IS NULL` predicate exists for, and it was missing.**
-     *
-     * The sequential replay above is caught by the read that precedes the update, so a mutation deleting the
-     * predicate left every assertion in this file passing. What the predicate actually decides is this: two
-     * callbacks for one state, both of which read `consumed_at` as null before either writes. Without it both
-     * proceed, both exchange the code, and the second overwrites the first's grant — two token requests for
-     * one authorization.
-     *
-     * The comment in `completeAuthorization` claimed the predicate made racing callbacks resolve to one. It
-     * was a claim about a property nothing measured, in a comment justifying the design, which is the same
-     * defect #168 fixed one module along.
-     */
-    const both = await Promise.allSettled([
-      completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-        state, code: "the-code", error: null, errorDescription: null,
-      }),
-      completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-        state, code: "the-code", error: null, errorDescription: null,
-      }),
-    ]);
-
-    const fulfilled = both.filter((one) => one.status === "fulfilled");
-    const rejected = both.filter((one) => one.status === "rejected");
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("E_PROVIDER_STATE_CONSUMED");
-    /*
-     * One authorization, one **exchange** — two would mean the code was spent twice at Cloudflare's end.
-     *
-     * Counted against the token endpoint rather than against every fetch. It was `stub.calls` flat, which
-     * said the same thing only while the exchange was the single call this function made; a successful
-     * consent now resolves the account too, and that read is not a code being spent. An assertion that
-     * counts *everything* to mean *one specific thing* breaks on the first honest addition, and would have
-     * read as a regression in the property it guards.
-     */
-    const exchanges = stub.calls.filter((one) => one.url === CLOUDFLARE_OAUTH.token);
-    expect(exchanges).toHaveLength(1);
-    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
-  });
-
-  it("resolves the account during the consent, so no later command has to know to ask", async () => {
-    /*
-     * **The hidden step this removes.** `account_id` comes from the token response, which is measured never
-     * to carry one — so it was null after every consent, including a re-consent replacing a binding that
-     * already knew its account. Every surface then answered `E_PROVIDER_NO_ACCOUNT` until somebody ran
-     * `resolve-account`, which is a step an operator can only take if they already know it exists.
-     *
-     * Measured the hard way: five consents in one session, each followed by a command that failed for this
-     * reason.
-     */
-    await register();
-    answering(200, { access_token: "an-access", expires_in: 3600, scope: "a" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-
-    // The token exchange, then one account read that finds exactly one.
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response(JSON.stringify(
-        String(url).includes("oauth2/token")
-          ? { access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a" }
-          : { success: true, result: [{ id: "acc_only", name: "Only" }] },
-      ), { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    const consent = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    expect(consent.ok).toBe(true);
-    expect(consent.accountId, "the consent did not resolve the account").toBe("acc_only");
-    expect((await providerStatus(testEnv)).accountId).toBe("acc_only");
-    expect(calls.some((one) => one.url.includes("/accounts"))).toBe(true);
-  });
-
-  it("still reports a granted consent when the account read is refused", async () => {
-    /*
-     * The reachable failure, not an invented one: a person can decline `account-settings.read` on the consent
-     * screen and grant the rest, and then `GET /accounts` answers 403. The grant is stored and usable; only
-     * the account is unknown. That must not turn a successful authorization into an error an operator would
-     * answer by consenting again — which spends a second code at Cloudflare for nothing.
-     */
-    await register();
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    vi.stubGlobal("fetch", async (url: string) => {
-      if (String(url).includes("oauth2/token")) {
-        return new Response(JSON.stringify({ access_token: "an-access", expires_in: 3600, scope: "a" }), {
-          status: 200, headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({
-        success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }],
-      }), { status: 403, headers: { "content-type": "application/json" } });
-    });
-
-    const consent = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    expect(consent.ok, "a failed account read must not fail the consent").toBe(true);
-    expect(consent.accountId).toBeNull();
-    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
-  });
-
-  it("consumes the state before the exchange, so a failed exchange cannot be retried", async () => {
-    await register();
-    answering(400, { error: "invalid_grant" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    /*
-     * The code is already spent at Cloudflare's end, so a state left open would only permit a retry that
-     * could not succeed — and it would leave a verifier alive after its redirect.
-     */
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600 });
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_STATE_CONSUMED");
-  });
-
-  it("refuses an expired authorization", async () => {
-    await register();
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    // Thirty-one minutes later. Was eleven, until a ten-minute window expired twice on one real consent —
-    // the nonce's protection is being single-use, not being short-lived.
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 31 * 60 * 1000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_STATE_EXPIRED");
-  });
-
-  it("refuses a callback carrying neither a code nor an error", async () => {
-    await register();
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: null, error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_NO_CODE");
-  });
-});
-
-describe("re-registering the client", () => {
-  it("discards the grant with it, because a grant belongs to the client that obtained it", async () => {
-    await register();
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "offline_access" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
-
-    await registerClient(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, ADMIN, {
-      clientId: "a-different-client", clientSecret: "a-different-secret", redirectUri: REDIRECT,
-    });
-
-    /*
-     * Keeping the tokens would leave a row whose `client_id` did not issue its `refresh_token`, and the first
-     * refresh would be refused with an error about the client — which an operator would read as a revocation.
-     */
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("awaiting_consent");
-    expect(status.clientId).toBe("a-different-client");
-    expect(status.grantedAt).toBeNull();
-    expect(status.accountId).toBeNull();
-  });
-
-  it("discards a consent in flight, whose verifier the new client could never exchange", async () => {
-    await register();
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-
-    await registerClient(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, ADMIN, {
-      clientId: "a-different-client", clientSecret: "a-different-secret", redirectUri: REDIRECT,
-    });
-
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    })).rejects.toThrow("E_PROVIDER_STATE_UNKNOWN");
-  });
-
-  it("keeps a consumed authorization, because it is the record that one happened", async () => {
-    await register();
-    answering(200, { access_token: "at", refresh_token: "rt", expires_in: 3600, scope: "offline_access" });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    await registerClient(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, ADMIN, {
-      clientId: "a-different-client", clientSecret: "a-different-secret", redirectUri: REDIRECT,
-    });
-
-    /*
-     * `WHERE consumed_at IS NULL`. A consumed row is the record that an authorization was completed and by
-     * whom it was started; deleting it would erase the difference between a consent that happened and one
-     * that never did.
-     */
-    const kept = await testEnv.CATALOG.prepare(
-      "SELECT started_by, consumed_at FROM provider_authorizations WHERE state = ?",
-    ).bind(state).first<{ started_by: string; consumed_at: string }>();
-    expect(kept?.started_by).toBe(ADMIN);
-    expect(kept?.consumed_at).not.toBeNull();
-  });
-
-  it("refuses half a registration", async () => {
-    await expect(registerClient(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, {
-      clientId: "cf-client-id", clientSecret: "  ", redirectUri: REDIRECT,
-    })).rejects.toThrow("E_PROVIDER_NEEDS_BOTH");
-    // And nothing was written, so a failed paste does not leave a client that cannot exchange.
-    expect((await providerStatus(testEnv)).state).toBe("no_client");
-  });
-});
-
-describe("the guided ceremony", () => {
-  it("carries the Node's own redirect URI and says which parts are unmeasured", () => {
-    const printed = ceremony(REDIRECT);
-    expect(printed.redirectUri).toBe(REDIRECT);
-    expect(printed.steps.some((step) => step.includes(REDIRECT))).toBe(true);
-    // Without `offline_access` the ceremony recurs, so the steps name it rather than leaving it to be found.
-    // The steps still mention it — now to say Cloudflare adds it, rather than to warn against adding it.
-    expect(printed.steps.some((step) => step.includes("offline_access"))).toBe(true);
-    // Private, which is what keeps the grant the customer's — ADR 42's whole custody argument.
-    expect(printed.steps.some((step) => step.toLowerCase().includes("private"))).toBe(true);
-
-    /*
-     * The honesty requirement, asserted rather than left to a docstring. #162 asks for the scope list
-     * prefilled; this repository has seen two Cloudflare scope strings, both from a documentation example. An
-     * operator following printed steps is entitled to know which parts of them the Node has verified, so the
-     * ceremony says the scope names are not printed and names the call that would produce them.
-     */
-    // Still says what is unverified: these come from wrangler's vocabulary, not from `GET /oauth/scopes`.
-    expect(printed.unmeasured).toContain("/oauth/scopes");
-    expect(printed.unmeasured).toContain("wrangler");
-    /*
-     * The steps carried an assertion that the scopes were **not** the dotted form, on the grounds that
-     * Cloudflare's documentation example was not the vocabulary in use. It was. Replaced with the property
-     * that actually matters: the steps say not to add `offline_access`, which is the one scope a client is
-     * measurably not allowed to request.
-     */
-    expect(printed.steps.some((step) => step.includes("offline_access"))).toBe(true);
-  });
-
-  it("prints real scope strings, and says which of them had no read-only choice", () => {
-    /*
-     * This asserted the opposite until two consents settled it: the ceremony named **capabilities** in prose
-     * and no scope strings, because `GET /oauth/scopes` needs a token this Node does not have.
-     *
-     * That could not work. A request naming no scope is granted none — the consent screen reads "0 total
-     * permissions" with `Authorize` disabled, because a client's registered scopes are a ceiling on what it
-     * may request rather than a default for what it does. So the Node must enumerate them.
-     */
-    const printed = ceremony(REDIRECT);
-    expect(printed.scopes.length).toBeGreaterThanOrEqual(5);
-    for (const one of printed.scopes) {
-      /*
-       * `<group>.<verb>` with a **dot**, or a protocol scope with neither. Cloudflare's API reference says
-       * both in one sentence: *"Colon-delimited scopes are not accepted. Dot-delimited scopes are validated
-       * against available OAuth API scopes; simple identity scopes are allowed."*
-       *
-       * This asserted a colon until 9 September 2026, because wrangler's bundle spells its own scopes that
-       * way — and wrangler is a first-party client whose shorthand nobody else may use. The reference had
-       * the answer the whole time; so did the guide's own example.
-       */
-      expect(one.scope, "a scope is <group>.<verb> or a protocol scope")
-        .toMatch(/^([a-z0-9-]+\.[a-z_]+|offline_access|openid)$/);
-      expect(one.why.length).toBeGreaterThan(30);
-    }
-    // The steps name the exact ids, so an operator can select them rather than interpret a description.
-    expect(printed.steps.some((step) => step.includes("account-settings.read"))).toBe(true);
-
-    /*
-     * **L1 asks for reads only, and getting here took two corrections.**
-     *
-     * The first version asserted every L1 capability was read-only, in prose with no scope strings. The
-     * second asserted the opposite — that D1, Queues and Email had no read scope, so a read-only layer had
-     * to ask for write — on the strength of wrangler's bundled vocabulary.
-     *
-     * Both wrong. The dashboard's picker offers **Read** for every one of them; wrangler's list is what
-     * *wrangler* asks for, and wrangler deploys Workers. Reading a client's request list as the provider's
-     * vocabulary is the same error as reading `scopes_supported` as a client's menu, one layer in.
-     *
-     * So the property to hold is the original one after all: **a layer that provisions nothing asks for
-     * nothing but reads.**
-     */
-    /*
-     * **Not "reads only" any more, and that is an operator's selection rather than a design change.** This
-     * list is the fourteen scopes a real client was registered with, and the picker had `d1` and `queues` on
-     * Edit. Both have a `.read` Cloudflare offers, which is what L1 would ask for since it provisions
-     * nothing — so what is asserted is that every write entry *says* a read exists, not that none is used.
-     */
-    for (const one of printed.scopes.filter((x) => x.scope.endsWith(".write"))) {
-      expect(one.readOnlyExists, `${one.scope} claims no read form exists`).toBe(true);
-    }
-    expect(printed.scopes.some((one) => one.scope.endsWith(".read"))).toBe(true);
-
-    /*
-     * **`offline_access` is requested, and this test asserted its absence for a day.** A consent refused it
-     * and the conclusion drawn was that no self-managed client can hold a refreshable grant — from a picker
-     * that does not list it and a `GET /oauth/scopes` that does not either. Both true and neither the point:
-     * the API reference says protocol scopes are *"added or removed automatically based on `grant_types`"*,
-     * so a client with `refresh_token` has it and one without never could.
-     *
-     * Without it the grant expires in an hour, measured, which turns ADR 42's one ceremony into one per hour.
-     */
-    expect(printed.scopes.map((one) => one.scope)).toContain("offline_access");
-
-    // And every read scope is honest the other way: a narrower choice was available and taken.
-    for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {
-      expect(one.readOnlyExists).toBe(true);
-    }
-  });
-});
-
-describe("spending the grant, which is what makes grant_refused reachable", () => {
-  /** A grant that expires at `expiresAt`, so the refresh path can be aimed at. */
-  async function granted(expiresAt: number, withRefresh = true) {
-    await register();
-    answering(200, {
-      access_token: "first-access", refresh_token: withRefresh ? "the-refresh" : undefined,
-      expires_in: 3600, scope: "a",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-    await testEnv.CATALOG.prepare("UPDATE provider_binding SET access_expires_at = ? WHERE id = 1")
-      .bind(new Date(expiresAt).toISOString()).run();
+describe("the four refusals, and none of them writes a row", () => {
+  async function nothingHeld() {
+    expect((await providerStatus(testEnv)).state).toBe("no_token");
+    expect(await entries("provider.token_registered")).toEqual([]);
   }
 
-  it("uses the stored token while it is good, without touching the token endpoint", async () => {
-    await granted(SEPTEMBER_3 + 3600_000);
-    const stub = answering(200, { success: true, result: [{ id: "acc_only", name: "One" }] });
+  it("refuses a token Cloudflare does not call active, in Cloudflare's own word", async () => {
+    cloudflare({ body: { success: true, result: { id: "tok_1", status: "expired" } } }, [{ id: ACCOUNT, name: "A" }]);
+    await expect(register({ token: "t" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID.*expired/s);
+    await nothingHeld();
+  });
+
+  it("refuses a token verify rejects, carrying Cloudflare's error rather than a status code", async () => {
+    cloudflare({ status: 400, body: { success: false, errors: [{ code: 1000, message: "Invalid API Token" }] } }, []);
+    await expect(register({ token: "t" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID.*1000 Invalid API Token/s);
+    await nothingHeld();
+  });
+
+  it("refuses rather than guesses between two accounts, naming them, and accepts one named back", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }, { id: OTHER, name: "B" }]);
+    await expect(register({ token: "t" })).rejects.toThrow(new RegExp(`E_PROVIDER_ACCOUNT_AMBIGUOUS.*A \\(${ACCOUNT}\\).*B \\(${OTHER}\\)`, "s"));
+    await nothingHeld();
+
+    const status = await register({ token: "t", accountId: OTHER });
+    expect(status.accountId).toBe(OTHER);
+    expect(status.accountName).toBe("B");
+  });
+
+  it("refuses an accountId the token does not see", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }]);
+    await expect(register({ token: "t", accountId: OTHER })).rejects.toThrow(/E_PROVIDER_ACCOUNT_AMBIGUOUS.*does not see/s);
+    await nothingHeld();
+  });
+
+  it("refuses a token that sees no account at all", async () => {
+    cloudflare(ACTIVE, []);
+    await expect(register({ token: "t" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID.*sees no account/s);
+    await nothingHeld();
+  });
+
+  it("refuses when the accounts cannot be listed, and says which permission that is", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      const body = path === "/user/tokens/verify"
+        ? { success: true, result: { status: "active" } }
+        : { success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    await expect(register({ token: "t" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID.*9109.*Account Settings: Read/s);
+    await nothingHeld();
+  });
+
+  it("refuses when Cloudflare cannot be reached, as an unknown rather than as an invalid token", async () => {
+    vi.stubGlobal("fetch", async () => { throw new TypeError("fetch failed"); });
+    await expect(register({ token: "t" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID.*could not be reached/s);
+    await nothingHeld();
+  });
+
+  it("leaves a held token in place when a replacement is refused", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "A" }]);
+    await register({ token: "first" });
+    cloudflare({ body: { success: true, result: { status: "disabled" } } }, []);
+    await expect(register({ token: "second" })).rejects.toThrow(/E_PROVIDER_TOKEN_INVALID/);
+    expect(await accessTokenFor(testEnv, atTime(SEPTEMBER_3), ORG)).toBe("first");
+  });
+});
+
+describe("forgetting the token", () => {
+  it("deletes the row, records the act with the account, and reports no_token", async () => {
+    cloudflare(ACTIVE, [{ id: ACCOUNT, name: "Whyme Labs" }]);
+    await register({ token: "t" });
+    const status = await forgetToken(testEnv, atTime(SEPTEMBER_3 + 1000), ORG, ADMIN);
+    expect(status.state).toBe("no_token");
+    expect(await boundAccount(testEnv)).toBeNull();
+    const [entry] = await entries("provider.token_forgotten");
+    expect(entry!.subject).toBe(ACCOUNT);
+    expect(JSON.parse(entry!.detail)).toEqual({ accountId: ACCOUNT, accountName: "Whyme Labs" });
+    await expect(accessTokenFor(testEnv, atTime(SEPTEMBER_3 + 2000), ORG)).rejects.toThrow(/E_PROVIDER_NO_TOKEN/);
+  });
+
+  it("refuses to forget what is not held, rather than recording an act that changed nothing", async () => {
+    await expect(forgetToken(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN)).rejects.toThrow(/E_PROVIDER_NO_TOKEN/);
+    expect(await entries("provider.token_forgotten")).toEqual([]);
+  });
+});
+
+describe("the permissions an operator ticks", () => {
+  it("names each in the dashboard's form, says why, and marks exactly the registrar read optional", () => {
+    for (const one of REQUIRED_PERMISSIONS) {
+      expect(one.name).toMatch(/^[A-Z][A-Za-z ]+: (Read|Edit)$/);
+      expect(one.why.length).toBeGreaterThan(20);
+      expect(["account", "zone"]).toContain(one.scope);
+    }
+    expect(REQUIRED_PERMISSIONS.filter((one) => one.optional).map((one) => one.name))
+      .toEqual(["Registrar Domains: Read"]);
+    expect(new Set(REQUIRED_PERMISSIONS.map((one) => one.name)).size).toBe(REQUIRED_PERMISSIONS.length);
+    // The admission travels with the list: verify reports no permissions, so a missing one is found late.
+    expect(PROVIDER_NOTE).toContain("does not report permissions");
+  });
+});
+
+describe("spending the token", () => {
+  it("sends the unwrapped token as the bearer, and nothing else first", async () => {
+    await holdToken(testEnv, ACCOUNT, SEPTEMBER_3, "held-token");
+    const stub = answering(200, { success: true, result: [{ id: ACCOUNT, name: "One" }] });
     const answer = await cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "/accounts");
     expect(answer.ok).toBe(true);
-    // One call, and it is the API rather than a renewal.
     expect(stub.calls).toHaveLength(1);
     expect(stub.calls[0]?.url).toContain("/client/v4/accounts");
-    expect((stub.calls[0]?.init.headers as Record<string, string>).authorization)
-      .toBe("Bearer first-access");
-  });
-
-  it("renews a minute before expiry, not after, and keeps the refresh token when none is returned", async () => {
-    /*
-     * The margin is the point. A token that expires between the check and the request it was fetched for is
-     * a request that fails for a reason the caller cannot tell from a revocation — so the check is against
-     * `now + 60s`, and this grant expires in thirty.
-     */
-    await granted(SEPTEMBER_3 + 30_000);
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return new Response(JSON.stringify(
-        String(url).includes("oauth2/token")
-          // No `refresh_token` in the renewal: rotation is at the server's discretion.
-          ? { access_token: "second-access", expires_in: 3600 }
-          : { success: true, result: [] },
-      ), { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    await cloudflareGet(testEnv, atTime(SEPTEMBER_3), ORG, "/accounts");
-    expect(calls[0]?.url).toBe("https://dash.cloudflare.com/oauth2/token");
-    expect(new URLSearchParams(String(calls[0]?.init.body)).get("grant_type")).toBe("refresh_token");
-    // The API call then carries the new token.
-    expect((calls[1]?.init.headers as Record<string, string>).authorization).toBe("Bearer second-access");
-
-    const row = await testEnv.CATALOG.prepare(
-      "SELECT access_token, refresh_token FROM provider_binding WHERE id = 1",
-    ).first<{ access_token: string; refresh_token: string }>();
-    expect(await unwrapCredential(testEnv, row!.access_token)).toBe("second-access");
-    /*
-     * **The refresh token survives a renewal that did not rotate it.** Overwriting it with the response's
-     * absent field would discard the durable half of the authorization on a *successful* renewal — the
-     * grant would work for one more hour and then be unrecoverable.
-     */
-    expect(await unwrapCredential(testEnv, row!.refresh_token)).toBe("the-refresh");
-  });
-
-  it("records grant_refused in Cloudflare's own words when a renewal is rejected", async () => {
-    /*
-     * The path L1 could describe and not reach. Until this existed the state was only settable by hand, and
-     * the revocation drill had to write the row itself.
-     */
-    await granted(SEPTEMBER_3);
-    answering(400, { error: "invalid_grant", error_description: "token is inactive because it was revoked" });
-
-    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
-      .rejects.toThrow("E_PROVIDER_GRANT_REFUSED");
-
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("grant_refused");
-    expect(status.refusedDetail).toBe("token is inactive because it was revoked");
-    // The tokens stay: *never granted* and *granted and then refused* are different questions.
-    expect(status.grantedAt).not.toBeNull();
-  });
-
-  it("does not record a refusal when the token endpoint is merely unreachable", async () => {
-    /*
-     * ADR 40's distinction, in a third place. An unreachable endpoint says nothing about the grant, and
-     * marking it refused would tell an operator their authorization was revoked because a request timed out.
-     */
-    await granted(SEPTEMBER_3);
-    vi.stubGlobal("fetch", async () => { throw new Error("socket closed"); });
-
-    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
-      .rejects.toThrow("E_PROVIDER_REFRESH_UNREACHABLE");
-    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
-  });
-
-  it("refuses to spend a grant already marked refused, rather than retrying it", async () => {
-    await granted(SEPTEMBER_3 + 3600_000);
-    await testEnv.CATALOG.prepare(
-      "UPDATE provider_binding SET refused_at = ?, refused_detail = 'revoked' WHERE id = 1",
-    ).bind(new Date(SEPTEMBER_3).toISOString()).run();
-    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
-      .rejects.toThrow("E_PROVIDER_GRANT_REFUSED");
-  });
-
-  it("says so when an expired grant has no refresh token to renew with", async () => {
-    // The one-hour dead end: a client whose grant types omit `refresh_token`.
-    await granted(SEPTEMBER_3, false);
-    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
-      .rejects.toThrow("E_PROVIDER_NO_REFRESH");
-  });
-
-  it("records the account only when there is exactly one, because a guess is worse than a null", async () => {
-    await granted(SEPTEMBER_3 + 3600_000);
-    answering(200, { success: true, result: [{ id: "acc_one", name: "A" }, { id: "acc_two", name: "B" }] });
-    const many = await resolveAccount(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
-    expect(many.found).toBe(2);
-    expect(many.accountId).toBeNull();
-    /*
-     * Belonging to two accounts is a real answer, not an error — and the column a deployment plan reads
-     * names the account it would provision into, so a guess there is worse than *not yet determined*.
-     */
-    expect((await providerStatus(testEnv)).accountId).toBeNull();
-
-    answering(200, { success: true, result: [{ id: "acc_only", name: "A" }] });
-    const one = await resolveAccount(testEnv, atTime(SEPTEMBER_3 + 4000), ORG);
-    expect(one.accountId).toBe("acc_only");
-    expect((await providerStatus(testEnv)).accountId).toBe("acc_only");
+    expect((stub.calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer held-token");
   });
 
   it("carries Cloudflare's own error rather than a status code", async () => {
-    await granted(SEPTEMBER_3 + 3600_000);
-    // The shape that matters: a missing scope and a missing resource must be tellable apart.
+    await holdToken(testEnv, ACCOUNT, SEPTEMBER_3);
+    // The shape that matters: a missing permission and a missing resource must be tellable apart.
     answering(403, { success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }] });
     const answer = await cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "/accounts");
     expect(answer.ok).toBe(false);
@@ -959,28 +300,10 @@ describe("spending the grant, which is what makes grant_refused reachable", () =
   });
 });
 
-
-/**
- * Whether a send's outcome would ever be **seen** (#163 L2).
- *
- * ## Why this is worth stubbing rather than only measuring live
- *
- * The live account has exactly one subscription and it is correct, so every branch that matters — an apex
- * subscription covering a subdomain, a queue nobody consumes, a subscription switched off, an unreadable
- * answer — is a branch a live run cannot reach. Those are the states an operator would actually be in, and
- * the failure mode of all of them is the same: the report says *fine* and the mail says nothing.
- */
-describe("delivery events, read through the grant", () => {
-  /** A grant good for an hour, an account already resolved, and one routed address. */
+describe("delivery events, read through the token", () => {
+  /** A token bound to `acc_1`, and one routed address. */
   async function ready(address: string) {
-    await register();
-    answering(200, {
-      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
+    await holdToken(testEnv, "acc_1", SEPTEMBER_3);
     await testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG).run();
     await testEnv.CATALOG.prepare(
       "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
@@ -1047,13 +370,8 @@ describe("delivery events, read through the grant", () => {
     };
   }
 
-  async function withAccount() {
-    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
-  }
-
   it("names the subscription, its queue and the consumers reading it", async () => {
     await ready("inbox@mailda-test.example.test");
-    await withAccount();
     serving({
       [SUBSCRIPTIONS]: [subscription("mailda-test.example.test")],
       "/accounts/acc_1/queues/q_1": {
@@ -1096,7 +414,6 @@ describe("delivery events, read through the grant", () => {
      * sending domains, so a Node under either has to be found under the one that is actually there.
      */
     await ready("inbox@deep.example.test");
-    await withAccount();
     serving({ [SUBSCRIPTIONS]: [] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1112,7 +429,6 @@ describe("delivery events, read through the grant", () => {
      * into a zone carrying live mail.
      */
     await ready("inbox@deep.example.test");
-    await withAccount();
     serving({
       [SENDING]: [
         { id: "snd_apex", name: "example.test", enabled: true },
@@ -1131,7 +447,6 @@ describe("delivery events, read through the grant", () => {
 
   it("prefers the most specific subscription when an apex one covers the domain too", async () => {
     await ready("inbox@deep.example.test");
-    await withAccount();
     serving({
       [SUBSCRIPTIONS]: [
         subscription("example.test", { id: "sub_apex", name: "apex-events" }),
@@ -1146,7 +461,6 @@ describe("delivery events, read through the grant", () => {
 
   it("does not count a sending domain that merely ends the same way", async () => {
     await ready("inbox@notexample.test");
-    await withAccount();
     // A zone exists for it, so the walk succeeds and only the sending-list match decides.
     serving({
       "/zones?name=notexample.test": [{ id: "zone_1", name: "notexample.test" }],
@@ -1165,7 +479,6 @@ describe("delivery events, read through the grant", () => {
      * irrelevant when they are the actual fault.
      */
     await ready("inbox@example.test");
-    await withAccount();
     serving({ [SENDING]: REFUSE, [SUBSCRIPTIONS]: [] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1181,7 +494,6 @@ describe("delivery events, read through the grant", () => {
      * because a request failed.
      */
     await ready("inbox@example.test");
-    await withAccount();
     serving({ [`${SENDING}/snd_1/dns`]: REFUSE, [SUBSCRIPTIONS]: [] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1196,7 +508,6 @@ describe("delivery events, read through the grant", () => {
      * and a non-empty one would attach this Node's mail to somebody else's registry entry.
      */
     await ready("inbox@deep.example.test");
-    await withAccount();
     const asked = serving({ "/zones?name=deep.example.test": [], [SUBSCRIPTIONS]: [] });
 
     await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1217,7 +528,6 @@ describe("delivery events, read through the grant", () => {
      * a verdict about somebody else's mail.
      */
     await ready("inbox@deep.b.example.test");
-    await withAccount();
     serving({
       "/zones?name=b.example.test": [{ id: "zone_inner", name: "b.example.test" }],
       "/zones/zone_inner/email/sending/subdomains": [{ id: "snd_2", name: "b.example.test", enabled: true }],
@@ -1238,7 +548,6 @@ describe("delivery events, read through the grant", () => {
      * subscription for a domain that already has one.
      */
     await ready("inbox@mailda-test.example.test");
-    await withAccount();
     serving({
       [SUBSCRIPTIONS]: [subscription("example.test")],
       "/accounts/acc_1/queues/q_1": { queue_name: "q", consumers: [{ script: "mailda" }] },
@@ -1251,7 +560,6 @@ describe("delivery events, read through the grant", () => {
   it("does not count a subscription on a different domain that merely ends the same way", async () => {
     // `notexample.test` ends with `example.test` as a *string*. The dot is what makes it a label boundary.
     await ready("inbox@notexample.test");
-    await withAccount();
     serving({ [SUBSCRIPTIONS]: [subscription("example.test")] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1261,7 +569,6 @@ describe("delivery events, read through the grant", () => {
 
   it("ignores subscriptions from other sources on the same domain", async () => {
     await ready("inbox@example.test");
-    await withAccount();
     serving({ [SUBSCRIPTIONS]: [subscription("example.test", { source: { type: "r2", domain: "example.test" } })] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1274,7 +581,6 @@ describe("delivery events, read through the grant", () => {
      * published — into a queue no Worker reads. Nothing errors, and nothing arrives.
      */
     await ready("inbox@example.test");
-    await withAccount();
     serving({
       [SUBSCRIPTIONS]: [subscription("example.test")],
       "/accounts/acc_1/queues/q_1": { queue_name: "orphan", consumers: [] },
@@ -1290,7 +596,6 @@ describe("delivery events, read through the grant", () => {
     // Both are `consumers: []`. Only `error` says which, and a surface that read the first as the second
     // would report a working Node as blind.
     await ready("inbox@example.test");
-    await withAccount();
     serving({ [SUBSCRIPTIONS]: [subscription("example.test")] });
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
@@ -1305,7 +610,6 @@ describe("delivery events, read through the grant", () => {
      * called a healthy Node broken on exactly this, over R2's page of twenty.
      */
     await ready("inbox@example.test");
-    await withAccount();
     const filler = Array.from({ length: 50 }, (_, at) => subscription("other.test", { id: `pad_${at}` }));
     const asked: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
@@ -1324,16 +628,14 @@ describe("delivery events, read through the grant", () => {
     expect(asked.filter((one) => one.startsWith(SUBSCRIPTIONS))).toHaveLength(2);
   });
 
-  it("says the account is not determined yet rather than blaming Cloudflare", async () => {
-    /*
-     * `account_id` is filled lazily by `resolveAccount`, so a Node can hold a working grant and not know
-     * which account it covers. Naming the step is the difference between one command and a re-consent.
-     */
+  it("says no credential is held rather than blaming Cloudflare", async () => {
+    // No token and no operator headers: the error names the two ways to give one, not the provider.
     await ready("inbox@example.test");
+    await testEnv.CATALOG.prepare("DELETE FROM provider_token").run();
     const asked = serving({});
 
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
-    expect(seen!.error).toContain("/api/provider/resolve-account");
+    expect(seen!.error).toContain("PUT /api/provider/token");
     // And it spent nothing finding out.
     expect(asked).toEqual([]);
   });
@@ -1366,15 +668,7 @@ describe("onboarding a domain for sending", () => {
   const ZONE = { id: "zone_1", name: "example.test" };
 
   async function granted() {
-    await register();
-    answering(200, {
-      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
+    await holdToken(testEnv, "acc_1", SEPTEMBER_3);
   }
 
   /** Records every request, and answers the two reads a proposal makes. */
@@ -1545,39 +839,6 @@ describe("onboarding a domain for sending", () => {
   });
 });
 
-describe("a grant made before the ceremony grew", () => {
-  it("names the scopes it is short of, and none when it holds them all", async () => {
-    /*
-     * `queues.read` became `queues.write` on 16 September 2026 (#222), and every grant consented before that
-     * still works for everything but the one write. `scopesMissing` is the fact the screen, the CLI and the
-     * doctor all say "authorize again" from — computed against what the Node asks for *today*, so the next
-     * scope the ceremony grows is reported the same way without anybody remembering to.
-     */
-    await register();
-    answering(200, {
-      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600,
-      scope: REQUIRED_SCOPE_NAMES.filter((one) => one !== "queues.write").join(" "),
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, [...REQUIRED_SCOPE_NAMES]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-
-    const before = await providerStatus(testEnv);
-    expect(before.state).toBe("consent_granted");
-    expect(before.scopesMissing).toEqual(["queues.write"]);
-
-    answering(200, {
-      access_token: "an-access-2", refresh_token: "a-refresh-2", expires_in: 3600,
-      scope: REQUIRED_SCOPE_NAMES.join(" "),
-    });
-    const again = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 3000), ADMIN, [...REQUIRED_SCOPE_NAMES]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 4000), ORG, {
-      state: again.state, code: "the-code-2", error: null, errorDescription: null,
-    });
-    expect((await providerStatus(testEnv)).scopesMissing).toEqual([]);
-  });
-});
 
 describe("subscribing a sending domain's delivery events to this Node's queue (#222)", () => {
   const ZONE = { id: "zone_1", name: "example.test" };
@@ -1585,15 +846,7 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
   const OTHER = { queue_id: "q_other", queue_name: "somebody-elses" };
 
   async function granted() {
-    await register();
-    answering(200, {
-      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
-    });
-    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
-      state, code: "the-code", error: null, errorDescription: null,
-    });
-    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
+    await holdToken(testEnv, "acc_1", SEPTEMBER_3);
   }
 
   /**
@@ -1807,111 +1060,31 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
  * ceremony; `offline_access` sent as a scope Cloudflare then refuses; the token surviving anywhere; and a
  * token seeing two accounts being guessed at rather than refused.
  */
-describe("creating the client through Cloudflare's API", () => {
-  const ACCOUNT = "1e0170aaabc90ecf5f466128d1f0466a";
 
-  function cloudflare(answers: Record<string, { status: number; body: unknown }>) {
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      calls.push({ url: String(url), init });
-      const path = new URL(String(url)).pathname.replace("/client/v4", "");
-      const found = Object.entries(answers).find(([key]) => (key.endsWith("/") ? path.startsWith(key) : path === key));
-      if (found === undefined) throw new Error(`unexpected call ${path}`);
-      return new Response(JSON.stringify(found[1].body), { status: found[1].status, headers: { "content-type": "application/json" } });
-    });
-    return calls;
-  }
-
-  it("registers the client Cloudflare returns, with the ceremony's scopes and this Node's redirect URI", async () => {
-    const calls = cloudflare({
-      [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 200, body: { success: true, result: { client_id: "cf-made", client_secret: "s3cret+/=", scopes: ["zone.read", "offline_access"] } } },
-    });
-    const made = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, {
-      token: "tok", accountId: ACCOUNT, redirectUri: REDIRECT,
-    });
-    expect(made.clientId).toBe("cf-made");
-    expect(made.accountId).toBe(ACCOUNT);
-
-    const sent = JSON.parse(String(calls[0]!.init.body)) as Record<string, unknown>;
-    expect(sent.redirect_uris).toEqual([REDIRECT]);
-    expect(sent.grant_types).toEqual(["authorization_code", "refresh_token"]);
-    expect(sent.token_endpoint_auth_method).toBe("client_secret_basic");
-    // The ceremony's list, minus the protocol scope Cloudflare adds itself.
-    expect(sent.scopes).toEqual(REQUIRED_SCOPES.map((one) => one.scope).filter((one) => one.includes(".")));
-    expect(sent.scopes).not.toContain("offline_access");
-    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer tok");
-
-    const status = await providerStatus(testEnv);
-    expect(status.state).toBe("awaiting_consent");
-    expect(status.clientId).toBe("cf-made");
-    const row = await testEnv.CATALOG.prepare("SELECT client_secret FROM provider_binding WHERE id = 1").first<{ client_secret: string }>();
-    expect(await unwrapCredential(testEnv, row!.client_secret)).toBe("s3cret+/=");
-  });
-
-  it("never stores the token: not in the binding, not in the audit trail", async () => {
-    cloudflare({
-      [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 200, body: { success: true, result: { client_id: "c", client_secret: "s" } } },
-    });
-    await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "the-only-copy", accountId: ACCOUNT, redirectUri: REDIRECT });
-    const binding = await testEnv.CATALOG.prepare("SELECT * FROM provider_binding").all();
-    expect(JSON.stringify(binding.results)).not.toContain("the-only-copy");
-    const audit = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'provider.client_registered'").all();
-    expect(audit.results.length).toBeGreaterThan(0);
-    expect(JSON.stringify(audit.results)).not.toContain("the-only-copy");
-  });
-
-  it("names the permission when Cloudflare answers 403, which is what a token without it gets", async () => {
-    cloudflare({ [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 403, body: { success: false, errors: [{ code: 10000, message: "Authentication error" }] } } });
-    const refusal = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: ACCOUNT, redirectUri: REDIRECT })
-      .then(() => null, (error: Error & { code?: string }) => error);
-    expect(refusal?.code).toBe("E_PROVIDER_TOKEN_REFUSED");
-    expect(refusal?.message).toContain(OAUTH_CLIENTS_PERMISSION);
-    expect((await providerStatus(testEnv)).state).toBe("no_client");
-  });
-
-  it("asks the token which account when none is given, and refuses rather than guesses between two", async () => {
-    const calls = cloudflare({
-      "/accounts": { status: 200, body: { success: true, result: [{ id: ACCOUNT, name: "One" }] } },
-      "/accounts/": { status: 200, body: { success: true, result: { client_id: "c", client_secret: "s" } } },
-    });
-    const made = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: null, redirectUri: REDIRECT });
-    expect(made.accountId).toBe(ACCOUNT);
-    expect(calls[1]!.url).toContain(`/accounts/${ACCOUNT}/oauth_clients`);
-
-    cloudflare({ "/accounts": { status: 200, body: { success: true, result: [{ id: ACCOUNT, name: "One" }, { id: "b".repeat(32), name: "Two" }] } } });
-    const ambiguous = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: null, redirectUri: REDIRECT })
-      .then(() => null, (error: Error & { code?: string }) => error);
-    expect(ambiguous?.code).toBe("E_PROVIDER_ACCOUNT_AMBIGUOUS");
-    expect(ambiguous?.message).toContain("Two");
-  });
-});
-
-/**
- * An operator's own credential, carried on the request for one call (25 September 2026).
- *
- * The seam is two functions: `accessTokenFor` and `boundAccount`. With an operator on the `Ctx` they answer
- * the operator's token and account without a binding row; without one they behave as before, which the
- * first assertion pins so the override cannot become the default by accident.
- */
 describe("an operator's credential on the request", () => {
   const ACCOUNT = "1e0170aaabc90ecf5f466128d1f0466a";
   const operator = withOperator(atTime(SEPTEMBER_3), { token: "wrangler-token", accountId: ACCOUNT });
 
-  it("is absent from an ordinary context, so a Node without a grant still refuses", async () => {
+  it("is absent from an ordinary context, so a Node without a token still refuses", async () => {
     expect(operatorOf(atTime(SEPTEMBER_3))).toBeNull();
-    await expect(accessTokenFor(testEnv, atTime(SEPTEMBER_3), ORG)).rejects.toThrow(/E_PROVIDER_NO_GRANT/);
+    await expect(accessTokenFor(testEnv, atTime(SEPTEMBER_3), ORG)).rejects.toThrow(/E_PROVIDER_NO_TOKEN/);
     expect(await boundAccount(testEnv, atTime(SEPTEMBER_3))).toBeNull();
   });
 
-  it("answers the operator's token and account with no binding row at all", async () => {
+  it("answers the operator's token and account with no token row at all", async () => {
     expect(await accessTokenFor(testEnv, operator, ORG)).toBe("wrangler-token");
+    // And over a stored one: the credential on the request is the operator's choice for this call.
+    await holdToken(testEnv, OTHER, SEPTEMBER_3, "stored-token");
+    expect(await accessTokenFor(testEnv, operator, ORG)).toBe("wrangler-token");
+    expect(await boundAccount(testEnv, operator)).toBe(ACCOUNT);
+    await testEnv.CATALOG.prepare("DELETE FROM provider_token").run();
     expect(await boundAccount(testEnv, operator)).toBe(ACCOUNT);
     // And the context still keeps time and mints ids, so nothing downstream notices the wrapping.
     expect(operator.now()).toBe(SEPTEMBER_3);
     expect(operator.id("x").startsWith("x_")).toBe(true);
   });
 
-  it("reaches Cloudflare with that token, for a read that would otherwise need the grant", async () => {
+  it("reaches Cloudflare with that token, for a read that would otherwise need the stored one", async () => {
     const { calls } = answering(200, { success: true, result: [] });
     const zones = await cloudflareGet(testEnv, operator, ORG, "/zones?name=example.test");
     expect(zones.ok).toBe(true);

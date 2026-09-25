@@ -669,6 +669,15 @@ const FIGURES: Record<string, Classification> = {
     "deploy.canary_override_attempts_named_node",
   ),
 
+  // docs/receipts/worker-custom-domain.md
+  ...bothPlans(
+    "whether a first deploy attaches a custom hostname, whether the canary path keeps it, and whether "
+      + "`triggers deploy` adds one to a Worker already deployed. Custom domains are a Workers feature on "
+      + "every plan, and the scratch Worker that measured them was deleted afterwards",
+    "deploy.custom_domain_attached_by_first_deploy", "deploy.custom_domain_kept_across_versions",
+    "deploy.triggers_deploy_adds_custom_domain",
+  ),
+
   // docs/receipts/wrangler-list-pagination.md
   ...bothPlans(
     "how many buckets `wrangler r2 bucket list` returns before it silently stops, and whether it says it "
