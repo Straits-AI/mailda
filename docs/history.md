@@ -3205,6 +3205,16 @@ uses the documented user-token form with `accountId=*`, which puts the account i
 and says what to tick if the prefill still fails. And the inbox's search hint sat too close to the pill;
 it moved from a fifth to half a rem, the spacing scale's next step.
 
+### The token link, three tries, and the honest fourth (25 September 2026)
+
+The user-token form prefilled the name and not the permission: an unknown short key is dropped without a
+word, and this permission's short key is not documented anywhere. Cloudflare's docs PR on template links
+says account-token links resolve a permission group **id** in the `key` field, so the third try addressed
+the exact id. The dashboard refused it by name: *"requested an entry we don't recognize"*. Three measured
+failures on a permission three months old say the template vocabulary does not have it. The link now
+opens the account's token page with the name filled in and nothing else claimed, and the ceremony spells
+the tick: Account → OAuth App Registrations → Write. The receipt records all three, so the next person
+does not try them a fourth time.
 ## What the token was for: the grant leaves the critical path (25 September 2026)
 
 After a day of trying to make the token step friendlier, the founder asked the question that should have

@@ -277,10 +277,14 @@ Implicit, Resource Owner Password Credentials, Device Authorization, or other OA
 discovery document still advertises all five plus a device endpoint, and `registration_endpoint` is null,
 so there is no dynamic client registration either. wrangler's scope list, re-read the same day, is 25 scopes
 and none is IAM or OAuth. So the floor is one API token, created in the dashboard, and one consent click.
-What the dashboard does offer is a **token template URL** (`fundamentals/api/how-to/account-owned-token-template`):
-`permissionGroupKeys=[{key,type}]` plus `accountId` and `name` prefill the form. The key for this permission
-is inferred from its label `oauth_app_registrations_write` by the documented pattern (`dns_admin` → `dns`)
-and is not measured on this permission; the installer prints and opens the link and says to check the tick.
+What the dashboard offers is a **token template URL** (`fundamentals/api/how-to/account-owned-token-template`):
+`permissionGroupKeys=[{key,type}]` plus `accountId` and `name` prefill the form. **Measured on 25 September
+2026, on this permission, three ways, and none prefills it:** the short key `oauth_app_registrations`
+(the label without its verb) on the account form and on the user form was dropped silently, name filled and
+permission blank; the group id `358d00a81412422280b0055618c81d59` on the account form, which the docs say
+resolves ids, was refused by name, *"requested an entry we don't recognize"*. The dashboard's template
+vocabulary does not include this permission. The ceremony's link therefore prefills the name only and the
+instruction names the tick; the receipt says so rather than the link implying a prefill it cannot make.
 
 **What that changes.** The dashboard ceremony ADR 42 accepted was a twelve-field form. It is one field now:
 `POST /api/provider/client` takes an API token carrying that single permission, and the Node creates the
