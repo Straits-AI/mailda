@@ -57,6 +57,11 @@ const PAIRS = [
     module: "packages/cli/src/wrangler-config.mjs",
     declaration: "packages/cli/src/wrangler-config.d.mts",
   },
+  {
+    what: "the receiving, sending and outcomes setup",
+    module: "packages/cli/src/verbs/provision.mjs",
+    declaration: "packages/cli/src/verbs/provision.d.mts",
+  },
 ] as const;
 
 describe("hand-written declarations match their modules", () => {
