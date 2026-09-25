@@ -107,7 +107,7 @@ function ClientFromToken({ ceremony, done }: { ceremony: ProviderCeremony; done:
 
   return (
     <section className="setup-block" aria-label="Create the client from a token">
-      <h2>1. Let this Node create its client</h2>
+      <h2>With one API token</h2>
       <p>
         Create one API token in Cloudflare with a single permission, <span className="mono">{ceremony.token.permission}</span>,
         and paste it here. This Node creates its own OAuth client with the exact redirect address and
@@ -163,7 +163,7 @@ function Client({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Pr
 
   return (
     <section className="setup-block" aria-label="Create the client">
-      <h2>1, by hand. Create a client, in Cloudflare</h2>
+      <h2>By hand. Create a client, in Cloudflare</h2>
       <p className="dim">
         The longer path, with no token at any point. Twelve fields; what to put in each is below.
       </p>
@@ -272,7 +272,7 @@ function Consent(
 
   return (
     <section className="setup-block" aria-label="Authorize">
-      <h2>2. Authorize, in Cloudflare</h2>
+      <h2>Then authorize, in Cloudflare</h2>
       <Refusal said={problem} />
       {url === null ? (
         <p>
@@ -327,7 +327,7 @@ function Connected({ provider, refresh }: { provider: ProviderBinding; refresh: 
 
   return (
     <section className="setup-block" aria-label="The connection">
-      <h2>1–2. Connected</h2>
+      <h2>Connected</h2>
       <dl className="setup-facts">
         <dt>Cloudflare account</dt>
         <dd className="mono">
@@ -886,7 +886,7 @@ export function Setup() {
   if (provider.isPending) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="loading" /></>;
   if (provider.isError) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="failed" detail={provider.error.message} /></>;
 
-  const { provider: binding, ceremony } = provider.data;
+  const { provider: binding, provisioned, ceremony } = provider.data;
   const connected = binding.state === "consent_granted";
 
   return (
@@ -904,7 +904,14 @@ export function Setup() {
         </p>
       </header>
 
-      <OnboardingProgress binding={binding} />
+      <OnboardingProgress binding={binding} provisioned={provisioned} />
+      {connected ? null : (
+        <p className="dim">
+          Receiving, sending and delivery outcomes are set up at install, with the consent wrangler already
+          had, or later with <span className="mono">mailda provider</span>. Connecting this Node, below, is
+          what lets you change them from this screen.
+        </p>
+      )}
 
       {binding.state === "grant_refused" && binding.refusedDetail !== null
         ? <Refusal said={binding.refusedDetail} />
@@ -939,6 +946,15 @@ export function Setup() {
         ? <Connected provider={binding} refresh={refresh} />
         : (
           <>
+            <section className="setup-block" aria-label="Optional connection">
+              <h2>Optional: let this Node act in Cloudflare from this screen</h2>
+              <p>
+                The install set receiving, sending and delivery outcomes up with the consent wrangler already
+                had, so this Node works without a grant of its own. Connecting it is only for changing that
+                from here: another receiving domain, a sending domain, buying a domain, taking over a routing
+                rule. Two ways, below: one API token, or a client made by hand.
+              </p>
+            </section>
             <ClientFromToken ceremony={ceremony} done={refresh} />
             <Client ceremony={ceremony} done={refresh} />
             {/*

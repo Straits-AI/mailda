@@ -255,8 +255,27 @@ export const providerStateResponse = z.object({
  * writer that forgot to return the steps and a reader that has none would be the same shape, so the route an
  * operator reaches for guidance could stop carrying it without anything failing.
  */
+/** One provisioning act as the audit trail recorded it: the domain, when, and which credential acted. */
+export const provisionedAct = z.object({
+  domain: z.string().min(1),
+  at: isoDate,
+  authority: z.enum(["grant", "operator", "unknown"]),
+  address: z.string().nullable(),
+}).strict();
+
 export const providerResponse = z.object({
   provider: providerStateResponse.shape.provider,
+  /**
+   * What this Node's Cloudflare setup has been observed to do, from the audit trail (25 September 2026):
+   * receiving, sending and delivery events, each the latest act or null. A Node set up at install by the
+   * CLI, with wrangler's login, may never hold a grant to re-read the account with; this is the honest
+   * source for "set up, on this date, by that credential", and the progress list says it is a record.
+   */
+  provisioned: z.object({
+    receiving: provisionedAct.nullable(),
+    sending: provisionedAct.nullable(),
+    deliveryEvents: provisionedAct.nullable(),
+  }).strict(),
   ceremony: z.object({
     steps: z.array(z.string().min(1)).min(1),
     redirectUri: z.string().min(1),

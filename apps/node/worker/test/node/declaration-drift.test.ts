@@ -52,6 +52,11 @@ const PAIRS = [
     module: "packages/cli/src/backup.mjs",
     declaration: "packages/cli/src/backup.d.mts",
   },
+  {
+    what: "wrangler's token file",
+    module: "packages/cli/src/wrangler-config.mjs",
+    declaration: "packages/cli/src/wrangler-config.d.mts",
+  },
 ] as const;
 
 describe("hand-written declarations match their modules", () => {

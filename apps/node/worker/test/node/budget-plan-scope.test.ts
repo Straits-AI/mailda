@@ -678,6 +678,16 @@ const FIGURES: Record<string, Classification> = {
     "wrangler.r2_bucket_list_page_size", "wrangler.r2_bucket_list_marks_truncation",
   ),
 
+  // docs/receipts/wrangler-login-reach.md
+  ...bothPlans(
+    "what wrangler's login token may do in the account: create subdomain routing records and rules, and "
+      + "not delete those records or reach raw DNS or the registrar. Permission groups on an OAuth scope "
+      + "list wrangler fixes for every account; nothing here is metered or plan-gated, and it is recorded "
+      + "because the install now provisions with that token",
+    "wrangler.login_creates_subdomain_routing_records", "wrangler.login_deletes_subdomain_routing_records",
+    "wrangler.login_reaches_raw_dns_records", "wrangler.login_reaches_registrar",
+  ),
+
   // docs/receipts/cloudflare-oauth-node-as-client.md
   ...bothPlans(
     "how Cloudflare's OAuth authorization endpoint behaves — which redirect hosts it accepts, whether a "

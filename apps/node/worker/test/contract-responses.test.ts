@@ -110,7 +110,7 @@ async function cookie(): Promise<string> {
 async function answers(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   template: string,
-  init: { params?: Record<string, string>; body?: unknown; cookie?: string } = {},
+  init: { params?: Record<string, string>; body?: unknown; cookie?: string; headers?: Record<string, string> } = {},
   /*
    * A query string, appended verbatim. Added for `GET /oauth/cloudflare/callback`, whose whole input is
    * query parameters Cloudflare chose — there is no request schema to put them in, and building one would
@@ -126,6 +126,7 @@ async function answers(
     headers: {
       "content-type": "application/json",
       ...(init.cookie === undefined ? {} : { cookie: init.cookie }),
+      ...(init.headers ?? {}),
     },
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
@@ -338,6 +339,39 @@ describe("every schema-bearing route answers what the contract says it does", ()
       delivery: unknown[];
     };
     expect(delivery.delivery).toEqual([]);
+
+    /*
+     * An operator's own credential for one request (25 September 2026). With the two headers, the
+     * receiving proposal reaches Cloudflare with **that** token and account, on a Node that holds no grant
+     * at all — which is how `mailda install` sets a Node up with wrangler's consent. The stubbed Cloudflare
+     * lists no zones, so the proposal refuses, and the refusal is in the answer rather than a 4xx: the
+     * route ran, the token was spent, nothing was stored.
+     */
+    const seen: string[] = [];
+    const platformFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).startsWith("https://api.cloudflare.com/")) {
+        seen.push(`${String(url)} ${(init?.headers as Record<string, string> | undefined)?.authorization ?? ""}`);
+        return Response.json({ success: true, result: [] });
+      }
+      return platformFetch(url, init);
+    });
+    try {
+      const proposed = await answers("GET", "/api/provider/receiving", {
+        params: {}, cookie: held,
+        headers: { "x-cloudflare-token": "wrangler-token", "x-cloudflare-account": "1e0170aaabc90ecf5f466128d1f0466a" },
+      }, "?domain=mail.example.test") as { proposal: { refusal: string | null } };
+      expect(proposed.proposal.refusal).not.toBeNull();
+      expect(seen.some((one) => one.includes("account.id=1e0170aaabc90ecf5f466128d1f0466a") && one.endsWith("Bearer wrangler-token"))).toBe(true);
+      // A token without its account is refused before anything is asked of Cloudflare.
+      const half = await SELF.fetch(`${ORIGIN}${path(route("GET", "/api/provider/receiving"), {})}?domain=mail.example.test`, {
+        headers: { cookie: held, "x-cloudflare-token": "wrangler-token" },
+      });
+      expect(half.status).toBe(422);
+      expect(await half.text()).toContain("E_PROVIDER_OPERATOR_ACCOUNT_MISSING");
+    } finally {
+      vi.stubGlobal("fetch", platformFetch);
+    }
 
     /*
      * The proposal read and the apply (#163 L2's write side).

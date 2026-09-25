@@ -28,13 +28,14 @@ curl -fsSL https://mailda.site/install.sh | bash
 It checks for git and Node 22, clones this repository, installs, signs you in to Cloudflare, asks which
 account if you have several and what to call the Node (`mailda` by default), deploys the Worker with its
 D1, R2 and queue, and applies the schema. Then it claims the Node from the same terminal: you choose the
-first administrator's email and password, and the ten recovery codes are printed once. Then it connects
-the Node to your account: you create one API token in the Cloudflare dashboard with a single permission
-(*OAuth App Registrations Write*), paste it, and the Node creates its own private OAuth client with the
-exact scopes and redirect URI, registers it, and the installer opens the consent in your browser and tells
-you to delete the token. Decline either question and the Node's own screens do the same thing later: the
-claim page, and the same token field on *Setup*. Nothing in your
-account changes before it asks. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
+first administrator's email and password, and the ten recovery codes are printed once. Then it asks one more
+question, which domain this Node should receive mail at, and with the same Cloudflare sign-in you already
+gave it enables routing on that subdomain, writes the rule to the Node, onboards the domain for sending,
+subscribes delivery events to the Node's queue, and reads each back. The Node receives when the install
+ends. No dashboard, no API token, no OAuth client ([receipt](./docs/receipts/wrangler-login-reach.md)).
+Decline a question and the Node's own screens do the same thing later. Nothing in your account changes
+before it asks. Connecting the Node with a grant of its own, for changing that setup from the browser
+later, is optional and lives on *Setup*. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
 without a bash, run that in PowerShell.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
@@ -80,7 +81,8 @@ if the account has several, and then, before the schema is touched, takes a `mai
 git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
 refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as
-`mailda deploy`. It never creates a Node; `mailda install` with an existing name still upgrades too, but
+`mailda deploy`. A Node that was never set up to receive is offered the install's setup step afterwards,
+with the same sign-in. It never creates a Node; `mailda install` with an existing name still upgrades too, but
 with whatever code the clone has, which is why the verb exists.
 
 The button clones without history and without a remote. The upgrade handles that on its first run: it adds

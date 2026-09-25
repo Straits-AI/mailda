@@ -45,7 +45,7 @@ export async function ownershipFacts(
   ) => facts.push({ question, answer, source, because });
 
   const status = await providerStatus(env);
-  const accountId = await boundAccount(env);
+  const accountId = await boundAccount(env, ctx);
 
   if (accountId === null) {
     say("Which Cloudflare account holds this Node", null, "node",

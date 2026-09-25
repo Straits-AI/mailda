@@ -65,12 +65,14 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
   mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
   mailda install [--yes] [--no-open] the first run as one conversation: sign in, pick the account, deploy,
-                                     claim the Node, create its Cloudflare OAuth client from one API token,
-                                     and open the consent. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD and
-                                     CLOUDFLARE_API_TOKEN instead of asking
+                                     claim the Node, set it up to receive, send and observe outcomes with
+                                     wrangler's own login, then (optional) its Cloudflare grant from one API
+                                     token. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD, MAILDA_DOMAIN,
+                                     MAILDA_ADDRESS, CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN
   mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--contract]
                                      pull the release, back the Node up, list what its schema will do to
-                                     the catalog, then deploy through the canary
+                                     the catalog, deploy through the canary, and finish a Node's setup if
+                                     it was never set up to receive
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
