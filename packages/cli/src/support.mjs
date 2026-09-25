@@ -257,7 +257,8 @@ export const ENV = ["--env", ""];
  * config explains itself — survive into the derived file a reader may open to see what was deployed.
  */
 export function configFor(argv) {
-  const name = flag(argv, "name");
+  const hostname = flag(argv, "hostname");
+  const name = flag(argv, "name") ?? (hostname === null ? null : nameIn(readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8")));
   const source = readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8");
   if (name === null) return { name: nameIn(source), path: resolve(workerDir, "wrangler.jsonc"), text: source, args: [] };
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) {
@@ -268,9 +269,10 @@ export function configFor(argv) {
     );
   }
   const base = nameIn(source);
-  const derived = deriveConfig(source, name);
+  // A hostname derives a config even for the base name: a custom domain is per Node, never committed.
+  const derived = deriveConfig(source, name, hostname);
   const path = resolve(workerDir, `wrangler.${name}.jsonc`);
-  writeFileSync(path, `// Derived by \`mailda deploy --name ${name}\` from wrangler.jsonc (base name \`${base}\`). Do not edit; do not commit.\n${derived}`);
+  writeFileSync(path, `// Derived by \`mailda deploy --name ${name}${hostname === null ? "" : ` --hostname ${hostname}`}\` from wrangler.jsonc (base name \`${base}\`). Do not edit; do not commit.\n${derived}`);
   return { name, path, text: derived, args: ["--config", path] };
 }
 

@@ -94,7 +94,9 @@ export async function upgrade(argv) {
     : existing.length === 0
       ? ((await ask(`\n   Node to upgrade [${suggested}]: `)).trim() || suggested)
       : await choose("\n== Node to upgrade", existing, { initial: Math.max(0, existing.indexOf(suggested)) });
-  const nameArgs = name === base ? [] : ["--name", name];
+  // A hostname given here goes into the derived config; the deploy attaches it after promotion.
+  const hostname = (flag(argv, "hostname") ?? process.env.MAILDA_HOSTNAME ?? "").trim().toLowerCase() || null;
+  const nameArgs = [...(name === base ? [] : ["--name", name]), ...(hostname === null ? [] : ["--hostname", hostname])];
   useConfig(configFor(nameArgs));
   if (firstInstall()) {
     fail(`\`${name}\` is not a Node in this account, and an upgrade never creates one.\n\n  fix      mailda install, which does`);
@@ -138,6 +140,7 @@ export async function upgrade(argv) {
   const go = yes ? "y" : await ask("\n   upgrade now? [y/N]: ");
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed; the backup stays.\n\n"); return; }
   const deployed = await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])]);
+  if (hostname !== null) rememberUrl(accountId, name, `https://${hostname}`);
   if (deployed === 2) {
     // `refuse` after promotion is the one fault the canary cannot see (a Durable Object runs the promoted
     // version only after traffic moves). The deploy printed the rollback; setting up receiving on a Node

@@ -44,12 +44,9 @@ import { backup, verifyBackup } from "./verbs/backup.mjs";
 
 const USAGE = `mailda — operate a Mailda Node
 
-  mailda provider [--url <origin>]   this Node's Cloudflare grant: its state, or the printed ceremony
-  mailda provider --connect          create the OAuth client from one API token, register it, open the consent
-                                     (the install's grant step, for a Node claimed without it)
-  mailda provider --client-id <id>   register the OAuth client; the secret is read from stdin
-  mailda provider --scopes a,b       begin a consent and print the URL to open
-  mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
+  mailda provider [--url <origin>]   this Node's own Cloudflare token: its state, and the permissions one needs
+  mailda provider --token            hold an API token for the Node; the token is read from stdin
+  mailda provider --forget-token     drop it (revoke it in the dashboard too)
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
@@ -66,16 +63,17 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --price a.com,b.dev          real-time registry price, which is what an approval binds to
   mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
   mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
-  mailda install [--yes] [--no-open] the first run as one conversation: sign in, pick the account, deploy,
-                                     claim the Node, set it up to receive, send and observe outcomes with
-                                     wrangler's own login, then (optional) its Cloudflare grant from one API
-                                     token. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD, MAILDA_DOMAIN,
-                                     MAILDA_ADDRESS, MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN
-                                     and MAILDA_GRANT_TOKEN
-  mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--contract]
+  mailda install [--yes] [--no-open] [--hostname <host>]
+                                     the first run as one conversation: sign in, pick the account, a hostname
+                                     of your own or the workers.dev address, deploy, claim the Node, set it
+                                     up to receive, send and observe outcomes with wrangler's own login, then
+                                     (optional) hold an API token for it. --yes reads MAILDA_EMAIL,
+                                     MAILDA_PASSWORD, MAILDA_HOSTNAME, MAILDA_DOMAIN, MAILDA_ADDRESS,
+                                     MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN
+  mailda upgrade [--name <worker>] [--url <origin>] [--hostname <host>] [--yes] [--contract]
                                      pull the release, back the Node up, list what its schema will do to
-                                     the catalog, deploy through the canary, and finish a Node's setup if
-                                     it was never set up to receive
+                                     the catalog, deploy through the canary, attach --hostname if given, and
+                                     finish a Node's setup if it was never set up to receive
   mailda setup [--name <worker>] [--url <origin>] [--yes]
                                      receiving, sending and delivery outcomes for a Node already deployed
                                      and claimed, with the consent wrangler has; no deploy. --yes reads

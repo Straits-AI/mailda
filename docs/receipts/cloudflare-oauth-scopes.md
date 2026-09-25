@@ -23,6 +23,11 @@ values:
   oauth.read_only_scope_exists_for_email: 1
 ---
 
+> **Superseded 26 September 2026.** The Node no longer holds an OAuth client or a grant: ADR 42 (as amended
+> that day) replaced it with a stored API token, the same custody as the Email Sending token, because both
+> cost the operator the same dashboard act. The measurements below stand as the record of what the OAuth
+> path was and did; nothing in the code reads them now.
+
 ## Confirmed, 10 September 2026: a second consent returned a refresh token
 
 After `PATCH grant_types: ["authorization_code","refresh_token"]` added `offline_access` to the client's

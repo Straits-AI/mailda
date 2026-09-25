@@ -42,7 +42,7 @@ const grant = readdirSync(join(import.meta.dirname, "../../src/provider"))
  */
 
 /**
- * The scopes the module asks for, read from its **text**.
+ * The permissions the module asks for (`REQUIRED_PERMISSIONS`, dashboard names), read from its **text**.
  *
  * Importing it is what this test tried first and cannot do: `cloudflare-grant.ts` reaches `keyvault.ts`,
  * which imports `cloudflare:workers`, which does not exist outside workerd — and vitest reported the file
@@ -50,7 +50,7 @@ const grant = readdirSync(join(import.meta.dirname, "../../src/provider"))
  * `provider-blast-radius.test.ts` reads this module as text for the same reason.
  */
 function scopesAskedFor(source: string): string[] {
-  return [...source.matchAll(/^\s*scope: "([^"]+)",$/gm)].map((match) => match[1]!);
+  return [...source.matchAll(/^\s*name: "([A-Z][A-Za-z ]+: (?:Read|Edit))",$/gm)].map((match) => match[1]!);
 }
 
 /**
@@ -93,32 +93,26 @@ function pathsIn(source: string): string[] {
  * grant holding `email-sending.write` reaches them.
  */
 const REACHES: Record<string, { scope: string | null; reference: string | null }> = {
-  "/accounts": { scope: "account-settings.read", reference: null },
-  /*
-   * Not through the grant at all: reached once with an API token the operator made carrying "OAuth App
-   * Registrations Write", to create the client the grant then belongs to (24 September 2026). `scope: null`
-   * says so, rather than a grant scope that would claim the grant can do this. It cannot, and must not: a
-   * grant able to register OAuth clients could widen itself.
-   */
-  "/accounts/{}/oauth_clients": { scope: null, reference: "OAuth App Registrations Write" },
+  // Listed at registration to bind the token to the one account it sees, and by ownership afterwards.
+  "/accounts": { scope: "Account Settings: Read", reference: null },
   // The account's own record: its name, `type` — which decides the ownership claim — and its settings.
-  "/accounts/{}": { scope: "account-settings.read", reference: null },
+  "/accounts/{}": { scope: "Account Settings: Read", reference: null },
   /*
    * The two registrar reads (#164). `domain-check` is a `POST` and is still a read — Cloudflare documents
    * it as reserving nothing — so it sits here beside the `GET`s rather than being excluded for its verb.
    */
-  "/accounts/{}/registrar/domain-search": { scope: "registrar-domains.read", reference: null },
-  "/accounts/{}/registrar/domain-check": { scope: "registrar-domains.read", reference: null },
+  "/accounts/{}/registrar/domain-search": { scope: "Registrar Domains: Read", reference: null },
+  "/accounts/{}/registrar/domain-check": { scope: "Registrar Domains: Read", reference: null },
   /*
    * The purchase (#164). The `GET`s read an existing registration and its workflow; the `POST` creates one
-   * and is the only path in this table that costs money. `registrar-domains.admin` is **not** in
-   * `REQUIRED_SCOPES` yet, so the `POST` is expected to be refused by Cloudflare until it is — which is the
+   * and is the only path in this table that costs money. `Registrar Domains: Edit` is **not** in
+   * `REQUIRED_PERMISSIONS`, so the `POST` is expected to be refused by Cloudflare until it is — which is the
    * state this Node ships in deliberately.
    */
-  "/accounts/{}/registrar/registrations": { scope: "registrar-domains.read", reference: null },
-  "/accounts/{}/registrar/registrations/{}": { scope: "registrar-domains.read", reference: null },
+  "/accounts/{}/registrar/registrations": { scope: "Registrar Domains: Read", reference: null },
+  "/accounts/{}/registrar/registrations/{}": { scope: "Registrar Domains: Read", reference: null },
   "/accounts/{}/registrar/registrations/{}/registration-status": {
-    scope: "registrar-domains.read", reference: null,
+    scope: "Registrar Domains: Read", reference: null,
   },
   /*
    * Receiving on a subdomain (#163 L2). The rules endpoint is reachable with Email Routing's own
@@ -128,44 +122,44 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
    */
   // Measured refused under zone-settings.write on the #92 drill; the picker's Email Routing Rules Edit.
   // The zone's catch-all, taken over from the receiving step on an apex and put back (25 September 2026).
-  "/zones/{}/email/routing/rules/catch_all": { scope: "email-routing-rule.write", reference: "Email Routing Rules Write" },
-  "/zones/{}/email/routing/rules": { scope: "email-routing-rule.write", reference: null },
+  "/zones/{}/email/routing/rules/catch_all": { scope: "Email Routing Rules: Edit", reference: "Email Routing Rules Write" },
+  "/zones/{}/email/routing/rules": { scope: "Email Routing Rules: Edit", reference: null },
   // One rule, read and replaced whole (#258). The same scope as the list; measured with a PUT on 19 Sept.
-  "/zones/{}/email/routing/rules/{}": { scope: "email-routing-rule.write", reference: null },
+  "/zones/{}/email/routing/rules/{}": { scope: "Email Routing Rules: Edit", reference: null },
   // Read to know whether a send's outcome would be seen; `POST`ed to make it so (#222). `queues.read` was
   // measured refused for the write, so the scope is the write form and the read rides on it.
   "/accounts/{}/event_subscriptions/subscriptions": {
-    scope: "queues.write",
+    scope: "Queues: Edit",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/accounts/{}/queues/{}": {
-    scope: "queues.write",
+    scope: "Queues: Edit",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   // Listed to find this Node's own events queue by name, for the subscription it creates (#222).
   // Attaches this Worker as a consumer, when nothing consumes the events queue (#222 second half).
-  "/accounts/{}/queues/{}/consumers": { scope: "queues.write", reference: "Queues Write" },
+  "/accounts/{}/queues/{}/consumers": { scope: "Queues: Edit", reference: "Queues Write" },
   "/accounts/{}/queues": {
-    scope: "queues.write",
+    scope: "Queues: Edit",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
-  "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
+  "/zones": { scope: "Zone: Read", reference: "Zone Zone Read" },
   /*
    * Read to get the verdict; `POST /enable` is what turns a zone into a mail zone. The `PATCH` this Node
    * used to send answered success and changed nothing (measured, #92 drill), so the path is read-only now
    * and the write is the `/enable` row below.
    */
   "/zones/{}/email/routing": {
-    scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
+    scope: "Zone Settings: Edit", reference: "Zone Settings Write | Zone Settings Read",
   },
   // Measured with the operator's token to enable (`enabled: true, status: ready`); through the grant unmeasured.
-  "/zones/{}/email/routing/enable": { scope: "zone-settings.write", reference: null },
+  "/zones/{}/email/routing/enable": { scope: "Zone Settings: Edit", reference: null },
   "/zones/{}/email/routing/dns": {
-    scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
+    scope: "Zone Settings: Edit", reference: "Zone Settings Write | Zone Settings Read",
   },
   // No documented permission. Reached with a grant holding `email-sending.write`; nothing says it is needed.
-  "/zones/{}/email/sending/subdomains": { scope: "email-sending.write", reference: null },
-  "/zones/{}/email/sending/subdomains/{}/dns": { scope: "email-sending.write", reference: null },
+  "/zones/{}/email/sending/subdomains": { scope: "Email Sending: Edit", reference: null },
+  "/zones/{}/email/sending/subdomains/{}/dns": { scope: "Email Sending: Edit", reference: null },
 };
 
 describe("every Cloudflare endpoint this Node can reach", () => {
@@ -180,20 +174,16 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope).filter((one): one is string => one !== null));
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "email-routing-rule.write", "email-sending.write", "queues.write",
-      "registrar-domains.read", "zone-settings.write", "zone.read",
+      "Account Settings: Read", "Email Routing Rules: Edit", "Email Sending: Edit", "Queues: Edit",
+      "Registrar Domains: Read", "Zone Settings: Edit", "Zone: Read",
     ]);
 
     const asked = scopesAskedFor(grant);
-    /*
-     * `offline_access` authorizes no endpoint and belongs in neither direction of this check: it is what
-     * makes the token renewable, and a grant without it would reach every path above exactly once.
-     */
-    const idle = asked.filter((one) => !spent.has(one) && one !== "offline_access");
+    const idle = asked.filter((one) => !spent.has(one));
     expect(idle).toEqual([]);
-    // And the other direction: a path whose scope nobody asks for would fail at runtime, not here.
+    // And the other direction: a path whose permission nobody asks for would fail at runtime, not here.
     expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
-    expect(asked).toHaveLength(8);
+    expect(asked).toHaveLength(7);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -205,7 +195,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
     expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(8);
+    expect(scopesAskedFor(grant).length).toBe(7);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);

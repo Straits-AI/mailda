@@ -3,8 +3,8 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  beginAuthorization, completeAuthorization, registerClient,
 } from "../src/provider/cloudflare-grant.ts";
+import { holdToken } from "./support/provider-token.ts";
 import { putBackRule, routingRulesFor, takeOverRule } from "../src/provider/routing-rules.ts";
 
 /**
@@ -27,8 +27,7 @@ function atTime(millis: number): Ctx {
 
 beforeEach(async () => {
   await testEnv.CATALOG.batch([
-    testEnv.CATALOG.prepare("DELETE FROM provider_authorizations"),
-    testEnv.CATALOG.prepare("DELETE FROM provider_binding"),
+    testEnv.CATALOG.prepare("DELETE FROM provider_token"),
     testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
     testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
@@ -41,20 +40,7 @@ beforeEach(async () => {
     "INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
   ).bind(MAILBOX, ORG, "Enquiries", new Date(AT).toISOString()).run();
 
-  vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
-    access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
-  }), { status: 200, headers: { "content-type": "application/json" } }));
-  await registerClient(testEnv, atTime(AT), ORG, ADMIN, {
-    clientId: "a-client", clientSecret: "a-secret",
-    redirectUri: "https://node.example.test/oauth/cloudflare/callback",
-  });
-  const { state } = await beginAuthorization(testEnv, atTime(AT + 1000), ADMIN, ["a"]);
-  await completeAuthorization(testEnv, atTime(AT + 2000), ORG, {
-    state, code: "the-code", error: null, errorDescription: null,
-  });
-  await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = ? WHERE id = 1")
-    .bind("acc_rules").run();
-  vi.restoreAllMocks();
+  await holdToken(testEnv, "acc_rules", AT);
 });
 
 afterEach(() => vi.restoreAllMocks());

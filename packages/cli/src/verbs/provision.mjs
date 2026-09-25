@@ -60,7 +60,7 @@ export function domainChoices(zones) {
 }
 
 /** The zones the operator's token can see in this account, or an empty list when the read fails. */
-async function zonesOf(accountId, token) {
+export async function zonesOf(accountId, token) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`, {
     headers: { authorization: `Bearer ${token}` },
   }).catch(() => null);

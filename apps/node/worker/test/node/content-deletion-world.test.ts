@@ -97,19 +97,14 @@ interface Site {
  */
 const SITES: Site[] = [
   {
-    file: "src/provider/grant-oauth.ts",
-    target: "provider_authorizations",
+    file: "src/provider/credential.ts",
+    target: "provider_token",
     content: false,
-    why: "A consent in flight, discarded because the OAuth client was re-registered (#162, ADR 42). It "
-      + "carries a `state` nonce and a PKCE verifier and nothing else — no message, no attribution, no "
-      + "decision — and it is worthless by construction the moment the client changes: the verifier can only "
-      + "be exchanged by the client that issued the challenge, so a row surviving a re-registration is a "
-      + "secret that could never be spent. `WHERE consumed_at IS NULL` is what keeps it to those, and the "
-      + "reason is the audit trail rather than tidiness: a consumed row is the record that an authorization "
-      + "was completed, and deleting it would erase the difference between a consent that happened and one "
-      + "that never did. No legal-hold guard, because nothing here destroys anything a hold preserves — no "
-      + "mail, no evidence, no decision. The two provider.* audit entries are what record the registration "
-      + "and any grant it replaced.",
+    why: "The Node's Cloudflare API token, forgotten by an administrator (`DELETE /api/provider/token`, ADR "
+      + "42 as reopened). One row, holding a wrapped credential and the account it was bound to — no message, "
+      + "no attribution, no decision — and the token itself stays valid in Cloudflare until deleted there, "
+      + "so this destroys the Node's copy and nothing else. No legal-hold guard, because nothing here "
+      + "destroys anything a hold preserves. `provider.token_forgotten` records the act with the account.",
   },
   {
     file: "src/invitations.ts",

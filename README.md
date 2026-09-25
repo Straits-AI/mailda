@@ -26,16 +26,18 @@ curl -fsSL https://mailda.site/install.sh | bash
 ```
 
 It checks for git and Node 22, clones this repository, installs, signs you in to Cloudflare, asks which
-account if you have several and what to call the Node (`mailda` by default), deploys the Worker with its
-D1, R2 and queue, and applies the schema. Then it claims the Node from the same terminal: you choose the
+account if you have several, what to call the Node (`mailda` by default) and, if you want one, a hostname of
+your own for it (a zone from the list, then the label; Enter keeps `<worker>.<account>.workers.dev`), deploys
+the Worker with its D1, R2 and queue, attaches the hostname, and applies the schema. Then it claims the Node from the same terminal: you choose the
 first administrator's email and password, and the ten recovery codes are printed once. Then it asks one more
 question, which domain this Node should receive mail at, and with the same Cloudflare sign-in you already
 gave it enables routing on that subdomain, writes the rule to the Node, onboards the domain for sending,
 subscribes delivery events to the Node's queue, and reads each back. The Node receives when the install
 ends. No dashboard, no API token, no OAuth client ([receipt](./docs/receipts/wrangler-login-reach.md)).
 Decline a question and the Node's own screens do the same thing later. Nothing in your account changes
-before it asks. Connecting the Node with a grant of its own, for changing that setup from the browser
-later, is optional and lives on *Setup*. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
+before it asks. Giving the Node a Cloudflare credential of its own, an API token pasted once on *Setup*, is
+optional and only for changing that setup from the browser later; the OAuth client it replaced is gone
+([ADR 42](./Mailda-Full-Engineering-Blueprint.md), amended 26 September 2026). From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
 without a bash, run that in PowerShell.
 
 **After the install.** Open the Node. Until it has an address and mail routed to it, it shows the next
@@ -43,6 +45,14 @@ setup step and nothing else, with the command that does it; once it has both, th
 before the install could set it up finishes with `pnpm mailda setup` from the clone, which does the same
 receiving, sending and delivery-outcomes setup without deploying. Then send a message to the address you
 chose: it appears in the inbox, and that is the proof.
+
+**Adding people.** On *People*, mint an invitation for the person's sign-in address: the link is shown to
+you once and not mailed, you hand it over however you already trust, and the person opens it and chooses
+a password. They hold nothing until you grant them a relation on a mailbox, on the same screen, where each
+relation is written as what it lets them do. To receive at an address of their own, say
+`user1@example.com`, add that address to a mailbox they hold (*People* → *Add an address*); on a domain
+whose catch-all points at the Node nothing else is needed, and on a subdomain the Node writes the routing
+rule in the same act, or says exactly what to run if it could not.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
@@ -278,9 +288,9 @@ docs/mail-security.md                  what the Node establishes about a message
                                        verdict, stored and shown; and what is not built, in order
 docs/cloudflare-settings.md            every Cloudflare setting a Node needs, from Mailda or by hand, and
                                        the doctor check that verifies each
-docs/cloudflare-grant.md               why the Node is its own OAuth client, the guided ceremony, the five
-                                       connection states and which one it cannot observe, and what is
-                                       still owed
+docs/cloudflare-grant.md               the two credentials a Node acts with: wrangler's login carried on
+                                       one request at install, and the optional stored API token for the
+                                       browser; what is stored, and what is still owed
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED, do not edit

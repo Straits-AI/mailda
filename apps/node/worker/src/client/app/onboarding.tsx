@@ -21,13 +21,13 @@ import {
  *
  * | step | source | done when |
  * |:--|:--|:--|
- * | connected | `GET /api/provider` state | `consent_granted` with no scope missing |
+ * | connected | `GET /api/provider` state | `token_held` |
  * | an address | `doctor` `inbound_routing.ok` | an address is configured (that is what `ok` means there) |
  * | routed | `GET /api/provider/email-routing` | a domain enabled with no record still required |
  * | sending | `GET /api/provider/delivery-events` | a domain onboarded for sending, enabled, no record required |
  * | outcomes | the same | a subscription, enabled, with a queue and a consumer |
  *
- * The last three spend the grant (each is live Cloudflare calls and may renew a token), which is why the
+ * The last three spend the token (each is live Cloudflare calls and may renew a token), which is why the
  * Setup screen reads them and the shell's one-line notice reads only the first two. The notice is honest
  * about that: it names a step it can see is undone, and says nothing when both of its sources are fine.
  *
@@ -40,7 +40,7 @@ import {
 
 /**
  * `optional` is the connection's state when there is none: a Node the installer set up with wrangler's
- * login (25 September 2026) works without a grant, and the grant is for changing that setup from this
+ * login (25 September 2026) works without a token, and the token is for changing that setup from this
  * screen. It is not "to do", and it is left out of the count.
  */
 export type StepState = "done" | "todo" | "unknown" | "optional";
@@ -56,7 +56,7 @@ export interface Step {
 export interface Sources {
   provider: ProviderBinding | null;
   /**
-   * The audit trail's record of what was set up, read when there is no grant to read the account with.
+   * The audit trail's record of what was set up, read when there is no token to read the account with.
    * Live reads win when connected; a record is shown as a record, with its date.
    */
   provisioned?: Provisioned | null;
@@ -73,7 +73,7 @@ const recorded = (act: ProvisionedAct | null, absent: string): Pick<Step, "state
   ? { state: "todo", detail: absent }
   : {
     state: "done",
-    detail: `${act.domain}, set up ${act.authority === "operator" ? "at install" : "through the grant"} on `
+    detail: `${act.domain}, set up ${act.authority === "operator" ? "at install" : "through the held token"} on `
       + `${new Date(act.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} (a record, not a live read)`,
   };
 
@@ -83,14 +83,10 @@ export function onboardingSteps(sources: Sources): Step[] {
 
   const connected = provider === null
     ? notAsked("the connection state could not be read")
-    : provider.state === "consent_granted" && provider.scopesMissing.length === 0
-      ? { state: "done" as const, detail: provider.accountId === null ? "grant held; account not resolved yet" : `account ${provider.accountId}` }
-      : provider.state === "consent_granted"
-        ? { state: "todo" as const, detail: `grant held, but short of ${provider.scopesMissing.join(", ")}; authorize again` }
-        : provider.state === "no_client"
-          ? { state: "optional" as const, detail: "only for changing the Cloudflare setup from this screen" }
-          : { state: "todo" as const, detail: provider.state.replace(/_/g, " ") };
-  // Without a grant the account cannot be read, so nothing live was asked for; the audit trail's record of
+    : provider.state === "token_held"
+      ? { state: "done" as const, detail: `account ${provider.accountName ?? provider.accountId ?? "?"}` }
+      : { state: "optional" as const, detail: "only for changing the Cloudflare setup from this screen" };
+  // Without a token the account cannot be read, so nothing live was asked for; the audit trail's record of
   // the install's acts stands in. Live reads only exist once connected, which is why this needs no second guard.
   const record = connected.state !== "done" && provisioned !== null;
 
@@ -108,7 +104,7 @@ export function onboardingSteps(sources: Sources): Step[] {
     : routing === undefined
     ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
     : routing === null
-      ? notAsked("routing could not be read through the grant")
+      ? notAsked("routing could not be read with the held token")
       : routing.length === 0
         ? { state: "todo" as const, detail: "no domain to route yet" }
         : routing.some((row) => row.enabled === true && row.required.length === 0 && row.error === null)
@@ -121,7 +117,7 @@ export function onboardingSteps(sources: Sources): Step[] {
     : delivery === undefined
     ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
     : delivery === null
-      ? notAsked("delivery events could not be read through the grant")
+      ? notAsked("delivery events could not be read with the held token")
       : sendingRows.length > 0
         ? { state: "done" as const, detail: sendingRows.map((row) => row.domain).join(", ") }
         : { state: "todo" as const, detail: delivery.length === 0 ? "no domain onboarded for sending yet" : delivery.map((row) => `${row.domain}: ${row.sending === null ? "not onboarded for sending" : row.sending.error ?? (row.sending.enabled === true ? `${row.sending.required.length} record(s) still required` : "sending not enabled")}`).join("; ") };
@@ -132,7 +128,7 @@ export function onboardingSteps(sources: Sources): Step[] {
     : delivery === undefined
     ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
     : delivery === null
-      ? notAsked("delivery events could not be read through the grant")
+      ? notAsked("delivery events could not be read with the held token")
       : observedRows.length > 0
         ? { state: "done" as const, detail: observedRows.map((row) => row.domain).join(", ") }
         : { state: "todo" as const, detail: delivery.length === 0 ? "nothing to subscribe yet" : delivery.map((row) => `${row.domain}: ${row.error ?? (row.subscription === null ? "no subscription" : row.enabled !== true ? "subscription not enabled" : row.queueId === null ? "no queue" : "no consumer on the queue")}`).join("; ") };
@@ -205,9 +201,9 @@ export function ProgressList({ steps }: { steps: Step[] }) {
   );
 }
 
-/** The list at the top of Setup. Reads the grant-spending sources only once connected. */
+/** The list at the top of Setup. Reads the token-spending sources only once connected. */
 export function OnboardingProgress({ binding, provisioned }: { binding: ProviderBinding; provisioned: Provisioned }) {
-  const connected = binding.state === "consent_granted";
+  const connected = binding.state === "token_held";
   const doctor = useDoctor();
   const routing = useRouting();
   const delivery = useDeliveryEvents(connected);
@@ -223,7 +219,7 @@ export function OnboardingProgress({ binding, provisioned }: { binding: Provider
 
 /**
  * One line above every screen but Setup, while a step the shell can see cheaply is undone. It reads the
- * connection state, the audit trail's record and `doctor`, all cheap, and never the grant-spending sources:
+ * connection state, the audit trail's record and `doctor`, all cheap, and never the token-spending sources:
  * a glance at the inbox must not renew a token. It never nags about the connection, which is optional.
  */
 export function SetupUnfinished() {

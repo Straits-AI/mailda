@@ -41,33 +41,19 @@ vi.mock("@tanstack/react-router", () => ({
 
 const { Setup } = await import("../../src/client/app/screens/setup.tsx");
 
-const CEREMONY = {
-  steps: ["Open Manage Account → OAuth clients.", "Create a client."],
-  redirectUri: "https://node.example.test/oauth/cloudflare/callback",
-  scopes: [
-    { scope: "zone.read", why: "find the zone a domain lives in", readOnlyExists: true },
-    { scope: "dns.write", why: "write the MX records receiving needs", readOnlyExists: false },
-  ],
-  unmeasured: "The scope names are not measured against Cloudflare's own list.",
-  token: {
-    url: "https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=x",
-    permission: "OAuth App Registrations Write",
-    unmeasured: "The prefill is inferred.",
-  },
-};
+const PERMISSIONS = [
+  { name: "Zone Read", scope: "zone", why: "find the zone a domain lives in", optional: false },
+  { name: "Registrar Domains Read", scope: "account", why: "price a domain before buying it", optional: true },
+];
+const NOTE = "The permission names come from Cloudflare's token form and are not measured against it.";
 
 function binding(overrides: Record<string, unknown> = {}) {
   return {
-    state: "consent_granted",
-    evidence: "observed",
-    clientId: "cf-client",
-    redirectUri: CEREMONY.redirectUri,
-    registeredAt: "2026-09-01T00:00:00.000Z",
+    state: "token_held",
     accountId: "acc_one",
-    grantedAt: "2026-09-02T00:00:00.000Z",
-    scopesGranted: ["zone.read", "dns.write"],
-    scopesMissing: [],
-    refusedDetail: null,
+    accountName: "Example Ltd",
+    registeredAt: "2026-09-26T00:00:00.000Z",
+    verifiedAt: "2026-09-26T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -90,8 +76,11 @@ function mount(
     subscribed?: unknown;
     outcome?: unknown;
     refuse?: { status: number; body: unknown };
+    /** What `PUT /api/provider/token` answers, per call, in order; a 4xx body carries `message`. */
+    tokenAnswers?: Array<{ status: number; body: unknown }>;
   } = {},
 ) {
+  let tokenCall = 0;
   answerWith((call) => {
     if (call.path.startsWith("/api/provider/email-routing")) return Response.json(NO_RECORDS);
     if (call.path.startsWith("/api/provider/receiving") && call.method === "GET") {
@@ -110,10 +99,15 @@ function mount(
       return Response.json(parts.subscribed);
     }
     if (call.path === "/api/provider" && call.method === "GET") {
-      return Response.json({ provider: binding(parts.provider), provisioned: NOTHING_PROVISIONED, ceremony: CEREMONY });
+      return Response.json({ provider: binding(parts.provider), provisioned: NOTHING_PROVISIONED, permissions: PERMISSIONS, note: NOTE });
     }
-    if (call.path === "/api/provider/client" && call.method === "POST") {
-      return Response.json({ provider: binding({ ...parts.provider, state: "awaiting_consent", clientId: "cf-made" }) });
+    if (call.path === "/api/provider/token" && call.method === "PUT") {
+      const answer = parts.tokenAnswers?.[tokenCall] ?? { status: 200, body: { provider: binding() } };
+      tokenCall += 1;
+      return Response.json(answer.body, { status: answer.status });
+    }
+    if (call.path === "/api/provider/token" && call.method === "DELETE") {
+      return Response.json({ provider: binding({ state: "no_token", accountId: null, accountName: null, registeredAt: null, verifiedAt: null }) });
     }
     return undefined;
   });
@@ -240,18 +234,6 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     expect(alert.textContent).toContain("read the plan again before confirming it");
   });
 
-  it("offers no authorization until there is a client to authorize", async () => {
-    /*
-     * A consent needs a registered client. Offering the button first produces a refusal whose only cause is
-     * that the operator followed the screen in the order it was printed — which is the specific way a setup
-     * screen wastes somebody's afternoon.
-     */
-    mount({ provider: { state: "no_client", clientId: null, accountId: null, grantedAt: null } });
-
-    expect(await screen.findByLabelText("Client ID")).toBeTruthy();
-    expect(screen.queryByText("start the authorization")).toBeNull();
-  });
-
   it("subscribes a sending domain's delivery events with the digest it was shown (#222)", async () => {
     const proposal = {
       domain: "mail.example.com", zone: "example.com", zoneId: "z1", sendingDomain: "mail.example.com",
@@ -297,22 +279,68 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
   });
 });
 
-describe("the one-token path", () => {
+/**
+ * The connection is one API token (26 September 2026), held by the Node and never shown again. What would
+ * render plausibly and be wrong: a permission list written in this file rather than the Node's; a token
+ * kept in the field after a refusal; the account-id field offered before the Node said it was needed; a
+ * "forget" that did not reach the route.
+ */
+describe("the connection, one API token", () => {
   beforeEach(reset);
+  const unconnected = { state: "no_token", accountId: null, accountName: null, registeredAt: null, verifiedAt: null };
 
-  it("sends the token once to POST /api/provider/client and clears the field, whatever the answer", async () => {
-    mount({ provider: { state: "no_client", clientId: null, accountId: null } });
-    const field = await screen.findByLabelText("API token");
-    fireEvent.change(field, { target: { value: "tok-once" } });
-    fireEvent.click(screen.getByText("create the client"));
+  it("renders the Node's permission list, marks the optional one, and shows the note", async () => {
+    mount({ provider: unconnected });
+    expect(await screen.findByText("Zone Read")).toBeTruthy();
+    expect(screen.getByText("Registrar Domains Read")).toBeTruthy();
+    expect(screen.getByText("Optional.")).toBeTruthy();
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    expect(screen.getByText("open the token page").getAttribute("href")).toBe("https://dash.cloudflare.com/profile/api-tokens");
+    expect(screen.queryByLabelText("Account id")).toBeNull();
+  });
+
+  it("sends the token to PUT /api/provider/token and clears the field, whatever the answer", async () => {
+    mount({ provider: unconnected, tokenAnswers: [{ status: 422, body: { error: "E_PROVIDER_TOKEN_REFUSED", message: "E_PROVIDER_TOKEN_REFUSED  the token is not active\n  fix      make a new one" } }] });
+    fireEvent.change(await screen.findByLabelText("API token"), { target: { value: "tok-once" } });
+    fireEvent.click(screen.getByText("connect"));
     await waitFor(() => {
-      const sent = calls.find((call) => call.method === "POST" && call.path === "/api/provider/client");
+      const sent = calls.find((call) => call.method === "PUT" && call.path === "/api/provider/token");
       expect(sent, "the token was never sent").toBeDefined();
       expect(sent!.body).toEqual({ token: "tok-once" });
     });
-    await waitFor(() => expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe(""));
-    // The link is the Node's, not this file's: a URL written here would be the one that goes stale.
-    expect(screen.getByText("open Cloudflare's token page with the permission filled in").getAttribute("href")).toBe(CEREMONY.token.url);
+    expect((await screen.findByRole("alert")).textContent).toContain("make a new one");
+    expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe("");
+  });
+
+  it("asks for the account only after the Node said the token sees several, and resends with it", async () => {
+    mount({
+      provider: unconnected,
+      tokenAnswers: [
+        { status: 422, body: { error: "E_PROVIDER_ACCOUNT_AMBIGUOUS", message: "E_PROVIDER_ACCOUNT_AMBIGUOUS  the token can see 2 accounts\n  fix      pass accountId" } },
+        { status: 200, body: { provider: binding() } },
+      ],
+    });
+    fireEvent.change(await screen.findByLabelText("API token"), { target: { value: "tok-two" } });
+    fireEvent.click(screen.getByText("connect"));
+    const account = await screen.findByLabelText("Account id");
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-two" } });
+    fireEvent.change(account, { target: { value: "1e0170aaabc90ecf5f466128d1f0466a" } });
+    fireEvent.click(screen.getByText("connect"));
+    await waitFor(() => {
+      const puts = calls.filter((call) => call.method === "PUT" && call.path === "/api/provider/token");
+      expect(puts).toHaveLength(2);
+      expect(puts[1]!.body).toEqual({ token: "tok-two", accountId: "1e0170aaabc90ecf5f466128d1f0466a" });
+    });
+  });
+
+  it("shows the held token's account and forgets it through DELETE", async () => {
+    mount();
+    const held = await screen.findByText(/Connected to account/);
+    expect(held.textContent).toContain("Connected to account Example Ltd (acc_one) since");
+    fireEvent.click(screen.getByText("forget this token"));
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === "DELETE" && call.path === "/api/provider/token")).toBe(true);
+    });
   });
 });
 

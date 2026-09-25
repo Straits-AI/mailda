@@ -1086,7 +1086,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Whether this Node holds a Cloudflare grant, and the guided steps to give it one
+   * Whether this Node holds a Cloudflare API token, what has been set up, and the permissions a token needs
    *
    * `GET /api/provider`
    */
@@ -1095,30 +1095,21 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Supply the OAuth client id and secret. The secret is never returned, and this discards any grant the previous client obtained
+   * Verify an API token with Cloudflare, bind it to the one account it sees, and hold it wrapped. The token is never returned
    *
-   * `PUT /api/provider/client`
+   * `PUT /api/provider/token`
    */
-  async putProviderClient(body: z.infer<typeof S.providerClientRequest>): Promise<z.infer<typeof S.providerStateResponse>> {
-    return await this.json("PUT", "/api/provider/client", {}, body) as z.infer<typeof S.providerStateResponse>;
+  async putProviderToken(body: z.infer<typeof S.providerTokenRequest>): Promise<z.infer<typeof S.providerStateResponse>> {
+    return await this.json("PUT", "/api/provider/token", {}, body) as z.infer<typeof S.providerStateResponse>;
   }
 
   /**
-   * Create the OAuth client through Cloudflare's API from an API token used once and never stored, with this Node's own redirect URI and scopes, and register it. Discards any grant the previous client obtained
+   * Forget the held token. The token stays valid in Cloudflare until deleted there
    *
-   * `POST /api/provider/client`
+   * `DELETE /api/provider/token`
    */
-  async postProviderClient(body: z.infer<typeof S.providerClientCreateRequest>): Promise<z.infer<typeof S.providerStateResponse>> {
-    return await this.json("POST", "/api/provider/client", {}, body) as z.infer<typeof S.providerStateResponse>;
-  }
-
-  /**
-   * Begin a consent: answers with the URL to send a browser to
-   *
-   * `POST /api/provider/authorize`
-   */
-  async postProviderAuthorize(body: z.infer<typeof S.providerAuthorizeRequest>): Promise<z.infer<typeof S.providerAuthorizeResponse>> {
-    return await this.json("POST", "/api/provider/authorize", {}, body) as z.infer<typeof S.providerAuthorizeResponse>;
+  async deleteProviderToken(body?: unknown): Promise<z.infer<typeof S.providerStateResponse>> {
+    return await this.json("DELETE", "/api/provider/token", {}, body) as z.infer<typeof S.providerStateResponse>;
   }
 
   /**
@@ -1304,33 +1295,6 @@ export class GeneratedClient extends Transport {
    */
   async postProviderSubscription(body: z.infer<typeof S.providerSubscriptionRequest>): Promise<z.infer<typeof S.providerSubscriptionProposalResponse>> {
     return await this.json("POST", "/api/provider/subscription", {}, body) as z.infer<typeof S.providerSubscriptionProposalResponse>;
-  }
-
-  /**
-   * Ask Cloudflare which account this grant covers, and record it when the answer is one
-   *
-   * `POST /api/provider/resolve-account`
-   */
-  async postProviderResolveAccount(body?: unknown): Promise<z.infer<typeof S.providerAccountResponse>> {
-    return await this.json("POST", "/api/provider/resolve-account", {}, body) as z.infer<typeof S.providerAccountResponse>;
-  }
-
-  /**
-   * Record that Cloudflare's consent screen did not list the operator's account — their report, which this Node cannot observe
-   *
-   * `POST /api/provider/unselectable`
-   */
-  async postProviderUnselectable(body?: unknown): Promise<z.infer<typeof S.providerStateResponse>> {
-    return await this.json("POST", "/api/provider/unselectable", {}, body) as z.infer<typeof S.providerStateResponse>;
-  }
-
-  /**
-   * Where Cloudflare sends the authorization response. Guarded by the state nonce, not a session
-   *
-   * `GET /oauth/cloudflare/callback`
-   */
-  async getOauthCloudflareCallback(): Promise<z.infer<typeof S.providerConsentResponse>> {
-    return await this.json("GET", "/oauth/cloudflare/callback", {}, undefined) as z.infer<typeof S.providerConsentResponse>;
   }
 
   /**

@@ -1,6 +1,6 @@
 import { doctor } from "./doctor.mjs";
 import { resolve } from "node:path";
-import { activeVersionFrom, contractingAmong, deployExitCode, promotionVerdict, servedVersionOf, versionIdFrom } from "../deploy-parse.mjs";
+import { activeVersionFrom, contractingAmong, deployExitCode, hostnameIn, promotionVerdict, servedVersionOf, versionIdFrom } from "../deploy-parse.mjs";
 import { planFor, renderPlan, resourcesFrom as resourcesFromConfig } from "../deploy-plan.mjs";
 import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, configFor, useConfig } from "../support.mjs";
 /**
@@ -335,6 +335,8 @@ export async function deploy(argv) {
     const uploaded = capture("npx", ["wrangler", "deploy", ...WRANGLER_ARGS]);
     if (uploaded.status !== 0) fail("the first deploy failed.");
     installedUrl = /https:\/\/[a-z0-9.-]+\.workers\.dev/i.exec(uploaded.text)?.[0] ?? null;
+    // `wrangler deploy` attaches a custom domain in the config itself (measured 25 September 2026).
+    await hostnameLive(hostnameIn(deployConfig.text));
     process.stdout.write("\n== applying migrations for the first time\n");
     if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...WRANGLER_ARGS]) !== 0) {
       fail("applying migrations failed. The Worker is deployed against an empty schema — re-run to finish.");
@@ -621,6 +623,18 @@ export async function deploy(argv) {
   }
 
   /*
+   * A custom domain on an existing Worker: `versions upload` says routes must be applied with `wrangler
+   * triggers deploy`, and measured 25 September 2026 that is exactly right — the canary path keeps a domain
+   * the Worker already has, and this call is what adds a new one (live within about ten seconds).
+   */
+  const host = hostnameIn(deployConfig.text);
+  if (host !== null) {
+    process.stdout.write("\n== attaching the hostname\n");
+    if (run("npx", ["wrangler", "triggers", "deploy", ...WRANGLER_ARGS]) !== 0) fail(`attaching ${host} failed. The new version is live on its workers.dev address.`);
+    await hostnameLive(host);
+  }
+
+  /*
    * Unconditional now, where it used to depend on `--url` being passed. The canary path refuses without an
    * origin long before this line, so there is no branch left in which it could be absent — and this run is
    * the one that covers what the canary could not: Durable Object code, which runs the promoted version only
@@ -656,6 +670,17 @@ export async function deploy(argv) {
    * code into the exit; a caller in the middle of a sequence reads it and goes on.
    */
   return deployExitCode(after);
+}
+
+/** Waits for a custom domain to answer `/health`, up to a minute, and says which it was. */
+async function hostnameLive(host) {
+  if (host === null) return;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const ok = await fetch(`https://${host}/health`).then((r) => r.ok).catch(() => false);
+    if (ok) { process.stdout.write(`   hostname  https://${host} answers\n`); return; }
+    await new Promise((settle) => setTimeout(settle, 5000));
+  }
+  process.stdout.write(`   hostname  https://${host} does not answer yet; DNS and the certificate can take a few minutes. The workers.dev address works meanwhile.\n`);
 }
 
 export async function preflight(argv) {

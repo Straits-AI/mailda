@@ -40,7 +40,7 @@ function sources(dir: string): string[] {
 const ALL = sources(src);
 const relative = (path: string) => path.slice(src.length + 1);
 
-describe("the Cloudflare grant is reachable from nothing that carries mail", () => {
+describe("the Cloudflare credential is reachable from nothing that carries mail", () => {
   it("scans the whole source tree, so nothing below passes by finding no files", () => {
     // Anti-vacuity. A broken walk would make every assertion here agree with everything.
     expect(ALL.length).toBeGreaterThan(50);
@@ -65,35 +65,36 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
 
   it("has its table read by the migration, the module and the doctor, and nothing else", () => {
     /*
-     * The second door. An import is not the only way in — raw SQL against `provider_binding` would reach the
+     * The second door. An import is not the only way in — raw SQL against `provider_token` would reach the
      * same row without naming the module, which is how a closed world over imports alone would be evaded.
      */
     const readers = ALL
-      .filter((path) => readFileSync(path, "utf8").includes("provider_binding"))
+      .filter((path) => readFileSync(path, "utf8").includes("provider_token"))
       .map(relative)
       .sort();
-    // The grant module is three siblings behind the `cloudflare-grant.ts` barrel since 20 September 2026; the
-    // barrel itself reads nothing, and the world is still closed over exactly the module, the migration and
-    // the doctor.
+    // The credential module is three siblings behind the `cloudflare-grant.ts` barrel since 20 September
+    // 2026 (the token replaced the OAuth client on the 26th); the barrel itself reads nothing, and the world
+    // is still closed over exactly the module, the migration and the doctor.
     expect(readers).toEqual([
       "doctor/node.ts", "migrate.ts",
-      "provider/account-routing.ts", "provider/cloudflare-api.ts", "provider/grant-oauth.ts",
+      "provider/account-routing.ts", "provider/cloudflare-api.ts", "provider/credential.ts",
     ]);
   });
 
-  it("keeps a refused grant out of the verdict, which is what makes a revocation harmless", () => {
+  it("keeps the token out of the verdict, which is what makes forgetting or revoking it harmless", () => {
     /*
      * The drill's other half. `doctor`'s verdict escalates on `refuse` and `degraded` only, and `mailda
-     * deploy` reads that verdict — so a grant finding at either severity would fail a deploy for a
-     * revocation an operator performed on purpose.
+     * deploy` reads that verdict — so a credential finding at either severity would fail a deploy for a
+     * revocation an operator performed on purpose, or for a Node installed with wrangler's consent that
+     * never held a token at all.
      *
      * Asserted against the source because the live drill cannot be re-run in CI: the finding is built with
-     * `severity: "report"` and carries `ok` false, which is the pair that means *worth acting on, nothing
-     * broken*. Confirmed live on 10 September 2026 — `doctor` exited 0 with the grant refused.
+     * `severity: "report"`. Confirmed live on 10 September 2026 with the grant this token replaced —
+     * `doctor` exited 0 with it refused.
      */
     const doctor = readFileSync(join(src, "doctor/node.ts"), "utf8");
-    const finding = /check: "provider_binding",[\s\S]{0,2000}?severity: "[a-z]+"/.exec(doctor)?.[0] ?? "";
-    expect(finding, "the provider_binding finding could not be found").toContain("check: \"provider_binding\"");
+    const finding = /check: "provider_token",[\s\S]{0,2000}?severity: "[a-z]+"/.exec(doctor)?.[0] ?? "";
+    expect(finding, "the provider_token finding could not be found").toContain("check: \"provider_token\"");
     expect(finding).toContain('severity: "report"');
     expect(finding).not.toContain('severity: "degraded"');
     expect(finding).not.toContain('severity: "refuse"');

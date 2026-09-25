@@ -1,5 +1,5 @@
 import { operatorOf } from "./cloudflare-api.ts";
-import { providerStatus } from "./grant-oauth.ts";
+import { providerStatus } from "./credential.ts";
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
@@ -316,8 +316,8 @@ export async function onboardReceiving(
       creates: proposal.creates.map((one) => `${one.content} (priority ${one.priority})`),
       address: normalized,
       mailboxId: mailbox.id,
-      // Which credential did this: the Node's grant, or an operator's own token carried on the request.
-      authority: operatorOf(ctx) === null ? "grant" : "operator",
+      // Which credential did this: the Node's stored token, or an operator's own carried on the request.
+      authority: operatorOf(ctx) === null ? "token" : "operator",
       // True when the zone's catch-all is what routes here, so adding an address later writes no rule.
       catchAll,
     },
@@ -376,7 +376,7 @@ export async function onboardReceiving(
     const after: CatchAllRule = { action: "worker", destinations: [worker], enabled: true };
     await auditedBatch(env, ctx, orgId, {
       action: "provider.catch_all_taken_over", outcome: "ok", actorUserId, subject: proposal.zone ?? domain,
-      detail: { zone: proposal.zone, before, after, authority: operatorOf(ctx) === null ? "grant" : "operator" },
+      detail: { zone: proposal.zone, before, after, authority: operatorOf(ctx) === null ? "token" : "operator" },
     }, (entry) => [entry]);
     await cloudflarePut(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules/catch_all`, {
       name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [worker] }],
@@ -467,7 +467,7 @@ export async function ensureLiteralRule(
  * The address is written first, in the batch with its audit entry, so the Node knows the recipient before
  * anything can deliver one. Then the routing: nothing to write when this domain's catch-all was taken over
  * (`receiving_onboarded` with `catchAll: true`, the latest entry for the domain); a literal rule otherwise,
- * through whatever credential the request carries; and when none can — no grant, no operator token, or
+ * through whatever credential the request carries; and when none can — no stored token, no operator token, or
  * Cloudflare refuses — the answer names it and the next step, because an address the Node knows and
  * Cloudflare does not route is silent, which is the one state this refuses to leave unsaid.
  */
@@ -503,12 +503,12 @@ export async function addAddress(
   } else {
     routing = await (async () => {
       /*
-       * Said first, in its own words: a Node with no grant and no operator token has no credential at all,
-       * and `zoneFor` would report the account as unresolved, which names the wrong next step (measured in
-       * a browser on 25 September 2026: the line pointed at resolve-account on a Node that had never connected).
+       * Said first, in its own words: a Node with no stored token and no operator token has no credential at
+       * all, and `zoneFor` would report the account as unresolved, which names the wrong next step (measured
+       * in a browser on 25 September 2026: the line pointed at a resolve step on a Node that had never connected).
        */
-      if (operatorOf(ctx) === null && (await providerStatus(env)).state !== "consent_granted") {
-        return { state: "not_written" as const, detail: "this Node holds no Cloudflare grant and no operator credential came with the request" };
+      if (operatorOf(ctx) === null && (await providerStatus(env)).state !== "token_held") {
+        return { state: "not_written" as const, detail: "this Node holds no Cloudflare token and no operator credential came with the request" };
       }
       const carrying = await zoneFor(env, ctx, orgId, domain).catch((error: Error) => ({ ok: false as const, error: error.message }));
       if (!carrying.ok) return { state: "not_written" as const, detail: carrying.error };

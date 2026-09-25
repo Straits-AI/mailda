@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import {
-  checkSchema, checkEvidenceBucket, planCheck, checkProviderBinding, checkInboundRouting,
+  checkSchema, checkEvidenceBucket, planCheck, checkProviderToken, checkInboundRouting,
   checkInboundAuthentication, checkTransportAdapters,
 } from "./doctor/node.ts";
 import { sendingEventsConsumerCheck, checkDeliveryVisibility, checkBreakers } from "./doctor/delivery.ts";
@@ -234,7 +234,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkButlerPauses(env, claim?.org_id ?? null)),
     planCheck(),
     ...(await checkTransportAdapters(env)),
-    ...(await checkProviderBinding(env)),
+    ...(await checkProviderToken(env)),
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
     ...(await checkInboundAuthentication(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),

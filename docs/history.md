@@ -3336,3 +3336,26 @@ verified from the account afterwards. Sending and the delivery-events subscripti
 from the run before. The Node's first address is `hello@whymelabs.com`; every other address at the apex
 is filed if a mailbox holds it and bounced otherwise. What remains unmeasured live: the catch-all put-back,
 and a message actually arriving, which is the founder's next act.
+
+## One credential, not two; a hostname of one's own; and how a person gets in (26 September 2026)
+
+The founder, looking at the Setup screen's API-token block after the Node received, asked whether it was
+still needed, and answered his own question: the OAuth client and an API token each cost one dashboard
+form, so keep one, the simpler. ADR 42 is reopened accordingly. The private client, the consent, the
+hourly refresh, the five connection states and the scope ceremony are struck; the Node's own credential is
+a stored API token, verified with Cloudflare, bound to the one account it can see, wrapped like the sending
+token already was, and forgotten on request. The hygiene argument the decision had made against a pasted
+token is answered by what a token is: account-restricted, permissions visible, an optional expiry, one
+revocation list, no state machine. The three OAuth receipts stay as measurements, marked superseded. None
+of this touches the ordinary path, which is wrangler's login carried on one request at install.
+
+The second question was a hostname of the Node's own, which had been dashboard-only because changing it
+also changed the OAuth redirect URI. With the redirect gone, it was measured on a scratch Worker: a first
+`wrangler deploy` attaches a custom domain, the canary path keeps it, `wrangler triggers deploy` adds one
+to a Worker already deployed, and deleting the Worker leaves no DNS behind
+(`docs/receipts/worker-custom-domain.md`). The install and the upgrade ask for one.
+
+The third was how a new person gets in, and the answer was already built and undocumented at the place a
+person would look: an invitation minted on People, shown once and not mailed; a password chosen on the
+link; nothing held until a relation is granted; and an address of their own added to a mailbox they hold,
+which under the apex catch-all is the whole act. The README and the shell doc say so now.

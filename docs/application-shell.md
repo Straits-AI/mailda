@@ -649,21 +649,17 @@ Three things the screen must not round off, each with a test:
 - **Refusals arrive whole.** They are four-part and the last part is what to do next, which here is the
   difference between finishing setup and going back to the dashboard to guess.
 
-**The one-token path** (24 September 2026). Section 1 offers two ways to the same client. The first: one
-API token with a single permission, pasted into a password field, and the Node creates the client itself
-through `POST /api/provider/client` with the redirect URI and scopes it publishes, so nothing on the
-dashboard form can be mistyped. The link to Cloudflare's token page, the permission's name and what is
-unverified about the prefill all come from the ceremony, never from this file. The field is cleared whether
-or not the call worked, and the account-id field appears only after Cloudflare said the token sees several
-accounts. The second is the twelve-field form, kept for an operator who wants no token to exist.
-
-**The connection is optional** (25 September 2026). Since the install sets receiving, sending and delivery
-outcomes up with wrangler's login, section 1 no longer stands between a new Node and its first message. It
-says what a grant is for, changing the Cloudflare setup from this screen later, and offers the same two ways
-to make one. The progress list's first step reads *connected, optional*, and the three steps the screen
-used to read through the grant fall back to `provisioned` from `GET /api/provider` when there is no grant:
-the latest receiving, sending and subscription act from the audit trail, with its date and which credential
-did it. That is a record of an act, not a live read, and the row says so in those words.
+**The connection is optional, and it is one API token** (26 September 2026). Since the install sets
+receiving, sending and delivery outcomes up with wrangler's login, section 1 no longer stands between a new
+Node and its first message. It says what a credential of the Node's own is for, changing the Cloudflare
+setup from this screen later, prints the permissions to give a token and why each is asked for, and takes
+the token in a password field cleared whether or not the call worked. The state beside it is the Node's:
+`no_token`, or `token_held` with the account and when it was verified, with a button that forgets the
+token; a token revoked in Cloudflare is found out at the next act, whose refusal says so. The OAuth client, the consent and the two-way ceremony this
+section used to carry were removed that day (ADR 42); the three steps the screen reads through the
+credential fall back to `provisioned` from `GET /api/provider` when there is none: the latest receiving,
+sending and subscription act from the audit trail, with its date and which credential did it. That is a
+record of an act, not a live read, and the row says so in those words.
 
 **Progress, derived and never stored** (24 September 2026). The screen is five numbered sections and each
 knew its own state, but nothing said *two of five, next is receiving*, and nothing outside Setup said setup
@@ -757,6 +753,13 @@ that writes it. The last is said in those words: an address that files and nothi
 receiving step exists to prevent, and a green row over it would be the lie.
 
 ### Inviting somebody (#83)
+
+How a person gets in, in one paragraph, because it was asked (26 September 2026): an administrator mints an
+invitation on this screen for the person's sign-in address (`POST /api/invitations`); the link is shown
+once and is not mailed, the administrator delivers it however they already trust; the person opens it and
+chooses a password (`POST /api/invitations/redeem`, the one public route here); they then hold nothing
+until an administrator grants a relation on a mailbox below. To receive at an address of their own, the
+address is added to a mailbox they hold (*Add an address*), which under an apex catch-all is the whole act.
 
 The screen used to say it could not create a person, which was honest and not a resting state. A Node had
 exactly one account and nothing else wrote to `users`, so Layer 3's whole premise had one person to exercise

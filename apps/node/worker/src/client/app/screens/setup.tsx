@@ -1,14 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Copyable, Nothing } from "../chrome.tsx";
+import { Nothing } from "../chrome.tsx";
 import { OnboardingProgress } from "../onboarding.tsx";
 import {
-  beginConsent, createProviderClient, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
+  forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, registerProviderToken,
   routingRulesOn, takeOverRule,
-  resolveProviderAccount, sendingProposal, setProviderClient, subscribeDeliveryEvents, subscriptionProposal,
+  sendingProposal, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
-  type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type RoutingRules, type SendingProposal,
+  type Permission, type ProviderBinding, type ReceivingProposal, type RoutingRules, type SendingProposal,
   type SubscriptionProposal,
 } from "../api.ts";
 
@@ -24,9 +24,8 @@ import {
  * rest were a CLI because nobody had written the screen.
  *
  * So the standard this is held to is not "an administrator can do it". It is **an operator who has never
- * opened a terminal can finish setup**, and the two steps that remain in the dashboard are the two that
- * cannot leave it: a client this Node is not allowed to create for itself, and a consent only a human may
- * give.
+ * opened a terminal can finish setup**. Since 26 September 2026 the one dashboard act is an API token the
+ * operator makes and pastes here; the OAuth client and its consent are gone, one act instead of three.
  *
  * ## Nothing here decides anything
  *
@@ -50,296 +49,116 @@ function Refusal({ said }: { said: string | null }) {
   return <pre className="notice bad butler-findings" role="alert">{said}</pre>;
 }
 
-const WORDS: Record<ProviderBinding["state"], string> = {
-  no_client: "This Node has no Cloudflare client yet.",
-  awaiting_consent: "The client is registered. Nobody has authorized it.",
-  account_not_selectable: "Cloudflare's consent screen offered no account to choose.",
-  consent_granted: "Connected.",
-  grant_refused: "Cloudflare refused this grant.",
-};
-
 /**
- * The one-token path: the operator makes an API token with one permission, and the Node creates the client
- * itself with the redirect URI and scopes it publishes, so nothing on the dashboard form can be mistyped.
- * The token is sent once and the Node never stores it; the field is cleared whether or not it worked.
+ * The one connection: an API token the operator made in Cloudflare, handed to the Node once and held wrapped.
+ *
+ * The permissions are the Node's list (`GET /api/provider`), never this file's: a list written here would
+ * be the one that goes stale. No prefilled link is offered, measured three ways not to work for a permission
+ * Cloudflare added recently; the operator ticks the names the table shows. The field is cleared whether or
+ * not the call worked, and the account-id field appears only after the Node said the token sees several.
  */
-function ClientFromToken({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Promise<void> }) {
+function Connection({ binding, permissions, note, refresh }: {
+  binding: ProviderBinding; permissions: Permission[]; note: string; refresh: () => Promise<void>;
+}) {
   const [token, setToken] = useState("");
   const [accountId, setAccountId] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const held = binding.state === "token_held";
 
-  async function create() {
+  async function connect() {
     setProblem(null);
     setBusy(true);
-    const outcome = await createProviderClient(token.trim(), accountId.trim() === "" ? undefined : accountId.trim());
+    const outcome = await registerProviderToken(token.trim(), accountId.trim() === "" ? undefined : accountId.trim());
     setBusy(false);
     setToken("");
     if (!outcome.ok) { setProblem(outcome.message); return; }
-    await done();
+    setAccountId("");
+    await refresh();
   }
 
-  // Only asked for once Cloudflare said the token sees several accounts; before that it is noise.
+  async function forget() {
+    setProblem(null);
+    setBusy(true);
+    const outcome = await forgetProviderToken();
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await refresh();
+  }
+
   const ambiguous = problem !== null && problem.includes("E_PROVIDER_ACCOUNT_AMBIGUOUS");
 
   return (
-    <section className="setup-block" aria-label="Create the client from a token">
-      <h2>With one API token</h2>
+    <section className="setup-block" aria-label="Optional connection">
+      <h2>Optional: connect this Node to Cloudflare from this screen</h2>
       <p>
-        Create one API token in Cloudflare with a single permission, <span className="mono">{ceremony.token.permission}</span>,
-        and paste it here. This Node creates its own OAuth client with the exact redirect address and
-        permissions listed below, uses the token for that one request, and never stores it. Delete the token
-        afterwards.
+        The install set receiving, sending and delivery outcomes up with the consent wrangler already had, so
+        this Node works without a credential of its own. Connecting it is only for changing that from here:
+        another receiving domain, a sending domain, taking over a routing rule.
       </p>
-      <p>
-        <a className="linkish" href={ceremony.token.url} target="_blank" rel="noreferrer">open Cloudflare's token page with the permission filled in</a>
-      </p>
-      <p className="dim">{ceremony.token.unmeasured}</p>
-      <Refusal said={problem} />
-      <div className="limits-ask">
-        <label className="field-row" htmlFor="setup-api-token">
-          <span>API token</span>
-          <input
-            id="setup-api-token" type="password" className="mono" value={token} autoComplete="off"
-            onChange={(event) => setToken(event.target.value)}
-          />
-        </label>
-        {ambiguous ? (
-          <label className="field-row" htmlFor="setup-account-id">
-            <span>Account id</span>
-            <input
-              id="setup-account-id" className="mono" value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
-            />
-          </label>
-        ) : null}
-        <button type="button" className="primary" onClick={() => void create()} disabled={busy || token.trim() === ""}>
-          {busy ? "creating…" : "create the client"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function Client({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Promise<void> }) {
-  const [clientId, setClientId] = useState("");
-  const [secret, setSecret] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    setProblem(null);
-    setSaving(true);
-    const outcome = await setProviderClient(clientId.trim(), secret.trim());
-    setSaving(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setClientId("");
-    setSecret("");
-    await done();
-  }
-
-  return (
-    <section className="setup-block" aria-label="Create the client">
-      <h2>By hand. Create a client, in Cloudflare</h2>
-      <p className="dim">
-        The longer path, with no token at any point. Twelve fields; what to put in each is below.
-      </p>
-      {/*
-        The steps are the Node's, not this file's. `GET /api/provider` returns them, the CLI prints the same
-        list, and a second copy written here would be the one that goes stale — which on a setup screen means
-        an operator following instructions to a place that has moved.
-      */}
-      <ol className="setup-steps">
-        {ceremony.steps.map((step) => <li key={step}>{step}</li>)}
-      </ol>
-
-      <p>
-        Cloudflare will ask where to send you back. It is this, exactly:{" "}
-        <Copyable text={ceremony.redirectUri} label="address" />
-      </p>
-
-      <p>Tick these permissions, and no others:</p>
-      <div className="scroller">
-        <table>
-          <thead>
-            <tr><th scope="col">Permission</th><th scope="col">What this Node does with it</th></tr>
-          </thead>
-          <tbody>
-            {ceremony.scopes.map((one) => (
-              <tr key={one.scope}>
-                <td className="mono">{one.scope}</td>
-                <td>
-                  {one.why}
-                  {/*
-                    Four of these have no read-only form in Cloudflare's vocabulary. Saying so where the
-                    write permission appears is the difference between a Node that asked for more than it
-                    needed and one that took the only shape on offer.
-                  */}
-                  {one.readOnlyExists ? null : (
-                    <> <span className="dim">Cloudflare offers no read-only version of this one.</span></>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <p className="dim">{ceremony.unmeasured}</p>
-
-      <Refusal said={problem} />
-      <div className="limits-ask">
-        <label className="field-row" htmlFor="setup-client-id">
-          <span>Client ID</span>
-          <input
-            id="setup-client-id" className="mono" value={clientId}
-            onChange={(event) => setClientId(event.target.value)}
-          />
-        </label>
-        <label className="field-row" htmlFor="setup-client-secret">
-          <span>Client secret</span>
-          {/*
-            `type="password"`, and the reason is not the operator's own eyes. Setup is the screen most likely
-            to be shown to somebody else — shared, projected, screen-recorded for support — and this is the
-            one field on it that authorizes anything.
-          */}
-          <input
-            id="setup-client-secret" type="password" className="mono" value={secret}
-            onChange={(event) => setSecret(event.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className="primary"
-          onClick={() => void save()}
-          disabled={saving || clientId.trim() === "" || secret.trim() === ""}
-        >
-          {saving ? "saving…" : "save this client"}
-        </button>
-      </div>
-      <p className="dim">
-        The secret is sealed and never shown again — not here, and not by any route. Saving a different client
-        discards whatever the last one was granted.
-      </p>
-    </section>
-  );
-}
-
-function Consent(
-  { ceremony, refresh }: { ceremony: ProviderCeremony; refresh: () => Promise<void> },
-) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [until, setUntil] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-
-  async function begin() {
-    setProblem(null);
-    const outcome = await beginConsent(ceremony.scopes.map((one) => one.scope));
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setUrl(outcome.value.authorize.url);
-    setUntil(outcome.value.authorize.expiresAt);
-  }
-
-  async function noAccount() {
-    setProblem(null);
-    const outcome = await reportUnselectable();
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    await refresh();
-  }
-
-  return (
-    <section className="setup-block" aria-label="Authorize">
-      <h2>Then authorize, in Cloudflare</h2>
-      <Refusal said={problem} />
-      {url === null ? (
-        <p>
-          <button type="button" className="primary" onClick={() => void begin()}>start the authorization</button>{" "}
-          <span className="dim">Nothing is granted by asking. This only produces the address to visit.</span>
-        </p>
+      {held ? (
+        <>
+          <p>
+            Connected to account {binding.accountName ?? <span className="dim">unnamed</span>}{" "}
+            (<span className="mono">{binding.accountId ?? "?"}</span>)
+            {binding.registeredAt === null ? "" : ` since ${new Date(binding.registeredAt).toLocaleString()}`}.
+          </p>
+          <Refusal said={problem} />
+          <button type="button" className="quiet" onClick={() => void forget()} disabled={busy}>
+            {busy ? "forgetting…" : "forget this token"}
+          </button>
+          <p className="dim">Forgetting it here does not delete it in Cloudflare; that is yours to do on the token page.</p>
+        </>
       ) : (
         <>
-          {/*
-            A link the operator clicks, rather than a window this screen opens.
-            
-            The address arrives from a request, so by the time it exists the click that asked for it is over
-            — and a popup opened outside a gesture is blocked by Safari, which presents as a button that does
-            nothing. A link is also the honest shape: it says where it goes before it goes there.
-          */}
           <p>
-            <a href={url} target="_blank" rel="noreferrer">Open Cloudflare's consent screen</a>{" "}
-            <span className="dim">
-              opens in a new tab
-              {until === null ? "" : ` — valid until ${new Date(until).toLocaleTimeString()}, once`}
-            </span>
+            Create one API token in Cloudflare with exactly these permissions, restricted to this account, and
+            paste it below. This Node holds it wrapped under its credential key and never shows it again.
           </p>
+          <div className="scroller">
+            <table>
+              <thead>
+                <tr><th scope="col">Permission</th><th scope="col">Scope</th><th scope="col">What this Node does with it</th></tr>
+              </thead>
+              <tbody>
+                {permissions.map((one) => (
+                  <tr key={one.name}>
+                    <td className="mono">{one.name}</td>
+                    <td>{one.scope}</td>
+                    <td>{one.why}{one.optional ? <> <span className="dim">Optional.</span></> : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="dim">{note}</p>
           <p>
-            Cloudflare sends you back to this Node when you agree. Then:{" "}
-            <button type="button" className="linkish" onClick={() => void refresh()}>check again</button>
+            <a className="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">open the token page</a>
           </p>
-          <p className="dim">
-            If the consent screen lists no account to choose from, somebody with access to the Cloudflare
-            account has turned off public OAuth app access. This Node cannot see that — Cloudflare sends no
-            error — so it has to be told:{" "}
-            <button type="button" className="linkish" onClick={() => void noAccount()}>
-              it offered me no account
+          <Refusal said={problem} />
+          <div className="limits-ask">
+            <label className="field-row" htmlFor="setup-api-token">
+              <span>API token</span>
+              <input
+                id="setup-api-token" type="password" className="mono" value={token} autoComplete="off"
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </label>
+            {ambiguous ? (
+              <label className="field-row" htmlFor="setup-account-id">
+                <span>Account id</span>
+                <input
+                  id="setup-account-id" className="mono" value={accountId}
+                  onChange={(event) => setAccountId(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <button type="button" className="primary" onClick={() => void connect()} disabled={busy || token.trim() === ""}>
+              {busy ? "connecting…" : "connect"}
             </button>
-          </p>
+          </div>
         </>
       )}
-    </section>
-  );
-}
-
-function Connected({ provider, refresh }: { provider: ProviderBinding; refresh: () => Promise<void> }) {
-  const [problem, setProblem] = useState<string | null>(null);
-  const [found, setFound] = useState<number | null>(null);
-
-  async function resolve() {
-    setProblem(null);
-    const outcome = await resolveProviderAccount();
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setFound(outcome.value.account.found);
-    await refresh();
-  }
-
-  return (
-    <section className="setup-block" aria-label="The connection">
-      <h2>Connected</h2>
-      <dl className="setup-facts">
-        <dt>Cloudflare account</dt>
-        <dd className="mono">
-          {provider.accountId ?? <span className="dim">not recorded</span>}
-          {/*
-            An account is resolved during the consent now. It can still be null — a grant covering more than
-            one account records none rather than guessing, which is the ADR 40 distinction between a refusal
-            and an unknown, and the only honest answer when the deployment plan reads this field.
-          */}
-          {provider.accountId === null ? (
-            <> <button type="button" className="linkish" onClick={() => void resolve()}>ask again</button></>
-          ) : null}
-        </dd>
-        <dt>Authorized</dt>
-        <dd className="mono">
-          {provider.grantedAt === null
-            ? <span className="dim">unknown</span>
-            : new Date(provider.grantedAt).toLocaleString()}
-        </dd>
-        <dt>Permissions granted</dt>
-        <dd className="mono">
-          {provider.scopesGranted === null || provider.scopesGranted.length === 0
-            ? <span className="dim">Cloudflare named none</span>
-            : provider.scopesGranted.join(", ")}
-        </dd>
-      </dl>
-      {found !== null && found !== 1 ? (
-        <p className="notice" role="status">
-          {found === 0
-            ? "This grant can see no account."
-            : `This grant covers ${found} accounts, so none was recorded — a Node that guessed would be `
-              + "guessing about where mail goes."}
-        </p>
-      ) : null}
-      <Refusal said={problem} />
     </section>
   );
 }
@@ -916,91 +735,30 @@ export function Setup() {
   if (provider.isPending) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="loading" /></>;
   if (provider.isError) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="failed" detail={provider.error.message} /></>;
 
-  const { provider: binding, provisioned, ceremony } = provider.data;
-  const connected = binding.state === "consent_granted";
+  const { provider: binding, provisioned, permissions, note } = provider.data;
+  const connected = binding.state === "token_held";
 
   return (
     <>
       <header className="ledger-head">
         <h1>Setup</h1>
-        <p className="dim">
-          {WORDS[binding.state]}
-          {/*
-            `reported` states are somebody's account of what they saw, and this Node saying so is the
-            difference between a fact it checked and a fact it was handed. The contract makes the field
-            impossible to omit; this is where that pays.
-          */}
-          {binding.evidence === "reported" ? " Reported by an administrator, not observed by this Node." : ""}
-        </p>
+        <p className="dim">{connected ? "Connected." : "This Node holds no Cloudflare credential of its own."}</p>
       </header>
 
       <OnboardingProgress binding={binding} provisioned={provisioned} />
       {connected ? null : (
         <p className="dim">
           Receiving, sending and delivery outcomes are set up at install, with the consent wrangler already
-          had, or later with <span className="mono">mailda provider</span>. Connecting this Node, below, is
+          had, or later with <span className="mono">mailda setup</span>. Connecting this Node, below, is
           what lets you change them from this screen.
         </p>
       )}
 
-      {binding.state === "grant_refused" && binding.refusedDetail !== null
-        ? <Refusal said={binding.refusedDetail} />
-        : null}
-
-      {binding.state === "account_not_selectable" ? (
-        <p className="notice bad" role="alert">
-          Cloudflare offered no account on the consent screen. Somebody with access to the account has turned
-          off public OAuth app access; it is in Manage Account → Preferences. This Node cannot see that
-          setting, so it cannot tell you when it changes back — try authorizing again once it has.
-        </p>
-      ) : null}
-
-      {connected && binding.scopesMissing.length > 0 ? (
-        /*
-          A grant that works and is short a scope this Node asks for now. The consent block below the
-          connection is the same one a first authorization uses; the sentence is what makes an operator
-          who was told "connected" understand why one thing on this screen still refuses.
-        */
-        <>
-          <p className="notice" role="status">
-            This grant was made before this Node asked for{" "}
-            <span className="mono">{binding.scopesMissing.join(", ")}</span>. Add those to the OAuth client
-            in the Cloudflare dashboard first — a client may only request what it was registered with, and
-            consenting before that is refused as <span className="mono">invalid_scope</span> — then authorize
-            again below.
-          </p>
-          <Consent ceremony={ceremony} refresh={refresh} />
-        </>
-      ) : null}
-      {connected
-        ? <Connected provider={binding} refresh={refresh} />
-        : (
-          <>
-            <section className="setup-block" aria-label="Optional connection">
-              <h2>Optional: let this Node act in Cloudflare from this screen</h2>
-              <p>
-                The install set receiving, sending and delivery outcomes up with the consent wrangler already
-                had, so this Node works without a grant of its own. Connecting it is only for changing that
-                from here: another receiving domain, a sending domain, buying a domain, taking over a routing
-                rule. Two ways, below: one API token, or a client made by hand.
-              </p>
-            </section>
-            <ClientFromToken ceremony={ceremony} done={refresh} />
-            <Client ceremony={ceremony} done={refresh} />
-            {/*
-              Shown from `awaiting_consent` on, and not before. A consent needs a client; offering the button
-              first would produce a refusal whose only cause is that the operator followed the screen in the
-              order it was printed.
-            */}
-            {binding.state === "no_client"
-              ? null
-              : <Consent ceremony={ceremony} refresh={refresh} />}
-          </>
-        )}
+      <Connection binding={binding} permissions={permissions} note={note} refresh={refresh} />
 
       {/*
-        Receiving and sending are only reachable once there is a grant. Rendering the forms unreachably would
-        be nineteen routes' problem over again in a different shape: a control that exists and cannot work.
+        Receiving and sending are only reachable once there is a credential. Rendering the forms unreachably
+        would be nineteen routes' problem over again in a different shape: a control that exists and cannot work.
       */}
       {connected ? <Receiving refresh={refresh} /> : <Inert title="Receiving" />}
       {connected ? <Sending /> : <Inert title="Sending" />}
@@ -1012,8 +770,8 @@ export function Setup() {
       */}
       {connected ? (
         <p className="dim">
-          Buying a domain through this grant is not on this screen yet. It spends money, and who may press
-          that button is a decision this Node has not been given.
+          Buying a domain through this credential is not on this screen yet. It spends money, and who may
+          press that button is a decision this Node has not been given.
         </p>
       ) : null}
     </>

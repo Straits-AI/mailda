@@ -20,8 +20,8 @@ vi.mock("@tanstack/react-router", () => ({
 
 const { Gate } = await import("../../src/client/app/screens/first-run.tsx");
 
-const binding = { state: "no_client", evidence: "observed", clientId: null, redirectUri: null, registeredAt: null, accountId: null, grantedAt: null, scopesGranted: null, scopesMissing: [], refusedDetail: null };
-const ceremony = { steps: ["x"], redirectUri: "https://n/cb", scopes: [{ scope: "zone.read", why: "w", readOnlyExists: true }], unmeasured: "u", token: { url: "https://dash.cloudflare.com/", permission: "p", unmeasured: "u" } };
+const binding = { state: "no_token", accountId: null, accountName: null, registeredAt: null, verifiedAt: null };
+const permissions = [{ name: "Zone Read", scope: "zone", why: "w", optional: false }];
 const none = { receiving: null, sending: null, deliveryEvents: null };
 const routed = { receiving: { domain: "mail.example.test", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: "hello@mail.example.test" }, sending: null, deliveryEvents: null };
 
@@ -29,7 +29,7 @@ function mount(parts: { addressOk: boolean; provisioned?: unknown; providerStatu
   answerWith((call) => {
     if (call.path === "/api/provider") {
       if (parts.providerStatus !== undefined) return Response.json({ error: "not_found" }, { status: parts.providerStatus });
-      return Response.json({ provider: binding, provisioned: parts.provisioned ?? none, ceremony });
+      return Response.json({ provider: binding, provisioned: parts.provisioned ?? none, permissions, note: "n" });
     }
     if (call.path === "/api/doctor") {
       return Response.json({ verdict: "ok", claimed: true, at: "2026-09-25T00:00:00.000Z", findings: [

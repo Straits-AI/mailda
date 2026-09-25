@@ -9,7 +9,7 @@ import { withOperator } from "../provider/cloudflare-api.ts";
  *
  * `x-cloudflare-token` and `x-cloudflare-account`: `mailda install` sends wrangler's login token and the
  * account it settled, so a Node can be set up to receive, send and observe outcomes at install with a
- * consent the operator already gave, before or instead of the Node's own grant. Administrator-only routes
+ * consent the operator already gave, before or instead of the Node's own token. Administrator-only routes
  * carry it, the token is used for the request and never stored, and the audit entry says `operator` did it.
  * Headers rather than body fields so the proposal `GET`s can carry it without a token in a query string.
  */
@@ -29,101 +29,57 @@ function operatorCtx(request: Request, clock: Ctx): Ctx {
 
 export const provider = {
   /**
-   * The Node's own Cloudflare grant (#162 L1, ADR 42).
+   * The Node's own Cloudflare credential (#162 L1, ADR 42 as reopened on 26 September 2026).
    *
-   * `GET  /api/provider`             — the connection state, the guided ceremony, and no secret
-   * `PUT  /api/provider/client`      — the client id and secret the operator created in the dashboard
-   * `POST /api/provider/client`      — create the client through Cloudflare's API from a token used once
-   * `POST /api/provider/authorize`   — mint a state and a PKCE challenge, and answer with the URL
-   * `POST /api/provider/unselectable`— record that the consent screen did not list the operator's account
-   * `GET  /oauth/cloudflare/callback`— where Cloudflare sends the authorization response
+   * `GET    /api/provider`        — the state, what has been set up, the permissions to tick, and no secret
+   * `PUT    /api/provider/token`  — verify an API token, bind it to the one account it sees, hold it wrapped
+   * `DELETE /api/provider/token`  — forget it
    *
-   * Administrator-gated except the callback, and for a stronger reason than the transport's: this decides
-   * which Cloudflare account the Node can act in, and every later provisioning act inherits it.
-   *
-   * **The callback is not gated, and that is deliberate rather than an omission.** It arrives from
-   * Cloudflare through the operator's browser, and requiring a Mailda session would fail whenever the
-   * consent was completed in a different browser profile — which is common, because the operator may hold
-   * their Cloudflare account somewhere other than where they administer their mail. What protects it is the
-   * `state` nonce: a callback carrying a state this Node did not issue is refused, and one carrying a state
-   * already spent is refused by the row rather than by a check. That is what the parameter is *for*, and a
-   * session check would be a second gate that does not answer the same question.
+   * Administrator-gated, and for a stronger reason than the transport's: this decides which Cloudflare
+   * account the Node can act in, and every later provisioning act inherits it.
    */
-  "GET /api/provider": async ({ env, url, who }) => {
+  "GET /api/provider": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    const { providerStatus, ceremony, provisionedFacts } = await import("../provider/cloudflare-grant.ts");
+    const { providerStatus, provisionedFacts, REQUIRED_PERMISSIONS, PROVIDER_NOTE } = await import("../provider/cloudflare-grant.ts");
     return Response.json({
       provider: await providerStatus(env),
-      // What the install or a grant has been observed to set up, from the audit trail (structured, dated).
+      // What the install or a token has been observed to set up, from the audit trail (structured, dated).
       provisioned: await provisionedFacts(env, who.orgId),
-      /*
-       * The ceremony is returned beside the state rather than from a second route, because an operator in
-       * `no_client` needs the steps and an operator in `consent_granted` needs to be able to check that the
-       * redirect URI Cloudflare holds is still the one this Node is reachable on.
-       *
-       * `url.origin` is the one thing that knows what hostname the operator actually reached this Node on.
-       */
-      ceremony: ceremony(`${url.origin}/oauth/cloudflare/callback`),
+      // The list an operator ticks in Cloudflare's token form, beside the state, because an operator in
+      // `no_token` needs it and one in `token_held` checks a replacement against it.
+      permissions: REQUIRED_PERMISSIONS,
+      note: PROVIDER_NOTE,
     });
   },
 
-  "PUT /api/provider/client": async ({ request, env, clock, url, who }) => {
+  "PUT /api/provider/token": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const { registerClient, providerStatus } = await import("../provider/cloudflare-grant.ts");
-    await registerClient(env, clock, who.orgId, who.userId, {
-      clientId: String(body.clientId ?? ""),
-      clientSecret: String(body.clientSecret ?? ""),
-      /*
-       * Derived here and not taken from the body. A redirect URI the caller could choose is a redirect URI
-       * an attacker could choose, and the whole value of storing it is that the exchange sends what the
-       * authorization used — which has to be this Node's own hostname or Cloudflare refuses it anyway.
-       */
-      redirectUri: `${url.origin}/oauth/cloudflare/callback`,
+    const body = (await request.json().catch(() => ({}))) as { token?: unknown; accountId?: unknown };
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    if (token === "") {
+      throw unprocessable("E_PROVIDER_TOKEN_MISSING", {
+        what: "no token was sent",
+        why: "a connection is a token; there is nothing to verify without one",
+        fix: "send { token } — the value Cloudflare showed once when the token was created",
+      });
+    }
+    const { registerToken } = await import("../provider/cloudflare-grant.ts");
+    const provider = await registerToken(env, clock, who.orgId, who.userId, {
+      token, ...(typeof body.accountId === "string" ? { accountId: body.accountId } : {}),
     });
-    return Response.json({ provider: await providerStatus(env) });
+    return Response.json({ provider });
   },
 
-  "POST /api/provider/client": async ({ request, env, clock, url, who }) => {
+  "DELETE /api/provider/token": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const { createClientThroughApi, providerStatus } = await import("../provider/cloudflare-grant.ts");
-    await createClientThroughApi(env, clock, who.orgId, who.userId, {
-      token: String(body.token ?? ""),
-      accountId: typeof body.accountId === "string" ? body.accountId : null,
-      // Derived, never taken from the body, for `PUT /api/provider/client`'s reason.
-      redirectUri: `${url.origin}/oauth/cloudflare/callback`,
-    });
-    return Response.json({ provider: await providerStatus(env) });
-  },
-
-  "POST /api/provider/authorize": async ({ request, env, clock, who }) => {
-    if (!(await isAdmin(env, who.orgId, who.userId))) {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    /*
-     * `REQUIRED_SCOPE_NAMES` unless the caller names its own. The scopes cannot be left out: a request
-     * naming none is granted none — measured, the consent screen reads "0 total permissions" with
-     * `Authorize` disabled, because a client's registered scopes are a ceiling rather than a default.
-     *
-     * The override exists because these names come from wrangler's vocabulary rather than from
-     * `GET /oauth/scopes`, so an operator whose account offers a different set needs a way to say so
-     * without waiting for a release.
-     */
-    const asked = Array.isArray(body.scopes) ? body.scopes.map((one) => String(one)) : [];
-    const { REQUIRED_SCOPE_NAMES } = await import("../provider/cloudflare-grant.ts");
-    const scopes = asked.length > 0 ? asked : [...REQUIRED_SCOPE_NAMES];
-    const { beginAuthorization } = await import("../provider/cloudflare-grant.ts");
-    const begun = await beginAuthorization(env, clock, who.userId, scopes);
-    // The URL, not a redirect: the client decides whether to navigate or to show the operator the link.
-    return Response.json({ authorize: { url: begun.url, expiresAt: begun.expiresAt } });
+    const { forgetToken } = await import("../provider/cloudflare-grant.ts");
+    return Response.json({ provider: await forgetToken(env, clock, who.orgId, who.userId) });
   },
 
   "GET /api/provider/email-routing": async ({ request, env, clock, who }) => {
@@ -131,7 +87,7 @@ export const provider = {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     /*
-     * A `GET` that **spends the grant** — it may renew a token and it calls Cloudflare three times per
+     * A `GET` that **spends the credential** — it calls Cloudflare three times per
      * domain. Declared `operator` in the agent registry for that reason: the derivation rule would
      * otherwise offer it as an ordinary read, and an agent polling it would be spending the account's
      * authority to answer a question nothing it may do depends on.
@@ -145,7 +101,7 @@ export const provider = {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     /*
-     * `operator` for `/api/provider/email-routing`'s reason: it spends the grant. This is the surface
+     * `operator` for `/api/provider/email-routing`'s reason: it spends the credential. This is the surface
      * `doctor`'s `sending_events_consumer` points at, which is why that finding can now name which of the
      * three objects is missing instead of saying the question is unanswerable from here.
      */
@@ -401,79 +357,5 @@ export const provider = {
         env, operatorCtx(request, clock), who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
       ),
     });
-  },
-
-  "POST /api/provider/resolve-account": async ({ request, env, clock, who }) => {
-    if (!(await isAdmin(env, who.orgId, who.userId))) {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-    /*
-     * The first route that spends the grant. Separate from `GET /api/provider` because that one describes
-     * the binding and this one *uses* it — a read that renewed a token as a side effect of being displayed
-     * would make every status page a consumer of the account's authority.
-     */
-    const { resolveAccount } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ account: await resolveAccount(env, operatorCtx(request, clock), who.orgId) });
-  },
-
-  "POST /api/provider/unselectable": async ({ env, clock, who }) => {
-    if (!(await isAdmin(env, who.orgId, who.userId))) {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-    const { reportUnselectable, providerStatus } = await import("../provider/cloudflare-grant.ts");
-    await reportUnselectable(env, clock, who.orgId, who.userId);
-    return Response.json({ provider: await providerStatus(env) });
-  },
-
-  "GET /oauth/cloudflare/callback": async ({ request, env, clock, url }) => {
-    const { completeAuthorization } = await import("../provider/cloudflare-grant.ts");
-    const state = url.searchParams.get("state");
-    if (state === null || state === "") {
-      throw unprocessable("E_PROVIDER_NO_STATE", {
-        what: "the callback carried no state parameter",
-        why: "the state is what distinguishes a consent this Node started from one somebody else did, so a "
-          + "callback without one is not a callback it can act on",
-        fix: "start the connection from this Node's own screen rather than by visiting this URL",
-      });
-    }
-    /*
-     * The org is read from the claim rather than from a session, because there is no session here — see the
-     * route header. A Node has one organization, and the audit entry has to land in it.
-     */
-    const claim = await env.CATALOG.prepare(
-      // The same predicate every other unauthenticated path uses. `id = 1` was wrong: a row exists before
-      // it is claimed, so it would have found an org for a Node nobody had finished installing.
-      "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-    ).first<{ org_id: string }>().catch(() => null);
-    if (claim === null) {
-      throw unprocessable("E_PROVIDER_UNCLAIMED", {
-        what: "this Node has not been claimed, so a consent has nowhere to be recorded",
-        why: "the grant's audit entry belongs to an organization, and an unclaimed Node has none",
-        fix: "complete the install first; a Cloudflare grant is not part of claiming a Node",
-      });
-    }
-    const outcome = await completeAuthorization(env, clock, claim.org_id, {
-      state,
-      code: url.searchParams.get("code"),
-      error: url.searchParams.get("error"),
-      errorDescription: url.searchParams.get("error_description"),
-    });
-    /*
-     * HTML for a browser, JSON for everything else.
-     *
-     * This route is reached by the operator's browser — that is what a redirect URI is — and it answered
-     * with `{"consent":{"ok":true,…}}`. The last step of connecting a Node showed raw JSON to somebody who
-     * had been reading English up to that point, and offered no way back.
-     *
-     * `Accept` rather than a second path, so `mailda provider` and this suite still parse what they parse.
-     */
-    if ((request.headers.get("accept") ?? "").includes("text/html")) {
-      const { consentPage } = await import("../ui.ts");
-      return new Response(consentPage(outcome), {
-        status: 200,
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
-    return Response.json({ consent: outcome });
   },
 } satisfies Some;
