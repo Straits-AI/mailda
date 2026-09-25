@@ -404,15 +404,18 @@ export const OAUTH_CLIENTS_PERMISSION = "OAuth App Registrations Write";
 
 /**
  * Cloudflare's token page with that permission prefilled, by its documented template URL
- * (`fundamentals/api/how-to/account-owned-token-template`). The account form, because this Node does not
- * know its account id before it holds a grant; the dashboard asks which. The key is the permission's label
- * without its verb, inferred from the documented pattern and not measured on this permission — which is
- * what `token.unmeasured` says.
+ * (`fundamentals/api/how-to/account-owned-token-template`). The **user-token** form: the account form
+ * (`?to=/:account/api-tokens`) opened an account picker and then a blank form on the first real run
+ * (25 September 2026), while the user form carries `accountId=*` and puts the account choice inside the
+ * prefilled form. This Node does not know its account id before it holds a grant, so `*`. The key is the
+ * permission's label without its verb, inferred from the documented pattern and not measured on this
+ * permission — which is what `token.unmeasured` says.
  */
 export function tokenTemplateUrl(): string {
   const keys = JSON.stringify([{ key: "oauth_app_registrations", type: "edit" }]);
-  return "https://dash.cloudflare.com/?to=/:account/api-tokens"
-    + `&permissionGroupKeys=${encodeURIComponent(keys)}&name=${encodeURIComponent("Mailda setup, delete after use")}`;
+  return "https://dash.cloudflare.com/profile/api-tokens"
+    + `?permissionGroupKeys=${encodeURIComponent(keys)}&accountId=*&zoneId=all`
+    + `&name=${encodeURIComponent("Mailda setup, delete after use")}`;
 }
 
 export function ceremony(redirectUri: string): {
@@ -429,7 +432,8 @@ export function ceremony(redirectUri: string): {
       url: tokenTemplateUrl(),
       permission: OAUTH_CLIENTS_PERMISSION,
       unmeasured: "The link prefills the permission by a key inferred from Cloudflare's documented pattern and "
-        + "not measured on this permission: check the one permission is ticked before creating the token. "
+        + "not measured on this permission: if the form opens without it, pick Account → OAuth App "
+        + "Registrations → Write yourself, and restrict the token to this account. "
         + "While it exists the token can edit or delete every OAuth client in the account, not only this one; "
         + "this Node spends it on one request and never stores it, and you delete it afterwards.",
     },

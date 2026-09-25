@@ -3190,3 +3190,17 @@ a digit jumps, Enter takes the row, and the list collapses to the question and i
 stays readable. It answers the account, the Node in `upgrade`, and in `install` the choice between
 upgrading an existing Node and naming a new one, which used to be made by typing a name that happened to
 match. Driven in a pseudo-terminal: down then Enter picks the second row.
+
+### Five things the first real run found (25 September 2026)
+
+Running the update on a Mac, the founder found five things in a row. The chooser left a stray line and
+crept right on every arrow press: raw mode turns off the terminal's output processing, so a bare newline
+moves down without returning to the first column; the chooser writes `\r\n` now. Ctrl-C at a raw-mode
+prompt printed a stack, because raw mode takes SIGINT from the terminal and the prompt rejects with
+"cancelled" instead; the dispatcher says *cancelled* once, for every verb, and exits 130. The scripts
+checked for git, Node 22 and pnpm and pointed at download pages; they now print the one command that
+installs the missing tool on this machine, by which package manager is present, and do not run it. The
+token link, in Cloudflare's account form, opened an account picker and then a blank form; the ceremony now
+uses the documented user-token form with `accountId=*`, which puts the account inside the prefilled form,
+and says what to tick if the prefill still fails. And the inbox's search hint sat too close to the pill;
+it moved from a fifth to half a rem, the spacing scale's next step.

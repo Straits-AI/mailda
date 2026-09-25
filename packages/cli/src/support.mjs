@@ -486,17 +486,21 @@ export function choose(prompt, options, { initial = 0 } = {}) {
   }
   let index = Math.max(0, Math.min(initial, options.length - 1));
   const lines = options.length + 1;
-  const draw = (first) => {
-    if (!first) process.stdout.write(`\x1b[${lines}A`);
-    process.stdout.write(`\x1b[2K${prompt}\n`);
+  /*
+   * `\r\n`, not `\n`. Raw mode turns off the terminal's output processing along with its input processing, so
+   * a bare newline moves down a row without returning to the first column, and each redraw stepped one
+   * column further right and left a stray line behind (seen on the first real run, 25 September 2026).
+   */
+  const draw = () => {
+    process.stdout.write(`\x1b[2K\r${prompt}\r\n`);
     options.forEach((one, i) => {
       const label = typeof one === "string" ? one : one.label;
-      process.stdout.write(`\x1b[2K   ${i === index ? "›" : " "} ${label}\n`);
+      process.stdout.write(`\x1b[2K\r   ${i === index ? "›" : " "} ${label}\r\n`);
     });
   };
-  draw(true);
   return new Promise((done, reject) => {
     process.stdin.setRawMode(true);
+    draw();
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
     const finish = (result, error) => {
@@ -504,7 +508,7 @@ export function choose(prompt, options, { initial = 0 } = {}) {
       process.stdin.pause();
       process.stdin.removeListener("data", onData);
       // Collapse the list to the question and its answer.
-      process.stdout.write(`\x1b[${lines}A\x1b[J`);
+      process.stdout.write(`\x1b[${lines}A\x1b[J\r`);
       if (error !== undefined) { reject(error); return; }
       const picked = options[result];
       process.stdout.write(`${prompt} ${typeof picked === "string" ? picked : picked.label}\n`);
@@ -518,12 +522,10 @@ export function choose(prompt, options, { initial = 0 } = {}) {
       else if (key === "\x1b[B" || key === "j") index = (index + 1) % options.length;
       else if (/^[1-9]$/.test(key) && Number(key) <= options.length) index = Number(key) - 1;
       else return;
-      draw(false);
+      process.stdout.write(`\x1b[${lines}A`);
+      draw();
     };
     process.stdin.on("data", onData);
-  }).catch((error) => {
-    if (error.message === "cancelled") { process.stdout.write("\n"); process.exit(130); }
-    throw error;
   });
 }
 

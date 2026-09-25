@@ -1108,7 +1108,7 @@ tbody a { font-size: .8rem; }
    narrow screen rather than squeezing the pill. */
 /* Set off from the pill by the gap it would otherwise close: a hint touching the field's edge reads as part
    of the control, and this one describes it. */
-.search-hint { flex: 1 1 100%; margin: .2rem 0 0; padding-left: 1rem; font-size: .78rem; }
+.search-hint { flex: 1 1 100%; margin: .5rem 0 0; padding-left: 1rem; font-size: .78rem; }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
 .message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
