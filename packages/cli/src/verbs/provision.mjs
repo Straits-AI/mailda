@@ -47,9 +47,27 @@ export function catchAllLine(catchAll) {
 
 export async function provisionNode({ origin, cookie, accountId, token, yes, ask }) {
   const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false };
-  const domain = (yes ? process.env.MAILDA_DOMAIN ?? "" : await ask("   which domain should this Node receive mail at? (Enter to skip): ")).trim().toLowerCase();
+  /*
+   * The skip is a word, not an empty line. Twice on 25 September 2026 this question answered itself with
+   * an empty line the moment it was asked, on a Mac, after a two-minute deploy, and the run said "skipped"
+   * as if a person had chosen that. The cause is not reproduced on Linux. So an empty answer that arrives
+   * faster than anyone could press a key is treated as noise: said aloud, and asked again, three times at
+   * most, and "skip" is what skipping takes.
+   */
+  let domain = "";
+  if (yes) domain = (process.env.MAILDA_DOMAIN ?? "").trim().toLowerCase();
+  else {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const asked = Date.now();
+      const answer = (await ask("   which domain should this Node receive mail at? (type skip to skip): ")).trim().toLowerCase();
+      if (answer !== "" && answer !== "skip") { domain = answer; break; }
+      if (answer === "skip") break;
+      const elapsed = Date.now() - asked;
+      process.stdout.write(`   an empty line arrived ${elapsed} ms after the question${elapsed < 400 ? ", before anyone could have typed" : ""}; asking again.\n`);
+    }
+  }
   if (domain === "") {
-    process.stdout.write("   skipped; the Setup screen in the Node, or `mailda provider`, does this later.\n");
+    process.stdout.write("   skipped; the Setup screen in the Node, or `mailda setup`, does this later.\n");
     return done;
   }
   const address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`   address to receive at [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
