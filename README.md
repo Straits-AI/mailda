@@ -38,6 +38,12 @@ before it asks. Connecting the Node with a grant of its own, for changing that s
 later, is optional and lives on *Setup*. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
 without a bash, run that in PowerShell.
 
+**After the install.** Open the Node. Until it has an address and mail routed to it, it shows the next
+setup step and nothing else, with the command that does it; once it has both, the inbox. A Node claimed
+before the install could set it up finishes with `pnpm mailda setup` from the clone, which does the same
+receiving, sending and delivery-outcomes setup without deploying. Then send a message to the address you
+chose: it appears in the inbox, and that is the proof.
+
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
 Node registers a `ButlerRun` Workflow under its own name), and the name you give decides: an existing name

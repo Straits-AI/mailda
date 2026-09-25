@@ -39,13 +39,14 @@ export async function wranglerToken() {
 }
 
 export async function provisionNode({ origin, cookie, accountId, token, yes, ask }) {
-  const done = { receiving: null, sending: null, deliveryEvents: null };
+  const done = { receiving: null, sending: null, deliveryEvents: null, address: null };
   const domain = (yes ? process.env.MAILDA_DOMAIN ?? "" : await ask("   which domain should this Node receive mail at? (Enter to skip): ")).trim().toLowerCase();
   if (domain === "") {
     process.stdout.write("   skipped; the Setup screen in the Node, or `mailda provider`, does this later.\n");
     return done;
   }
   const address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`   address to receive at [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
+  done.address = address;
 
   const call = async (method, template, body, query) => {
     const path = api(method, template, query);
@@ -74,6 +75,8 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     if (proposal.refusal !== null) {
       process.stdout.write("     will not set it up:\n");
       for (const line of wrapAt(proposal.refusal, 70)) process.stdout.write(`       ${line}\n`);
+      process.stdout.write("     fix       the domain must be a subdomain of a zone in this Cloudflare account; try another\n"
+        + "               with `mailda setup`\n");
     } else {
       const applied = await call("POST", "/api/provider/receiving", { domain, digest: proposal.digest, address });
       if (!applied.ok) refused(applied.text);
@@ -94,8 +97,10 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
   if (!sending.ok) refused(sending.text);
   else {
     const { proposal } = sending.value;
-    if (proposal.error !== null) process.stdout.write(`     unknown   ${proposal.error}\n`);
-    else if (proposal.onboarded) { process.stdout.write("     onboarded already\n"); done.sending = domain; }
+    if (proposal.error !== null) {
+      process.stdout.write(`     unknown   ${proposal.error}\n`
+        + `     fix       \`mailda provider --onboard-sending ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
+    } else if (proposal.onboarded) { process.stdout.write("     onboarded already\n"); done.sending = domain; }
     else {
       for (const name of proposal.creates) process.stdout.write(`     creates   ${name}\n`);
       const applied = await call("POST", "/api/provider/sending", { domain, digest: proposal.digest });
@@ -110,8 +115,10 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
   if (!subscription.ok) refused(subscription.text);
   else {
     const { proposal } = subscription.value;
-    if (proposal.error !== null) process.stdout.write(`     unknown   ${proposal.error}\n`);
-    else if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
+    if (proposal.error !== null) {
+      process.stdout.write(`     unknown   ${proposal.error}\n`
+        + `     fix       \`mailda provider --subscribe ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
+    } else if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
       process.stdout.write(`     subscribed already, as ${proposal.subscribed}\n`); done.deliveryEvents = domain;
     } else {
       if (proposal.subscribed === null) process.stdout.write(`     creates   a subscription publishing ${proposal.events.join(", ")} into ${proposal.queueName}\n`);
@@ -122,9 +129,37 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     }
   }
 
-  if (done.receiving !== null) {
-    process.stdout.write("\n   DNS takes a little while to propagate. Send a message from OUTSIDE this Cloudflare\n"
-      + "   account to prove it; a same-account send is accepted and never delivered.\n");
-  }
+  process.stdout.write(
+    "\n   set up\n"
+    + `     receiving   ${done.receiving === null ? "not set up" : `${address} on ${done.receiving}`}\n`
+    + `     sending     ${done.sending ?? "not set up"}\n`
+    + `     outcomes    ${done.deliveryEvents === null ? "not subscribed" : `subscribed for ${done.deliveryEvents}`}\n`,
+  );
   return done;
+}
+
+/**
+ * What to do now, printed by every verb that ends in a set-up Node, so the run never ends on a summary
+ * the operator has to interpret. An operator who opened the Node after the install and saw an inbox took
+ * it for ready (25 September 2026); the next step is named here and the app shows the same step until it
+ * is done.
+ */
+export function printNext(origin, setUp) {
+  process.stdout.write(`\n== next\n   your Node   ${origin}\n`);
+  if (setUp.receiving !== null) {
+    process.stdout.write(
+      `   prove it    send a message to ${setUp.address} from any mailbox OUTSIDE this Cloudflare account;\n`
+      + "               it appears in the Node's inbox. DNS takes a little while to propagate; a same-account\n"
+      + "               send is accepted and never delivered\n",
+    );
+  } else {
+    process.stdout.write(
+      "   then        the app shows the next setup step instead of an inbox until this Node has a routed\n"
+      + "               address; `mailda setup` runs this step again, with another domain\n",
+    );
+  }
+  if (setUp.receiving !== null && setUp.deliveryEvents === null) {
+    process.stdout.write("   outcomes    not subscribed: replies hand over but their delivery stays unobserved; `mailda setup` retries\n");
+  }
+  process.stdout.write("\n");
 }

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Copyable, Nothing } from "../chrome.tsx";
 import { OnboardingProgress } from "../onboarding.tsx";
 import {
   beginConsent, createProviderClient, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
@@ -43,29 +43,6 @@ import {
  * has edited in the meantime is a different act from the one that was read.
  */
 
-/** Copies to the clipboard and says so, because a button that silently succeeds looks broken. */
-function Copyable({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <span className="setup-copy">
-      <code className="mono">{text}</code>
-      <button
-        type="button"
-        className="linkish"
-        onClick={() => {
-          void navigator.clipboard?.writeText(text).then(
-            () => setCopied(true),
-            // A clipboard that refuses is not a failure worth a banner — the text is on screen and
-            // selectable, which is what it was always the fallback for.
-            () => setCopied(false),
-          );
-        }}
-      >
-        {copied ? "copied" : `copy ${label}`}
-      </button>
-    </span>
-  );
-}
 
 /** A refusal, whole. Never trimmed: the fix is usually the last sentence. */
 function Refusal({ said }: { said: string | null }) {
@@ -872,6 +849,22 @@ function Subscription() {
   );
 }
 
+/**
+ * A section that exists and cannot act from here yet. Rendered rather than omitted: a person on this screen
+ * looking for "receiving" must find it, and the one sentence says what would make it live.
+ */
+function Inert({ title }: { title: string }) {
+  return (
+    <section className="setup-block" aria-label={title}>
+      <h2>{title}</h2>
+      <p className="dim">
+        Needs the connection above, or the terminal command: <span className="mono">curl -fsSL https://mailda.site/update.sh | bash</span>,
+        which sets this up with the consent wrangler already has.
+      </p>
+    </section>
+  );
+}
+
 export function Setup() {
   const provider = useProvider();
   const queryClient = useQueryClient();
@@ -972,9 +965,9 @@ export function Setup() {
         Receiving and sending are only reachable once there is a grant. Rendering the forms unreachably would
         be nineteen routes' problem over again in a different shape: a control that exists and cannot work.
       */}
-      {connected ? <Receiving refresh={refresh} /> : null}
-      {connected ? <Sending /> : null}
-      {connected ? <Subscription /> : null}
+      {connected ? <Receiving refresh={refresh} /> : <Inert title="Receiving" />}
+      {connected ? <Sending /> : <Inert title="Sending" />}
+      {connected ? <Subscription /> : <Inert title="Delivery outcomes" />}
 
       {/*
         Buying a domain is not here, and that is a scope decision rather than an oversight — `mailda provider

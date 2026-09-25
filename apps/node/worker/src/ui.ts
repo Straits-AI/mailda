@@ -681,6 +681,13 @@ form > .hint { margin: -.6rem 0 0; }
 .setup-block h3 { margin: .8rem 0 .4rem; font-size: .95rem; }
 .setup-steps { margin: .6rem 0 1rem; padding-left: 1.4rem; display: flex; flex-direction: column; gap: .35rem; }
 .setup-copy { display: inline-flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+
+/* The first-run screen: the whole app while the Node cannot be used as an inbox. One column, read top down. */
+.first-run { max-width: 44rem; margin: 0 auto; padding: clamp(1rem, 2.5vw, 2rem); }
+.first-run-next { margin-top: 1.5rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.first-run-next h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.first-run-next h3 { margin: 1rem 0 .25rem; font-size: .95rem; }
+.first-run-anyway { margin-top: 1.5rem; font-size: .82rem; }
 /* Label above value, because both are long enough to wrap and a two-column grid would break the account id
    mid-string on a narrow window. */
 .setup-facts { margin: .6rem 0; display: flex; flex-direction: column; gap: .5rem; }
@@ -1107,8 +1114,13 @@ tbody a { font-size: .8rem; }
    box beside it. Flex order keeps it after the pill and before Clear on one line, and it wraps below on a
    narrow screen rather than squeezing the pill. */
 /* Set off from the pill by the gap it would otherwise close: a hint touching the field's edge reads as part
-   of the control, and this one describes it. */
-.search-hint { flex: 1 1 100%; margin: .5rem 0 0; padding-left: 1rem; font-size: .78rem; }
+   of the control, and this one describes it.
+
+   form > .search-hint, because the search is a form and the form > .hint rule above pulls a hint up by .6rem to
+   hug the field it follows — and beat the plain .search-hint rule on specificity. Measured in a browser on
+   25 September 2026: the hint's box began 1.6px above the pill's bottom edge, after two edits to a rule the
+   cascade never applied. The selector names the rule it overrides. */
+form > .search-hint { flex: 1 1 100%; margin: .5rem 0 0; padding-left: 1rem; font-size: .78rem; }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
 .message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

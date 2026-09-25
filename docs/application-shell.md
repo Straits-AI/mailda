@@ -594,6 +594,29 @@ What is still not reachable from a screen, stated so the next reader does not ha
 domain, searching the registrar, the handover manifest, the ownership page, and the delivery-events read.
 `/setup` covers connecting, receiving and sending.
 
+### The first run (25 September 2026)
+
+Until a Node can receive, the application does not show an inbox. Every screen but `/setup` and `/doctor` is
+replaced by one page: *This Node is not ready to use yet*, the progress list, and the next step with its
+action written out two ways. The terminal way is recommended, `curl -fsSL https://mailda.site/update.sh |
+bash` in the clone's directory, because it needs no token: it uses the consent wrangler already holds. The
+browser way is to connect the Node from Setup and set up receiving there. An administrator can open the
+app anyway, per tab, for the case where they know better than the gate.
+
+The readiness rule is two facts and nothing more: an address exists (`doctor`'s `inbound_routing.ok`) and
+mail is routed to this Node (the routing step, read live through the grant or as the install's dated
+record in the audit trail). Sending is not required to read mail, and a rule that demanded it would keep
+an inbox with mail in it behind a page about DNS. Those two are the facts whose absence makes an inbox lie:
+without an address nothing can be delivered, and a fresh Node's first reply refuses with
+`E_MAILBOX_HAS_NO_ADDRESS`, which is the failure this page exists to put in front of the operator before
+they meet it as an error.
+
+The origin, in the founder's words after installing, updating and opening the Node: *I ran the setup
+script, then the update script, then I opened the web and saw the inbox. So as a user of course I thought
+it is ready to use. If not, you should only show the next setup steps and guide me until the whole thing
+is ready. This should not be seen in production apps.* He was right, and the inbox he saw was on a Node
+that had never been set up to receive.
+
 ### `/setup` (#210)
 
 Connecting the Node to the Cloudflare account it runs in, without opening the Cloudflare dashboard.

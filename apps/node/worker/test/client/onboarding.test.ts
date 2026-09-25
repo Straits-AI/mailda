@@ -92,3 +92,13 @@ describe("onboarding steps", () => {
     expect(detail).toContain("no consumer");
   });
 });
+
+describe("readiness", () => {
+  it("is ready only with an address and mail routed here; sending and outcomes do not gate", async () => {
+    const { readinessOf } = await import("../../src/client/app/onboarding.tsx");
+    const steps = onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(true), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } });
+    expect(readinessOf(steps)).toBe("ready");
+    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(true), provisioned: { receiving: null, sending: null, deliveryEvents: null } }))).toBe("not-ready");
+    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_client", accountId: null }), doctor: doctor(false), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } }))).toBe("not-ready");
+  });
+});
