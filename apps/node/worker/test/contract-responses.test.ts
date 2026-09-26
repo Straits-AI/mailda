@@ -427,6 +427,13 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(added.address.address).toBe("hello@mail.example.test");
     expect(added.routing.state).toBe("not_written");
     expect(added.routing.detail).toContain("mailda provider --onboard-receiving mail.example.test --address hello@mail.example.test");
+    // Its mirror answers the same way on this fixture: the row goes, and no credential could touch a rule.
+    const removed = await answers("DELETE", "/api/addresses", {
+      cookie: held, body: { address: "hello@mail.example.test" },
+    }) as { address: { address: string }; routing: { state: string; detail: string } };
+    expect(removed.address.address).toBe("hello@mail.example.test");
+    expect(removed.routing.state).toBe("not_removed");
+    expect(removed.routing.detail).toContain("delete the rule in the Cloudflare dashboard");
 
     /*
      * The zone's rules (#258). The listing **answers** with its error, the way the proposals do, and both
@@ -1142,6 +1149,13 @@ describe("the operator and key surfaces", () => {
       params: { mailboxId }, body: { quarantineDangerousAttachments: true }, cookie: held,
     });
     expect(files).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: true, quarantineDangerousAttachments: true });
+    // A name is the fourth thing a PATCH may change, and the answer carries it; the same name again is refused.
+    const renamed = await answers("PATCH", "/api/mailboxes/:mailboxId", {
+      params: { mailboxId }, body: { name: "Renamed" }, cookie: held,
+    });
+    expect(renamed).toMatchObject({ name: "Renamed", firstResponseMinutes: 60 });
+    await expect(answers("PATCH", "/api/mailboxes/:mailboxId", { params: { mailboxId }, body: { name: "Renamed" }, cookie: held }))
+      .rejects.toThrow(/E_MAILBOX_NAME_UNCHANGED|answered 409/);
   });
 
   it("a draft, read back and discarded", async () => {
@@ -2232,8 +2246,11 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * objects `delivery-events` reports on, proposed and applied the way sending is. The proposal names the
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
+     *
+     * The 137th is `DELETE /api/addresses` (26 September 2026), the mirror of adding one: the row and the
+     * literal rule that routed it, with `routing.state` saying which of the two Cloudflare halves happened.
      */
-    expect(coverage.total).toBe(136);
+    expect(coverage.total).toBe(137);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

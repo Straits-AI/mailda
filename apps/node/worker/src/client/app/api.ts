@@ -484,6 +484,19 @@ export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Er
   });
 }
 
+/**
+ * The mailboxes this person may **read**, which is the other question. `useMailboxes` is where they have
+ * work (`send.propose`); this is what they may look at, and a supervised reader is in the second set and
+ * not the first. The inbox's filter offers this one, because it narrows what is being looked at.
+ */
+export function useReadableMailboxes(): UseQueryResult<{ mailboxes: Array<{ id: string; name: string }> }, Error> {
+  return useQuery({
+    queryKey: ["mailboxes", "readable"],
+    queryFn: () => read<{ mailboxes: Array<{ id: string; name: string }> }>(GET("/api/mailboxes/readable")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useCases(mailboxId: string | null): UseQueryResult<{ cases: CaseRow[] }, Error> {
   return useQuery({
     queryKey: ["cases", mailboxId],
@@ -573,6 +586,29 @@ export const addAddress = (address: string, mailboxId?: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRouting }>(
     at("POST", "/api/addresses"), "POST", { address, ...(mailboxId === undefined ? {} : { mailboxId }) },
   );
+
+/**
+ * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still named this
+ * Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
+ */
+export interface AddressRemoval {
+  state: "catch_all" | "rule_removed" | "not_removed";
+  detail: string;
+}
+export const removeAddress = (address: string) =>
+  act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }>(
+    at("DELETE", "/api/addresses"), "DELETE", { address },
+  );
+
+/** Renames a mailbox. Administrator only, audited with both names; the rail and the queue show the new one. */
+export async function renameMailbox(mailboxId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
+  });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
 
 /** Creates a mailbox, named. Administrator only, audited; the creator may read and send from it. */
 export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | { ok: false; message: string }> {
@@ -1209,6 +1245,16 @@ export const grant = (subjectId: string, relation: string, objectId: string) =>
 
 export const revokeAccess = (subjectId: string, relation: string, objectId: string) =>
   act(at("POST", "/api/access"), "DELETE", { subjectId, relation, objectId });
+
+/** Renames a team. Administrator only, audited with both names, since a stage cites the id and a person reads the name. */
+export async function renameTeam(teamId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("POST", "/api/teams/:teamId/rename", { teamId }), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
+  });
+  if (response.ok) return { ok: true };
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+}
 
 export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
   const response = await apiFetch(at("POST", "/api/teams"), {

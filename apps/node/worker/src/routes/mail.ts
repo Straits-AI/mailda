@@ -127,6 +127,10 @@ export const mail = {
 
   "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    if (typeof body.name === "string") {
+      const { renameMailbox } = await import("../mailbox-policy.ts");
+      return Response.json(await renameMailbox(env, clock, who.orgId, who.userId, params.mailboxId, body.name));
+    }
     /*
      * Three settings since 0057, and a PATCH naming a quarantine switch changes only that. The target keeps
      * its older reading — absent and null are the same request, "promise nothing" — because it was the only

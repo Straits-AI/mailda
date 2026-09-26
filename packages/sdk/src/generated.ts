@@ -460,7 +460,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Create a mailbox, named. The creator may read and send from it; addresses are routed at it through POST /api/provider/receiving
+   * Create a mailbox, named. The creator may read and send from it; addresses are added to it through POST /api/addresses
    *
    * `POST /api/mailboxes`
    */
@@ -469,7 +469,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Change a mailbox's settings
+   * Change a mailbox's settings, or its name
    *
    * `PATCH /api/mailboxes/:mailboxId`
    */
@@ -1226,6 +1226,15 @@ export class GeneratedClient extends Transport {
    */
   async postAddresses(body: z.infer<typeof S.addressCreateRequest>): Promise<z.infer<typeof S.addressCreatedResponse>> {
     return await this.json("POST", "/api/addresses", {}, body) as z.infer<typeof S.addressCreatedResponse>;
+  }
+
+  /**
+   * Remove an address from its mailbox and, in the same act, the literal rule that routed it here: nothing to remove under a catch-all, the rule deleted when it still names this Worker, and a named reason when it was left
+   *
+   * `DELETE /api/addresses`
+   */
+  async deleteAddresses(body: z.infer<typeof S.addressRemoveRequest>): Promise<z.infer<typeof S.addressRemovedResponse>> {
+    return await this.json("DELETE", "/api/addresses", {}, body) as z.infer<typeof S.addressRemovedResponse>;
   }
 
   /**

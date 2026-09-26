@@ -107,6 +107,18 @@ const SITES: Site[] = [
       + "destroys anything a hold preserves. `provider.token_forgotten` records the act with the account.",
   },
   {
+    file: "src/provider/receiving.ts",
+    target: "addresses",
+    content: false,
+    why: "An address removed from its mailbox by an administrator (`DELETE /api/addresses`, 26 September "
+      + "2026). One row naming where mail arrives; no message, no attribution, no decision. But the row is "
+      + "the join every read makes from a receipt's envelope_to to its mailbox, so deleting one that has "
+      + "received mail would hide every message under it while keeping the bytes. The DELETE therefore "
+      + "carries `NOT EXISTS (SELECT 1 FROM ingress_receipts …)` in its own predicate and `removeAddress` "
+      + "refuses `E_ADDRESS_HAS_MAIL` first; a row that goes is one nothing was ever received at, which is "
+      + "why no legal-hold guard applies. `address.removed` records the act, with what became of the rule.",
+  },
+  {
     file: "src/invitations.ts",
     target: "invitations",
     content: false,

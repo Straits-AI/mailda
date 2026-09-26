@@ -52,7 +52,10 @@ a password. They hold nothing until you grant them a relation on a mailbox, on t
 relation is written as what it lets them do. To receive at an address of their own, say
 `user1@example.com`, add that address to a mailbox they hold (*People* → *Add an address*); on a domain
 whose catch-all points at the Node nothing else is needed, and on a subdomain the Node writes the routing
-rule in the same act, or says exactly what to run if it could not.
+rule in the same act, or says exactly what to run if it could not. Each mailbox lists its addresses there,
+with *remove* beside each: the rule goes with it when this Node wrote it, and an address that has received
+mail stays, by name, because every message under it is filed through that address. Mailboxes and teams are
+renamed on the same screen.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every

@@ -3,11 +3,12 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, revokeAccess, revokeInvitation, setTeamMember,
+  GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam,
+  revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
   type PersonRow, type TeamRow,
-  type AddressRouting, type MailboxQueue,
+  type AddressRemoval, type AddressRouting, type MailboxQueue,
 } from "../api.ts";
 
 /**
@@ -29,9 +30,9 @@ import {
  *
  * ## What this screen refuses to do
  *
- * **It does not create people.** There is no invitation flow and no second-user creation anywhere in this
- * product; the only user is the one the claim made. Rendering an "add somebody" button that produced a
- * `POST` to nothing would be worse than the absence, so the absence is stated on the screen instead.
+ * **It does not create people.** It invites them (#83, below): the person redeems the invitation and chooses
+ * their own password, and holds nothing until somebody grants it here. Creating an account with a password
+ * an administrator knows is the thing this product never does.
  *
  * **It does not offer `supervised.read`.** That relation is not granted this way — it is time-boxed, needs
  * two approvals and cites a matter (§7) — and `POST /api/access` refuses it with a message explaining the
@@ -67,8 +68,9 @@ function relationsFor(person: PersonRow, objectId: string): Set<string> {
  */
 /**
  * A second mailbox. Here rather than on Setup because a mailbox is a thing people are given access to, and
- * this is the screen that gives it; the address that reaches it is Setup's business (Receiving names a
- * mailbox). The creator is granted read and send on it, so it appears in the rail and below at once.
+ * this is the screen that gives it; its addresses are added, listed and removed here too, and only the
+ * domain's records and catch-all are Setup's business. The creator is granted read and send on it, so it
+ * appears in the rail and below at once.
  */
 function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
   const [name, setName] = useState("");
@@ -167,6 +169,79 @@ function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => 
         </button>
       </p>
     </section>
+  );
+}
+
+/**
+ * A mailbox's name and its addresses, above the access table for it (26 September 2026).
+ *
+ * The addresses come from `GET /api/mailboxes` itself, which has always carried them for the composer's
+ * From choice; nothing new is read. Removing one says what became of its rule, in the same words adding
+ * does, because an address gone from the Node while a rule still routes it is mail arriving for nobody.
+ */
+const REMOVAL_WORDS: Record<AddressRemoval["state"], string | null> = {
+  catch_all: "removed; the domain's catch-all needed nothing",
+  rule_removed: "removed, and its routing rule deleted",
+  not_removed: null,
+};
+
+function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => Promise<void> }) {
+  const [name, setName] = useState(box.name);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const addresses = box.addresses === null ? [] : box.addresses.split(",");
+
+  async function rename() {
+    setBusy(true);
+    setProblem(null);
+    setSaid(null);
+    const outcome = await renameMailbox(box.id, name);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setSaid(`renamed to ${name.trim()}`);
+    await onChanged();
+  }
+
+  async function remove(address: string) {
+    setBusy(true);
+    setProblem(null);
+    setSaid(null);
+    const outcome = await removeAddress(address);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setSaid(`${outcome.value.address.address}: ${REMOVAL_WORDS[outcome.value.routing.state] ?? outcome.value.routing.detail}`);
+    await onChanged();
+  }
+
+  return (
+    <>
+      <h2>{box.name}</h2>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {said === null ? null : <p className="notice" role="status">{said}</p>}
+      <p className="field-row">
+        <label htmlFor={`rename-${box.id}`}>Name</label>
+        {" "}
+        <input id={`rename-${box.id}`} value={name} onChange={(event) => setName(event.target.value)} />
+        {" "}
+        <button className="quiet" type="button" onClick={() => void rename()} disabled={busy || name.trim() === "" || name.trim() === box.name}>
+          rename
+        </button>
+      </p>
+      {addresses.length === 0
+        ? <p className="dim">No address yet: nothing is routed here, and a send from it is refused until one is.</p>
+        : (
+          <ul className="grant-list" aria-label={`Addresses of ${box.name}`}>
+            {addresses.map((address) => (
+              <li key={address}>
+                <span className="mono">{address}</span>
+                {" "}
+                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+    </>
   );
 }
 
@@ -340,17 +415,27 @@ function Grants({
  * that cannot show state is worse than no control, which is why the roster route exists now.
  */
 function Roster({
-  team, people, onToggle,
+  team, people, onToggle, onRename,
 }: {
   team: TeamRow;
   people: PersonRow[];
   onToggle: (teamId: string, userId: string, on: boolean) => Promise<void>;
+  onRename: (teamId: string, name: string) => Promise<void>;
 }) {
   const members = useTeamMembers(team.id);
   const inTeam = new Set(members.data?.members ?? []);
+  const [name, setName] = useState(team.name);
   return (
     <tr>
-      <td>{team.name}</td>
+      <td>
+        <label className="field-row" htmlFor={`rename-${team.id}`}>
+          <input id={`rename-${team.id}`} aria-label={`Name of ${team.name}`} value={name} onChange={(event) => setName(event.target.value)} />
+          {" "}
+          <button type="button" className="linkish" onClick={() => void onRename(team.id, name)} disabled={name.trim() === "" || name.trim() === team.name}>
+            rename
+          </button>
+        </label>
+      </td>
       <td>
         <ul className="grant-list">
           {people.map((person) => {
@@ -406,6 +491,13 @@ function Teams({ people }: { people: PersonRow[] }) {
     await refresh();
   }
 
+  async function rename(teamId: string, newName: string) {
+    setProblem(null);
+    const outcome = await renameTeam(teamId, newName);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await refresh();
+  }
+
   return (
     <section className="people-teams" aria-label="Teams">
       <h2>Teams</h2>
@@ -436,7 +528,7 @@ function Teams({ people }: { people: PersonRow[] }) {
             </thead>
             <tbody>
               {teams.data.teams.map((team) => (
-                <Roster key={team.id} team={team} people={people} onToggle={member} />
+                <Roster key={team.id} team={team} people={people} onToggle={member} onRename={rename} />
               ))}
             </tbody>
           </table>
@@ -605,7 +697,7 @@ export function People() {
 
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
-          <h2>{box.name}</h2>
+          <MailboxHead box={box} onChanged={refresh} />
           <div className="scroller">
             <table>
               <thead>

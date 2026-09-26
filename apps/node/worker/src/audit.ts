@@ -558,6 +558,16 @@ export const AUDIT_ACTIONS = {
     says: "An administrator added an address to a mailbox. Whether mail for it reaches this Node is on the "
       + "entry: the catch-all already routes it, a rule was written, or nothing could be written and why.",
   },
+  /** The mirror of `address.added`: the row gone, and whether the rule that routed it went with it. */
+  "address.removed": {
+    says: "An administrator removed an address from a mailbox. Whether Cloudflare still routes it is on the "
+      + "entry: the catch-all needed nothing, the rule was deleted, or it was left and why.",
+  },
+  /** A mailbox's name changed; both names, because access is granted by id and chosen by name. */
+  "mailbox.renamed": {
+    says: "An administrator renamed a mailbox; both names are recorded, because it is granted to by id and "
+      + "chosen by a human reading its name.",
+  },
   /** A mailbox's attachment limits (0065): the bound and the list, before and after. */
   "mailbox.attachment_limits_set": {
     says: "An administrator changed the attachment size bound or the allowed-type list on a mailbox.",

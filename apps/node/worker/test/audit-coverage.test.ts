@@ -207,7 +207,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       + "it afterwards: the route that would does not exist, which is what 'pinned' means here.",
   },
   // Was exempt as "set at claim time and never since"; `POST /api/addresses` adds one and says how it is routed.
-  addresses: { actions: ["address.added"] },
+  addresses: { actions: ["address.added", "address.removed"] },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   /*
@@ -313,7 +313,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // rather than a preference, and a breach recorded against it is a fact somebody may be asked about.
     // Creating and archiving mailboxes are still unbuilt; when they land they join this list rather than
     // moving the table back.
-    actions: ["mailbox.response_target_set", "mailbox.quarantine_set", "mailbox.attachment_limits_set", "mailbox.created"],
+    actions: ["mailbox.response_target_set", "mailbox.quarantine_set", "mailbox.attachment_limits_set", "mailbox.created", "mailbox.renamed"],
   },
   messages: {
     /*

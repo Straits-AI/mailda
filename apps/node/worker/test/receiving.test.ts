@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 } from "../src/provider/cloudflare-grant.ts";
 import { holdToken } from "./support/provider-token.ts";
-import { addAddress, onboardReceiving, receivingProposalFor } from "../src/provider/receiving.ts";
+import { addAddress, onboardReceiving, receivingProposalFor, removeAddress } from "../src/provider/receiving.ts";
 import { putBackRule } from "../src/provider/routing-rules.ts";
 
 /**
@@ -634,5 +634,74 @@ describe("adding an address routes it in the same act", () => {
     expect(row?.address).toBe("sales@mail.example.test");
     const entry = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'address.added'").bind(ORG).first<{ detail: string }>();
     expect(JSON.parse(entry!.detail).routing).toBe("not_written");
+  });
+});
+
+describe("removing an address undoes its routing", () => {
+  const OURS = {
+    id: "rule_sales", name: "mailda mail.example.test", enabled: true,
+    matchers: [{ type: "literal", field: "to", value: "Sales@mail.example.test" }],
+    actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }],
+  };
+  const deleted = (calls: Array<{ url: string; method: string }>) =>
+    calls.filter((one) => one.method === "DELETE").map((one) => one.url);
+
+  it("deletes the literal rule that names this Worker, and the row with it, in one audited act", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "Sales@Mail.Example.test");
+    expect(gone.routing.state).toBe("rule_removed");
+    expect(gone.address).toMatchObject({ address: "sales@mail.example.test", mailboxId: MAILBOX });
+    expect(deleted(calls)).toEqual(["/zones/zone_1/email/routing/rules/rule_sales"]);
+    const rows = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ?").bind(ORG).all<{ address: string }>();
+    expect(rows.results).toEqual([]);
+    const entry = await testEnv.CATALOG.prepare("SELECT subject, detail FROM audit_entries WHERE org_id = ? AND action = 'address.removed'")
+      .bind(ORG).first<{ subject: string; detail: string }>();
+    expect(entry?.subject).toBe("sales@mail.example.test");
+    expect(JSON.parse(entry!.detail)).toMatchObject({ mailboxId: MAILBOX, routing: "rule_removed" });
+  });
+
+  it("leaves a rule somebody has pointed elsewhere, and says so", async () => {
+    const theirs = { ...OURS, actions: [{ type: "forward", value: ["somebody@gmail.test"] }] };
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [theirs] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test");
+    expect(gone.routing.state).toBe("not_removed");
+    expect(gone.routing.detail).toContain("forward to somebody@gmail.test, not this Node");
+    expect(gone.routing.detail).toContain("delete the rule in the Cloudflare dashboard");
+    expect(deleted(calls)).toEqual([]);
+    // The row still goes: the Node no longer knows the recipient, and the entry says the rule was left.
+    const row = await testEnv.CATALOG.prepare("SELECT id FROM addresses WHERE org_id = ?").bind(ORG).first();
+    expect(row).toBeNull();
+  });
+
+  it("refuses an address that has received mail, before touching the rule, because the row files every message under it", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes, blob_key, blob_sha256, accepted_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind("rcpt_sales_1", ORG, "evt_sales_1", "someone@example.test", "sales@mail.example.test", 1, `${ORG}/raw/rcpt_sales_1`, "0".repeat(64), new Date(AT).toISOString()).run();
+    await expect(removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test")).rejects.toThrow(/E_ADDRESS_HAS_MAIL/);
+    expect(deleted(calls)).toEqual([]);
+    const row = await testEnv.CATALOG.prepare("SELECT id FROM addresses WHERE org_id = ?").bind(ORG).first();
+    expect(row).not.toBeNull();
+    await testEnv.CATALOG.prepare("DELETE FROM ingress_receipts WHERE org_id = ?").bind(ORG).run();
+  });
+
+  it("writes nothing under a domain whose catch-all was taken over, and refuses an address it does not hold", async () => {
+    const calls = serving({ existingMx: [] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/rules/catch_all")) return new Response(JSON.stringify({ success: true, result: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] } }), { status: 200, headers: { "content-type": "application/json" } });
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    const before = calls.length;
+    const gone = await removeAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "hello@example.test");
+    expect(gone.routing.state).toBe("catch_all");
+    expect(calls.length).toBe(before);
+    await expect(removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "hello@example.test")).rejects.toThrow(/E_NO_SUCH_ADDRESS/);
   });
 });
