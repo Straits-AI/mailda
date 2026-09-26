@@ -8,8 +8,9 @@ import { ownershipFacts, type OwnershipFact } from "./cloudflare-grant.ts";
  * The handover manifest (#165 L4).
  *
  * #108: *"Handover is a state transition, not a folder of passwords."* And under ADR 42 there is no Mailda-held
- * credential to hand over at all — the Node is its own private OAuth client — so the manifest is a statement
- * about a **relationship**, not a transfer of secrets.
+ * credential to hand over at all — the Node acts with wrangler's login at install and, optionally, an API
+ * token an administrator made in the account — so the manifest is a statement about a **relationship**, not
+ * a transfer of secrets.
  *
  * ## Signed, and honest about what the signature proves
  *
@@ -60,26 +61,18 @@ function ceremonyOn(key: keyof typeof BUDGETS, when: number, what: string, why: 
 function ceremonies(): Ceremony[] {
   return [
     /*
-     * The two ADR 42 requires and no measurement will remove, because they are properties of the design
-     * rather than gaps in an API: a **private** OAuth client is authorizable only by a member of the account,
-     * which is exactly what makes Mailda's non-involvement structural.
+     * The one ADR 42 requires and no measurement will remove, because it is a property of the design rather
+     * than a gap in an API: every credential this Node acts with is made by a person signed in to the
+     * account — wrangler's login at install, an API token from the dashboard for the browser — which is
+     * exactly what makes Mailda's non-involvement structural.
      */
     {
-      what: "Registering this Node's OAuth client in the Cloudflare dashboard",
-      why: "a private OAuth client is created by a person signed in to the account. This is not an API gap — "
-        + "it is what makes the grant unobtainable by anyone outside the account, Mailda included",
+      what: "Signing in to Cloudflare for the install, or creating this Node's API token in the dashboard",
+      why: "both happen in Cloudflare's own session, past its own sign-in challenge. This is not an API gap — "
+        + "it is what makes the credential unobtainable by anyone outside the account, Mailda included",
       evidence: {
-        value: "adr.42", is: 1, receipt: "docs/receipts/cloudflare-oauth-endpoints.md",
-        measuredOn: BUDGET_ORIGINS["oauth.access_token_lifetime_seconds"]?.measuredOn ?? "unrecorded",
-      },
-    },
-    {
-      what: "Granting consent in the browser",
-      why: "the authorization happens in Cloudflare's own session, past its own sign-in challenge. The Node "
-        + "never sees who consented, which is why its ownership report says so rather than naming somebody",
-      evidence: {
-        value: "adr.42", is: 1, receipt: "docs/receipts/cloudflare-oauth-scopes.md",
-        measuredOn: BUDGET_ORIGINS["oauth.access_token_lifetime_seconds"]?.measuredOn ?? "unrecorded",
+        value: "adr.42", is: 1, receipt: "docs/receipts/wrangler-login-reach.md",
+        measuredOn: BUDGET_ORIGINS["wrangler.login_writes_zone_catch_all"]?.measuredOn ?? "unrecorded",
       },
     },
     ceremonyOn(
