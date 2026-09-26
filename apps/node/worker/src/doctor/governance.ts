@@ -412,7 +412,7 @@ export async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string 
         + `${state.oldestOverdueDueAt ?? "an unrecorded instant"}. Each one is a person who has not been told `
         + `their mail was read, or somebody who has not been told they are being asked to decide something.`,
     ...(state.overdue === 0 ? {} : {
-      fix: "the delivering scan runs on this Worker's scheduled trigger every minute. Check GET /api/log for "
+      fix: "the delivering scan runs on this Worker's scheduled trigger every minute. Check GET /api/logs for "
         + "notifications.scan_failed, and confirm the cron trigger exists on this Worker — a Node deployed "
         + "without one accrues these silently and this finding is the only thing that says so",
     }),

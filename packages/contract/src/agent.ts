@@ -524,8 +524,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/maintenance/reconcile",
     "PATCH /api/mailboxes/:mailboxId",
     "POST /api/mailboxes",
-    // An address is where mail arrives, and the act may write a routing rule on the customer's zone.
+    // An address is where mail arrives, and either act may write or delete a routing rule on the customer's zone.
     "POST /api/addresses",
+    "DELETE /api/addresses",
   ),
 };
 

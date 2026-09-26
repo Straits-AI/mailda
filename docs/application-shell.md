@@ -40,7 +40,10 @@ in it, and Layer 3 adds rows rather than a shape.**
   it.
 - **Full-width tables** for the outbox, audit trail and log. For a ledger a table is the right
   form, the one thing variant A got right, and it is kept.
-- **A bottom instrument bar** carrying the session countdown, the `doctor` verdict and the outbound counts.
+- **A bottom instrument bar** carrying the session countdown, the `doctor` verdict, the outbound counts and
+  the two sign-outs: *sign out* ends this device's session, *sign out everywhere* asks the Node to revoke
+  every session this person holds (`POST /api/auth/logout-everywhere`) and signs this page out only once it
+  has answered, so a revocation that did not happen is rendered rather than hidden behind a signed-out page.
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
   a reader's eye rests, and the counts belong beside the mailboxes they describe.
 
@@ -166,6 +169,10 @@ Three decisions worth having written down:
   address they did not choose. This one picks what to *look at*, so "all mailboxes" is a truthful description
   of an unfiltered list rather than a decision taken on the reader's behalf. Two controls that look alike and
   differ in exactly that, which is why the reasoning is written in both.
+- **Its options are what the reader may read** (`GET /api/mailboxes/readable`, since 26 September 2026), not
+  where they have work. `GET /api/mailboxes` lists mailboxes the caller holds `send.propose` on, which is the
+  composer's question; a supervised reader holds none and their mailbox was missing from this filter, its mail
+  reachable only unfiltered. The route existed for the agent surface and the inbox is its first screen.
 - **Changing the filter resets the cursor**, and that is correctness rather than courtesy. A cursor is a
   position in one ordering; narrow the listing and the row it names may not be in the new one at all, so the
   page it produces is arbitrary or empty. Nothing server-side can catch it. The cursor is well-formed and
@@ -706,6 +713,13 @@ two approvals neither of them the requester, an export is approved and then run.
 could be placed and lifted **by id** and never listed. An administrator who placed one last month had no way
 to find its id again, and a legal hold nobody can enumerate is one nobody can answer a court about.
 
+A completed export links its manifest and, on request, every object the manifest names, each through
+`GET /api/exports/:id/objects/:name`. The listing deliberately carries no object names: the manifest is the
+sealed, hashed account of what left, and a second list of the same names beside it would be a copy that can
+disagree with it. So the screen reads the manifest through the object route, which is the same grant check
+every download passes, and anybody but the requester is answered 404 there rather than shown a list they
+cannot open.
+
 ### `/limits` (#66, #81)
 
 `GET /api/breakers` exists because of AGENTS.md's third principle rather than for a dashboard (*a limit
@@ -759,6 +773,26 @@ the outcome beside the address: routed, already routed by the catch-all, or `not
 that writes it. The last is said in those words: an address that files and nothing routes is the state the
 receiving step exists to prevent, and a green row over it would be the lie.
 
+**Each mailbox lists its addresses, with a remove beside each** (26 September 2026, `DELETE /api/addresses`).
+The list is the `addresses` column `GET /api/mailboxes` has always carried for the composer's From choice.
+Removing is adding's mirror and answers in the same three words: `catch_all` (no rule of its own existed),
+`rule_removed` (the literal rule naming this Worker was deleted), or `not_removed` with the reason and where
+the rule still is, because a rule routing a recipient this Node no longer knows is mail arriving to bounce. A
+rule somebody has since pointed elsewhere is theirs and is left alone.
+
+**An address that has received mail is refused** (`E_ADDRESS_HAS_MAIL`), and the refusal is the feature. The
+`addresses` row is the join every read makes from a receipt's `envelope_to` to its mailbox, so deleting it
+would not delete the mail: every message under it would vanish from every queue and read while the bytes
+stayed in R2, which is Blueprint §24's "accepted but absent" reachable from a button. The predicate rides on
+the `DELETE` statement itself, so a delivery landing between the check and the batch is refused too. The
+fix names what the person actually wants, which is for mail to stop arriving: delete the rule in Cloudflare;
+the address stays as the record of what did arrive.
+
+**Mailboxes and teams are renamed inline**: `PATCH /api/mailboxes/:mailboxId` with `name`, and the existing
+`POST /api/teams/:teamId/rename`. Both record both names, because each is granted to by id and chosen by a
+person reading its name, and both refuse a rename to the name already held rather than record an act nobody
+took.
+
 ### Inviting somebody (#83)
 
 How a person gets in, in one paragraph, because it was asked (26 September 2026): an administrator mints an
@@ -766,7 +800,8 @@ invitation on this screen for the person's sign-in address (`POST /api/invitatio
 once and is not mailed, the administrator delivers it however they already trust; the person opens it and
 chooses a password (`POST /api/invitations/redeem`, the one public route here); they then hold nothing
 until an administrator grants a relation on a mailbox below. To receive at an address of their own, the
-address is added to a mailbox they hold (*Add an address*), which under an apex catch-all is the whole act.
+address is added to a mailbox they hold (*Add an address*), which under an apex catch-all is the whole act;
+it is listed under that mailbox from then on, with *remove* beside it.
 
 The screen used to say it could not create a person, which was honest and not a resting state. A Node had
 exactly one account and nothing else wrote to `users`, so Layer 3's whole premise had one person to exercise
@@ -831,6 +866,12 @@ author is deliberately **not** excluded: a hold is a pause for a human to read w
 is usually the person who wrote it, which is the distinction from `require_approval`, where §18 excludes
 them by design.
 
+The Butler gate is the other one a `send.propose` holder clears, and it has its own button for the same
+reason: *release* appears on a row whose reason is `butler_release_required` and calls
+`POST /api/sends/:id/release`, which puts the send back in the ordinary hold window and wakes the run that
+proposed it if that run is still there. The route answers `not_found` alike for absent, already released and
+not yours (§5C), so the refusal the outbox renders says all three rather than guessing which.
+
 ### `/approvals` (#81)
 
 The first of the governance surfaces, and it went first because without it a published `require_approval`
@@ -869,6 +910,12 @@ together and splitting them would make the common diagnosis a two-screen navigat
   second copy here would be a second opinion about what publishes.
 - **Observe**: recent runs with state, the reason they ended, nodes, effects, refusals and spend; the
   pauses in force, each with the detector's own sentence and a resume that requires a written reason.
+- **Run again**: `POST /api/butler-runs/:id/replay` with `mode: "re-run"`, on every finished run. The screen
+  says what that is, because "replay" invites the reading that nothing happens: a **new run** of the same
+  published version over the run's recorded input, judged under today's rules, whose writes are real. What
+  makes it safe to offer is the release gate rather than the word: any send it proposes waits in the outbox
+  for a person, so the button moves no mail on its own. Whether a run *can* be re-run (input recorded,
+  version still published, Butler not paused) is the Node's answer, and its four-part refusal is shown whole.
 
 Three things it refuses to do, each one a decision made elsewhere that a screen could quietly undo: it does
 not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and

@@ -12,15 +12,17 @@ import { unprocessable } from "./errors.ts";
  * An administrator's act, audited. The creator is granted read and send on it in the same batch, for the
  * reason the claim grants the owner both: a mailbox nobody may see is not in anybody's rail, and the
  * People screen — where an administrator hands access to others — lists the mailboxes its reader holds.
- * Addresses arrive the way they always have, `POST /api/provider/receiving` with this id; nothing here
- * touches Cloudflare. There is no delete: a mailbox with mail in it is evidence, and one without is harmless.
+ * Addresses are added to it on the same screen, `POST /api/addresses` with this id, which writes the routing
+ * rule in the same act. There is no delete: a mailbox with mail in it is evidence, and one without is harmless.
  */
 export const MAX_MAILBOX_NAME_CHARS = 60;
 
-export async function createMailbox(
-  env: Env, ctx: Ctx, orgId: string, actorUserId: string, rawName: string,
-): Promise<{ mailboxId: string; name: string }> {
-  await assertAdmin(env, orgId, actorUserId);
+/**
+ * A usable mailbox name, or the refusal that says why not. Shared by creating and renaming, because a name
+ * that is fine at birth and refused at a rename would be two definitions of one word. `exceptId` is the
+ * mailbox being renamed, which may of course keep its own name's case-folded twin.
+ */
+export async function mailboxNameOrThrow(env: Env, orgId: string, rawName: string, exceptId: string | null = null): Promise<string> {
   const name = rawName.trim().replace(/\s+/g, " ");
   if (name === "" || name.length > MAX_MAILBOX_NAME_CHARS || /[\p{C}]/u.test(name)) {
     throw unprocessable("E_MAILBOX_NAME_INVALID", {
@@ -29,8 +31,8 @@ export async function createMailbox(
       fix: "give it the name people will call it — Support, Invoices",
     });
   }
-  const taken = await env.CATALOG.prepare("SELECT id FROM mailboxes WHERE org_id = ? AND lower(name) = lower(?) LIMIT 1")
-    .bind(orgId, name).first<{ id: string }>();
+  const taken = await env.CATALOG.prepare("SELECT id FROM mailboxes WHERE org_id = ? AND lower(name) = lower(?) AND id IS NOT ? LIMIT 1")
+    .bind(orgId, name, exceptId).first<{ id: string }>();
   if (taken !== null) {
     throw unprocessable("E_MAILBOX_NAME_TAKEN", {
       what: `a mailbox called ${JSON.stringify(name)} already exists (${taken.id})`,
@@ -38,6 +40,14 @@ export async function createMailbox(
       fix: "pick another name, or route the address at the existing mailbox",
     });
   }
+  return name;
+}
+
+export async function createMailbox(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, rawName: string,
+): Promise<{ mailboxId: string; name: string }> {
+  await assertAdmin(env, orgId, actorUserId);
+  const name = await mailboxNameOrThrow(env, orgId, rawName);
   const mailboxId = ctx.id(ID_PREFIXES.mailbox);
   const at = new Date(ctx.now()).toISOString();
   await auditedBatch<never>(env, ctx, orgId, {

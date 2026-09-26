@@ -3,9 +3,9 @@ import { providerStatus } from "./credential.ts";
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
-import { conflict, unprocessable } from "../errors.ts";
+import { conflict, notFound, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
-import { cloudflareGet, cloudflareGetAll, cloudflarePost, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
+import { cloudflareDelete, cloudflareGet, cloudflareGetAll, cloudflarePost, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
 
 /**
  * Onboarding a subdomain to **receive** mail (#163 L2, and the half #92's drill ran aground on).
@@ -490,12 +490,7 @@ export async function addAddress(
   const mailbox = await mailboxForAddress(env, orgId, mailboxId);
   const id = ctx.id("addr");
 
-  const routedByCatchAll = await env.CATALOG.prepare(
-    "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'provider.receiving_onboarded' "
-    + "AND subject = ? ORDER BY seq DESC LIMIT 1",
-  ).bind(orgId, domain).first<{ detail: string | null }>().then((row) => {
-    try { return (JSON.parse(row?.detail ?? "{}") as { catchAll?: unknown }).catchAll === true; } catch { return false; }
-  });
+  const routedByCatchAll = await catchAllTakenOverFor(env, orgId, domain);
 
   let routing: { state: "catch_all" | "rule_written" | "not_written"; detail: string };
   if (routedByCatchAll) {
@@ -538,6 +533,110 @@ export async function addAddress(
   const row = await env.CATALOG.prepare("SELECT id, mailbox_id FROM addresses WHERE org_id = ? AND address = ?")
     .bind(orgId, normalized).first<{ id: string; mailbox_id: string }>();
   return { address: { id: row?.id ?? id, address: normalized, mailboxId: row?.mailbox_id ?? mailbox.id }, routing };
+}
+
+/** Whether the latest receiving onboard for `domain` took its catch-all over, which is where every address then routes. */
+async function catchAllTakenOverFor(env: Env, orgId: string, domain: string): Promise<boolean> {
+  const row = await env.CATALOG.prepare(
+    "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'provider.receiving_onboarded' "
+    + "AND subject = ? ORDER BY seq DESC LIMIT 1",
+  ).bind(orgId, domain).first<{ detail: string | null }>();
+  try { return (JSON.parse(row?.detail ?? "{}") as { catchAll?: unknown }).catchAll === true; } catch { return false; }
+}
+
+/**
+ * The address removed, and the routing rule `addAddress` wrote for it removed with it (26 September 2026).
+ *
+ * The mirror of adding: nothing to remove under a catch-all, since no per-address rule exists there; on a
+ * subdomain the literal rule is deleted, and only when it still names this Worker, because a rule somebody
+ * has since pointed elsewhere is theirs and is left where it is. The row goes in every case, in the batch
+ * with its audit entry, and `not_removed` names what still routes and where to delete it: a rule pointing
+ * an unknown recipient at this Node is the mirror of the silent address, in that mail arrives and bounces.
+ *
+ * **An address that has received mail is refused, by name.** The `addresses` row is the join every read
+ * makes from a receipt's `envelope_to` to its mailbox (`authz-read.ts`, `materialise.ts`, `cases.ts`), so
+ * deleting it would not delete the mail: it would make every message received at it vanish from every
+ * queue and every read while the bytes stay in R2, which is "accepted but absent" (Blueprint §24) built
+ * from the People screen. So the row goes only when nothing was ever received at it, and the predicate
+ * rides on the DELETE itself so a delivery landing between the check and the batch is refused too.
+ *
+ * A mailbox may be left with no address. Nothing on this Node holds that invariant; the first send from it
+ * refuses with `E_MAILBOX_HAS_NO_ADDRESS`, which names the fix.
+ */
+export async function removeAddress(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, address: string,
+): Promise<{
+  address: { id: string; address: string; mailboxId: string };
+  routing: { state: "catch_all" | "rule_removed" | "not_removed"; detail: string };
+}> {
+  const normalized = address.trim().toLowerCase();
+  const row = await env.CATALOG.prepare("SELECT id, mailbox_id FROM addresses WHERE org_id = ? AND address = ?")
+    .bind(orgId, normalized).first<{ id: string; mailbox_id: string }>();
+  if (row === null) {
+    throw notFound("E_NO_SUCH_ADDRESS", {
+      what: `${JSON.stringify(address)} is not an address on this Node`,
+      why: "removing names the address it removes, and this Node has no row for it",
+      fix: "GET /api/mailboxes lists each mailbox's addresses",
+    });
+  }
+  const domain = normalized.slice(normalized.indexOf("@") + 1);
+  const received = async () => (await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM ingress_receipts WHERE org_id = ? AND envelope_to = ?")
+    .bind(orgId, normalized).first<{ n: number }>())?.n ?? 0;
+  const refusal = (n: number) => conflict("E_ADDRESS_HAS_MAIL", {
+    what: `${normalized} has received ${n} message${n === 1 ? "" : "s"}, so it stays`,
+    why: "every message is filed under its mailbox through this address; removing it would hide them all while keeping the bytes",
+    fix: `to stop mail arriving at ${normalized}, delete its routing rule in the Cloudflare dashboard (Email, Email Routing, Routing rules); the address stays as the record of what did arrive`,
+  });
+  const before = await received();
+  if (before > 0) throw refusal(before);
+
+  let routing: { state: "catch_all" | "rule_removed" | "not_removed"; detail: string };
+  if (await catchAllTakenOverFor(env, orgId, domain)) {
+    routing = { state: "catch_all", detail: `the catch-all on ${domain} routes every address here; no rule of its own to remove` };
+  } else {
+    routing = await (async () => {
+      if (operatorOf(ctx) === null && (await providerStatus(env)).state !== "token_held") {
+        return { state: "not_removed" as const, detail: "this Node holds no Cloudflare token and no operator credential came with the request" };
+      }
+      const carrying = await zoneFor(env, ctx, orgId, domain).catch((error: Error) => ({ ok: false as const, error: error.message }));
+      if (!carrying.ok) return { state: "not_removed" as const, detail: carrying.error };
+      if (carrying.zone === null) return { state: "not_removed" as const, detail: `no zone in this account carries ${domain}` };
+      const rules = await routingRulesOf(env, ctx, orgId, carrying.zone.id);
+      if (!rules.ok) return { state: "not_removed" as const, detail: rules.error };
+      const rule = rules.result.find((one) => (one.matchers ?? []).some((m) =>
+        m.field === "to" && typeof m.value === "string" && m.value.toLowerCase() === normalized));
+      if (rule === undefined) return { state: "not_removed" as const, detail: `no rule on ${carrying.zone.name} routes ${normalized}; nothing to remove` };
+      const action = rule.actions?.[0];
+      const destinations = action?.value ?? [];
+      if (action?.type !== "worker" || !destinations.includes(workerNameFor(env))) {
+        const where = destinations.length === 0 ? "" : ` to ${destinations.join(", ")}`;
+        return { state: "not_removed" as const, detail: `the rule for ${normalized} is ${action?.type ?? "unset"}${where}, not this Node, so it was left alone` };
+      }
+      try {
+        await cloudflareDelete<unknown>(env, ctx, orgId, `/zones/${carrying.zone.id}/email/routing/rules/${rule.id}`);
+        return { state: "rule_removed" as const, detail: `the rule routing ${normalized} to this Node was deleted` };
+      } catch (error) {
+        return { state: "not_removed" as const, detail: (error as Error).message };
+      }
+    })();
+    if (routing.state === "not_removed") {
+      routing.detail += `. If a rule still routes ${normalized} here, mail for it arrives for a recipient this Node no longer knows: `
+        + "delete the rule in the Cloudflare dashboard (Email, Email Routing, Routing rules)";
+    }
+  }
+
+  const nothingReceived = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM ingress_receipts WHERE org_id = ? AND envelope_to = ?)";
+  const { results } = await auditedBatch(env, ctx, orgId, {
+    action: "address.removed", outcome: "ok", actorUserId, subject: normalized,
+    detail: { mailboxId: row.mailbox_id, domain, routing: routing.state, routingDetail: routing.detail },
+  }, (entry) => [
+    entry,
+    env.CATALOG.prepare(`DELETE FROM addresses WHERE org_id = ? AND id = ? AND EXISTS (${nothingReceived})`)
+      .bind(orgId, row.id, orgId, normalized),
+  ], { sql: nothingReceived, params: [orgId, normalized] });
+  // A delivery landed between the check above and the batch: neither the entry nor the delete happened.
+  if ((results[1]?.meta.changes ?? 0) === 0) throw refusal(await received());
+  return { address: { id: row.id, address: normalized, mailboxId: row.mailbox_id }, routing };
 }
 
 /**

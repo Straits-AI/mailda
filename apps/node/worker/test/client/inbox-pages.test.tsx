@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerMailboxes, answerWith, calls, reset } from "./session-stub.ts";
+import { answer, answerMailboxes, answerWith, calls, reset } from "./session-stub.ts";
 
 /**
  * The control that reaches older mail, rendered (#91).
@@ -246,6 +246,20 @@ describe("the listing can be narrowed to one mailbox", () => {
     mount();
     await settle();
     expect(document.getElementById("inbox-mailbox")).toBeNull();
+  });
+
+  it("offers what the reader may read, which is not where they have work", async () => {
+    /*
+     * The work-queue list has one mailbox and the readable list two: a supervised reader's shape. The filter
+     * must come from `GET /api/mailboxes/readable`, or their mailbox is missing from it.
+     */
+    answerMailboxes([TWO[0]!]);
+    answer("/api/mailboxes/readable", () => ({ mailboxes: TWO }));
+    answerPages({ "": { messages: [row(1)], next_cursor: null } });
+    mount();
+    await settle();
+    const options = Array.from((document.getElementById("inbox-mailbox") as HTMLSelectElement).options).map((one) => one.textContent);
+    expect(options).toEqual(["all mailboxes", "Support", "Billing"]);
   });
 
   it("defaults to every mailbox, and asks for no mailbox when it does", async () => {

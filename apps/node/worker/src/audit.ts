@@ -558,6 +558,16 @@ export const AUDIT_ACTIONS = {
     says: "An administrator added an address to a mailbox. Whether mail for it reaches this Node is on the "
       + "entry: the catch-all already routes it, a rule was written, or nothing could be written and why.",
   },
+  /** The mirror of `address.added`: the row gone, and whether the rule that routed it went with it. */
+  "address.removed": {
+    says: "An administrator removed an address from a mailbox. Whether Cloudflare still routes it is on the "
+      + "entry: the catch-all needed nothing, the rule was deleted, or it was left and why.",
+  },
+  /** A mailbox's name changed; both names, because access is granted by id and chosen by name. */
+  "mailbox.renamed": {
+    says: "An administrator renamed a mailbox; both names are recorded, because it is granted to by id and "
+      + "chosen by a human reading its name.",
+  },
   /** A mailbox's attachment limits (0065): the bound and the list, before and after. */
   "mailbox.attachment_limits_set": {
     says: "An administrator changed the attachment size bound or the allowed-type list on a mailbox.",
@@ -822,16 +832,15 @@ export const AUDIT_ACTIONS = {
   },
 
   /**
-   * The Node being given its own Cloudflare OAuth client (#162 L1, ADR 42).
+   * The Node being given its own Cloudflare API token (#162 L1, ADR 42 as amended 26 September 2026).
    *
    * Audited for `transport.configured`'s reason and a wider one. This is not configuration: it decides which
    * Cloudflare account this Node can act in, and every later provisioning act inherits it. The question an
    * investigator has is *when did this Node gain the ability to change infrastructure, and who gave it that*.
    *
-   * **The entry names the client id and the redirect URI and never the secret**, not even its length. A client
-   * id is not a secret — it appears in every authorization URL by construction — and the redirect URI is the
-   * half worth having later, because a URI that is not this Node's hostname is the shape of a grant pointed
-   * somewhere else.
+   * **The entry names the account the token was bound to and never the token**, not even its length. The
+   * account is the half worth having later, because an account that is not the customer's is the shape of
+   * a credential pointed somewhere else.
    */
   "provider.token_registered": {
     says: "An administrator gave this Node a Cloudflare API token, bound to the account named in the entry. "
@@ -1430,7 +1439,7 @@ export async function recordDisclosure(
       why: "§7 requires every supervised query, result opened and attachment read to be recorded. A read that "
         + "is not recorded is the one outcome supervised access exists to prevent, so the read fails with the "
         + "record rather than proceeding without it",
-      fix: "read the log for supervised.record_failed — GET /api/log — and check the migrations_applied and "
+      fix: "read the log for supervised.record_failed — GET /api/logs — and check the migrations_applied and "
         + "self_granted_access findings in GET /api/doctor. A Node that cannot append to audit_entries cannot "
         + "record any act, not only this one",
     });

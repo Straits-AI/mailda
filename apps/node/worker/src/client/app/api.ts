@@ -494,6 +494,19 @@ export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Er
   });
 }
 
+/**
+ * The mailboxes this person may **read**, which is the other question. `useMailboxes` is where they have
+ * work (`send.propose`); this is what they may look at, and a supervised reader is in the second set and
+ * not the first. The inbox's filter offers this one, because it narrows what is being looked at.
+ */
+export function useReadableMailboxes(): UseQueryResult<{ mailboxes: Array<{ id: string; name: string }> }, Error> {
+  return useQuery({
+    queryKey: ["mailboxes", "readable"],
+    queryFn: () => read<{ mailboxes: Array<{ id: string; name: string }> }>(GET("/api/mailboxes/readable")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useCases(mailboxId: string | null): UseQueryResult<{ cases: CaseRow[] }, Error> {
   return useQuery({
     queryKey: ["cases", mailboxId],
@@ -583,6 +596,29 @@ export const addAddress = (address: string, mailboxId?: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRouting }>(
     at("POST", "/api/addresses"), "POST", { address, ...(mailboxId === undefined ? {} : { mailboxId }) },
   );
+
+/**
+ * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still named this
+ * Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
+ */
+export interface AddressRemoval {
+  state: "catch_all" | "rule_removed" | "not_removed";
+  detail: string;
+}
+export const removeAddress = (address: string) =>
+  act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }>(
+    at("DELETE", "/api/addresses"), "DELETE", { address },
+  );
+
+/** Renames a mailbox. Administrator only, audited with both names; the rail and the queue show the new one. */
+export async function renameMailbox(mailboxId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
+  });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
 
 /** Creates a mailbox, named. Administrator only, audited; the creator may read and send from it. */
 export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | { ok: false; message: string }> {
@@ -1133,6 +1169,27 @@ export const resumeButler = (pauseId: string, reason: string) =>
     at("POST", "/api/butler-pauses/:pauseId/resume", { pauseId }), "POST", { reason },
   );
 
+/**
+ * Runs a recorded run again (#53's `re-run`). **Not a simulation**: a new run of the same published version
+ * over the same recorded input, whose writes are real and whose judgement is re-asked under today's policy,
+ * approvals and pauses. What keeps it provider-free is the gate, not this call: a send a Butler proposes is
+ * sealed `awaiting` with `butler_release_required`, so nothing leaves this Node until a person releases it
+ * from the outbox. The Node's refusals (input not recorded, version gone, Butler paused) arrive verbatim.
+ */
+export const replayButlerRun = (runId: string) =>
+  act<{ mode: "re-run"; runId: string; replayOf: string }>(
+    at("POST", "/api/butler-runs/:runId/replay", { runId }), "POST", { mode: "re-run" },
+  );
+
+/**
+ * Ends every session this person holds, on every device, including this one.
+ *
+ * The route answers 200 with the same `signedOutResponse` every expired-session path uses, so `ok` here means
+ * the revocation happened; the caller then signs this page out through the session module so the timers stop.
+ */
+export const signOutEverywhere = () =>
+  act<{ message: string }>(at("POST", "/api/auth/logout-everywhere"));
+
 /* ------------------------------------------------------------------ Layer 4: approvals (#81) ------- */
 
 export interface ApprovalStage { count: number; teamId: string | null }
@@ -1294,6 +1351,16 @@ export const grant = (subjectId: string, relation: string, objectId: string) =>
 
 export const revokeAccess = (subjectId: string, relation: string, objectId: string) =>
   act(at("POST", "/api/access"), "DELETE", { subjectId, relation, objectId });
+
+/** Renames a team. Administrator only, audited with both names, since a stage cites the id and a person reads the name. */
+export async function renameTeam(teamId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("POST", "/api/teams/:teamId/rename", { teamId }), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
+  });
+  if (response.ok) return { ok: true };
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+}
 
 export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
   const response = await apiFetch(at("POST", "/api/teams"), {
@@ -1529,6 +1596,26 @@ export const requestExport = (input: { mailboxId: string; matterId: string; maxM
 
 export const runExport = (id: string) =>
   act(routePath(EXPORT_RUN, { exportId: id }));
+
+/**
+ * What a completed export staged, read off its own manifest.
+ *
+ * The listing carries no object names on purpose: the manifest is the sealed, hashed account of what left,
+ * and a second list of the same names in the row would be a copy that can disagree with it. So the screen
+ * reads the manifest through the object route — the same grant check every download passes — and links each
+ * `object` it names. Only the requester may read it; anybody else is answered 404 by §5C.
+ */
+export interface ExportManifest {
+  count: number;
+  messages: Array<{ receiptId: string; object: string; bytes: number; sha256: string }>;
+}
+
+/** Where one staged object is fetched from; the route answers the bytes, not JSON. */
+export const exportObjectHref = (exportId: string, objectId: string) =>
+  GET("/api/exports/:exportId/objects/:objectId", { exportId, objectId });
+
+export const readExportManifest = (exportId: string) =>
+  read<ExportManifest>(exportObjectHref(exportId, "manifest.json"));
 
 /* ------------------------------------------------------------------ inviting somebody (#83) -------- */
 

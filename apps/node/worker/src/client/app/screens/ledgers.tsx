@@ -138,6 +138,23 @@ export function Outbox() {
   }
 
   /**
+   * Lets go a send a **Butler** wrote (#61). A different route from `release`, because it is a different
+   * gate: `release-hold` clears a policy's pause, this clears the person-must-see gate every Butler send
+   * parks on, and the run that proposed it is woken if it is still there. The Node answers `not_found` alike
+   * for absent, already released and not yours (§5C), so the refusal says all three rather than guessing.
+   */
+  async function releaseFromGate(id: string) {
+    setProblem(null);
+    const response = await apiFetch(`/api/sends/${encodeURIComponent(id)}/release`, { method: "POST" });
+    const outcome = (await response.json()) as { released: boolean; reason?: string };
+    await queryClient.invalidateQueries({ queryKey: ["sends"] });
+    if (!outcome.released) {
+      setProblem(`${outcome.reason ?? "refused"}: this send is no longer waiting on a Butler's gate, or you may not send `
+        + "as its mailbox. The outbox has been refreshed; if it is still listed, ask for send.propose on that mailbox.");
+    }
+  }
+
+  /**
    * Retries a send the Node offers a retry for. The listing says which mode (ADR 40): `retry-effect` reuses
    * the idempotency key and cannot duplicate; `resend-may-duplicate` mints a new one and might, so that one
    * asks for a reason and an explicit acceptance before it goes. The route existed for months; the button
@@ -254,6 +271,24 @@ export function Outbox() {
                                 onClick={() => void release(send.id)}
                               >
                                 let it go
+                              </button>
+                              {" · "}
+                            </>
+                          ) : null}
+                          {/*
+                            A Butler's send is the other gate a `send.propose` holder clears, and it is the
+                            one the gate exists for: a program proposed this and no person has agreed yet.
+                            Its own token, its own route — `release-hold` on this row would answer 409.
+                          */}
+                          {send.state_reason === "butler_release_required" ? (
+                            <>
+                              <button
+                                type="button"
+                                className="linkish"
+                                title="A Butler wrote this. Releasing it puts it in the ordinary hold window, where it can still be stopped."
+                                onClick={() => void releaseFromGate(send.id)}
+                              >
+                                release
                               </button>
                               {" · "}
                             </>

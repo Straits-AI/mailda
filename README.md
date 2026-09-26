@@ -52,7 +52,10 @@ a password. They hold nothing until you grant them a relation on a mailbox, on t
 relation is written as what it lets them do. To receive at an address of their own, say
 `user1@example.com`, add that address to a mailbox they hold (*People* → *Add an address*); on a domain
 whose catch-all points at the Node nothing else is needed, and on a subdomain the Node writes the routing
-rule in the same act, or says exactly what to run if it could not.
+rule in the same act, or says exactly what to run if it could not. Each mailbox lists its addresses there,
+with *remove* beside each: the rule goes with it when this Node wrote it, and an address that has received
+mail stays, by name, because every message under it is filed through that address. Mailboxes and teams are
+renamed on the same screen.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
@@ -70,7 +73,7 @@ found and fixed is in the [receipt](./docs/receipts/deploy-button-install.md).
 **One step neither path can do for you.** Delivery outcomes (`accepted`, `bounced`, per recipient) arrive
 on a queue, and observing them needs two things in your account: a consumer on that queue, and an
 `email.sending` event subscription publishing to it. The installer attaches the consumer. The
-subscription is created from the Node's own Setup screen once the Node holds a grant on your account
+subscription is created from the Node's own Setup screen once the Node holds an API token for your account
 ([`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md)). Until both exist every recipient stays
 `unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as
 "nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
@@ -137,7 +140,7 @@ What is blocking, as of 19 September 2026, with everything else on the
 |---|---|
 | **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account, then a real backup, then a same-account restore that took a domain, wrote its own routing, and accepted a message from outside. The catalog imports at about a thousand rows a second. The evidence copy works with any tool that moves the bytes, including one that drops the key label, and has only been timed with wrangler (5.4 s per object); a bucket-to-bucket copy is the tool for a real mailbox and is deliberately not timed here. [Runbook](./docs/disaster-recovery.md). |
 | **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). The canary is reached by a version override on the production hostname, because preview URLs do not exist for a Worker with Durable Objects. Unmeasured on a Free account, where ADR 25 says not to run anyway. [Receipt](./docs/receipts/deploy-drill-live-account.md). |
-| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A ZIP is listed without being opened, and one naming a program is held. A mailbox can bound attachment size and type, in and out. Absent: inbound acts beyond the quarantine switch, RAR and 7z listings, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
+| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A ZIP is listed without being opened, and one naming a program is held. A mailbox can bound attachment size and type, in and out. Absent: inbound acts beyond the quarantine switch, RAR and 7z listings, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
 
 What it is good for now: a design-partner alpha, a non-critical shared mailbox, and exercising the
 governance and deterministic-automation model, which is further along than anything else here.
@@ -176,9 +179,9 @@ turned out to be theatre) is in [`docs/history.md`](./docs/history.md), in the o
 ## What it will need from you
 
 Every Cloudflare setting a Node depends on is listed once, with both ways to put it there, in
-[`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md). The Node does the account work through its
-own grant, from `/setup`. The dashboard path is kept for builders who would rather do it by hand, and
-`doctor` verifies either the same way.
+[`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md). The Node does the account work with
+wrangler's login at install and, later, with its own API token from `/setup`. The dashboard path is kept
+for builders who would rather do it by hand, and `doctor` verifies either the same way.
 
 | | |
 |---|---|

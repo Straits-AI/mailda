@@ -5,7 +5,7 @@ import { Nothing } from "../chrome.tsx";
 import {
   createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
-  runFacts, simulateButler,
+  replayButlerRun, runFacts, simulateButler,
   type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Simulation,
 } from "../api.ts";
 
@@ -464,12 +464,22 @@ function Paused({ butler }: { butler: ButlerRow }) {
   );
 }
 
-function Runs({ runs }: { runs: ButlerRunRow[] }) {
+function Runs({ runs, onRunAgain }: { runs: ButlerRunRow[]; onRunAgain: (runId: string) => void }) {
   if (runs.length === 0) {
     return <Nothing kind="empty" detail="No Butler has run yet. A run comes from a delivery." />;
   }
   return (
     <div className="scroller">
+      {/*
+        Said plainly, because "replay" invites the reading that nothing happens. A re-run is a new run whose
+        writes are real; what makes it safe to offer is the gate, not the word — a Butler's send waits in the
+        outbox for a person, so this button on its own moves no mail. See `replayButlerRun`.
+      */}
+      <p className="dim">
+        <em>Run again</em> starts a new run of the same published version over what this run was given, judged
+        under today&rsquo;s rules. Its effects are real; any send it proposes waits in the outbox until a person
+        releases it, so nothing leaves this Node by itself.
+      </p>
       <table>
         <thead>
           <tr>
@@ -480,6 +490,7 @@ function Runs({ runs }: { runs: ButlerRunRow[] }) {
             <th scope="col" className="num">Effects</th>
             <th scope="col" className="num">Refusals</th>
             <th scope="col" className="num">Spent</th>
+            <th scope="col">Again</th>
           </tr>
         </thead>
         <tbody>
@@ -494,6 +505,13 @@ function Runs({ runs }: { runs: ButlerRunRow[] }) {
               <td className="mono num">{run.effects}</td>
               <td className="mono num">{run.refusals}</td>
               <td className="mono num">{run.subrequests_spent}</td>
+              <td>
+                {/* Offered on every finished run: whether it *can* be re-run (input recorded, version still
+                    published, Butler not paused) is the Node's answer, and its refusal names which. */}
+                {run.finished_at === null ? <span className="dim">—</span> : (
+                  <button type="button" className="linkish" onClick={() => onRunAgain(run.id)}>run again</button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -508,6 +526,16 @@ export function Butlers() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [ranAgain, setRanAgain] = useState<string | null>(null);
+
+  async function runAgain(runId: string) {
+    setProblem(null);
+    setRanAgain(null);
+    const outcome = await replayButlerRun(runId);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setRanAgain(outcome.value.runId);
+    await queryClient.invalidateQueries({ queryKey: ["butler-runs"] });
+  }
 
   async function create() {
     setProblem(null);
@@ -550,7 +578,7 @@ export function Butlers() {
   return (
     <>
       {heading}
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
 
       {rows.length === 0 ? (
         <Nothing kind="empty" detail="Nothing is automated on this Node yet." />
@@ -597,9 +625,12 @@ export function Butlers() {
       {current === null ? null : <Editing butler={current} onDone={() => setEditing(null)} />}
 
       <h2 className="butler-runs-heading">Runs</h2>
+      {ranAgain === null ? null : (
+        <p className="notice" role="status">Started again as <span className="mono">{ranAgain}</span>.</p>
+      )}
       {runs.isPending ? <Nothing kind="loading" />
         : runs.isError ? <Nothing kind="failed" detail={runs.error.message} />
-          : <Runs runs={runs.data.runs} />}
+          : <Runs runs={runs.data.runs} onRunAgain={(runId) => void runAgain(runId)} />}
     </>
   );
 }

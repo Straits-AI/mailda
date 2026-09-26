@@ -6,7 +6,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, setRead, stealCase, useDrafts, useMailboxes, useMessages, useThread,
+  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, setRead, stealCase, useDrafts, useMailboxes, useMessages, useReadableMailboxes, useThread,
 } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
@@ -255,18 +255,17 @@ function newMessageContext(mailboxId: string): ComposerContext {
  * on somebody's behalf. Two controls that look alike and differ in exactly that way, which is why they are
  * separate functions with the reasoning written in both.
  *
- * The options come from `useMailboxes`, which returns what this reader holds `send.propose` on — **not** what
- * they may read. That is a genuine mismatch and it is the narrower set: a supervised reader may see messages
- * from a mailbox that is not in this list, so filtering cannot reach them and the unfiltered view is the one
- * that shows their mail. Filtering to fewer rows than exist is safe; the reverse would not be. Named here
- * because the honest fix is a `mailbox.content.read` listing, and inventing one for a filter would be a new
- * authority surface added for a convenience.
+ * The options come from `useReadableMailboxes`, which is what this reader may **read**, not where they have
+ * work. The two differ exactly for the reader a filter matters most to: a supervised reader holds no
+ * `send.propose`, so the work-queue list (`useMailboxes`, what the composer offers) would leave their mailbox
+ * out of the filter and its mail reachable only in the unfiltered view. This one picks what to *look at*,
+ * and `GET /api/mailboxes/readable` is the Node's answer to that question, made for it.
  */
 function MailboxFilter({ chosen, onChoose }: {
   chosen: string | null;
   onChoose: (mailboxId: string | null) => void;
 }) {
-  const mailboxes = useMailboxes();
+  const mailboxes = useReadableMailboxes();
   const rows = mailboxes.data?.mailboxes ?? [];
   // Nothing to narrow with one mailbox, and nothing to narrow at all with none.
   if (rows.length < 2) return null;

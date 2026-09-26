@@ -5,23 +5,23 @@ import { MARK_IS_AUTHORED } from "../../brand.ts";
 import { Mark } from "./mark.tsx";
 
 import {
-  useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow,
+  signOutEverywhere, useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends,
+  type NotificationRow,
 } from "./api.ts";
 import type { AppRoute } from "../../app-routes.ts";
 
 /**
  * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
  *
- * ## Why the rail, when there is exactly one mailbox today
+ * ## Why a rail
  *
  * Layer 3 is *share* — shared mailboxes, assignment, reply-collision, cases with SLA clocks — and it needs
  * a persistent list of mailboxes carrying per-item counts and claim state. That is what a rail is. Route
  * tabs are not, and choosing them would mean bolting a rail on at Layer 3 and rewriting the chrome around
- * it. So the rail exists now with one row in it, and Layer 3 adds rows rather than a new shape.
+ * it. The rail was built with one row in it before a second mailbox could exist; People creates them now.
  *
- * There is deliberately **no mailboxes endpoint call** here. None exists — nothing can create a second
- * mailbox yet — and inventing a client-side list would be a decision about visibility, which ADR 11 puts
- * on the server on every request.
+ * The rows are `GET /api/mailboxes`, read on every load: which mailboxes this person may work is a decision
+ * about visibility, which ADR 11 puts on the server on every request, never in a client-side list.
  *
  * ## Why the top status strip does not survive
  *
@@ -111,6 +111,19 @@ function OutboundCounts() {
 }
 
 export function InstrumentBar() {
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /**
+   * Every session, every device. The Node revokes first and this page signs out second, so a revocation
+   * that did not happen is rendered rather than hidden behind a page that merely looks signed out.
+   */
+  async function everywhere() {
+    setProblem(null);
+    const outcome = await signOutEverywhere();
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await logout();
+  }
+
   return (
     <footer className="instrument-bar" aria-label="Node status">
       <span className="field">
@@ -122,8 +135,17 @@ export function InstrumentBar() {
       <span className="bar-spacer" />
       <DoctorVerdict />
       <SessionClock />
+      {problem === null ? null : <span className="bad" role="alert">{problem}</span>}
       <button type="button" className="linkish" onClick={() => void logout()}>
         sign out
+      </button>
+      <button
+        type="button"
+        className="linkish"
+        title="Ends every session you hold, on every device, including this one."
+        onClick={() => void everywhere()}
+      >
+        sign out everywhere
       </button>
     </footer>
   );
