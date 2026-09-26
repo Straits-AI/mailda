@@ -3378,3 +3378,13 @@ a consumer step the confirm now performs; `butler_execution` names the ceiling, 
 replay modes as built and only taint tracking and the second trigger as not; and the canary gate's doctor
 prints are headed by whose report they are, since the incumbent's `degraded` lines read as the canary's
 repeated.
+
+## The upgrade finishes each setup step on its own record (26 September 2026)
+
+The sighting above was written, deployed, and the next `mailda upgrade` still ended `sending: not set up`.
+The upgrade ran the setup only when `provisioned.receiving` was null, so a Node with receiving recorded
+at install and sending onboarded from the dashboard before the Node existed never had its sending step
+run, and the record the sighting exists to write was never written. `provisionNode` now takes the Node's
+`provisioned` record and skips each step on its own record, printing `recorded <date>`; the upgrade and
+`mailda setup` call it whenever any of the three is missing, and a recorded receiving domain is reused
+rather than asked for again. Measured on `mailda-whymelabs` the same day.

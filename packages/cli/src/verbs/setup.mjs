@@ -60,6 +60,6 @@ export async function setup(argv) {
   );
 
   process.stdout.write("\n== setting up\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
-  const setUp = await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask });
+  const setUp = await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask, provisioned: state.provisioned });
   printNext(url, setUp);
 }
