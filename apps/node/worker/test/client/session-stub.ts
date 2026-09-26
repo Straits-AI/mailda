@@ -107,6 +107,7 @@ export function answerMessages(rows: unknown[]): void {
 
 export function reset(): void {
   calls.length = 0;
+  signOuts = 0;
   mailboxes = ONE_MAILBOX;
   messages = [];
   handler = () => undefined;
@@ -188,6 +189,15 @@ export function sessionExpiry(): number | null {
  */
 export function adopt(): void {}
 export function start(): void {}
+/**
+ * How many times a component asked this page to sign itself out. The one behaviour here that is counted
+ * rather than inert, because *sign out everywhere* must sign this page out **after** the Node revoked and
+ * never instead of it, and a test can only hold that ordering by seeing both.
+ */
+export let signOuts = 0;
+export async function logout(): Promise<void> {
+  signOuts += 1;
+}
 export function isSignedIn(): boolean {
   return false;
 }

@@ -3,8 +3,9 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  MATTER_TYPES, askToLiftHold, askToRead, closeMatter, openMatter, placeHold, requestExport, runExport,
-  useExports, useHolds, useMailboxes, useMatters, useSupervised,
+  type ExportManifest, MATTER_TYPES, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
+  placeHold, readExportManifest, requestExport, runExport, useExports, useHolds, useMailboxes, useMatters,
+  useSupervised,
 } from "../api.ts";
 
 /**
@@ -63,6 +64,24 @@ export function Matters() {
   const [readScope, setReadScope] = useState<string>("metadata");
   const [readHours, setReadHours] = useState(24);
   const [readMatter, setReadMatter] = useState("");
+  /** Manifests read so far, by export id. Read on request: a manifest is a download the trail must not see twice. */
+  const [objects, setObjects] = useState<Record<string, ExportManifest>>({});
+
+  /**
+   * Lists what one export staged, from its manifest. The read's failure is the Node's own sentence (404 by
+   * §5C for anybody but the requester), rendered where the other refusals on this screen go.
+   */
+  async function listObjects(exportId: string) {
+    setProblem(null);
+    let manifest: ExportManifest;
+    try {
+      manifest = await readExportManifest(exportId);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setObjects((known) => ({ ...known, [exportId]: manifest }));
+  }
 
   async function refresh() {
     for (const key of ["matters", "holds", "supervised", "exports", "approvals"]) {
@@ -442,7 +461,23 @@ export function Matters() {
                           <span className="dim">{when(row.completedAt)}</span>{" · "}
                           {/* The manifest names every object staged; each is a link of the same shape. The
                               Node re-checks the grant on each, and only the requester may take them. */}
-                          <a className="mono" href={`/api/exports/${encodeURIComponent(row.id)}/objects/manifest.json`}>manifest.json</a>
+                          <a className="mono" href={exportObjectHref(row.id, "manifest.json")}>manifest.json</a>
+                          {" · "}
+                          {objects[row.id] === undefined ? (
+                            <button type="button" className="linkish" onClick={() => void listObjects(row.id)}>
+                              objects
+                            </button>
+                          ) : (
+                            <ul className="export-objects">
+                              {objects[row.id]!.messages.map((entry) => (
+                                <li key={entry.object}>
+                                  <a className="mono" href={exportObjectHref(row.id, entry.object)}>{entry.object}</a>
+                                  {" "}
+                                  <span className="dim mono">{entry.bytes} bytes</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </>
                       )}
                     </td>
