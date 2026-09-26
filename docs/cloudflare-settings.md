@@ -48,15 +48,14 @@ Two rules hold across the table:
 
 ## What is still owed
 
-- Attaching the consumer through the *grant* is unmeasured. The API attaches it (measured with the
+- Attaching the consumer through the Node's *token* is unmeasured. The API attaches it (measured with the
   operator's token), the live Node's consumer was already attached by the deploy, and no Node without one
-  has been available to try. `queues.write` is the candidate.
-- A grant consented before 16 September 2026 is short of `zone-settings.write`, `dns.write`,
-  `queues.write` and `email-routing-rule.write`. `/setup`, `mailda provider` and `doctor` all say so and
-  name the two steps (add them to the OAuth client, authorize again). Measured that day: `queues.write`
-  creates the subscription, and the routing rule needs `email-routing-rule.write`. A grant holding only
-  `zone-settings.write` and `dns.write` wrote the MX records and was refused the rule, which is how the
-  receiving proposal learned to resume its own half-done work rather than refuse it. Since 26 September
-  2026 `dns.write` is not asked for at all: receiving reads and writes Email Routing's own records through
-  its own endpoints and never touches raw DNS, so a grant is seven scopes plus `offline_access`.
+  has been available to try. `Queues: Edit` is the candidate.
+- A token short of a permission registers anyway. `GET /user/tokens/verify` reports status and expiry, not
+  permissions, so a token missing `Email Routing Rules: Edit` is refused by Cloudflare at the first rule it
+  writes, in Cloudflare's words, and `/setup` and `mailda provider` say so beforehand rather than checking.
+  Measured 16 September 2026 with the OAuth grant this replaced: the routing rule needs its own write
+  permission, and a credential that wrote the MX records and was refused the rule is how the receiving
+  proposal learned to resume its own half-done work rather than refuse it. Raw DNS is not asked for at all:
+  receiving reads and writes Email Routing's own records through its own endpoints.
 - A custom hostname from Mailda, so the last dashboard-only row goes.
