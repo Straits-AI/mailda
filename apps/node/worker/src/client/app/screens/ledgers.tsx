@@ -5,8 +5,10 @@ import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipie
 
 import { Nothing, Truncated } from "../chrome.tsx";
 import {
-  type AuditRow, configureTransport, type SendRow, useAudit, useDoctor, useLogs, useSends,
-  useTransport,
+  acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
+  type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, repairSearch,
+  resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
+  useSends, useTransport, verifyEvidence,
 } from "../api.ts";
 
 /**
@@ -561,6 +563,331 @@ function SendingCredentials() {
   );
 }
 
+/**
+ * What an act answered, rendered as the Node said it.
+ *
+ * A refusal is `role="alert"` and keeps its line breaks, because the four parts arrive joined by newlines
+ * and the last one is what to do next. A result is `role="status"`: what was done, in the Node's counts,
+ * never a reassurance the screen composed itself.
+ */
+function Outcome({ outcome }: { outcome: { ok: true; text: string } | { ok: false; message: string } | null }) {
+  if (outcome === null) return null;
+  return outcome.ok
+    ? <p className="notice mono" role="status">{outcome.text}</p>
+    : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{outcome.message}</p>;
+}
+
+type Shown = { ok: true; text: string } | { ok: false; message: string } | null;
+
+/**
+ * The remedies, beside the findings that name them.
+ *
+ * `doctor`'s `fix` text already says which route answers each finding; these are those routes as buttons,
+ * on that finding and no other. The CLI verbs stay in the text because they still work, and because a
+ * terminal is where an operator is when the bundle cannot load (ADR 30). Each is offered only while the
+ * finding is failing, since a "reseal" button under "every message is under the current key" would be
+ * asking somebody to act on nothing. `evidence_present` is the exception: verification is a check rather
+ * than a fix, and a clean report is exactly when one wants to check.
+ *
+ * `finding.check === "…"` rather than a lookup table, so `test/node/doctor-check-names.test.ts` holds every
+ * name here to one a check actually emits — a button on a misspelled finding would be a button on nothing.
+ */
+function Remedy({ finding }: { finding: DoctorFinding }) {
+  if (finding.check === "recovery_escrow") return <RecoveryCodes />;
+  if (finding.check === "evidence_present") return <EvidenceVerify />;
+  if (finding.ok) return null;
+  if (finding.check === "migrations_applied") {
+    return <OneAct label="apply migrations" run={async () => {
+      const outcome = await applyMigrations();
+      return outcome.ok ? { ok: true, text: outcome.value.message } : outcome;
+    }} />;
+  }
+  if (finding.check === "evidence_key_generation") {
+    return <OneAct label="reseal a batch" run={async () => {
+      const outcome = await resealEvidence();
+      if (!outcome.ok) return outcome;
+      const { resealed, alreadyCurrent, failed, remaining, targetGeneration } = outcome.value;
+      return {
+        ok: true,
+        text: `${resealed} resealed under generation ${targetGeneration}, ${alreadyCurrent} already current, `
+          + `${failed.length} failed. ${remaining} remaining — run it again until that reaches 0.`,
+      };
+    }} />;
+  }
+  if (finding.check === "evidence_orphans" || finding.check === "draft_bodies_stranded") return <Collect />;
+  if (finding.check === "recovery_key_conflicts") return <Acknowledge />;
+  if (finding.check === "body_index_failed") return <SearchRepair />;
+  return null;
+}
+
+/** One button, one call, one rendered answer. The doctor report is refetched after, whatever it said. */
+function OneAct({ label, run, disabled = false }: { label: string; run: () => Promise<Shown>; disabled?: boolean }) {
+  const queryClient = useQueryClient();
+  const [shown, setShown] = useState<Shown>(null);
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    setBusy(true);
+    setShown(await run());
+    setBusy(false);
+    await queryClient.invalidateQueries({ queryKey: ["doctor"] });
+  }
+  return (
+    <>
+      <p><button type="button" className="quiet" disabled={busy || disabled} onClick={() => void go()}>{label}</button></p>
+      <Outcome outcome={shown} />
+    </>
+  );
+}
+
+/**
+ * `reconcile?collect=1` — the one call in the product that deletes content bytes. So the first click
+ * reveals what the second will do and the second does it; a single button here would be the R2 delete one
+ * mis-click away, on a screen an operator reaches when something is already wrong.
+ */
+function Collect() {
+  const [armed, setArmed] = useState(false);
+  if (!armed) {
+    return <p><button type="button" className="quiet" onClick={() => setArmed(true)}>collect them…</button></p>;
+  }
+  return (
+    <>
+      <p className="notice">
+        This deletes every object the reconciler finds no referent for — orphaned raw mail past the grace
+        period, stranded draft bodies and export residue. It is refused for the whole organization while a
+        legal hold stands.
+      </p>
+      <OneAct label="delete them now" run={async () => {
+        const outcome = await reconcileEvidence(true);
+        if (!outcome.ok) return outcome;
+        const { orphansDeleted, draftBodiesDeleted, exportObjectsDeleted } = outcome.value;
+        return {
+          ok: true,
+          text: `Deleted ${orphansDeleted} orphan(s), ${draftBodiesDeleted} draft body/bodies, `
+            + `${exportObjectsDeleted} export object(s).`,
+        };
+      }} />
+      {" "}
+      <button type="button" className="linkish dim" onClick={() => setArmed(false)}>never mind</button>
+    </>
+  );
+}
+
+/**
+ * Recording that a key collision has been assessed. The restore id is typed from the finding's own text
+ * rather than parsed out of it: the detail is prose, and a screen that read identifiers from prose would
+ * break the day the sentence was reworded. The Node refuses an id that did not collide, with the reason.
+ */
+function Acknowledge() {
+  const [restoreId, setRestoreId] = useState("");
+  const [scope, setScope] = useState("");
+  const [conclusion, setConclusion] = useState("");
+  return (
+    <>
+      <label className="field-row" htmlFor="ack-restore"><span>restore id</span>
+        <input id="ack-restore" className="mono" value={restoreId} onChange={(event) => setRestoreId(event.target.value)} /></label>
+      <label className="field-row" htmlFor="ack-scope"><span>what was examined</span>
+        <input id="ack-scope" value={scope} onChange={(event) => setScope(event.target.value)} /></label>
+      <label className="field-row" htmlFor="ack-conclusion"><span>what was concluded</span>
+        <input id="ack-conclusion" value={conclusion} onChange={(event) => setConclusion(event.target.value)} /></label>
+      <OneAct label="record the assessment" run={async () => {
+        const outcome = await acknowledgeConflict(restoreId.trim(), scope, conclusion);
+        if (!outcome.ok) return outcome;
+        const { acknowledged } = outcome.value;
+        return {
+          ok: true,
+          text: `Recorded against ${acknowledged.restoreId} (generations ${acknowledged.generations}) at `
+            + `${acknowledged.acknowledgedAt}. The collision is not repaired; the alarm is discharged.`,
+        };
+      }} />
+    </>
+  );
+}
+
+/**
+ * The ten codes, in the browser (the same flow as `mailda recovery-codes rotate` then `confirm`).
+ *
+ * ## Shown once, held only while rendered, typed back by a person
+ *
+ * The plaintext lives in one `useState` for as long as the list is on screen, and nowhere else: not in
+ * storage, not in a log, not in the confirm request except as the one code a person typed. "I have saved
+ * these" drops them. The confirm field is **never prefilled** from the mint response — the whole point of
+ * confirming is to assert that a human holds the sheet, and a screen that typed it for them would clear the
+ * finding without changing the fact (`docs/authentication.md`, #136). The field is `type="password"` for
+ * the reason the CLI reads it at a prompt: a code that is not spent by confirming is a live key to the vault.
+ *
+ * Confirming is offered whether or not a set was just minted, because the finding it answers also fires
+ * on a sheet minted elsewhere that nobody has typed back.
+ */
+function RecoveryCodes() {
+  const queryClient = useQueryClient();
+  const [minted, setMinted] = useState<RecoveryCodesMinted | null>(null);
+  const [code, setCode] = useState("");
+  const [shown, setShown] = useState<Shown>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function rotate() {
+    setBusy(true);
+    setShown(null);
+    const outcome = await rotateRecoveryCodes();
+    setBusy(false);
+    if (!outcome.ok) { setShown(outcome); return; }
+    setMinted(outcome.value);
+    await queryClient.invalidateQueries({ queryKey: ["doctor"] });
+  }
+
+  async function confirm() {
+    setBusy(true);
+    const outcome = await confirmRecoveryCode(code.trim());
+    setBusy(false);
+    // Cleared either way: the field held a live key, and a refused one is still a live key.
+    setCode("");
+    setShown(outcome.ok ? { ok: true, text: outcome.value.message } : outcome);
+    await queryClient.invalidateQueries({ queryKey: ["doctor"] });
+  }
+
+  return (
+    <>
+      {minted === null ? (
+        <p>
+          <button type="button" className="quiet" disabled={busy} onClick={() => void rotate()}>mint a new set</button>
+          {" "}
+          <span className="dim">Ten codes, shown once. Confirming one retires any previous sheet.</span>
+        </p>
+      ) : (
+        <div className="codes-sheet">
+          <p><strong>Write these down now.</strong> {minted.notice}</p>
+          <ol className="codes" aria-label="Recovery codes">
+            {minted.codes.map((one) => <li key={one} className="mono">{one}</li>)}
+          </ol>
+          <p className="dim">
+            Set <span className="mono">{minted.set}</span>, carrying content key generation {minted.escrowed.content} and
+            credential key generation {minted.escrowed.credential}. Put them somewhere that survives losing this
+            computer and this Cloudflare account.
+          </p>
+          <p><button type="button" className="quiet" onClick={() => setMinted(null)}>I have saved these ten codes</button></p>
+        </div>
+      )}
+      <label className="field-row" htmlFor="recovery-code">
+        <span>confirm one code</span>
+        <input id="recovery-code" type="password" className="mono" autoComplete="off" value={code}
+          onChange={(event) => setCode(event.target.value)} />
+      </label>
+      <p>
+        <button type="button" className="quiet" disabled={busy || code.trim() === ""} onClick={() => void confirm()}>
+          confirm
+        </button>
+        {" "}
+        <span className="dim">Compared against the hash, never spent. Type it; nothing here fills it in for you.</span>
+      </p>
+      <Outcome outcome={shown} />
+    </>
+  );
+}
+
+/**
+ * The body index's failures, listed with the reason each failed, and a repair for the ones worth it.
+ *
+ * Per message and never a sweep, which is the route's own rule: `unindexable` rows are deterministically
+ * unparseable and repairing them spends attempts on work that cannot succeed. So the list says which is
+ * which and nothing is pre-selected.
+ */
+function SearchRepair() {
+  const failed = useSearchFailed();
+  const queryClient = useQueryClient();
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+
+  if (failed.isPending) return <Nothing kind="loading" />;
+  if (failed.isError) return <Nothing kind="failed" detail={failed.error.message} />;
+  if (failed.data.failed.length === 0) return <p className="dim">The failed list is empty now.</p>;
+
+  function toggle(id: string) {
+    setChosen((was) => {
+      const next = new Set(was);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <>
+      <table className="search-failed">
+        <thead>
+          <tr><th scope="col">Repair</th><th scope="col">Message</th><th scope="col">State</th><th scope="col" className="num">Attempts</th><th scope="col">Error</th></tr>
+        </thead>
+        <tbody>
+          {failed.data.failed.map((row) => (
+            <tr key={row.messageId}>
+              <td>
+                <input type="checkbox" aria-label={`repair ${row.messageId}`} checked={chosen.has(row.messageId)}
+                  onChange={() => toggle(row.messageId)} />
+              </td>
+              <td className="mono">{row.messageId}</td>
+              <td><span className={`state state-index-${row.state}`}>{row.state}</span></td>
+              <td className="num mono dim">{row.attempts}</td>
+              <td className="dim mono">{row.error ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="dim">Tick the ones worth retrying — fix the cause first.</p>
+      {/* Mounted whether or not anything is ticked, so the answer outlives the selection it was about. */}
+      <OneAct label={`requeue ${chosen.size} message(s)`} disabled={chosen.size === 0} run={async () => {
+        const outcome = await repairSearch([...chosen]);
+        if (!outcome.ok) return outcome;
+        setChosen(new Set());
+        await queryClient.invalidateQueries({ queryKey: ["search-failed"] });
+        return { ok: true, text: `${outcome.value.requeued} requeued. ${outcome.value.message}` };
+      }} />
+    </>
+  );
+}
+
+/**
+ * Verifying evidence, one bounded batch at a time. The verdict says what it covered, and the next
+ * batch starts where this one stopped rather than from the beginning again.
+ */
+function EvidenceVerify() {
+  const [verdict, setVerdict] = useState<EvidenceVerdict | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function verify(after: string | null) {
+    setBusy(true);
+    setProblem(null);
+    const outcome = await verifyEvidence(after);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setVerdict(outcome.value);
+  }
+
+  return (
+    <>
+      <p>
+        <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>verify a batch</button>
+        {verdict?.resumeAfter == null ? null : (
+          <>
+            {" "}
+            <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>continue from where it stopped</button>
+          </>
+        )}
+      </p>
+      {problem === null ? null : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{problem}</p>}
+      {verdict === null ? null : (
+        <p className="notice mono" role="status">
+          {verdict.checked} object(s) checked{verdict.table === null ? "" : ` in ${verdict.table}`}, {verdict.bytesRead} bytes read:{" "}
+          {verdict.intact ? "intact." : `${verdict.faults.length} fault(s).`}
+          {verdict.resumeAfter === null ? " That was the last batch." : " More remains."}
+          {verdict.faults.map((fault) => (
+            <span key={`${fault.table}:${fault.rowId}:${fault.column}`} style={{ display: "block" }}>
+              {fault.kind} {fault.table}.{fault.column} {fault.rowId}: {fault.detail}
+            </span>
+          ))}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function Doctor() {
   const doctor = useDoctor();
   if (doctor.isPending || doctor.isError) {
@@ -607,6 +934,7 @@ export function Doctor() {
                     <span className="dim">Fix: {finding.fix}</span>
                   </>
                 )}
+                <Remedy finding={finding} />
               </td>
             </tr>
           ))}

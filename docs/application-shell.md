@@ -585,6 +585,13 @@ compile error rather than a path that serves HTML and renders nothing.
 Fourteen routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/agents`,
 `/limits`, `/outbox`, `/audit`, `/log`, `/doctor`, `/setup`.
 
+`/doctor` carries the remedies its findings name, on the finding and only while it fails: apply migrations,
+reseal a batch, collect orphans (two clicks, since it deletes), record a key-collision assessment, mint and
+confirm recovery codes, list and requeue the body index's failures, and verify evidence a batch at a time.
+Every one is `org.admin` on the Node; the screen checks nothing and renders the refusal verbatim, the way
+`people.tsx` does. `mailda recovery-codes redeem` is the one act left to the terminal, because it is used when
+nobody can sign in.
+
 This list said *twelve* and left out `/agents`, under a sentence claiming *"every API this Node exposes is
 reachable by a person"*. Neither was true, and the second was the expensive one: nineteen provider routes
 shipped with no screen at all, reachable only through `mailda provider …`. A count nobody can check drifts;
