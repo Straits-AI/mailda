@@ -5,7 +5,8 @@ import { MARK_IS_AUTHORED } from "../../brand.ts";
 import { Mark } from "./mark.tsx";
 
 import {
-  useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow,
+  signOutEverywhere, useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends,
+  type NotificationRow,
 } from "./api.ts";
 import type { AppRoute } from "../../app-routes.ts";
 
@@ -111,6 +112,19 @@ function OutboundCounts() {
 }
 
 export function InstrumentBar() {
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /**
+   * Every session, every device. The Node revokes first and this page signs out second, so a revocation
+   * that did not happen is rendered rather than hidden behind a page that merely looks signed out.
+   */
+  async function everywhere() {
+    setProblem(null);
+    const outcome = await signOutEverywhere();
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await logout();
+  }
+
   return (
     <footer className="instrument-bar" aria-label="Node status">
       <span className="field">
@@ -122,8 +136,17 @@ export function InstrumentBar() {
       <span className="bar-spacer" />
       <DoctorVerdict />
       <SessionClock />
+      {problem === null ? null : <span className="bad" role="alert">{problem}</span>}
       <button type="button" className="linkish" onClick={() => void logout()}>
         sign out
+      </button>
+      <button
+        type="button"
+        className="linkish"
+        title="Ends every session you hold, on every device, including this one."
+        onClick={() => void everywhere()}
+      >
+        sign out everywhere
       </button>
     </footer>
   );

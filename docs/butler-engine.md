@@ -493,6 +493,10 @@ compose the message, which is what #60 gave a policy hold's release to. The gate
 *seen* it, not because a stricter authority is owed; `approval.decide` would have made this the approval
 machinery with none of its guarantees.
 
+The outbox offers it as *release* on a row whose reason is `butler_release_required` and on no other row,
+because `release-hold` clears a different gate and one button for both would walk a send past whichever it
+was actually on (`docs/application-shell.md`).
+
 The gate is named in three predicates (the read, the conditional `UPDATE`, and the `AuditGate` beside it),
 and **widening any two changes nothing observable**. That is a mutation measurement rather than something a
 test can hold, since widening a predicate means editing the source; what the test pins is the outcome, which
@@ -671,6 +675,10 @@ assumes a first attempt.
 | `re-run` | `POST /api/butler-runs/:id/replay` | the source run's `trigger_facts` (through `triggerFactsOf`, the column's one reader), then everything the live path re-asks | a new `butler_runs` row carrying `replay_of`/`replayed_by`, in one transaction with `butler.replayed` |
 | `retry-effect` | `POST /api/sends/:id/retry` | one manifest's `state`, `fidelity`, `submitted_key` | that manifest back to `held`, audited `send.retried`; then dispatch, under the **original** key |
 | `resend-may-duplicate` | the same route, named mode | the same three, plus the envelope and the author's **typed** body | a **new** manifest under a **new** key with `resend_of` set, audited `send.resent` |
+
+The Butlers screen offers `re-run` as *run again* on every finished run, and says beside the button that the
+run is new and its writes are real; the release gate above is what keeps a re-run from sending anything on its
+own.
 
 `inspect` performs no effect (it creates no run, seals no manifest, writes no evidence and touches no state),
 and it appends no entry of its own, because an entry per glance at a screen is the per-row frequency this Node's

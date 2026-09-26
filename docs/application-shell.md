@@ -40,7 +40,10 @@ in it, and Layer 3 adds rows rather than a shape.**
   it.
 - **Full-width tables** for the outbox, audit trail and log. For a ledger a table is the right
   form, the one thing variant A got right, and it is kept.
-- **A bottom instrument bar** carrying the session countdown, the `doctor` verdict and the outbound counts.
+- **A bottom instrument bar** carrying the session countdown, the `doctor` verdict, the outbound counts and
+  the two sign-outs: *sign out* ends this device's session, *sign out everywhere* asks the Node to revoke
+  every session this person holds (`POST /api/auth/logout-everywhere`) and signs this page out only once it
+  has answered, so a revocation that did not happen is rendered rather than hidden behind a signed-out page.
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
   a reader's eye rests, and the counts belong beside the mailboxes they describe.
 
@@ -699,6 +702,13 @@ two approvals neither of them the requester, an export is approved and then run.
 could be placed and lifted **by id** and never listed. An administrator who placed one last month had no way
 to find its id again, and a legal hold nobody can enumerate is one nobody can answer a court about.
 
+A completed export links its manifest and, on request, every object the manifest names, each through
+`GET /api/exports/:id/objects/:name`. The listing deliberately carries no object names: the manifest is the
+sealed, hashed account of what left, and a second list of the same names beside it would be a copy that can
+disagree with it. So the screen reads the manifest through the object route, which is the same grant check
+every download passes, and anybody but the requester is answered 404 there rather than shown a list they
+cannot open.
+
 ### `/limits` (#66, #81)
 
 `GET /api/breakers` exists because of AGENTS.md's third principle rather than for a dashboard (*a limit
@@ -824,6 +834,12 @@ author is deliberately **not** excluded: a hold is a pause for a human to read w
 is usually the person who wrote it, which is the distinction from `require_approval`, where §18 excludes
 them by design.
 
+The Butler gate is the other one a `send.propose` holder clears, and it has its own button for the same
+reason: *release* appears on a row whose reason is `butler_release_required` and calls
+`POST /api/sends/:id/release`, which puts the send back in the ordinary hold window and wakes the run that
+proposed it if that run is still there. The route answers `not_found` alike for absent, already released and
+not yours (§5C), so the refusal the outbox renders says all three rather than guessing which.
+
 ### `/approvals` (#81)
 
 The first of the governance surfaces, and it went first because without it a published `require_approval`
@@ -862,6 +878,12 @@ together and splitting them would make the common diagnosis a two-screen navigat
   second copy here would be a second opinion about what publishes.
 - **Observe**: recent runs with state, the reason they ended, nodes, effects, refusals and spend; the
   pauses in force, each with the detector's own sentence and a resume that requires a written reason.
+- **Run again**: `POST /api/butler-runs/:id/replay` with `mode: "re-run"`, on every finished run. The screen
+  says what that is, because "replay" invites the reading that nothing happens: a **new run** of the same
+  published version over the run's recorded input, judged under today's rules, whose writes are real. What
+  makes it safe to offer is the release gate rather than the word: any send it proposes waits in the outbox
+  for a person, so the button moves no mail on its own. Whether a run *can* be re-run (input recorded,
+  version still published, Butler not paused) is the Node's answer, and its four-part refusal is shown whole.
 
 Three things it refuses to do, each one a decision made elsewhere that a screen could quietly undo: it does
 not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and
