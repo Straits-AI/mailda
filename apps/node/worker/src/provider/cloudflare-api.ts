@@ -122,8 +122,19 @@ export async function cloudflarePut<T>(
   return await cloudflareWrite<T>(env, ctx, orgId, "PUT", path, body);
 }
 
+/**
+ * One authenticated `DELETE`, for removing a literal routing rule this Node wrote (26 September 2026), which
+ * is the one thing this Node deletes in Cloudflare. Cloudflare answers with the rule it removed, so the
+ * same success shape holds. No body: the rule is named by its path.
+ */
+export async function cloudflareDelete<T>(
+  env: Env, ctx: Ctx, orgId: string, path: string,
+): Promise<T> {
+  return await cloudflareWrite<T>(env, ctx, orgId, "DELETE", path, undefined);
+}
+
 async function cloudflareWrite<T>(
-  env: Env, ctx: Ctx, orgId: string, method: "POST" | "PATCH" | "PUT", path: string, body: unknown,
+  env: Env, ctx: Ctx, orgId: string, method: "POST" | "PATCH" | "PUT" | "DELETE", path: string, body: unknown,
 ): Promise<T> {
   const token = await accessTokenFor(env, ctx, orgId);
   const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
@@ -131,7 +142,7 @@ async function cloudflareWrite<T>(
     headers: {
       authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
     },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }).catch(() => null);
 
   const payload = (await response?.json().catch(() => ({}))) as {

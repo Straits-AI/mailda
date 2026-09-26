@@ -274,11 +274,11 @@ export const ROUTES = [
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/mailboxes",
-    summary: "Create a mailbox, named. The creator may read and send from it; addresses are routed at it through POST /api/provider/receiving",
+    summary: "Create a mailbox, named. The creator may read and send from it; addresses are added to it through POST /api/addresses",
     request: S.createMailboxRequest,
     response: S.mailboxCreatedResponse,
   },
-  { method: "PATCH", path: "/api/mailboxes/:mailboxId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
+  { method: "PATCH", path: "/api/mailboxes/:mailboxId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Change a mailbox's settings, or its name", response: S.mailboxPatchedResponse },
   {
     authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] },
     method: "GET", path: "/api/messages",
@@ -701,6 +701,14 @@ export const ROUTES = [
       + "domain's catch-all already points at this Node, a literal rule otherwise, and a named reason when "
       + "no credential could write one",
     request: S.addressCreateRequest, response: S.addressCreatedResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "DELETE", path: "/api/addresses",
+    summary: "Remove an address from its mailbox and, in the same act, the literal rule that routed it here: "
+      + "nothing to remove under a catch-all, the rule deleted when it still names this Worker, and a named "
+      + "reason when it was left",
+    request: S.addressRemoveRequest, response: S.addressRemovedResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },

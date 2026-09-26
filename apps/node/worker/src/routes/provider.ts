@@ -234,6 +234,16 @@ export const provider = {
     ));
   },
 
+  "DELETE /api/addresses": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // The mirror of the add above, through the same credential, because the rule it deletes is the one that wrote.
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { removeAddress } = await import("../provider/receiving.ts");
+    return Response.json(await removeAddress(env, operatorCtx(request, clock), who.orgId, who.userId, String(body.address ?? "")));
+  },
+
   "GET /api/provider/routing-rules": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });

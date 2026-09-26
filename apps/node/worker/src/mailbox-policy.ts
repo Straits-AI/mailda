@@ -5,7 +5,8 @@ import { isAdmin } from "./access.ts";
 import { BUDGETS } from "@mailda/budgets";
 
 import { allowedTypesOf } from "./attachments.ts";
-import { CallerError, notFound, unprocessable } from "./errors.ts";
+import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
+import { mailboxNameOrThrow } from "./mailboxes.ts";
 
 /**
  * A mailbox's first-response target: the one thing about a mailbox anybody can currently change.
@@ -34,6 +35,7 @@ const MAX_MINUTES = 60 * 24 * 30; // thirty days
 
 export interface TargetOutcome {
   mailboxId: string;
+  name: string;
   firstResponseMinutes: number | null;
   /** Whether this mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
   quarantineDmarcFail: boolean;
@@ -46,6 +48,7 @@ export interface TargetOutcome {
 
 interface SettingsRow {
   id: string;
+  name: string;
   first_response_minutes: number | null;
   quarantine_dmarc_fail: number;
   quarantine_dangerous_attachments: number;
@@ -55,7 +58,7 @@ interface SettingsRow {
 
 async function settingsOf(env: Env, orgId: string, mailboxId: string, why: string): Promise<SettingsRow> {
   const row = await env.CATALOG.prepare(
-    `SELECT id, first_response_minutes, quarantine_dmarc_fail, quarantine_dangerous_attachments,
+    `SELECT id, name, first_response_minutes, quarantine_dmarc_fail, quarantine_dangerous_attachments,
             attachment_max_bytes, attachment_allowed_types
        FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1`,
   ).bind(orgId, mailboxId).first<SettingsRow>();
@@ -68,6 +71,7 @@ async function settingsOf(env: Env, orgId: string, mailboxId: string, why: strin
 function outcomeOf(row: SettingsRow): TargetOutcome {
   return {
     mailboxId: row.id,
+    name: row.name,
     firstResponseMinutes: row.first_response_minutes,
     quarantineDmarcFail: row.quarantine_dmarc_fail === 1,
     quarantineDangerousAttachments: row.quarantine_dangerous_attachments === 1,
@@ -77,6 +81,41 @@ function outcomeOf(row: SettingsRow): TargetOutcome {
 }
 
 /** The two switches a mailbox has, each a column. A third is a third entry here and nowhere else. */
+/**
+ * A mailbox's name (26 September 2026). A rail row and a queue heading are chosen by name and granted by id,
+ * so both names go on the entry, and the update is gated on the old one: two renames landing together do
+ * not both record having changed it from the same thing (the shape `renameTeam` settled).
+ */
+export async function renameMailbox(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, mailboxId: string, rawName: string,
+): Promise<TargetOutcome> {
+  if (!(await isAdmin(env, orgId, actorUserId))) {
+    throw new CallerError("E_NOT_AN_ADMINISTRATOR", 403, {
+      what: "you are not an administrator of this organization",
+      why: "a mailbox's name is what everybody granted to it sees in their rail",
+      fix: "ask somebody who holds org.admin",
+    });
+  }
+  const mailbox = await settingsOf(env, orgId, mailboxId, "renaming names the mailbox it renames");
+  const name = await mailboxNameOrThrow(env, orgId, rawName, mailboxId);
+  if (mailbox.name === name) {
+    throw conflict("E_MAILBOX_NAME_UNCHANGED", {
+      what: `mailbox ${mailboxId} is already called ${JSON.stringify(name)}`,
+      why: "a rename that changes nothing would put an entry in the trail claiming an act nobody took",
+      fix: "send a different name, or leave it as it is",
+    });
+  }
+  await auditedBatch<never>(env, ctx, orgId, {
+    action: "mailbox.renamed", outcome: "ok", actorUserId, subject: mailboxId,
+    detail: { from: mailbox.name, to: name },
+  }, (entry) => [
+    entry,
+    env.CATALOG.prepare("UPDATE mailboxes SET name = ? WHERE id = ? AND org_id = ? AND name = ?")
+      .bind(name, mailboxId, orgId, mailbox.name),
+  ]);
+  return outcomeOf({ ...mailbox, name });
+}
+
 export const QUARANTINE_SWITCHES = {
   dmarc: "quarantine_dmarc_fail",
   attachments: "quarantine_dangerous_attachments",

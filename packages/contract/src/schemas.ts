@@ -621,6 +621,28 @@ export const addressCreatedResponse = z.object({
   }).strict(),
 }).strict();
 
+/** The mirror of adding (26 September 2026): the address named, and the rule `POST /api/addresses` wrote for it. */
+export const addressRemoveRequest = z.object({
+  address: z.string().min(3).max(320),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+export const addressRemovedResponse = z.object({
+  address: z.object({
+    id: z.string().min(1),
+    address: z.string().min(3),
+    mailboxId: z.string().min(1),
+  }).strict(),
+  /**
+   * What became of the routing: `catch_all` when the domain's catch-all routes here and no rule of its own
+   * existed; `rule_removed` when the literal rule naming this Worker was deleted in this act; `not_removed`
+   * with the reason and where to delete it, because a rule routing an unknown recipient here bounces mail.
+   */
+  routing: z.object({
+    state: z.enum(["catch_all", "rule_removed", "not_removed"]),
+    detail: z.string().min(1),
+  }).strict(),
+}).strict();
+
 /** The routing rules already on a zone (#258): what routes where, and whether each already names this Worker. */
 export const providerRoutingRulesResponse = z.object({
   routing: z.object({
@@ -1621,6 +1643,8 @@ export const revokedResponse = z.object({ revoked: z.boolean() }).strict();
 
 export const mailboxPatchedResponse = z.object({
   mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+  /** What the mailbox is called now; a PATCH with `name` changes it (26 September 2026). */
+  name: z.string().min(1),
   firstResponseMinutes: z.number().int().nullable(),
   /** Whether the mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
   quarantineDmarcFail: z.boolean(),
