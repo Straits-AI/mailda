@@ -238,16 +238,18 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
 - **Mail that arrived before the indexes existed is searchable once the backfill reaches it.** Subjects go
   500 a minute, bodies 25, because each body is an R2 read, a decryption and a parse. `doctor` reports the
   two backlogs separately. A body that cannot be parsed is never body-searchable; one whose read failed is
-  retried with backoff, and `mailda search repair` requeues chosen messages.
+  retried with backoff, and `mailda search repair` or the `body_index_failed` finding on the Doctor screen lists
+  them with the reason each failed and requeues chosen messages.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts
   in time order until it finds enough: 2,410 rows read to return 3 messages from a mailbox holding the
   oldest 3 of 1,200. Fixing it means driving the listing from a per-mailbox ordering
   ([receipt](./docs/receipts/message-page-size.md)).
 - **Recovery codes minted before 28 August 2026 carry 80 bits, not 128.** A hash is one-way, so they can
-  only be replaced. `doctor` reports them degraded and `mailda recovery-codes rotate` replaces them. A set
-  nobody has confirmed is also reported degraded, and `mailda recovery-codes confirm` is typed at a prompt,
-  never passed as a flag, because a confirmation a script can make from a file proves nothing about a person
-  holding the sheet.
+  only be replaced. `doctor` reports them degraded and `mailda recovery-codes rotate`, or the same act on the
+  Doctor screen's `recovery_escrow` finding, replaces them. A set nobody has confirmed is also reported
+  degraded, and `mailda recovery-codes confirm` is typed at a prompt, never passed as a flag, because a
+  confirmation a script can make from a file proves nothing about a person holding the sheet. The screen
+  holds to the same rule: it shows the ten once and never fills the confirm field in for you.
 - **A person cannot be removed.** Revoking every relation is the available act, and it takes effect on the
   next request.
 - **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id, so

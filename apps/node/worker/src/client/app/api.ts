@@ -93,10 +93,20 @@ async function act<T = Record<string, unknown>>(
   });
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (response.ok) return { ok: true, value: (parsed ?? {}) as T };
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
+  return { ok: false, message: refusalText(parsed, response.status) };
+}
+
+/**
+ * A refusal body, as one string. Most carry `message` with the four parts already joined; a few handlers
+ * (`POST /api/search/repair`) send `{ error, what, why, fix }` bare, and reading only `error` from those
+ * showed a screen the word "unprocessable" and nothing else — the code without the why or the fix.
+ */
+function refusalText(parsed: Record<string, unknown> | null, status: number): string {
+  if (typeof parsed?.message === "string") return parsed.message;
+  if (typeof parsed?.what === "string") {
+    return `${String(parsed.error ?? "refused")}  ${parsed.what}\n  why      ${String(parsed.why ?? "")}\n  fix      ${String(parsed.fix ?? "")}`;
+  }
+  return String(parsed?.error ?? `This Node answered ${status}.`);
 }
 
 /** Short, because a revocation must not be hidden by a cache. See the header. */
@@ -937,6 +947,102 @@ export const configureTransport = (accountId: string, apiToken: string) =>
   act<{ configured: { accountId: string; configuredAt: string } }>(
     at("PUT", "/api/transport"), "PUT", { accountId, apiToken },
   );
+
+/* ------------------------------------------------------------------ doctor's remedies ---------------- */
+
+/**
+ * The acts `doctor` names in its `fix` text, callable from the screen that shows the finding.
+ *
+ * Each existed as a route and a CLI verb; the browser had the report and none of the remedies, so an
+ * administrator read "POST /api/maintenance/reseal" on a screen and went to find a terminal. Every one is
+ * `org.admin` on the Node, and the screen does not check first — it renders the Node's refusal, verbatim,
+ * the way `people.tsx` does.
+ */
+
+/** Ten fresh codes, in plaintext, once. Nothing stores them; see `recoveryCodesMintedResponse`. */
+export interface RecoveryCodesMinted {
+  codes: string[];
+  escrowed: { content: number; credential: number };
+  set: string;
+  notice: string;
+}
+
+export const rotateRecoveryCodes = () =>
+  act<RecoveryCodesMinted>(at("POST", "/api/recovery-codes/rotate"));
+
+export const confirmRecoveryCode = (code: string) =>
+  act<{ confirmed: number; alreadyConfirmed: boolean; message: string }>(
+    at("POST", "/api/recovery-codes/confirm"), "POST", { code },
+  );
+
+export interface ResealOutcome {
+  resealed: number;
+  alreadyCurrent: number;
+  failed: unknown[];
+  remaining: number;
+  targetGeneration: number;
+}
+
+export const resealEvidence = () => act<ResealOutcome>(at("POST", "/api/maintenance/reseal"));
+
+export interface ReconcileOutcome {
+  orphans: unknown[];
+  orphansDeleted: number;
+  draftBodiesDeleted: number;
+  exportObjectsDeleted: number;
+}
+
+/** `collect=1` is the only call in the product that destroys content bytes; the screen asks twice. */
+export const reconcileEvidence = (collect: boolean) =>
+  act<ReconcileOutcome>(at("POST", "/api/maintenance/reconcile") + (collect ? "?collect=1" : ""));
+
+export const applyMigrations = () =>
+  act<{ applied: string[]; raced: string[]; alreadyCurrent: boolean; message: string }>(at("POST", "/api/prepare"));
+
+export const acknowledgeConflict = (restoreId: string, scope: string, conclusion: string) =>
+  act<{ acknowledged: { restoreId: string; generations: string; acknowledgedAt: string } }>(
+    at("POST", "/api/recovery/conflicts/:restoreId/acknowledge", { restoreId }), "POST", { scope, conclusion },
+  );
+
+export interface FailedIndexRow {
+  messageId: string;
+  state: "unindexable" | "retryable";
+  attempts: number;
+  error: string | null;
+}
+
+export function useSearchFailed(): UseQueryResult<{ failed: FailedIndexRow[] }, Error> {
+  return useQuery({
+    queryKey: ["search-failed"],
+    queryFn: () => read<{ failed: FailedIndexRow[] }>(GET("/api/search/failed")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export const repairSearch = (messageIds: string[]) =>
+  act<{ requeued: number; message: string }>(at("POST", "/api/search/repair"), "POST", { messageIds });
+
+export interface EvidenceFault {
+  rowId: string;
+  table: string;
+  column: string;
+  blobKey: string;
+  kind: "missing" | "unreadable" | "altered";
+  detail: string;
+}
+
+export interface EvidenceVerdict {
+  checked: number;
+  table: string | null;
+  intact: boolean;
+  faults: EvidenceFault[];
+  resumeAfter: string | null;
+  bytesRead: number;
+}
+
+/** One bounded batch; `after` continues from the previous verdict's `resumeAfter`. */
+export const verifyEvidence = (after: string | null) =>
+  act<EvidenceVerdict>(at("POST", "/api/evidence/verify") + (after === null ? "" : `?after=${encodeURIComponent(after)}`));
 
 export interface PasskeyRow {
   id: string;

@@ -194,6 +194,11 @@ codes, single-use: a mistyped one is spent.
 node packages/cli/src/mailda.mjs recovery-codes redeem --url https://<destination-node>
 ```
 
+`redeem` is the one recovery verb that stays terminal-only. Minting a sheet and confirming a code, resealing,
+collecting orphans, applying migrations, acknowledging a key collision and verifying evidence are all on the
+Doctor screen as well, on the finding each answers — those need a signed-in administrator, which is exactly
+what the redeem state lacks.
+
 Unauthenticated on purpose, and this is the reason: the state it exists for is one where the signing key cannot
 be unwrapped, so the Node can issue no session and nobody can prove they are an administrator. Requiring
 credentials would put the door behind the lock it opens. Measured: the destination answered 500 to every

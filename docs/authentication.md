@@ -365,8 +365,10 @@ confirming does not spend the code, so one on a command line is a *live* key to 
 strictly worse than the spent one `redeem` already refuses to take that way. And a code a script reads from a
 file cannot make the assertion at all. The condition asks whether a **human** holds the sheet, so automating
 the answer clears the warning without changing the fact, which is 2b: an assertion that cannot fail. The route
-is unchanged; what changed is that the only client shipped for it can no longer be handed the code by a
-machine.
+is unchanged; what changed is that neither client shipped for it can be handed the code by a machine. The
+Doctor screen's `recovery_escrow` finding mints a sheet and confirms one code too (`RecoveryCodes` in
+`apps/node/worker/src/client/app/screens/ledgers.tsx`): the ten are shown once, held only while rendered, and
+the confirm field is a password input that nothing prefills, so it is the same assertion typed in a browser.
 
 Three details that are load-bearing rather than incidental:
 

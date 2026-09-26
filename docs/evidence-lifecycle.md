@@ -46,6 +46,10 @@ cannot rotate is not much better than one you never held.
 POST /api/maintenance/reseal   →  { resealed, alreadyCurrent, failed[], remaining, targetGeneration }
 ```
 
+Offered as a button on the Doctor screen's `evidence_key_generation` finding while it fails, showing these
+five counts as the Node returned them; the `evidence_present` finding carries `POST /api/evidence/verify` the
+same way, one batch at a time with a *continue* from `resumeAfter`.
+
 Four properties, each preventing a specific failure:
 
 - **Resumable.** A shard holds ~8.5M messages, so no invocation finishes; ~85,000 calls at 100 per
@@ -63,6 +67,10 @@ Four properties, each preventing a specific failure:
 ```
 POST /api/maintenance/reconcile[?collect=1][&format=text]
 ```
+
+The collecting form is a button on the Doctor screen's `evidence_orphans` and `draft_bodies_stranded`
+findings, and it takes two clicks: the first says what the second deletes. It is the one call in the product
+that destroys content bytes, and an operator reaches that screen when something is already wrong.
 
 The two directions are **not symmetric**, and treating them alike is the mistake to avoid. Direction 1 has
 **four referent rules**, one per scanned prefix, because "no receipt" is the test for only one of them:
