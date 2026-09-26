@@ -99,19 +99,6 @@ export async function cloudflarePost<T>(
 }
 
 /**
- * One authenticated `PATCH`, for the single settings change this Node makes.
- *
- * Separate from `cloudflarePost` and named for what it does, so the one act that turns a zone into a mail
- * zone is greppable. `POST /email/routing/enable` would be the obvious call and Cloudflare marks it
- * deprecated; `PATCH /email/routing` is the live one.
- */
-export async function cloudflarePatch<T>(
-  env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
-): Promise<T> {
-  return await cloudflareWrite<T>(env, ctx, orgId, "PATCH", path, body);
-}
-
-/**
  * One authenticated `PUT`, for replacing a routing rule (#258). Measured: the rules endpoint refuses a
  * partial body (`2007 matchers: must have matchers`), so a caller sends the whole rule as it read it
  * (`docs/receipts/email-routing-rule-takeover.md`).

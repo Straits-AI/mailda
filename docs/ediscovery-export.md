@@ -288,8 +288,10 @@ mechanisms fight.
   through, because a "still not built" entry that silently disappears is indistinguishable from one nobody
   read.
 - **No download entry.** See *What the trail carries*.
-- **No UI.** The shell is Layer 1 to 3's surface, exactly as for policy, approvals and supervised reading. An
-  export is a governance act performed by an investigator with a matter already open.
+- ~~**No UI.**~~ Struck on 26 September 2026, for the reason the entry above stays: `/matters` requests an
+  export, runs it, and links its manifest and every object the manifest names through the object
+  route (`docs/application-shell.md`). The listing still carries no object names; the screen reads them off
+  the manifest, so there is one account of what left.
 - **No expiry on a staged export.** Objects stay until a hold-free reconciler collects them after their
   `exports` row goes, and nothing removes that row. A retention rule for exports is §14's question.
 

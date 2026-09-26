@@ -607,8 +607,8 @@ form > .hint { margin: -.6rem 0 0; }
 /* The dry run (#87). A section rather than a card: hairline rules, like everything else on this panel. */
 .butler-dry { border-top: 1px solid var(--rule); padding-top: .9rem; margin-bottom: 1.4rem; }
 .butler-dry h3 { margin: 0 0 .4rem; font-size: .95rem; }
-.butler-dry-runs { list-style: none; margin: .5rem 0; padding: 0; }
-.butler-dry-runs li { display: flex; gap: .5rem; align-items: center; margin: .25rem 0; font-size: .82rem; }
+.butler-dry-runs, .export-objects { list-style: none; margin: .5rem 0; padding: 0; }
+.butler-dry-runs li, .export-objects li { display: flex; gap: .5rem; align-items: center; margin: .25rem 0; font-size: .82rem; }
 .butler-dry-result { margin-top: .8rem; }
 /* The detail is JSON on one line and can be long. It scrolls in its own cell rather than widening the
    table, which is the rule the whole panel follows: nothing makes the page scroll sideways. */

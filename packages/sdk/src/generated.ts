@@ -161,10 +161,12 @@ export class GeneratedClient extends Transport {
   /**
    * What this Node can and cannot do, with the evidence
    *
+   * @param query.format `text` for the report as `mailda doctor` prints it. Omit for JSON.
+   *
    * `GET /api/doctor`
    */
-  async getDoctor(): Promise<z.infer<typeof S.doctorResponse>> {
-    return await this.json("GET", "/api/doctor", {}, undefined) as z.infer<typeof S.doctorResponse>;
+  async getDoctor(query?: { format?: string }): Promise<z.infer<typeof S.doctorResponse>> {
+    return await this.json("GET", "/api/doctor", {}, undefined, query) as z.infer<typeof S.doctorResponse>;
   }
 
   /**
@@ -377,10 +379,12 @@ export class GeneratedClient extends Transport {
   /**
    * Who holds what on which mailbox
    *
+   * @param query.subject Whose relations to list, by user id. Omit for your own; somebody else's needs `org.admin`, and without it the answer is 404 rather than a hint that the person exists.
+   *
    * `GET /api/access`
    */
-  async getAccess(): Promise<z.infer<typeof S.accessResponse>> {
-    return await this.json("GET", "/api/access", {}, undefined) as z.infer<typeof S.accessResponse>;
+  async getAccess(query?: { subject?: string }): Promise<z.infer<typeof S.accessResponse>> {
+    return await this.json("GET", "/api/access", {}, undefined, query) as z.infer<typeof S.accessResponse>;
   }
 
   /**
@@ -600,10 +604,12 @@ export class GeneratedClient extends Transport {
   /**
    * Drafts this person is writing
    *
+   * @param query.inReplyTo The id of the message a reply would answer. With it the response is `{ draft }`: this person's one draft for that reply, or null. Omit for the list.
+   *
    * `GET /api/drafts`
    */
-  async getDrafts(): Promise<z.infer<typeof S.draftListResponse>> {
-    return await this.json("GET", "/api/drafts", {}, undefined) as z.infer<typeof S.draftListResponse>;
+  async getDrafts(query?: { inReplyTo?: string }): Promise<z.infer<typeof S.draftListResponse>> {
+    return await this.json("GET", "/api/drafts", {}, undefined, query) as z.infer<typeof S.draftListResponse>;
   }
 
   /**
@@ -935,10 +941,12 @@ export class GeneratedClient extends Transport {
   /**
    * What the Butlers have done
    *
+   * @param query.limit How many of the newest runs, 1 to 100. 25 when omitted.
+   *
    * `GET /api/butler-runs`
    */
-  async getButlerRuns(): Promise<z.infer<typeof S.butlerRunListResponse>> {
-    return await this.json("GET", "/api/butler-runs", {}, undefined) as z.infer<typeof S.butlerRunListResponse>;
+  async getButlerRuns(query?: { limit?: string }): Promise<z.infer<typeof S.butlerRunListResponse>> {
+    return await this.json("GET", "/api/butler-runs", {}, undefined, query) as z.infer<typeof S.butlerRunListResponse>;
   }
 
   /**
@@ -989,46 +997,56 @@ export class GeneratedClient extends Transport {
   /**
    * The audit trail
    *
+   * @param query.action Only entries recording this action, named exactly (`supervised.query`, `send.sealed`). Omit for every action.
+   *
    * `GET /api/audit`
    */
-  async getAudit(): Promise<z.infer<typeof S.auditListResponse>> {
-    return await this.json("GET", "/api/audit", {}, undefined) as z.infer<typeof S.auditListResponse>;
+  async getAudit(query?: { action?: string }): Promise<z.infer<typeof S.auditListResponse>> {
+    return await this.json("GET", "/api/audit", {}, undefined, query) as z.infer<typeof S.auditListResponse>;
   }
 
   /**
    * Verify the audit chain
    *
+   * @param query.from The sequence number to start at: the previous call's `resumeFrom`. 1 when omitted.
+   *
    * `POST /api/audit/verify`
    */
-  async postAuditVerify(body?: unknown): Promise<z.infer<typeof S.auditVerifyResponse>> {
-    return await this.json("POST", "/api/audit/verify", {}, body) as z.infer<typeof S.auditVerifyResponse>;
+  async postAuditVerify(body?: unknown, query?: { from?: string }): Promise<z.infer<typeof S.auditVerifyResponse>> {
+    return await this.json("POST", "/api/audit/verify", {}, body, query) as z.infer<typeof S.auditVerifyResponse>;
   }
 
   /**
    * Check that stored evidence still matches the hashes recorded at ingress
    *
+   * @param query.after The previous call's `resumeAfter`, verbatim. Omit to start from the beginning.
+   *
    * `POST /api/evidence/verify`
    */
-  async postEvidenceVerify(body?: unknown): Promise<z.infer<typeof S.evidenceVerifyResponse>> {
-    return await this.json("POST", "/api/evidence/verify", {}, body) as z.infer<typeof S.evidenceVerifyResponse>;
+  async postEvidenceVerify(body?: unknown, query?: { after?: string }): Promise<z.infer<typeof S.evidenceVerifyResponse>> {
+    return await this.json("POST", "/api/evidence/verify", {}, body, query) as z.infer<typeof S.evidenceVerifyResponse>;
   }
 
   /**
    * Every stored object with the hash its plaintext should have, for a restorable backup
    *
+   * @param query.after The previous page's `resumeAfter`, verbatim. Omit for the first page.
+   *
    * `GET /api/evidence/inventory`
    */
-  async getEvidenceInventory(): Promise<z.infer<typeof S.evidenceInventoryResponse>> {
-    return await this.json("GET", "/api/evidence/inventory", {}, undefined) as z.infer<typeof S.evidenceInventoryResponse>;
+  async getEvidenceInventory(query?: { after?: string }): Promise<z.infer<typeof S.evidenceInventoryResponse>> {
+    return await this.json("GET", "/api/evidence/inventory", {}, undefined, query) as z.infer<typeof S.evidenceInventoryResponse>;
   }
 
   /**
    * The operational log
    *
+   * @param query.level Only entries at this level: `error`, `warn` or `info`. Omit for every level.
+   *
    * `GET /api/logs`
    */
-  async getLogs(): Promise<z.infer<typeof S.logListResponse>> {
-    return await this.json("GET", "/api/logs", {}, undefined) as z.infer<typeof S.logListResponse>;
+  async getLogs(query?: { level?: string }): Promise<z.infer<typeof S.logListResponse>> {
+    return await this.json("GET", "/api/logs", {}, undefined, query) as z.infer<typeof S.logListResponse>;
   }
 
   /**
@@ -1327,9 +1345,13 @@ export class GeneratedClient extends Transport {
   /**
    * Reconcile stored evidence against its metadata
    *
+   * @param query.collect `1` to delete the orphaned objects the pass finds: the one call in the product that destroys content bytes. Omit to report them and delete nothing.
+   *
+   * @param query.format `text` for the report as the CLI prints it. Omit for JSON.
+   *
    * `POST /api/maintenance/reconcile`
    */
-  async postMaintenanceReconcile(body?: unknown): Promise<z.infer<typeof S.reconcileResponse>> {
-    return await this.json("POST", "/api/maintenance/reconcile", {}, body) as z.infer<typeof S.reconcileResponse>;
+  async postMaintenanceReconcile(body?: unknown, query?: { collect?: string; format?: string }): Promise<z.infer<typeof S.reconcileResponse>> {
+    return await this.json("POST", "/api/maintenance/reconcile", {}, body, query) as z.infer<typeof S.reconcileResponse>;
   }
 }

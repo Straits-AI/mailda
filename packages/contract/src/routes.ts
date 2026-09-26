@@ -87,11 +87,10 @@ export interface RouteSpec {
    * Declared here rather than in prose because it is what the SDK and MCP generate from: a paging control
    * described in a summary is a control only the browser can use. See `GET /api/messages`.
    *
-   * **`GET /api/cases` reads one and does not declare one**, which is a parity gap of exactly the kind this
-   * field exists to close: it *requires* `?mailbox=`, so the generated `getCases()` — which has no way to send
-   * it — can only ever produce that route's 400. Left as it is rather than fixed in passing, because #91 is
-   * about the message listing and a second route's refusal deserves its own ticket rather than a drive-by; it
-   * is written down here so the next reader finds it as a known gap and not as a surprise.
+   * Every parameter a handler reads is declared here: `test/node/query-params.test.ts` reads the handlers
+   * with the TypeScript parser and fails on a `searchParams.get("…")` this field does not name, because
+   * a parameter read in one channel and undeclared in the others is exactly the parity gap this field
+   * exists to close.
    */
   readonly query?: readonly { readonly name: string; readonly description: string }[];
 
@@ -175,6 +174,7 @@ export const ROUTES = [
     authority: { scope: "recovery" },
     method: "GET", path: "/api/doctor",
     summary: "What this Node can and cannot do, with the evidence",
+    query: [{ name: "format", description: "`text` for the report as `mailda doctor` prints it. Omit for JSON." }],
     response: S.doctorResponse,
   },
 
@@ -238,7 +238,15 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/teams/:teamId/members", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
-  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "self-or-admin" }, response: S.accessResponse },
+  {
+    method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "self-or-admin" },
+    query: [{
+      name: "subject",
+      description: "Whose relations to list, by user id. Omit for your own; somebody else's needs `org.admin`, "
+        + "and without it the answer is 404 rather than a hint that the person exists.",
+    }],
+    response: S.accessResponse,
+  },
   { method: "POST", path: "/api/access", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Grant a relation on a mailbox", response: S.grantedResponse },
   { method: "DELETE", path: "/api/access", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.supervisedListResponse },
@@ -429,7 +437,15 @@ export const ROUTES = [
   { method: "POST", path: "/api/conversations/merge", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
-  { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
+  {
+    method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] },
+    query: [{
+      name: "inReplyTo",
+      description: "The id of the message a reply would answer. With it the response is `{ draft }`: this "
+        + "person's one draft for that reply, or null. Omit for the list.",
+    }],
+    response: S.draftListResponse,
+  },
   { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, request: S.saveDraftRequest, response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
   { method: "DELETE", path: "/api/drafts/:draftId", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Discard a draft", response: S.draftDeletedResponse },
@@ -547,7 +563,11 @@ export const ROUTES = [
     summary: "Dry-run a Butler: walk it, cause nothing, report what a live run would do",
     request: S.simulateRequest, response: S.simulationResponse,
   },
-  { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunListResponse },
+  {
+    method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", authority: { scope: "organization", allOf: ["org.admin"] },
+    query: [{ name: "limit", description: "How many of the newest runs, 1 to 100. 25 when omitted." }],
+    response: S.butlerRunListResponse,
+  },
   { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunDetailResponse },
   { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunInspectionResponse },
   { method: "POST", path: "/api/butler-runs/:runId/replay", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
@@ -557,9 +577,18 @@ export const ROUTES = [
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
   {
     method: "GET", path: "/api/audit", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "The audit trail",
+    query: [{
+      name: "action",
+      description: "Only entries recording this action, named exactly (`supervised.query`, `send.sealed`). "
+        + "Omit for every action.",
+    }],
     response: S.auditListResponse,
   },
-  { method: "POST", path: "/api/audit/verify", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Verify the audit chain", response: S.auditVerifyResponse },
+  {
+    method: "POST", path: "/api/audit/verify", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Verify the audit chain",
+    query: [{ name: "from", description: "The sequence number to start at: the previous call's `resumeFrom`. 1 when omitted." }],
+    response: S.auditVerifyResponse,
+  },
   /**
    * Whether the evidence still hashes to what ingress recorded (#92).
    *
@@ -569,7 +598,11 @@ export const ROUTES = [
    * could read every message in the organization by asking for a verification and watching nothing;
    * `machineUseful` would be a lie here in the other direction, which is why no mint can confer it.
    */
-  { method: "POST", path: "/api/evidence/verify", summary: "Check that stored evidence still matches the hashes recorded at ingress", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceVerifyResponse },
+  {
+    method: "POST", path: "/api/evidence/verify", summary: "Check that stored evidence still matches the hashes recorded at ingress", authority: { scope: "organization", allOf: ["org.admin"] },
+    query: [{ name: "after", description: "The previous call's `resumeAfter`, verbatim. Omit to start from the beginning." }],
+    response: S.evidenceVerifyResponse,
+  },
   /**
    * The bucket's inventory, for a backup that can be checked after it is restored (#92).
    *
@@ -578,9 +611,14 @@ export const ROUTES = [
    * That is a map of the organization's mail traffic even without a single byte of content — who was busy,
    * when, and how much.
    */
-  { method: "GET", path: "/api/evidence/inventory", summary: "Every stored object with the hash its plaintext should have, for a restorable backup", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceInventoryResponse },
+  {
+    method: "GET", path: "/api/evidence/inventory", summary: "Every stored object with the hash its plaintext should have, for a restorable backup", authority: { scope: "organization", allOf: ["org.admin"] },
+    query: [{ name: "after", description: "The previous page's `resumeAfter`, verbatim. Omit for the first page." }],
+    response: S.evidenceInventoryResponse,
+  },
   {
     method: "GET", path: "/api/logs", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "The operational log",
+    query: [{ name: "level", description: "Only entries at this level: `error`, `warn` or `info`. Omit for every level." }],
     response: S.logListResponse,
   },
   { method: "GET", path: "/api/exports", summary: "Export jobs", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.exportListResponse },
@@ -808,7 +846,18 @@ export const ROUTES = [
 
   // ---- maintenance ------------------------------------------------------------------------------------
   { method: "POST", path: "/api/maintenance/reseal", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reseal evidence under the current key", response: S.resealResponse },
-  { method: "POST", path: "/api/maintenance/reconcile", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reconcile stored evidence against its metadata", response: S.reconcileResponse },
+  {
+    method: "POST", path: "/api/maintenance/reconcile", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reconcile stored evidence against its metadata",
+    query: [
+      {
+        name: "collect",
+        description: "`1` to delete the orphaned objects the pass finds: the one call in the product that "
+          + "destroys content bytes. Omit to report them and delete nothing.",
+      },
+      { name: "format", description: "`text` for the report as the CLI prints it. Omit for JSON." },
+    ],
+    response: S.reconcileResponse,
+  },
   /*
    * `as const satisfies` rather than a `readonly RouteSpec[]` annotation, and the difference is the whole
    * enforcement rather than a stylistic preference.
