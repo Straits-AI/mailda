@@ -164,8 +164,10 @@ export async function upgrade(argv) {
     } else if (state !== null) {
       setUp.receiving = state.provisioned?.receiving?.domain ?? null;
       setUp.address = state.provisioned?.receiving?.address ?? null;
-      setUp.sending = state.provisioned?.sending?.domain ?? null;
-      setUp.deliveryEvents = state.provisioned?.deliveryEvents?.domain ?? null;
+      // A record of a sighting is a record: a domain onboarded before this Node counts, and says so.
+      const seen = (act) => (act === null || act === undefined ? null : act.observed ? `${act.domain} (in place before this Node, observed)` : act.domain);
+      setUp.sending = seen(state.provisioned?.sending);
+      setUp.deliveryEvents = seen(state.provisioned?.deliveryEvents);
     }
   }
   process.stdout.write(

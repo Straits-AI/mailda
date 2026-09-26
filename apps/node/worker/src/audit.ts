@@ -855,6 +855,16 @@ export const AUDIT_ACTIONS = {
   "provider.sending_onboarded": {
     says: "An administrator onboarded a domain for sending, and Cloudflare placed records under it.",
   },
+  /**
+   * The domain was onboarded before this Node asked (26 September 2026). Recorded rather than refused
+   * because `provisionedFacts` reads only this trail: a Node installed into an account that had already
+   * onboarded the domain otherwise held no record of sending at all, and said "not set up" for ever.
+   * *Observed*, not onboarded: this Node did nothing to Cloudflare, it saw what was there.
+   */
+  "provider.sending_observed": {
+    says: "An administrator confirmed a sending proposal for a domain Cloudflare reported as already "
+      + "onboarded. This Node changed nothing; it recorded what it saw.",
+  },
 
   /**
    * The subscription that makes a sending domain's delivery outcomes reach this Node (#222). Against the
@@ -863,6 +873,12 @@ export const AUDIT_ACTIONS = {
    */
   "provider.delivery_events_subscribed": {
     says: "An administrator subscribed a sending domain's delivery events to this Node's queue.",
+  },
+  // `sending_observed`'s sibling: the subscription and the consumer were both in place already.
+  "provider.delivery_events_observed": {
+    says: "An administrator confirmed a subscription proposal for a domain whose delivery events already "
+      + "reached this Node's queue, with this Worker consuming it. This Node changed nothing; it recorded "
+      + "what it saw.",
   },
 
   /**

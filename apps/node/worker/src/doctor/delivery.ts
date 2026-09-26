@@ -21,8 +21,9 @@ import { type Finding } from "../doctor.ts";
  *
  * It said a Worker holds no account credential, so it cannot ask Queues who consumes its queue, and that
  * inventing a check that could not work would be worse than naming the question. That was true when it was
- * written and **ADR 42 made it false**: the Node now holds its own Cloudflare grant, carrying `queues.write`,
- * and two plain reads settle all three objects. `butler_execution` is the precedent for the rewrite as well
+ * written and **ADR 42 made it false**: the Node now holds a Cloudflare credential of its own (an API token
+ * since 26 September 2026, an OAuth grant before that; `docs/cloudflare-grant.md`), or is handed the
+ * operator's wrangler consent on the request, and two plain reads settle all three objects. `butler_execution` is the precedent for the rewrite as well
  * as the shape — the hazard in a permanently-true `detail` is that it stays in the file long after it stops
  * describing the world, and *nothing looks wrong*: the check still runs, still passes, still reads as
  * verified.
@@ -49,21 +50,21 @@ export function sendingEventsConsumerCheck(): Finding {
     discloses: "infrastructure",
     ok: true,
     detail:
-      "Not answered here, and answerable: `GET /api/provider/delivery-events` reads it through this Node's " +
-      "own Cloudflare grant (ADR 42) and names which of the three objects is missing — the `email.sending` " +
-      "event subscription, the queue it publishes to, or a consumer on that queue. It is not folded into " +
-      "this report because it costs live Cloudflare calls and may renew a token, and a report that reached " +
-      "the network would spend the account's authority every time anything asked how this Node was. Two of " +
-      "the three still cannot be created from here: the consumer is attached out of band by " +
-      "`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from this " +
-      "Worker's deployed binding, and the subscription is created by the API and not by wrangler (measured " +
-      "16 September 2026: `POST /accounts/{id}/event_subscriptions/subscriptions` with an `email.sending` " +
-      "source creates one for an onboarded sending domain and refuses a domain that is not; wrangler " +
-      "4.118.0 still offers no such source). `POST /api/provider/subscription` makes that call through the " +
-      "grant, which needs `queues.write` (measured). So a button-only install can observe its delivery " +
-      "outcomes once somebody runs the subscribe and attaches the consumer; until then their absence is " +
-      "reportable by name instead of inferable from silence. " +
-      "`delivery_visibility` reports the consequence from evidence.",
+      "Not answered here, and answerable: `GET /api/provider/delivery-events` reads it with the Cloudflare " +
+      "credential this Node holds — its stored API token, or the operator's wrangler consent carried on the " +
+      "request — and names which of the three objects is missing — the `email.sending` event " +
+      "subscription, the queue it publishes to, or a consumer on that queue. It is not folded into this " +
+      "report because it costs live Cloudflare calls, and a report that reached the network would spend " +
+      "the account's authority every time anything asked how this Node was. Neither missing object comes " +
+      "from wrangler: the subscription is created by the API alone (measured 16 September 2026: " +
+      "`POST /accounts/{id}/event_subscriptions/subscriptions` with an `email.sending` source creates one " +
+      "for an onboarded sending domain and refuses a domain that is not; wrangler 4.118.0 offers no such " +
+      "source). `POST /api/provider/subscription` makes that call with the same credential, which needs " +
+      "`queues.write` (measured), and attaches this Worker as the queue's consumer when nothing consumes " +
+      "it; `pnpm --filter @mailda/worker run queue:attach-consumer` does the consumer half from a shell for " +
+      "a Node holding no token. So a button-only install can observe its delivery outcomes once somebody " +
+      "confirms the subscription; until then their absence is reportable by name instead of inferable " +
+      "from silence. `delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
   };
 }

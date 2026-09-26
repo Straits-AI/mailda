@@ -399,9 +399,16 @@ export async function sendingProposalFor(
  *
  * Every refusal here is a refusal to act, never a partial one: the `POST` is the last thing that happens and
  * nothing before it changes state. `POST` is **not idempotent** — a second one answers
- * `2040 Subdomain already exists` — so the proposal is recomputed rather than cached, and `onboarded: true`
- * is a refusal with a different code from a digest mismatch, because *somebody already did this* and *you
- * are holding a stale proposal* are different things to be told.
+ * `2040 Subdomain already exists` — so the proposal is recomputed rather than cached, and a domain that is
+ * `onboarded: true` is never posted again.
+ *
+ * It is not refused either (26 September 2026). It used to be, as `E_PROVIDER_SENDING_ALREADY`, and a Node
+ * installed into an account that had onboarded the domain before it existed then held no audit entry for
+ * sending at all: the install saw `onboarded: true`, printed "already", and `provisionedFacts` said sending
+ * was never set up — on `mailda upgrade`, and on the first-run progress list. So a confirmed proposal for a
+ * domain already in place **records what was seen**, `provider.sending_observed`, which is the honest word:
+ * this Node did not onboard it, it saw that Cloudflare had. A digest mismatch is still `E_PROVIDER_SENDING_STALE`,
+ * because *you are holding an old proposal* is not something an observation may paper over.
  */
 export async function onboardSending(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string, domain: string, digest: string,
@@ -412,13 +419,6 @@ export async function onboardSending(
       what: `this Node could not settle what onboarding ${domain} would do`,
       why: proposal.error,
       fix: "read GET /api/provider/delivery-events, and check the grant still covers this zone",
-    });
-  }
-  if (proposal.onboarded) {
-    throw conflict("E_PROVIDER_SENDING_ALREADY", {
-      what: `${domain} is already onboarded for sending on ${proposal.zone}`,
-      why: "Cloudflare refuses a second onboarding of the same name, and this Node refuses before asking",
-      fix: "nothing to do — GET /api/provider/delivery-events shows what it is missing, if anything",
     });
   }
   if (digest !== proposal.digest) {
@@ -432,6 +432,13 @@ export async function onboardSending(
       why: "something changed between reading and confirming — the zone, or what is already onboarded",
       fix: `run the proposal again and confirm the digest it prints: ${proposal.digest}`,
     });
+  }
+  if (proposal.onboarded) {
+    await auditedBatch(env, ctx, orgId, {
+      action: "provider.sending_observed", outcome: "ok", actorUserId, subject: domain,
+      detail: { zone: proposal.zone, onboarded: true, authority: operatorOf(ctx) === null ? "token" : "operator" },
+    }, (entry) => [entry]);
+    return proposal;
   }
 
   const token = await accessTokenFor(env, ctx, orgId);
@@ -652,19 +659,25 @@ export async function subscribeDeliveryEvents(
       fix: "read GET /api/provider/delivery-events, and check the grant still covers this zone and the queue",
     });
   }
-  if (proposal.subscribed !== null && proposal.consumerAttached === true) {
-    throw conflict("E_PROVIDER_SUBSCRIPTION_ALREADY", {
-      what: `${domain} is already covered by the subscription ${proposal.subscribed}`,
-      why: "a second subscription for the same domain would publish every event twice into the same queue",
-      fix: "nothing to do — GET /api/provider/delivery-events shows what it is missing, if anything",
-    });
-  }
   if (digest !== proposal.digest) {
     throw conflict("E_PROVIDER_SUBSCRIPTION_STALE", {
       what: "the proposal confirmed is not the proposal this Node would now apply",
       why: "something changed between reading and confirming — the zone, the sending domain, or the queue",
       fix: `run the proposal again and confirm the digest it prints: ${proposal.digest}`,
     });
+  }
+  // Both objects in place: nothing to create (a second subscription would publish every event twice), so
+  // what was seen is recorded, for `onboardSending`'s reason.
+  if (proposal.subscribed !== null && proposal.consumerAttached === true) {
+    await auditedBatch(env, ctx, orgId, {
+      action: "provider.delivery_events_observed", outcome: "ok", actorUserId, subject: domain,
+      detail: {
+        zone: proposal.zone, sendingDomain: proposal.sendingDomain, queue: proposal.queueName,
+        subscriptionId: proposal.subscribed, consumerAttached: "already",
+        authority: operatorOf(ctx) === null ? "token" : "operator",
+      },
+    }, (entry) => [entry]);
+    return proposal;
   }
 
   const accountId = await boundAccountFor(env, ctx);

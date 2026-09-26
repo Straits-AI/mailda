@@ -202,12 +202,19 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     if (proposal.error !== null) {
       process.stdout.write(`     unknown   ${proposal.error}\n`);
       if (!/\bfix\b/i.test(proposal.error)) process.stdout.write(`     fix       \`mailda provider --onboard-sending ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
-    } else if (proposal.onboarded) { process.stdout.write("     onboarded already\n"); done.sending = domain; }
-    else {
+    } else {
+      /*
+       * Posted even when Cloudflare already has it (26 September 2026): the Node then records what it saw
+       * rather than onboarding, and without that entry its own record said sending was never set up — on
+       * the first-run progress list and at the end of every `mailda upgrade`.
+       */
       for (const name of proposal.creates) process.stdout.write(`     creates   ${name}\n`);
       const applied = await call("POST", "/api/provider/sending", { domain, digest: proposal.digest });
       if (!applied.ok) refused(applied.text);
-      else { process.stdout.write(`     onboarded for sending on ${applied.value.proposal.zone}\n`); done.sending = domain; }
+      else {
+        process.stdout.write(proposal.onboarded ? "     onboarded already, recorded\n" : `     onboarded for sending on ${applied.value.proposal.zone}\n`);
+        done.sending = domain;
+      }
     }
   }
 
@@ -220,14 +227,19 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     if (proposal.error !== null) {
       process.stdout.write(`     unknown   ${proposal.error}\n`);
       if (!/\bfix\b/i.test(proposal.error)) process.stdout.write(`     fix       \`mailda provider --subscribe ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
-    } else if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
-      process.stdout.write(`     subscribed already, as ${proposal.subscribed}\n`); done.deliveryEvents = domain;
     } else {
+      const already = proposal.subscribed !== null && proposal.consumerAttached !== false;
       if (proposal.subscribed === null) process.stdout.write(`     creates   a subscription publishing ${proposal.events.join(", ")} into ${proposal.queueName}\n`);
       if (proposal.consumerAttached === false) process.stdout.write(`     attaches  this Worker as the consumer of ${proposal.queueName}\n`);
+      // Posted when already in place too, for sending's reason above: the Node records the sighting.
       const applied = await call("POST", "/api/provider/subscription", { domain, digest: proposal.digest });
       if (!applied.ok) refused(applied.text);
-      else { process.stdout.write(`     subscribed: ${applied.value.proposal.subscribed} (events reach ${applied.value.proposal.queueName})\n`); done.deliveryEvents = domain; }
+      else {
+        process.stdout.write(already
+          ? `     subscribed already, as ${proposal.subscribed}, recorded\n`
+          : `     subscribed: ${applied.value.proposal.subscribed} (events reach ${applied.value.proposal.queueName})\n`);
+        done.deliveryEvents = domain;
+      }
     }
   }
 

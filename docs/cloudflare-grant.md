@@ -76,8 +76,10 @@ tidiness: a handler that grew a `token` field fails the contract suite instead o
 
 `GET /api/provider` reports `no_token` or `token_held` (with the account and the verification date),
 beside `provisioned`, the latest receiving, sending and
-subscription act from the audit trail with its date and which credential did it. The progress list reads
-those as a record of an act, not a live read, and says so.
+subscription act from the audit trail with its date and which credential did it. A sighting counts as
+the latest act and is marked `observed: true` (a domain Cloudflare already had onboarded when this Node
+asked). The progress list reads those as a record of an act, not a live read, and says so, and says
+"in place on Cloudflare before this Node, observed" for a sighting rather than claiming the Node did it.
 
 ## Withheld from machines
 
@@ -347,12 +349,21 @@ Nothing reached Cloudflare. `domain_pause` is the precedent for an organization-
 reason does not transfer. `approvals.ts` says it exists to stop *a single administrator stopping a
 customer's mail*. This stops nothing and is scoped to one name the operator typed.
 
-### Three refusals, three codes
+### Two refusals, two codes, and a sighting
 
-`E_PROVIDER_SENDING_ALREADY`, `E_PROVIDER_SENDING_STALE` and `E_PROVIDER_SENDING_UNREADABLE` are separate
-because *somebody already did this*, *you are holding an old proposal* and *this Node could not find out* are
-different things to be told. Cloudflare's own `2040 Subdomain already exists` would say the first, after a
-write had been attempted.
+`E_PROVIDER_SENDING_STALE` and `E_PROVIDER_SENDING_UNREADABLE` are separate because *you are holding an old
+proposal* and *this Node could not find out* are different things to be told. *Somebody already did this*
+used to be a third, `E_PROVIDER_SENDING_ALREADY`, and the live Node showed its cost on 26 September 2026:
+whymelabs.com had been onboarded before the install, so the install never posted, and the Node's own record
+of its setup (`provisioned` on `GET /api/provider`, read by the first-run progress list and by `mailda
+upgrade`'s summary) said sending was never set up. So a confirmed proposal for a domain already onboarded
+now records `provider.sending_observed` and answers 200 with the proposal; Cloudflare is still never asked
+to onboard twice, and its `2040 Subdomain already exists` is still never reached. *Observed* is the word
+because this Node did not do it, it saw that it was done, and `provisioned.sending.observed` carries that
+distinction to every surface that shows the record. `POST /api/provider/subscription` does the same for a
+subscription already publishing into a queue this Worker consumes (`provider.delivery_events_observed`, in
+place of the former `E_PROVIDER_SUBSCRIPTION_ALREADY`). Receiving never had the gap: `onboardReceiving`
+records its act on a zone that already routed here too.
 
 ### Covered is not onboarded
 

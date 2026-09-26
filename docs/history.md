@@ -3359,3 +3359,22 @@ The third was how a new person gets in, and the answer was already built and und
 person would look: an invitation minted on People, shown once and not mailed; a password chosen on the
 link; nothing held until a relation is granted; and an address of their own added to a mailbox they hold,
 which under the apex catch-all is the whole act. The README and the shell doc say so now.
+
+## A domain onboarded before the Node is a sighting, and the Node records it (26 September 2026)
+
+`mailda upgrade` on the live Node ended with `sending: not set up` for a domain that sends. The audit
+trail explained it: at install the domain was already onboarded, `GET /api/provider/sending` said so, the
+CLI printed "onboarded already" and never posted, and `POST /api/provider/sending` would have refused it
+as `E_PROVIDER_SENDING_ALREADY` anyway. `provisionedFacts` reads only that trail, so the Node's own record,
+the first-run progress list and the upgrade summary all said sending was never set up. The refusal is
+gone: a confirmed proposal for a domain already in place records `provider.sending_observed` (a
+subscription already publishing into a queue this Worker consumes, `provider.delivery_events_observed`)
+and answers with the proposal, Cloudflare untouched; a stale digest still refuses. The record marks a
+sighting as one, and the progress list says "in place on Cloudflare before this Node, observed on …"
+rather than "set up at install". The install posts in that case and prints "onboarded already, recorded".
+Receiving never had the gap. Beside it: `provisionedFacts` no longer swallows a failed read into "nothing
+set up"; the doctor's `sending_events_consumer` finding stopped naming a grant that no longer exists and
+a consumer step the confirm now performs; `butler_execution` names the ceiling, simulation and the four
+replay modes as built and only taint tracking and the second trigger as not; and the canary gate's doctor
+prints are headed by whose report they are, since the incumbent's `degraded` lines read as the canary's
+repeated.

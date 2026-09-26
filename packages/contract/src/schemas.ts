@@ -240,6 +240,8 @@ export const provisionedAct = z.object({
   /** `grant` is historical: acts recorded while the credential was an OAuth grant, before 26 September 2026. */
   authority: z.enum(["token", "grant", "operator", "unknown"]),
   address: z.string().nullable(),
+  /** True when the entry records a sighting, not an act: Cloudflare had it in place before this Node asked. */
+  observed: z.boolean(),
 }).strict();
 
 export const providerResponse = z.object({

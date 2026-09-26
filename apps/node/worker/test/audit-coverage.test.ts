@@ -231,7 +231,9 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     actions: [
       "provider.token_registered", "provider.token_forgotten",
       "provider.sending_onboarded",
+      "provider.sending_observed",
       "provider.delivery_events_subscribed",
+      "provider.delivery_events_observed",
       // A purchase started (#164): a registration in Cloudflare's account, not a row here.
       "provider.domain_purchase_attempted",
       // DNS written on a customer's zone, against the credential that authorized it.

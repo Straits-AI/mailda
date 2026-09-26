@@ -784,20 +784,39 @@ describe("onboarding a domain for sending", () => {
     expect(calls.filter((one) => one.method === "POST")).toEqual([]);
   });
 
-  it("refuses a second onboarding by name rather than by digest", async () => {
+  it("records a domain already onboarded as observed, and reaches Cloudflare with no write", async () => {
     /*
-     * A different code from staleness on purpose. *Somebody already did this* and *you are holding an old
-     * proposal* are different things to be told, and Cloudflare's own `2040` would arrive too late to say
-     * either — after a write had been attempted.
+     * This used to refuse, as `E_PROVIDER_SENDING_ALREADY`, and the live Node showed the cost on 26
+     * September 2026: whymelabs.com was onboarded before the install, the install never posted, and the
+     * Node's own record said sending was never set up. Cloudflare's `2040` still never gets asked for.
      */
     await granted();
     const calls = serving([{ name: "mail.example.test" }]);
     const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
 
-    await expect(onboardSending(
+    const answered = await onboardSending(
       testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
-    )).rejects.toThrow(/E_PROVIDER_SENDING_ALREADY/);
+    );
+    expect(answered.onboarded).toBe(true);
     expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+
+    const entries = await testEnv.CATALOG.prepare(
+      "SELECT action, subject, detail FROM audit_entries WHERE org_id = ? AND action LIKE 'provider.sending_%'",
+    ).bind(ORG).all<{ action: string; subject: string; detail: string }>();
+    expect(entries.results.map((one) => one.action)).toEqual(["provider.sending_observed"]);
+    expect(entries.results[0]!.subject).toBe("mail.example.test");
+    expect(JSON.parse(entries.results[0]!.detail)).toEqual({ zone: "example.test", onboarded: true, authority: "token" });
+    // And the sighting is what the Node's record now reports, saying it is one.
+    expect((await provisionedFacts(testEnv, ORG)).sending).toMatchObject({ domain: "mail.example.test", observed: true });
+  });
+
+  it("still refuses a stale digest for a domain already onboarded, and records nothing", async () => {
+    await granted();
+    serving([{ name: "mail.example.test" }]);
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", "0".repeat(64),
+    )).rejects.toThrow(/E_PROVIDER_SENDING_STALE/);
+    expect((await provisionedFacts(testEnv, ORG)).sending).toBeNull();
   });
 
   it("refuses rather than guesses when the proposal could not be read", async () => {
@@ -943,7 +962,8 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
     expect(proposal.sendingDomain).toBe("example.test");
   });
 
-  it("refuses a second subscription where one already covers the domain and this Worker consumes the queue", async () => {
+  it("records a subscription already covering the domain, with this Worker consuming, as observed and writes nothing", async () => {
+    // Was `E_PROVIDER_SUBSCRIPTION_ALREADY`; see the sending sibling for why a sighting is recorded instead.
     await granted();
     const calls = serving({
       onboarded: [{ name: "mail.example.test" }],
@@ -952,10 +972,18 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
 
     const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
     expect(proposal.subscribed).toBe("already");
-    await expect(subscribeDeliveryEvents(
+    const answered = await subscribeDeliveryEvents(
       testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
-    )).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_ALREADY/);
+    );
+    expect(answered.subscribed).toBe("already");
     expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+
+    const entries = await testEnv.CATALOG.prepare(
+      "SELECT action, subject, detail FROM audit_entries WHERE org_id = ? AND action LIKE 'provider.delivery_events_%'",
+    ).bind(ORG).all<{ action: string; subject: string; detail: string }>();
+    expect(entries.results.map((one) => one.action)).toEqual(["provider.delivery_events_observed"]);
+    expect(JSON.parse(entries.results[0]!.detail)).toMatchObject({ subscriptionId: "already", consumerAttached: "already", queue: "mailda-test-sending-events" });
+    expect((await provisionedFacts(testEnv, ORG)).deliveryEvents).toMatchObject({ domain: "mail.example.test", observed: true });
   });
 
   it("creates it with the measured shape when the digest matches, and records the act", async () => {
@@ -1113,10 +1141,31 @@ describe("provisioned facts from the audit trail", () => {
     await record(SEPTEMBER_3 + 2000, "provider.sending_onboarded", "mail.example.test", {});
     const facts = await provisionedFacts(testEnv, ORG);
     expect(facts.receiving).toEqual({
-      domain: "mail.example.test", at: new Date(SEPTEMBER_3 + 1000).toISOString(), authority: "operator", address: "hello@mail.example.test",
+      domain: "mail.example.test", at: new Date(SEPTEMBER_3 + 1000).toISOString(), authority: "operator", address: "hello@mail.example.test", observed: false,
     });
     // An entry written before `authority` existed says so rather than guessing.
     expect(facts.sending?.authority).toBe("unknown");
     expect(facts.deliveryEvents).toBeNull();
+  });
+
+  it("takes the latest of an act and a sighting, and says which it was", async () => {
+    const record = (at: number, action: "provider.sending_onboarded" | "provider.sending_observed", detail: Record<string, unknown>) =>
+      auditedBatch(testEnv, atTime(at), ORG, { action, outcome: "ok", actorUserId: ADMIN, subject: "mail.example.test", detail }, (entry) => [entry]);
+    await record(SEPTEMBER_3, "provider.sending_observed", { authority: "operator" });
+    expect((await provisionedFacts(testEnv, ORG)).sending).toMatchObject({ observed: true, authority: "operator" });
+    // A later act outranks the sighting, and reads as an act.
+    await record(SEPTEMBER_3 + 1000, "provider.sending_onboarded", { authority: "token" });
+    expect((await provisionedFacts(testEnv, ORG)).sending).toMatchObject({ observed: false, authority: "token", at: new Date(SEPTEMBER_3 + 1000).toISOString() });
+  });
+
+  it("lets a broken read surface rather than answering 'nothing set up'", async () => {
+    // The query used to end in `.catch(() => ({ results: [] }))`: an unreadable trail read as an unset-up
+    // Node, which is the swallow AGENTS.md §3 forbids.
+    // Rejected at `.all()`, where the swallow sat: a throw from `prepare` never reached it and proved nothing.
+    const broken = {
+      ...testEnv,
+      CATALOG: { prepare: () => ({ bind: () => ({ all: () => Promise.reject(new Error("D1 is away")) }) }) },
+    } as unknown as typeof testEnv;
+    await expect(provisionedFacts(broken, ORG)).rejects.toThrow("D1 is away");
   });
 });

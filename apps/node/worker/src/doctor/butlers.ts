@@ -23,10 +23,13 @@ import { type Finding } from "../doctor.ts";
  *
  * ## What is still not built, named here because an operator is entitled to the list
  *
- * The capability ceiling at publication, static taint tracking (#52), the run ledger and its four replay
- * modes (#53), simulation, and every trigger except `mail.received`. Two of those are §16 guarantees this
- * Node does not yet keep, and saying so in the report is the difference between a layer that is honest about
- * its edges and one that lets an absence read as a feature.
+ * Static taint tracking (#52), and every trigger except `mail.received` (`packages/butler-ast/src/ast.ts`
+ * admits one literal). The list was longer when first written and shrank as #51, #53 and simulation landed
+ * (26 September 2026 rewrite: `src/butler/ceiling.ts`, `src/butler/replay.ts`, `src/butler/simulate.ts`),
+ * and the detail names what landed beside what did not, because a "still not built" entry that outlives
+ * the build is the permanently-true paragraph `sendingEventsConsumer` warns about. Saying what is missing
+ * in the report is the difference between a layer that is honest about its edges and one that lets an
+ * absence read as a feature.
  */
 export function butlerExecutionCheck(): Finding {
   return {
@@ -57,9 +60,13 @@ export function butlerExecutionCheck(): Finding {
       "than being killed mid-loop. A Butler that re-triggers itself off its own mail is stopped: the run " +
       "record and the manifests it sealed make that chain a join, so a windowed count of self-provoked runs " +
       "latches a pause on the **Butler** — not on a version, so republishing a fixed Butler does not clear " +
-      "it — and one administrator resumes it alone with a reason. What is still not built: the capability " +
-      "ceiling at publication, static taint tracking (#52), the run ledger and its four replay modes (#53), " +
-      "simulation, and every trigger except mail.received.",
+      "it — and one administrator resumes it alone with a reason. Built since this list was first written: " +
+      "the capability ceiling, pinned at publication and intersected with live authority at every step " +
+      "(#51); simulation over supplied facts with no effect performed (POST /api/butlers/:id/simulate); " +
+      "and the run ledger with its four replay modes (#53): inspect and re-run on a run " +
+      "(GET /api/butler-runs/:id/inspect, POST /api/butler-runs/:id/replay), retry-effect and " +
+      "resend-may-duplicate on a send (POST /api/sends/:id/retry). What is still not built: static taint " +
+      "tracking (#52), and every trigger except mail.received.",
   };
 }
 
