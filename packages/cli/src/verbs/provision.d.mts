@@ -23,10 +23,17 @@ export interface ProvisionOutcome {
   catchAll: boolean;
 }
 
-/** Receiving, sending and the delivery-events subscription, through the Node's routes with the operator's token. */
+/** One act the Node has on record, as `GET /api/provider` reports it under `provisioned`. */
+export interface ProvisionedAct { domain: string; at: string; address: string | null; observed: boolean }
+
+/**
+ * Receiving, sending and the delivery-events subscription, through the Node's routes with the operator's
+ * token. A step the Node already has on record (`provisioned`) is reported and not done again.
+ */
 export function provisionNode(input: {
   origin: string; cookie: string; accountId: string; token: string; yes: boolean;
   ask: (prompt: string) => Promise<string>;
+  provisioned?: { receiving: ProvisionedAct | null; sending: ProvisionedAct | null; deliveryEvents: ProvisionedAct | null } | null;
 }): Promise<ProvisionOutcome>;
 
 /** The `== next` block after a setup. */

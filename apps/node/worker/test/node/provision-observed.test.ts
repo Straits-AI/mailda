@@ -36,3 +36,36 @@ describe("provisionNode on a domain already in place", () => {
     expect(done).toMatchObject({ sending: "whymelabs.com", deliveryEvents: "whymelabs.com" });
   });
 });
+
+/**
+ * The upgrade used to run the setup only when receiving was unrecorded, so a Node with receiving on record
+ * and sending onboarded from the dashboard before it existed never got its sending recorded, however many
+ * times it was upgraded (26 September 2026, whymelabs.com). Each step is now skipped on its own record.
+ */
+describe("provisionNode with steps already on the Node's record", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("skips the recorded step, asks no domain, and does the missing ones", async () => {
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      asked.push(`${init?.method ?? "GET"} ${path}`);
+      const answer = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if (path === "/api/provider/sending") return answer({ proposal: { error: null, onboarded: true, zone: "whymelabs.com", digest: "d1", creates: [] } });
+      return new Response("no route", { status: 404 });
+    });
+    const out: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { out.push(String(chunk)); return true; });
+    const act = (domain: string, observed = false) => ({ domain, at: "2026-09-25T17:10:03Z", address: "hello@whymelabs.com", observed });
+
+    const done = await provisionNode({
+      origin: "https://node.test", cookie: "c", accountId: "acc", token: "t", yes: false,
+      ask: async (prompt) => { throw new Error(`asked: ${prompt}`); },
+      provisioned: { receiving: act("whymelabs.com"), sending: null, deliveryEvents: act("whymelabs.com", true) },
+    });
+
+    expect(asked).toEqual(["GET /api/provider/sending", "POST /api/provider/sending"]);
+    expect(out.join("")).toContain("recorded  2026-09-25 (in place before this Node, observed)");
+    expect(done).toMatchObject({ receiving: "whymelabs.com", address: "hello@whymelabs.com", sending: "whymelabs.com", deliveryEvents: "whymelabs.com" });
+  });
+});

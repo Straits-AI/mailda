@@ -69,10 +69,18 @@ export async function zonesOf(accountId, token) {
   return zones.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name }));
 }
 
-export async function provisionNode({ origin, cookie, accountId, token, yes, ask }) {
+export async function provisionNode({ origin, cookie, accountId, token, yes, ask, provisioned = null }) {
   const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false };
+  /*
+   * What the Node already has on record (`GET /api/provider`'s `provisioned`) is not asked or done again.
+   * A Node whose receiving was set up at install but whose sending was onboarded from the dashboard before
+   * it existed reached here with only the receiving step recorded, and the upgrade ran nothing because
+   * receiving was present (26 September 2026): each step is skipped on its own record, not on the first.
+   */
+  const recorded = provisioned?.receiving ?? null;
   let domain = "";
-  if (yes) domain = (process.env.MAILDA_DOMAIN ?? "").trim().toLowerCase();
+  if (recorded !== null) domain = recorded.domain;
+  else if (yes) domain = (process.env.MAILDA_DOMAIN ?? "").trim().toLowerCase();
   else {
     const zones = await zonesOf(accountId, token);
     if (zones.length === 0) process.stdout.write("   (no zone could be listed with this token; the domain is typed)\n");
@@ -95,7 +103,7 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     return done;
   }
   // The address is asked after the catch-all choice, where it can be explained; see there.
-  let address = `hello@${domain}`;
+  let address = recorded?.address ?? `hello@${domain}`;
 
   const call = async (method, template, body, query) => {
     const path = api(method, template, query);
@@ -129,8 +137,12 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
 
   // 1. Receiving: the subdomain's records and the rule to this Worker.
   process.stdout.write(`\n   receiving at ${address}\n`);
-  const receiving = await call("GET", "/api/provider/receiving", undefined, { domain });
-  if (!receiving.ok) refused(receiving.text);
+  const receiving = recorded !== null ? null : await call("GET", "/api/provider/receiving", undefined, { domain });
+  if (recorded !== null) {
+    process.stdout.write(`     recorded  ${recorded.at.slice(0, 10)}\n`);
+    done.receiving = domain;
+    done.address = address;
+  } else if (!receiving.ok) refused(receiving.text);
   else {
     const { proposal } = receiving.value;
     if (proposal.zone !== null) process.stdout.write(`     zone      ${proposal.zone} (routing ${proposal.zoneRouting ?? "?"})\n`);
@@ -195,8 +207,11 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
 
   // 2. Sending: the domain onboarded for Email Sending.
   process.stdout.write(`\n   sending from ${domain}\n`);
-  const sending = await call("GET", "/api/provider/sending", undefined, { domain });
-  if (!sending.ok) refused(sending.text);
+  const sending = provisioned?.sending ? null : await call("GET", "/api/provider/sending", undefined, { domain });
+  if (sending === null) {
+    process.stdout.write(`     recorded  ${provisioned.sending.at.slice(0, 10)}${provisioned.sending.observed ? " (in place before this Node, observed)" : ""}\n`);
+    done.sending = provisioned.sending.domain;
+  } else if (!sending.ok) refused(sending.text);
   else {
     const { proposal } = sending.value;
     if (proposal.error !== null) {
@@ -220,8 +235,11 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
 
   // 3. Delivery outcomes: the subscription into this Node's queue, and the consumer on it.
   process.stdout.write(`\n   delivery outcomes for ${domain}\n`);
-  const subscription = await call("GET", "/api/provider/subscription", undefined, { domain });
-  if (!subscription.ok) refused(subscription.text);
+  const subscription = provisioned?.deliveryEvents ? null : await call("GET", "/api/provider/subscription", undefined, { domain });
+  if (subscription === null) {
+    process.stdout.write(`     recorded  ${provisioned.deliveryEvents.at.slice(0, 10)}${provisioned.deliveryEvents.observed ? " (in place before this Node, observed)" : ""}\n`);
+    done.deliveryEvents = provisioned.deliveryEvents.domain;
+  } else if (!subscription.ok) refused(subscription.text);
   else {
     const { proposal } = subscription.value;
     if (proposal.error !== null) {

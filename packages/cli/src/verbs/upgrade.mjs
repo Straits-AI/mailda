@@ -152,15 +152,21 @@ export async function upgrade(argv) {
   /*
    * A Node deployed before the install did the account work has never been set up to receive: no routing,
    * no grant, and nothing on it looks wrong. The audit trail says so (`provisioned.receiving` is null), and
-   * the upgrade finishes the job the same way the install does, with wrangler's login.
+   * the upgrade finishes the job the same way the install does, with wrangler's login. Each of the three
+   * steps is judged on its own record: a Node with receiving recorded and sending not (onboarded from the
+   * dashboard before the Node existed, 26 September 2026) gets the sending and outcomes steps only.
    */
   const cookie = await sessionCookie(url);
   const setUp = { receiving: null, sending: null, deliveryEvents: null, address: null };
   if (cookie !== null) {
     const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    if (state !== null && state.provisioned?.receiving === null) {
-      process.stdout.write("\n== this Node has never been set up to receive\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
-      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask }));
+    const missing = state === null || state.provisioned === undefined ? [] : ["receiving", "sending", "deliveryEvents"].filter((step) => state.provisioned[step] === null);
+    if (missing.length > 0) {
+      process.stdout.write(missing.includes("receiving")
+        ? "\n== this Node has never been set up to receive\n"
+        : `\n== this Node has no record of ${missing.join(" or ")}\n`);
+      process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
+      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask, provisioned: state.provisioned }));
     } else if (state !== null) {
       setUp.receiving = state.provisioned?.receiving?.domain ?? null;
       setUp.address = state.provisioned?.receiving?.address ?? null;
