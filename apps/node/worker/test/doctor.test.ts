@@ -296,6 +296,10 @@ describe("doctor", () => {
     expect(finding.ok).toBe(true);
     expect(report.verdict).not.toBe("refuse");
     expect(finding.detail).toContain("GET /api/provider/delivery-events");
+    // There is no grant since 26 September 2026 (`docs/cloudflare-grant.md`): the credential is the Node's
+    // API token or the operator's wrangler consent, and the detail used to name the thing that was gone.
+    expect(finding.detail).not.toContain("grant");
+    expect(finding.detail).toContain("API token");
     // The command, because a capability gap that does not name its remedy is a complaint (AGENTS.md §3).
     expect(finding.detail).toContain("queue:attach-consumer");
     // And the accepted cost, where the reader meets the gap rather than in a doc they have not opened.
@@ -340,8 +344,12 @@ describe("doctor", () => {
     expect(finding.detail).toContain("could not afford to run is also refused");
     expect(finding.detail).toContain("Workers Paid figure of 10,000");
     expect(finding.detail).toContain("On Workers Free the pot is 1,000");
-    // And the seam still open, stated where the reader meets it. It is no longer maxItems.
-    expect(finding.detail).toContain("capability ceiling");
+    // What landed is named as landed, and what is still open is the shorter list (26 September 2026): the
+    // ceiling, simulation and the four replay modes are built, so the sentence that listed them as missing
+    // would have been the permanently-true paragraph this file keeps warning about.
+    expect(finding.detail).toContain("capability ceiling, pinned at publication");
+    expect(finding.detail).toContain("POST /api/butlers/:id/simulate");
+    expect(finding.detail).toContain("What is still not built: static taint tracking (#52), and every trigger except mail.received.");
     expect(finding.detail).not.toContain("affordable is not checked");
 
     // Infrastructure: the shape of the bundle and the name of a ticket, both public. So it survives into

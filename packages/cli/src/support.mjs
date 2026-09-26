@@ -223,8 +223,15 @@ export async function doctorReport(origin, extraHeaders = {}, subject = "the Nod
   } catch {
     fail(`${subject}'s report was not JSON:\n${text.slice(0, 400)}`);
   }
-  for (const finding of report.findings ?? []) {
-    if (!finding.ok) process.stdout.write(`   ${finding.severity}  ${finding.check}  ${finding.detail}\n`);
+  /*
+   * Headed by the subject: the canary gate calls this twice in a row, for the canary and for the version
+   * now serving, and a `degraded recovery_escrow …` line printed once under each read as one finding
+   * repeated until the header said whose it was (26 September 2026).
+   */
+  const failing = (report.findings ?? []).filter((finding) => !finding.ok);
+  if (failing.length > 0) process.stdout.write(`   ${subject} reports:\n`);
+  for (const finding of failing) {
+    process.stdout.write(`     ${finding.severity}  ${finding.check}  ${finding.detail}\n`);
   }
   return report;
 }

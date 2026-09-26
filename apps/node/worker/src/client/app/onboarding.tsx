@@ -73,7 +73,10 @@ const recorded = (act: ProvisionedAct | null, absent: string): Pick<Step, "state
   ? { state: "todo", detail: absent }
   : {
     state: "done",
-    detail: `${act.domain}, set up ${act.authority === "operator" ? "at install" : "through the held token"} on `
+    // An observation says who did not do it: this Node found it in place, and claims no more than that.
+    detail: `${act.domain}, ${act.observed
+      ? "in place on Cloudflare before this Node, observed"
+      : `set up ${act.authority === "operator" ? "at install" : "through the held token"}`} on `
       + `${new Date(act.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} (a record, not a live read)`,
   };
 

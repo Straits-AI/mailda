@@ -327,7 +327,9 @@ export const provider = {
     /*
      * The one route that **changes the customer's Cloudflare account**. Its whole defence is in
      * `onboardSending`: the proposal is recomputed there and the digest must match it, so a stale proposal
-     * or one aimed at a different domain refuses rather than applies.
+     * or one aimed at a different domain refuses rather than applies. A domain already onboarded is not
+     * refused: the Node records `provider.sending_observed` and answers with the proposal, so its own
+     * record of the setup holds the domain either way.
      */
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const { onboardSending } = await import("../provider/cloudflare-grant.ts");

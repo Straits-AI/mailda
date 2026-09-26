@@ -1872,8 +1872,10 @@ export interface Permission {
 export interface ProvisionedAct {
   domain: string;
   at: string;
-  authority: "grant" | "operator" | "unknown";
+  authority: "token" | "grant" | "operator" | "unknown";
   address: string | null;
+  /** A sighting, not an act: Cloudflare had it in place before this Node asked, and the entry says so. */
+  observed: boolean;
 }
 export interface Provisioned {
   receiving: ProvisionedAct | null;

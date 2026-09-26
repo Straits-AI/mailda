@@ -31,8 +31,8 @@ const delivery = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
 const byId = (sources: Sources) => Object.fromEntries(onboardingSteps(sources).map((step) => [step.id, step.state]));
 const NONE: Provisioned = { receiving: null, sending: null, deliveryEvents: null };
 const RECORD: Provisioned = {
-  receiving: { domain: "mail.example.test", at: "2026-09-24T10:00:00Z", authority: "operator", address: "hello@mail.example.test" },
-  sending: { domain: "mail.example.test", at: "2026-09-24T10:01:00Z", authority: "operator", address: null },
+  receiving: { domain: "mail.example.test", at: "2026-09-24T10:00:00Z", authority: "operator", address: "hello@mail.example.test", observed: false },
+  sending: { domain: "mail.example.test", at: "2026-09-24T10:01:00Z", authority: "operator", address: null, observed: false },
   deliveryEvents: null,
 };
 
@@ -66,6 +66,19 @@ describe("onboarding steps", () => {
     expect(steps.find((step) => step.id === "outcomes")!.state).toBe("todo");
   });
 
+  it("says an observed act was in place before this Node, not that the Node did it", () => {
+    // The live Node on 26 September 2026: whymelabs.com was onboarded for sending before the install, so
+    // the install recorded a sighting. "Set up at install" would claim an act this Node never performed.
+    const observed: Provisioned = {
+      ...RECORD,
+      sending: { domain: "whymelabs.com", at: "2026-09-25T10:01:00Z", authority: "operator", address: null, observed: true },
+    };
+    const sending = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: observed })
+      .find((step) => step.id === "sending")!;
+    expect(sending.state).toBe("done");
+    expect(sending.detail).toBe("whymelabs.com, in place on Cloudflare before this Node, observed on 25 Sept 2026 (a record, not a live read)");
+  });
+
   it("lets a live read win over the record once connected", () => {
     const steps = byId({ provider: binding(), doctor: doctor(true), provisioned: RECORD, routing: [routing({ enabled: false })], delivery: [] });
     expect(steps.routed).toBe("todo");
@@ -95,9 +108,9 @@ describe("onboarding steps", () => {
 describe("readiness", () => {
   it("is ready only with an address and mail routed here; sending and outcomes do not gate", async () => {
     const { readinessOf } = await import("../../src/client/app/onboarding.tsx");
-    const steps = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } });
+    const steps = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null, observed: false }, sending: null, deliveryEvents: null } });
     expect(readinessOf(steps)).toBe("ready");
     expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: { receiving: null, sending: null, deliveryEvents: null } }))).toBe("not-ready");
-    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(false), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null }, sending: null, deliveryEvents: null } }))).toBe("not-ready");
+    expect(readinessOf(onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(false), provisioned: { receiving: { domain: "d", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: null, observed: false }, sending: null, deliveryEvents: null } }))).toBe("not-ready");
   });
 });

@@ -465,7 +465,10 @@ export async function provider(argv) {
         return;
       }
       if (proposal.onboarded) {
-        process.stdout.write(`     onboarded already — nothing to do\n\n`);
+        // Confirming changes nothing in Cloudflare; it records the sighting, which the Node's own record
+        // (`GET /api/provider`'s `provisioned`) otherwise never holds for a domain onboarded before it.
+        process.stdout.write(`     onboarded already — nothing to do in Cloudflare; confirming records it on this Node as observed\n`);
+        process.stdout.write(`\n   confirm: mailda provider --onboard-sending ${proposal.domain} --confirm ${proposal.digest}\n\n`);
         return;
       }
       // Said before the act, because it is the reason somebody might not want it.
@@ -511,7 +514,8 @@ export async function provider(argv) {
         return;
       }
       if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
-        process.stdout.write(`     subscribed already, as ${proposal.subscribed} — nothing to do\n\n`);
+        process.stdout.write(`     subscribed already, as ${proposal.subscribed} — nothing to do in Cloudflare; confirming records it on this Node as observed\n`);
+        process.stdout.write(`\n   confirm: mailda provider --subscribe ${proposal.domain} --confirm ${proposal.digest}\n\n`);
         return;
       }
       if (proposal.subscribed === null) {
