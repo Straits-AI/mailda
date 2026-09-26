@@ -11,7 +11,7 @@ export {
   type ProviderStatus, STATUS_COLUMNS, providerStatus, registerToken, forgetToken,
 } from "./credential.ts";
 export {
-  cloudflareGet, cloudflarePost, cloudflarePatch, cloudflarePut, cloudflareGetAll, accessTokenFor,
+  cloudflareGet, cloudflarePost, cloudflarePut, cloudflareGetAll, accessTokenFor,
   type OperatorAuthority, operatorOf, withOperator,
 } from "./cloudflare-api.ts";
 export {
