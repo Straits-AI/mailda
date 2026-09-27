@@ -509,6 +509,13 @@ cancellable. Letting a clock hand mail over would make this a delay rather than 
 `approval.send_expiry_seconds`, reused rather than invented: a release is a person agreeing to a Butler's send
 in substance, and this Node must not hold two opinions about how long somebody has to decide about one send.
 
+So a release asks the platform about the instance only when the run record reads `awaiting_release`. A run the
+record shows as ended (a timed-out one is `stopped`) has no instance waiting on the event, and the answer is
+`resumed: false` without a `get` or a `sendEvent`. Whether the platform would refuse an event for a completed
+instance it still retains is unmeasured, and the record is what keeps `resumed` from depending on it. A run
+that still reads `awaiting_release` but whose instance the platform no longer has is closed `finished` with
+`released_after_run_expired`.
+
 ---
 
 ## The trigger, and the instance id

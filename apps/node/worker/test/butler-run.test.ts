@@ -1,5 +1,5 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { env, introspectWorkflow } from "cloudflare:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { utf8 } from "@mailda/evidence";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
@@ -966,6 +966,15 @@ describe("a Butler does not choose who its reply goes to", () => {
 /* ------------------------------------------------------------------ the real workflow ------------- */
 
 describe("through the real Workflow binding", () => {
+  /*
+   * Every instance a test here creates ends with that test. `create` returns before the run does, and a parked
+   * run sleeps on `waitForEvent` for `approval.send_expiry_seconds`, so without this an instance outlives the
+   * test that made it. `dispose` aborts each instance created since `introspectWorkflow` was called.
+   */
+  let instances: Awaited<ReturnType<typeof introspectWorkflow>>;
+  beforeEach(async () => { instances = await introspectWorkflow(testEnv.BUTLER_RUNS); });
+  afterEach(async () => { await instances.dispose(); });
+
   /** Polls for a terminal-ish state, because an instance runs asynchronously. */
   async function settle(runId: string, want: readonly string[]): Promise<Record<string, unknown> | null> {
     for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -1011,6 +1020,43 @@ describe("through the real Workflow binding", () => {
     expect(effects.map((effect) => effect.seq)).toEqual([1, 2]);
   });
 
+  /** A run of `ACKNOWLEDGE` parked on its release gate by the real engine, and the send it is parked on. */
+  async function parkedRun(): Promise<{ runId: string; manifestId: string }> {
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    await grantTo(ctx, RESPONDER, "send.propose");
+    const delivery = await aDelivery(ctx);
+    const runId = (await triggerButlers(testEnv, ctx, ORG, delivery.messageId)).started[0]!;
+    const record = await settle(runId, ["awaiting_release"]);
+    expect(record?.state, JSON.stringify(record)).toBe("awaiting_release");
+    const proposed = (await runEffects(testEnv, ORG, runId)).find((row) => row.node_type === "mail.send.propose");
+    return { runId, manifestId: proposed!.subject! };
+  }
+
+  it("wakes the parked instance when a person releases its send, and the run finishes", async () => {
+    const { runId, manifestId } = await parkedRun();
+    expect(await releaseButlerSend(testEnv, atTime(T0 + 5000), ORG, RESPONDER, manifestId))
+      .toEqual({ released: true, runId, resumed: true });
+    const record = await settle(runId, ["finished"]);
+    expect(record?.state, JSON.stringify(record)).toBe("finished");
+    expect(record?.outcome_reason).toBeNull();
+  });
+
+  it("closes a parked run whose instance the platform no longer has, rather than leaving it parked", async () => {
+    const { runId, manifestId } = await parkedRun();
+    // Retention expired: the record still reads `awaiting_release`, and the platform has no such instance.
+    const expired = {
+      ...testEnv,
+      BUTLER_RUNS: { get: async () => { throw new Error("instance.not_found"); } },
+    } as unknown as Env;
+    expect(await releaseButlerSend(expired, atTime(T0 + 5000), ORG, RESPONDER, manifestId))
+      .toEqual({ released: true, runId, resumed: false });
+    expect(await runRow(testEnv, ORG, runId))
+      .toMatchObject({ state: "finished", outcome_reason: "released_after_run_expired" });
+  });
+
   it("does not fire a Butler listening on another mailbox", async () => {
     // Non-vacuity for the match: the same delivery, a Butler whose trigger names a different address.
     const ctx = atTime(T0);
@@ -1052,6 +1098,9 @@ describe("through the real Workflow binding", () => {
     // fails and the paragraph in `src/butler/trigger.ts` has to be rewritten rather than left claiming a
     // divergence that has closed.
     expect(threw).toBeNull();
+    // The instance runs, and refuses: no such version was published. Awaited so it ends inside this test
+    // rather than being aborted part-way through a step.
+    expect((await settle(id, ["refused"]))?.outcome_reason).toBe("version_not_published");
   });
 
   it("treats a thrown already_exists as a duplicate, and anything else as a fault", async () => {
@@ -1206,7 +1255,7 @@ describe("wait sleeps, and a release resumes", () => {
     expect(steps.performed).not.toContain("pause#1");
   });
 
-  it("parks a proposed send on waitForEvent and resumes when a person releases it", async () => {
+  it("parks a proposed send on waitForEvent, and a release after the run timed out returns the send to held without waking a run", async () => {
     const ctx = atTime(T0);
     const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
     await grantTo(ctx, ids.butlerId, "send.propose");
@@ -1236,8 +1285,16 @@ describe("wait sleeps, and a release resumes", () => {
 
     // Then: a person releases it. The manifest goes back to `held`, from where the ordinary hold window
     // takes it, and the trail names the person rather than the Butler.
-    const released = await releaseButlerSend(testEnv, atTime(T0 + 5000), ORG, RESPONDER, manifestId);
-    expect(released.released).toBe(true);
+    //
+    // The run is `stopped`, so nothing is waiting for the event. This binding accepts any event for any id —
+    // the unmeasured case of a platform that takes one for a completed instance it still retains — so
+    // `resumed` is false only if the run record, not the platform, decided whether there was a run to wake.
+    const accepting = {
+      ...testEnv,
+      BUTLER_RUNS: { get: async () => ({ sendEvent: async () => undefined }) },
+    } as unknown as Env;
+    const released = await releaseButlerSend(accepting, atTime(T0 + 5000), ORG, RESPONDER, manifestId);
+    expect(released).toEqual({ released: true, runId: parked.runId, resumed: false });
     expect(await manifestState(manifestId)).toEqual({ state: "held", state_reason: null });
     const entry = await testEnv.CATALOG.prepare(
       "SELECT actor_user_id, actor_kind FROM audit_entries WHERE action = 'send.released' LIMIT 1",

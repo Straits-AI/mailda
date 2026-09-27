@@ -114,8 +114,18 @@ export async function releaseButlerSend(
   // committed — the entry and the update share one transaction — so this is the honest answer.
   if ((results[1]?.meta.changes ?? 0) === 0) return { released: false, reason: "not_found" };
 
-  const runId = await runOfSubject(env, orgId, manifestId);
-  if (runId === null) return { released: true, runId: null, resumed: false };
+  const run = await runOfSubject(env, orgId, manifestId);
+  if (run === null) return { released: true, runId: null, resumed: false };
+  const runId = run.id;
+
+  /*
+   * Only a run whose record reads `awaiting_release` is parked on the event. Any other state means the run is
+   * no longer waiting on it — a release that timed out leaves it `stopped` — so there is no parked instance to
+   * tell, and asking the platform would spend a `get` and a `sendEvent` to learn what the row already says.
+   * Whether the platform refuses an event sent to an instance that has *completed* but is still retained is
+   * unmeasured; if it accepts one, `resumed: true` would claim a run was woken after it had ended.
+   */
+  if (run.state !== "awaiting_release") return { released: true, runId, resumed: false };
 
   /*
    * Tell the parked instance. Best effort, and the failure is a **state** rather than a swallowed error:

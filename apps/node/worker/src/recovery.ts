@@ -247,10 +247,11 @@ async function readVault(env: Env): Promise<EscrowedVault> {
   const collect = async (purpose: KeyPurpose, current: number) => {
     const found: { generation: number; secret: string }[] = [];
     for (let generation = 1; generation <= current; generation++) {
-      // `openingKey` throws for a generation this vault never held, which is possible in principle if a
-      // restore brought a pointer without its keys. Skipped rather than fatal: escrowing what exists is
-      // strictly better than escrowing nothing, and `doctor` reports the gap separately.
-      const key = await vault(env).openingKey(purpose, generation).catch(() => null);
+      // `null` for a generation this vault never held, which is possible in principle if a restore brought
+      // a pointer without its keys. Skipped rather than fatal: escrowing what exists is strictly better than
+      // escrowing nothing. A vault that fails to answer is not that case and propagates: the escrow's
+      // currency is judged by its newest generation, so an older one dropped here would read as current.
+      const key = await vault(env).openingKey(purpose, generation);
       if (key !== null) found.push({ generation, secret: key.secret });
     }
     return found;

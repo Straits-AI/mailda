@@ -3657,3 +3657,51 @@ also keeps in the ingress receipts, the outbox and the search index are not in t
 back in the budgets: warn at 3,597,986, stop bulky projections at 4,368,983, route new metadata at 4,625,982. The
 account-wide ceiling's figure in the receipt had not moved since 12 August's divisor; it now reads at most 526
 million.
+
+## Eight lines under a green suite (27 September 2026)
+
+CI's workerd run printed eight `uncaught exception` lines while every test passed, on this branch and on the pull
+request before it. Run file by file, they came from four tests, and none of them left a promise floating. workerd
+logs a throw from an RPC method in the isolate that threw, at the moment it throws, even when the caller catches
+the rejection; no `unhandledrejection` event fires there, so nothing in a test can see it. That was measured under
+miniflare with verbose logging, not on Cloudflare.
+
+**A release asked the platform about a run its own record said had ended.** `releaseButlerSend` called
+`BUTLER_RUNS.get` for every released send that had a run, and two tests release sends whose runs were driven
+inline and were never instances. Miniflare's `get` asks its engine object for a status, which throws twice, and
+then throws `instance.not_found` itself: three lines per release. The query that finds the run now returns its
+state too, and the instance is contacted only when the record reads `awaiting_release`. In production that saves a
+`get` and a `sendEvent` on every release of a run that had timed out, and it keeps `resumed` from depending on
+whether the platform accepts an event for a completed instance it still retains, which is unmeasured.
+`released_after_run_expired`, the state a parked run is closed with when its instance has gone, had no test until
+now.
+
+**The vault refused an unknown generation by throwing across RPC.** `KeyVault.openingKey` now answers `null` for
+a generation it never held, and `requireOpeningKey` raises the same `E_VAULT_UNKNOWN_GENERATION` text in the
+caller's isolate. A lost vault is a documented state with a remedy and should not look like a fault in the vault
+on every read. The change found a real defect beside it. The recovery escrow read each generation with
+`.catch(() => null)`, which treated a vault that failed to answer the same as a generation it never held. An
+escrow's currency is judged by its newest generation, so a mint that met one such failure wrote an escrow missing
+an older generation that still read as current, and a restore from it could not open that generation's mail. The
+failure now fails the mint; with the old catch put back, the new test sees `minted`.
+
+**The build now fails on these lines.** The workerd suite runs through
+`apps/node/worker/scripts/fail-on-uncaught.mjs`, which passes the output through and exits non-zero when a line
+begins `uncaught exception`. That prefix covers every form the installed workerd logs, `; source = …` (the only one
+CI has shown), `; exception = …` and `; description = …`; the first version matched only the first. Reading the
+output is the only option: the pool does not let a config replace the handler that prints workerd's logs, and a
+per-test assertion has nothing to observe. It was proven end to end three ways. A planted, caught `get` of an
+instance that never existed: one test passed, three lines, exit 1. A planted vault method that threw across RPC:
+one test passed, one line, exit 1. The release gate removed again: `contract-responses.test.ts` passed all 81
+tests, three lines, exit 1. The real-binding tests in `butler-run.test.ts` now also end every Workflow instance
+they create, where two of them had left one running or parked after the test finished.
+
+**The guard's blindness is a test, not a note.** Read from output, the guard exits 0 both for a clean suite and
+for one whose lines never reached it: `verbose: false` in `vitest.config.ts` (the pool defaults it to true), a
+pool that stops forwarding the lines, or a workerd that rewords them. The first plant is now kept as
+`apps/node/worker/test/canary/uncaught.canary.ts`, outside the workerd suite by its suffix and run through the
+workerd suite's own config by `vitest.canary.config.ts`. `test/node/fail-on-uncaught.test.ts` runs it through the
+guard and expects exit 1 with a reported line, and the canary's own test passing, about 7 seconds alone. Each way
+of going blind was tried and each turned it red: `verbose: false`, the guard's pattern reworded so it no longer
+matched workerd's wording, the report's `line` entries renamed, the exit code ignoring what was seen, and the
+canary test failing while the lines still printed.

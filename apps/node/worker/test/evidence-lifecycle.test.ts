@@ -7,7 +7,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { contentOpeningKey, contentSealingKey, generationOf, getEvidence, putEvidence } from "../src/evidence-store.ts";
 import { openPreview, sealPreview } from "../src/preview.ts";
 import { backfillPreviews } from "../src/preview-backfill.ts";
-import { LEGACY_KEY_GENERATION, aesKeyFrom, vault } from "../src/keyvault.ts";
+import { LEGACY_KEY_GENERATION, aesKeyFrom, requireOpeningKey, vault } from "../src/keyvault.ts";
 import { reconcileEvidence } from "../src/reconcile.ts";
 import { resealBatch } from "../src/reseal.ts";
 import { credentialGenerationOf, unwrapCredential, wrapCredential } from "../src/auth/kek.ts";
@@ -24,7 +24,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 /** Writes an object sealed under generation 0 — as a Node deployed before the vault would have. */
 async function writeLegacyObject(blobKey: string, plaintext: Bytes): Promise<void> {
-  const legacy = await vault(testEnv).openingKey("content", LEGACY_KEY_GENERATION);
+  const legacy = await requireOpeningKey(testEnv, "content", LEGACY_KEY_GENERATION);
   const sealed = await seal(await aesKeyFrom(legacy.secret), plaintext, DEFAULT_FRAME_BYTES);
   const object = new Uint8Array(sealed.header.length + sealed.body.length);
   object.set(sealed.header, 0);
@@ -76,7 +76,7 @@ describe("key vault (ADR 28)", () => {
     const sealing = await vault(testEnv).sealingKey("content");
     expect(sealing.generation).not.toBe(LEGACY_KEY_GENERATION);
 
-    const legacy = await vault(testEnv).openingKey("content", LEGACY_KEY_GENERATION);
+    const legacy = await requireOpeningKey(testEnv, "content", LEGACY_KEY_GENERATION);
     expect(legacy.generation).toBe(LEGACY_KEY_GENERATION);
     expect(legacy.secret).not.toBe(sealing.secret);
   });
@@ -87,17 +87,18 @@ describe("key vault (ADR 28)", () => {
     expect(rotation.to).toBeGreaterThan(rotation.from);
 
     // The point of the whole design: rotation does not make existing data unreadable.
-    const old = await vault(testEnv).openingKey("content", before.generation);
+    const old = await requireOpeningKey(testEnv, "content", before.generation);
     expect(old.secret).toBe(before.secret);
     const now = await vault(testEnv).sealingKey("content");
     expect(now.generation).toBe(rotation.to);
   });
 
   it("names an unknown generation instead of failing vaguely", async () => {
-    // One call, both assertions. Two separate `.rejects` on Durable Object RPC left the rejections
-    // unhandled in the pool, which Vitest warns can produce false positives — a test that reports
-    // green while something escaped is worse than one that fails.
-    const error = await vault(testEnv).openingKey("content", 9999).then(
+    // The vault answers across the RPC boundary rather than throwing there, which workerd would report
+    // as an uncaught exception of the vault even with this caller catching it.
+    expect(await vault(testEnv).openingKey("content", 9999)).toBeNull();
+
+    const error = await requireOpeningKey(testEnv, "content", 9999).then(
       () => null,
       (reason: Error) => reason,
     );

@@ -1,6 +1,6 @@
 import { type Bytes, DEFAULT_FRAME_BYTES, open as openFrames, openStream, seal } from "@mailda/evidence";
 
-import { aesKeyFrom, LEGACY_KEY_GENERATION, vault } from "./keyvault.ts";
+import { aesKeyFrom, LEGACY_KEY_GENERATION, requireOpeningKey, vault } from "./keyvault.ts";
 
 /**
  * Raw MIME storage (§12, #7, #16).
@@ -73,7 +73,7 @@ export async function contentOpeningKey(
 ): Promise<CryptoKey> {
   const cached = cache?.opening.get(generation);
   if (cached !== undefined) return cached;
-  const key = await aesKeyFrom((await vault(env).openingKey("content", generation)).secret);
+  const key = await aesKeyFrom((await requireOpeningKey(env, "content", generation)).secret);
   cache?.opening.set(generation, key);
   return key;
 }

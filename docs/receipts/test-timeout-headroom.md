@@ -13,6 +13,7 @@ values:
   test.slowest_test_ms_idle: 1417
   test.slowest_test_ms_under_load: 5790
   test.config_resolution_timeout_ms: 120000
+  test.uncaught_canary_timeout_ms: 120000
   test.migration_hook_ms_under_load: 77
   test.slowest_test_ms_ci: 753
   test.headroom_ceiling_percent: 50
@@ -289,3 +290,35 @@ prove: reading a config the way vitest reads it.
 If the worst case has moved above `test.slowest_test_ms_under_load`, update that value and reconsider
 `test.timeout_ms`. Do not raise the timeout alone, because the interesting number is the headroom
 between them, and raising only the ceiling erases the evidence that the floor moved.
+
+## A second exemption: the node test that boots workerd
+
+`apps/node/worker/test/node/fail-on-uncaught.test.ts` has one case that runs a vitest process of its own, on the
+workerd pool, over `apps/node/worker/test/canary/uncaught.canary.ts`, to prove the uncaught-exception guard can
+still read workerd's lines. Nearly all of its time is starting that pool: vite transforming the worker, then
+workerd itself. The canary's own test takes about 140 ms.
+
+Measured on 27 September 2026, 12-core Linux machine, with 30 spinning shell loops for the same 2.5x
+oversubscription as the measurement above:
+
+| condition | the case |
+| --- | --- |
+| the file alone | 6,647 ms |
+| under the full node suite, idle machine | 9,684 ms |
+| under the full node suite, oversubscribed, run 1 | 31,440 ms |
+| under the full node suite, oversubscribed, run 2 | 32,221 ms |
+| under the full node suite, oversubscribed, run 3 | 24,311 ms |
+
+Two of three loaded runs exceed `test.timeout_ms`, so the case would time out on a busy laptop for the reason the
+config-resolution test did. `test.uncaught_canary_timeout_ms: 120000` is its own bound, about 3.7× the worst
+observed, and separate from `test.config_resolution_timeout_ms` although the number is the same today, because
+the two measure different costs and a re-measurement of one says nothing about the other. The global timeout
+stays at 30,000 for the reasons given above.
+
+The run it starts uses `apps/node/worker/vitest.canary.config.ts`, a new vitest config of the kind `stale_when`
+names. It spreads the workerd suite's config, so it carries `test.timeout_ms`, and `vitest-timeout-world.test.ts`
+reads it with the rest. It writes no json report, since on CI that file would overwrite the workerd suite's.
+
+Unmeasured: its duration on CI. The headroom ceiling reads the node suite's report, so this case is held to
+half of `test.timeout_ms` there like every other test. If CI flags it, that is this measurement going stale,
+not a reason to exempt it from the ceiling.

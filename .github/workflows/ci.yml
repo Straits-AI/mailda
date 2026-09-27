@@ -97,6 +97,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The workerd suite runs through `apps/node/worker/scripts/fail-on-uncaught.mjs`, so an `uncaught exception`
+      # workerd logs fails this step even when every test passed. Eight of them once scrolled past a green run.
       - name: Test
         id: tests
         run: pnpm test

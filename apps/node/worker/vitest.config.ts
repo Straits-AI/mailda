@@ -11,6 +11,9 @@ const migrations = await readD1Migrations(resolve(import.meta.dirname, "migratio
 export default defineConfig({
   plugins: [
     cloudflareTest({
+      // Also what makes workerd print its `uncaught exception` lines, which `scripts/fail-on-uncaught.mjs`
+      // fails the run on. The pool defaults this to true and it is set anyway, so a change to that default
+      // cannot switch it off; `false` silences the lines, and `test/node/fail-on-uncaught.test.ts` then fails.
       verbose: true,
       wrangler: { configPath: "./wrangler.jsonc", environment: "test" },
       miniflare: {
