@@ -65,7 +65,7 @@ const LARGE = 8;
  * arm is a cache double that reports every lookup as a miss. The run under measurement is then the **real**
  * one, byte for byte, with the only difference being whether the vault is asked again.
  *
- * A `Map` subclass rather than a stub object, because `contentKeyFor` calls `.get` and `.set` on it and a
+ * A `Map` subclass rather than a stub object, because `contentOpeningKey` calls `.get` and `.set` on it and a
  * partial double would have to be kept in step with those.
  */
 class ForgetfulMap extends Map<number, CryptoKey> {

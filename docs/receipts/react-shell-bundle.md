@@ -1,7 +1,7 @@
 ---
 id: react-shell-bundle
 kind: measured-tripwire
-measured_on: 2026-08-28
+measured_on: 2026-09-27
 stale_when: >
   react, react-dom, @tanstack/react-router or @tanstack/react-query change major version; the esbuild
   target moves below es2022; a fourth runtime dependency is added to the authenticated application; the
@@ -11,14 +11,64 @@ stale_when: >
   webfont face is added, removed or reweighted, since those bytes are served per Node and are counted
   separately below
 values:
-  shell.bundle_bytes: 529617
-  shell.bundle_gzip_bytes: 153915
+  shell.bundle_bytes: 737772
+  shell.bundle_gzip_bytes: 213501
   shell.pre_auth_bundle_bytes: 0
-  shell.font_bytes: 72368
+  shell.font_bytes: 96744
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
 composer and nobody had priced either half.
+
+
+## Re-measured 26 and 27 September 2026: the interface redesign, and 28.6% of drift found before it started
+
+Two measurements, **before** and **after** the redesign, so its own cost is visible and not folded into the
+drift that had already happened. Both with `pnpm --filter @mailda/worker run build:client`, whose printed line is
+the figure (`gzipSync` at its default level):
+
+| | recorded (28 Aug) | before the redesign (`dcda05c`) | after the redesign | redesign's own cost |
+|:--|--:|--:|--:|--:|
+| bundle raw | 529,617 | 680,900 | **737,772** | +56,872 (+8.4%) |
+| bundle gzip | 153,915 | 195,380 | **213,501** | +18,121 (+9.3%) |
+| fonts | 72,368 | 96,744 | **96,744** | 0 |
+| before sign-in | 0 | 0 | **0** | 0 |
+
+**The receipt was already stale before the redesign.** 529,617 → 680,900 is +28.6%, past the 10% clause, with
+no remeasure: the application grew between 28 August and 26 September, and no single change was the one that
+noticed. That is the ratchet the section below predicted in so many words. The fonts clause had fired too: on 21 September the
+interface went to one family (Inter 400/500/600/700, 23,664 + 24,272 + 24,452 + 24,356 bytes) and Plus Jakarta
+Sans left, and nothing was remeasured then.
+
+**The redesign itself cost 8.4% raw and 9.3% gzip**, under the 10% band on its own, and it is recorded anyway,
+because this receipt's 10% was measured from a figure that was already a month out of date. The gzip figure is
+close to the band, so the next screen added is likely to be the one that trips it. *After the redesign* is the
+tree as finished on 27 September: the first measurement of the redesign, on 26 September, was 731,737 / 211,745,
+and the review's fixes after it added 6,035 raw and 1,756 gzip (focus return, the roving list, the popover and
+menu rules, the draft retire rule, the Doctor's preview requeue). Where it went:
+the sidebar, status bar and Health popover (`chrome.tsx` 9,659 → 13,394 bytes in the output), the shell's
+shared state (`shell-context.tsx`, 4,835), the six primitives (menu, popover and dialog, shortcuts, palette,
+section tabs and the local SVG icons, 12,107 together), the health mapping (2,177), and the Inbox's split into
+a list pane, a reader and next steps with Drafts and Settings added (`screens/` 155,452 → 184,747). **No
+runtime dependency was added**: icons are local SVG components, and popovers, menus and the palette are
+React state plus the native `<dialog>`. `/app/theme.js` joined the three external modules (it is served by the
+Worker and applies the viewer's theme before anything renders), so the theme code is not in these bytes.
+
+Where the 737,772 bytes are, from esbuild's metafile with identical options (bytes in output): app `screens/` 184,747 · react-dom 180,730 · zod
+78,908 · `@mailda/contract` 75,604 · `@tanstack/router-core` 53,394 · `@tanstack/query-core` 31,406 · `api.ts`
+18,718 · `@tanstack/react-router` 16,665 · `chrome.tsx` 13,394 · `@mailda/budgets` 12,924 · `ui/` 12,107 · react
+8,125 · `onboarding.tsx` 5,542 · `shell-context.tsx` 4,835.
+
+`@mailda/budgets` at 12,924 is worth a line: `scripts/build-client.mjs` says importing it "bundles the whole
+table for one integer", and that is what the Inbox does (`BUDGETS["messages.max_lookback"]` for the lookback's
+sentence, and it already read `messages.page_size` the same way before the redesign, at 12,452). It was in the
+bundle at `dcda05c` too; the redesign did not add it, and moving the two integers to `/app/config.js` is the
+upgrade if the 13 KB is ever worth a change. It also makes this figure move with unrelated receipts: the first
+build of the finished tree printed 731,843 / 211,792, and the 106 bytes it lost before the final build are the
+three `shard.plan_*` budgets withdrawn from `message-metadata-bytes.md` the same day.
+
+`shell.pre_auth_bundle_bytes` is still **0**: `test/shell-split.test.ts` holds that, and it passed on this
+tree. The Worker as a whole was not re-measured with `wrangler deploy --dry-run` here.
 
 
 ## Re-measured 28 August 2026: the brand's webfonts, and 2.8% of drift the 10% clause did not catch

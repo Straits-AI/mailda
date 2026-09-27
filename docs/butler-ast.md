@@ -49,9 +49,14 @@ schema `validate`, `lookup`; `case.assign`, `case.close`; `draft`; `mail.send.pr
 `case.note`, `connector.call`, `approval.request`, `template.render`.
 
 Each reserved node's refusal carries **the reason**, and the reason names what is missing rather than saying
-"unsupported": there is no label or tag concept in the schema, no archived state, no task or note on a case,
-no connector catalogue, no LLM control plane. An author told a template subsystem does not exist can choose
-`draft`; an author told "unsupported" can choose nothing.
+"unsupported": no task or note on a case, no connector catalogue, no LLM control plane. `archive` stays reserved
+because a Butler has no Inbox of its own: places are per person since ADR 45, so archiving is filing a message in
+one person's view, a Butler has no view to file into, and filing into a person's would change a view that is
+theirs alone. `label` stays reserved for a different reason than it gave until 26 September 2026: labels exist
+(0061, applied by people through `PUT /api/messages/:messageId/labels`), no Butler effect writes them, and one
+would first need deciding whose authority a Butler labels under. The old reason, that there was no label concept
+in the schema, had been false since 0061. An author told a template subsystem does not exist can choose `draft`;
+an author told "unsupported" can choose nothing.
 
 **`template.render` is reserved, and it was written down as shipping first.** The groundwork for
 [#54](https://github.com/Straits-AI/mailda/issues/54) found there is no template subsystem at all (no

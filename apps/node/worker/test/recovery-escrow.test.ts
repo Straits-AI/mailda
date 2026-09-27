@@ -7,7 +7,7 @@ import { conflictAcknowledgedResponse } from "@mailda/contract/schemas";
 
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { runDoctor, type Finding } from "../src/doctor.ts";
-import { aesKeyFrom, vault } from "../src/keyvault.ts";
+import { aesKeyFrom, requireOpeningKey, vault, type KeyPurpose } from "../src/keyvault.ts";
 import {
   acknowledgeKeyConflict, CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes,
   escrowState, formatCode, codeKey, mintRecoveryCodes, normaliseCode, redeemForVault, RESTORE_LEASE_MS, seal,
@@ -38,21 +38,6 @@ import {
  * 4. **A code spent on a failure.** Ten single-use codes are not many, and burning one on a typo during an
  *    incident is how a recovery path runs out.
  */
-
-/**
- * Asserts a Durable Object RPC rejected, without leaving the rejection unhandled.
- *
- * `await expect(vault(env).openingKey(…)).rejects.toThrow(…)` reads better and is subtly wrong here: the
- * cross-boundary RPC settles a second promise inside workerd's stub, which nothing awaits, so vitest
- * reported **1222 tests passed and exited non-zero** on an "Unhandled Rejection". A suite that passes while
- * failing the process is the worst available outcome — it fails somewhere nobody is looking.
- *
- * Settling it here with `.then(ok, err)` means the rejection is consumed exactly once, by this.
- */
-async function rejectsWith(promise: Promise<unknown>, pattern: RegExp): Promise<void> {
-  const outcome = await promise.then(() => "resolved", (error: unknown) => String(error));
-  expect(outcome, `expected a rejection matching ${pattern}`).toMatch(pattern);
-}
 
 const testEnv = env as unknown as Env;
 const ORG = "org_recovery";
@@ -119,17 +104,17 @@ describe("a lost vault can be put back", () => {
      * restore that produced a fresh key would satisfy "the vault has a content key" and leave every sealed
      * object unreadable, which is the failure the mechanism is for rather than a lesser version of success.
      */
-    const before = await vault(testEnv).openingKey("content", 1);
+    const before = await requireOpeningKey(testEnv, "content", 1);
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     expect(codes).toHaveLength(10);
 
     await loseTheVault();
-    await rejectsWith(vault(testEnv).openingKey("content", 1), /E_VAULT_UNKNOWN_GENERATION/);
+    expect(await vault(testEnv).openingKey("content", 1), "the wiped vault still holds generation 1").toBeNull();
 
     const restored = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[3]!);
     expect(restored.restored.content).toContain(1);
 
-    const after = await vault(testEnv).openingKey("content", 1);
+    const after = await requireOpeningKey(testEnv, "content", 1);
     expect(after.secret, "the restored key is not the key that was escrowed").toBe(before.secret);
   });
 
@@ -139,16 +124,38 @@ describe("a lost vault can be put back", () => {
      * a vault that can read recent mail and nothing older. Two generations, both asserted, because "the
      * vault works again" is satisfied by a Node that lost half its archive.
      */
-    const first = await vault(testEnv).openingKey("content", 1);
+    const first = await requireOpeningKey(testEnv, "content", 1);
     await vault(testEnv).rotate("content");
-    const second = await vault(testEnv).openingKey("content", 2);
+    const second = await requireOpeningKey(testEnv, "content", 2);
 
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     await loseTheVault();
     await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
 
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(first.secret);
-    expect((await vault(testEnv).openingKey("content", 2)).secret).toBe(second.secret);
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe(first.secret);
+    expect((await requireOpeningKey(testEnv, "content", 2)).secret).toBe(second.secret);
+  });
+
+  it("refuses to escrow a vault that failed to answer for an older generation", async () => {
+    /*
+     * The escrow's currency is judged by its newest generation, so an older one dropped here would read as
+     * current and restore a vault that cannot open that generation's mail. A generation the vault never
+     * held is skipped by design; a vault that did not answer is not that, and must fail the mint.
+     */
+    await vault(testEnv).rotate("content");
+    const real = vault(testEnv);
+    const flaky = {
+      inventory: () => real.inventory(),
+      openingKey: (purpose: KeyPurpose, generation: number) => purpose === "content" && generation === 1
+        ? Promise.reject(new Error("E_VAULT_UNAVAILABLE  the vault did not answer"))
+        : real.openingKey(purpose, generation),
+    };
+    const flakyEnv = { ...testEnv, KEY_VAULT: { getByName: () => flaky } } as unknown as Env;
+
+    const outcome = await mintRecoveryCodes(flakyEnv, createSystemCtx(), ORG)
+      .then(() => "minted", (error: Error) => error.message);
+    expect(outcome).toMatch(/E_VAULT_UNAVAILABLE/);
+    expect(await heldSets(), "a partial escrow was written").toBe(0);
   });
 
   it("lets any of the ten open it, because nine will be lost", async () => {
@@ -307,11 +314,11 @@ describe("restoring never overwrites a live key", () => {
      */
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     await vault(testEnv).rotate("content");
-    const live = await vault(testEnv).openingKey("content", 2);
+    const live = await requireOpeningKey(testEnv, "content", 2);
 
     await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
 
-    expect((await vault(testEnv).openingKey("content", 2)).secret).toBe(live.secret);
+    expect((await requireOpeningKey(testEnv, "content", 2)).secret).toBe(live.secret);
     expect((await vault(testEnv).inventory()).content, "the pointer moved backwards").toBe(2);
   });
 
@@ -335,13 +342,13 @@ describe("restoring never overwrites a live key", () => {
      * needs to know it had not. That is this repository's recurring defect arriving inside the mechanism
      * built to answer it.
      */
-    const original = await vault(testEnv).openingKey("content", 1);
+    const original = await requireOpeningKey(testEnv, "content", 1);
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
 
     await loseTheVault();
     // The Node keeps working after the loss, which is what makes the collision reachable.
     await vault(testEnv).sealingKey("content");
-    const regenerated = await vault(testEnv).openingKey("content", 1);
+    const regenerated = await requireOpeningKey(testEnv, "content", 1);
     expect(regenerated.secret, "the fixture did not actually regenerate").not.toBe(original.secret);
 
     const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
@@ -350,7 +357,7 @@ describe("restoring never overwrites a live key", () => {
       .not.toContain(1);
     expect(outcome.conflicted.content, "the collision was not reported at all").toContain(1);
     // The live key survived, so mail sealed since the loss is still readable.
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(regenerated.secret);
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe(regenerated.secret);
   });
 
   it("counts a generation it already held identically as neither restored nor conflicted", async () => {
@@ -2235,7 +2242,7 @@ describe("an escrowed key may take a reserved generation, and never a used one",
     const outcome = await vault(testEnv).restore("content", 1, "an-escrowed-secret");
 
     expect(outcome).toBe("adopted");
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe("an-escrowed-secret");
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe("an-escrowed-secret");
   });
 
   it("still refuses once something has sealed under it, which is the safety argument", async () => {
@@ -2253,7 +2260,7 @@ describe("an escrowed key may take a reserved generation, and never a used one",
 
     expect(outcome).toBe("conflict");
     // Untouched: the live key still opens what it sealed.
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(live.secret);
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe(live.secret);
   });
 
   it("treats a generation as used from the first seal, not from the tenth", async () => {
@@ -2277,7 +2284,7 @@ describe("an escrowed key may take a reserved generation, and never a used one",
     const outcome = await vault(testEnv).restore("content", 1, "escrowed-after-a-diagnostic");
 
     expect(outcome).toBe("adopted");
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe("escrowed-after-a-diagnostic");
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe("escrowed-after-a-diagnostic");
   });
 
   it("reports an adopted generation as restored, and names what it displaced", async () => {
@@ -2291,7 +2298,7 @@ describe("an escrowed key may take a reserved generation, and never a used one",
      * generation 1 the way a fresh install does, and redeem. That is #92's destination Node exactly.
      */
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
-    const sealed = await vault(testEnv).openingKey("content", 1);
+    const sealed = await requireOpeningKey(testEnv, "content", 1);
 
     await loseTheVault();
     await runDoctor(testEnv, createSystemCtx());
@@ -2303,7 +2310,7 @@ describe("an escrowed key may take a reserved generation, and never a used one",
     // Every generation put back displaced a reserved one, because the diagnostic had reserved both.
     expect(outcome.adopted).toEqual(outcome.restored);
     // And the escrowed key is the one in the vault, which is the only thing that makes the mail readable.
-    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(sealed.secret);
+    expect((await requireOpeningKey(testEnv, "content", 1)).secret).toBe(sealed.secret);
   });
 
   it("leaves a used generation conflicted while adopting the reserved one beside it", async () => {

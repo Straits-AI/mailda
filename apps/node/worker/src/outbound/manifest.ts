@@ -6,6 +6,7 @@ import { type AuditEvent, auditedBatchMany } from "../audit.ts";
 import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
+import { STANDING_CONTENT_RELATIONS } from "../access.ts";
 import { allowedTypesOf, classifyAttachment, DANGEROUS, overLimits } from "../attachments.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { recipientsSuppressed } from "../suppression.ts";
@@ -438,11 +439,12 @@ export async function readableMessage(
         AND a.mailbox_id IN (
           SELECT t.object_id FROM relationship_tuples t
            WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
-             AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
+             AND t.object_type = 'mailbox'
+             AND t.relation IN (${STANDING_CONTENT_RELATIONS.map(() => "?").join(", ")})
              ${sponsor.sql}
         )
       LIMIT 1`,
-  ).bind(orgId, messageId, orgId, ...subjects, ...sponsor.params)
+  ).bind(orgId, messageId, orgId, ...subjects, ...STANDING_CONTENT_RELATIONS, ...sponsor.params)
     .first<{ rfc_message_id: string; blob_key: string; attachments_dangerous: number | null }>();
 }
 

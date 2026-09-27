@@ -52,8 +52,8 @@ same way, one batch at a time with a *continue* from `resumeAfter`.
 
 Four properties, each preventing a specific failure:
 
-- **Resumable.** A shard holds ~8.5M messages, so no invocation finishes; ~85,000 calls at 100 per
-  batch. Progress is a durable indexed column, not memory.
+- **Resumable.** A shard holds millions of messages (`receipts/message-metadata-bytes.md`), so no invocation
+  finishes; tens of thousands of calls at 100 per batch. Progress is a durable indexed column, not memory.
 - **Verified.** Recomputes the **plaintext** SHA-256 against the receipt and refuses to advance on
   mismatch. This is *why* the receipt stores the plaintext hash rather than the ciphertext's. Decided
   when evidence storage was built, and this is the payoff.
@@ -61,6 +61,21 @@ Four properties, each preventing a specific failure:
   is written before D1: a crash costs one redundant pass, never an unreadable message.
 - **Never destructive on failure.** A message that fails is reported and left readable under its old
   key, not skipped silently and not deleted.
+
+**A message's row preview moves with its evidence** (0068, ADR 45, 26 September 2026). The preview is a line
+of the body stored in D1 sealed under the same content key, so a rotation that re-sealed the evidence and left
+the preview behind would leave that line under the key the rotation was meant to retire. The pass therefore
+re-seals the preview in the same step as its receipt, whether the receipt was re-sealed or found already
+current. The invariant, written beside the code in `src/reseal.ts`: **a preview is never sealed under an older
+generation than its receipt's evidence.** Ingest seals both with one key in one run, the backfill seals under
+the current generation, and this step advances both together, so the receipts still to re-seal are also the
+previews still behind, and the Doctor screen's `evidence_key_generation` finding counts both. A preview whose
+old seal will not open is cleared and put back for the backfill, which re-derives it from the evidence just
+re-sealed, and the response counts those as `previewsRequeued`. Nothing is lost that way: a preview is a
+projection. A preview the backfill itself gave up on is a different state, `failed` (its evidence missing, or
+every read of it failing), and nothing retries it on its own; once `evidence_present` and `key_vault` read ok,
+an administrator's `POST /api/maintenance/requeue-previews` puts every failed row back, as `doctor`'s
+`preview_backlog` says.
 
 ## Reconciliation
 
@@ -413,6 +428,17 @@ sweeper marks an event published only after its handler returns, so a failing ha
 and the alarm retries. That is at-least-once with retry, which is the property that mattered. Queues
 adds *decoupling*, and for this pipeline the trigger is still ahead: **it arrives when a handler needs
 to be slow**: scanning, an LLM call, an outbound webhook.
+
+**Publication starts at once, and a failed event waits alone.** Accepting a message arms the sweeper's alarm
+for the present instant, and a row that has never been tried is claimable at once. There is no in-request fast
+path; there never was one, though this repository described one until 27 September 2026, and the five-second
+claim cutoff that made room for it delayed every message and let the alarm lapse over one accepted just before a
+sweep. Each claim writes `attempts` and `retry_at` on the row before the handler runs (0069), so a failure, or
+a pass killed outright, leaves that event backing off (five seconds, doubling, capped at five minutes), and a
+retried event is claimed after every event with fewer attempts, so one that kills its pass cannot head the next.
+The minute cron arms the sweeper whenever an event is due and unclaimed, so a lost alarm costs about a minute,
+one cron interval plus the cron's lateness (`receipts/cron-lateness.md`). `doctor`'s `outbox_draining` tells a
+failing event from a sweeper that is not running. The argument, with the costs, is at the top of `apps/node/worker/src/outbox.ts` and in ADR 31.
 
 There *is* now a queue on this Worker, and it is worth being precise about why it does not contradict
 the above. It carries **delivery outcomes inbound from Cloudflare**, which are not

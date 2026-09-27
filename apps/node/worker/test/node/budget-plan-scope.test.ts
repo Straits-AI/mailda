@@ -263,9 +263,11 @@ const FIGURES: Record<string, Classification> = {
 
   // docs/receipts/contrast-tokens.md
   ...mailda(
-    "WCAG ratios and the worst pair in Mailda's own tokens, computed from the stylesheet",
-    "contrast.aa_large_ratio", "contrast.aa_normal_ratio",
-    "contrast.dim_dark_worst", "contrast.dim_light_worst",
+    "WCAG ratios and the worst pair in Mailda's own tokens, computed from the token registry",
+    "contrast.aa_normal_ratio",
+    "contrast.text_primary_dark_worst", "contrast.text_primary_light_worst",
+    "contrast.text_secondary_dark_worst", "contrast.text_secondary_light_worst",
+    "contrast.text_muted_dark_worst", "contrast.text_muted_light_worst",
   ),
 
   // docs/receipts/cron-lateness.md
@@ -461,6 +463,7 @@ const FIGURES: Record<string, Classification> = {
   ...mailda(
     "bytes per row of Mailda's own metadata, measured on remote D1; SQLite page accounting does not vary by plan",
     "message.metadata.bytes_per_message", "message.metadata.bytes_per_extra_delivery",
+    "message.metadata.bytes_per_filed_place",
   ),
   ...derived(
     "§11B's 70/85/90% marks of the **Paid** 10 GB per-database ceiling, divided by the measured bytes per message",
@@ -475,6 +478,12 @@ const FIGURES: Record<string, Classification> = {
       + "own schema, and the ceilings it is sized under — authz.list.max_rows_read and audit.max_detail_bytes "
       + "— are both Mailda's own",
     "messages.page_size",
+  ),
+  ...mailda(
+    "how far back one Inbox, Unread or Mine request looks, and the rows read per message it looks through, "
+      + "measured in workerd against our own listing and schema; sized under authz.list.max_rows_read, a "
+      + "Mailda budget, so the Cloudflare plan changes neither",
+    "messages.max_lookback", "messages.lookback_rows_read_per_message",
   ),
 
   // docs/receipts/mime-header-parse.md
@@ -756,13 +765,19 @@ const FIGURES: Record<string, Classification> = {
     "temporary.bindings_provisioned_before_refusal",
   ),
 
-  // docs/receipts/contrast-tokens.md — the brand palette, the rail's own surface, and a control's edge
+  // docs/receipts/contrast-tokens.md — the accents, the signal colours, a control's edge and the button label
   ...mailda(
     "contrast ratios between Mailda's own design tokens, and the WCAG thresholds they are measured "
       + "against. A Cloudflare plan does not have a colour",
-    "contrast.accent_text_light_worst", "contrast.accent_text_dark_worst", "contrast.accent_ui_worst",
-    "contrast.aa_nontext_ratio", "contrast.rail_text_worst", "contrast.rail_dim_worst",
-    "contrast.control_edge_light_worst",
+    "contrast.aa_nontext_ratio",
+    "contrast.accent_text_dark_worst", "contrast.accent_text_light_worst",
+    "contrast.accent_hover_dark_worst", "contrast.accent_hover_light_worst",
+    "contrast.success_dark_worst", "contrast.success_light_worst",
+    "contrast.warning_dark_worst", "contrast.warning_light_worst",
+    "contrast.danger_dark_worst", "contrast.danger_light_worst",
+    "contrast.accent_dark_worst", "contrast.accent_light_worst",
+    "contrast.control_edge_dark_worst", "contrast.control_edge_light_worst",
+    "contrast.on_accent_dark", "contrast.on_accent_light",
   ),
 
   // docs/receipts/message-search-cost.md
@@ -829,7 +844,7 @@ const FIGURES: Record<string, Classification> = {
   ...mailda(
     "how long Mailda's own suite takes on the machines that run it",
     "test.timeout_ms", "test.hook_timeout_ms", "test.slowest_test_ms_idle", "test.slowest_test_ms_under_load",
-    "test.config_resolution_timeout_ms",
+    "test.config_resolution_timeout_ms", "test.uncaught_canary_timeout_ms",
     "test.migration_hook_ms_under_load", "test.slowest_test_ms_ci", "test.headroom_ceiling_percent",
   ),
 

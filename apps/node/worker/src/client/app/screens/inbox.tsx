@@ -1,715 +1,63 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { apiFetch } from "/app/session.js";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { BUDGETS } from "@mailda/budgets";
 
+import type { AppRoute } from "../../../app-routes.ts";
 import { Nothing } from "../chrome.tsx";
 import {
-  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, setRead, stealCase, useDrafts, useMailboxes, useMessages, useReadableMailboxes, useThread,
+  type MessageRow, type Place, claimCase, labelsOf, patchReadInCache, releaseCase, setPlace, setRead, stealCase,
+  useMailboxes, useMessages, useReadableMailboxes,
 } from "../api.ts";
-import { Composer, type ComposerContext } from "./composer.tsx";
+import { type PaletteCommand, useCompose, usePendingSearch, useRegisterCommands, useToast } from "../shell-context.tsx";
+import { Icon } from "../ui/icons.tsx";
+import { Popover } from "../ui/popover.tsx";
+import { shortcutsEnabled, useShortcuts } from "../ui/shortcuts.ts";
+import type { ComposerContext } from "./composer.tsx";
+import { NextSteps, deterministicNextSteps } from "./next-steps.tsx";
+import { MONTHS, ReadingPane, Thread, bodyQuery, fullTime, shortTime, subjectOf, type RenderedBody } from "./reader.tsx";
 
 /**
- * The list and the reading pane — the half of variant B that is not a ledger.
+ * The mail view: the list pane and the reading column, for the Inbox, Archive and Trash alike.
  *
- * ## The body goes in a sandboxed iframe, and the sandbox is the boundary
+ * `reader.tsx` renders one message. This file owns everything that spans messages — which page of which
+ * listing is on screen, which row is selected, the claim that must come before a reply, moving a message
+ * between places, and the keys that do all of those. The three places are one component with a `place` prop
+ * because they are one listing with one filter (`place`, 0067): a second list component would be a second
+ * copy of the #91 paging rules to keep honest.
  *
- * `/api/messages/:id/body` returns sanitised HTML. ADR 37 is explicit that the sanitiser is **not** the
- * trust boundary: it reduces what the browser's parser is handed and withholds remote content, and the
- * thing that actually contains a hostile message is the iframe's `sandbox` with neither `allow-scripts`
- * nor `allow-same-origin`. Those two omissions are load-bearing. `allow-same-origin` would hand the frame
- * this document's origin, which is where the session cookies live.
+ * ## Every request here is governance, not only cost
  *
- * `srcDoc` rather than a URL, so the frame is opaque-origin and never a same-origin document that
- * happened to be sandboxed.
+ * Each listing a supervised reader fetches writes one `supervised.query` audit entry, and each body fetch is a
+ * recorded open (§7). So: one request per page, per tab switch, per applied filter and per submitted search;
+ * nothing is prefetched — not the next page, not another tab, not the body of the row J would open next; and
+ * opening a message patches the cached rows' read state rather than refetching the list. Opening a message that
+ * belongs to a conversation also lists that conversation, once while it is fresh, for the thread under the
+ * reader (`Thread`): one more listing, and one more `supervised.query`, per conversation opened. The default view's
+ * query key is `messagesKey({ place: "inbox" })` exactly, which is the sidebar's count, so the two are one
+ * request (`inbox-pages.test.tsx` holds this half; the sidebar's test the other).
  */
 
-interface RenderedBody {
-  state: string;
-  html: string | null;
-  text: string | null;
-  blockedRemote: number;
-  truncated: boolean;
-  problem: string | null;
-  attachments: Array<{
-    filename: string | null;
-    declaredType: string;
-    bytes: number;
-    verdict: "executable" | "script" | "archive" | "archive_dangerous" | "disguised" | "plain";
-  }>;
-  links: Array<{ href: string; text: string; verdict: "plain" | "mismatch" | "lookalike" | "userinfo" | "ip_host" }>;
-  recipients: { to: string[]; cc: string[]; replyTo: string | null };
-}
-
-const LINK_WORDS: Record<RenderedBody["links"][number]["verdict"], string | null> = {
-  plain: null,
-  mismatch: "says one place and goes to another",
-  lookalike: "goes to a domain that resembles one of yours and is not it",
-  userinfo: "carries a name before the real host, so it reads as somewhere it is not",
-  ip_host: "goes to a bare address rather than a named site",
-};
+const PLACE_TITLES: Record<Place, string> = { inbox: "Inbox", archive: "Archive", trash: "Trash" };
+const MOVED: Record<Place, string> = { inbox: "Moved to Inbox.", archive: "Archived.", trash: "Moved to Trash." };
 
 /**
- * The links worth a word, with where each really goes. Nothing is rewritten in the body — the sender's
- * href is what a click follows — so this is the comparison a hover cannot make, stated once, above the body.
+ * What a full page looks like, so "capped" can be distinguished from "that is all there was".
+ *
+ * From `BUDGETS` rather than written here: `messages.page_size` is a measured tripwire
+ * (`docs/receipts/message-page-size.md`) and a client with its own copy would tell the reader a page was
+ * capped at a number the Node had stopped using. The lookback's bound is not read here at all: the empty
+ * state that names it takes the figure the answering Node sent (`max_lookback`), so a Node running another
+ * budget is described by its own number.
  */
-function Links({ links }: { links: RenderedBody["links"] }) {
-  const flagged = links.filter((one) => one.verdict !== "plain");
-  if (flagged.length === 0) return null;
-  return (
-    <div className="notice bad" role="alert">
-      <p>{flagged.length} of {links.length} link{links.length === 1 ? "" : "s"} in this message {flagged.length === 1 ? "is" : "are"} not what {flagged.length === 1 ? "it says" : "they say"}:</p>
-      <ul className="links-flagged">
-        {flagged.map((one, index) => (
-          <li key={index}>
-            <span className="mono">{one.text === "" ? "(an image)" : one.text}</span> {LINK_WORDS[one.verdict]}: <span className="mono dim">{one.href}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+const PAGE_FULL = BUDGETS["messages.page_size"];
 
-const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
-  plain: null,
-  archive: "an archive; what is inside has not been opened",
-  archive_dangerous: "an archive listing a program or a script",
-  executable: "a program",
-  script: "a script",
-  disguised: "a program under a document's name",
-};
+type Tab = "all" | "unread" | "mine";
 
-/**
- * What was attached, named and judged, with no way to open it from here: the bytes stay in the original,
- * which the raw download carries whole. A verdict is a word a person can check against the file, not a scan.
- */
-function Attachments({ parts, receiptId }: { parts: RenderedBody["attachments"]; receiptId: string }) {
-  if (parts.length === 0) return null;
-  return (
-    <ul className="attachments" aria-label="Attachments">
-      {parts.map((part, index) => {
-        const word = VERDICT_WORDS[part.verdict];
-        return (
-          <li key={index}>
-            {/* A link to the part's own bytes; the Node serves a flagged one as octet-stream, to save and not run. */}
-            <a className="mono" href={`/api/messages/${encodeURIComponent(receiptId)}/attachments/${index}`}>
-              {part.filename ?? "(unnamed)"}
-            </a>{" "}
-            <span className="dim">{part.declaredType} · {Math.max(1, Math.round(part.bytes / 1024))} KB</span>
-            {word === null ? null : (
-              <span className={part.verdict === "archive" ? "dim" : "bad"}> — {word}</span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function received(at: string): string {
-  // A message whose own Date header was unreadable has `accepted_at` and nothing else; that is what is
-  // shown, and it is labelled as when the Node accepted it rather than when it was sent.
-  return new Date(at).toLocaleString(undefined, { hour12: false });
-}
-
-function MessageBody({ id }: { id: string }) {
-  const body = useQuery({
-    queryKey: ["body", id],
-    queryFn: async (): Promise<RenderedBody> => {
-      const response = await apiFetch(`/api/messages/${encodeURIComponent(id)}/body`);
-      if (!response.ok) throw new Error(`The body could not be read (${response.status}).`);
-      return (await response.json()) as RenderedBody;
-    },
-    // A body is immutable once accepted, so unlike the lists this can be cached hard. Authorization is
-    // still re-checked server-side on every request; what is cached is bytes the caller already read.
-    staleTime: Infinity,
-  });
-
-  if (body.isPending) return <Nothing kind="loading" />;
-  if (body.isError) return <Nothing kind="failed" detail={body.error.message} />;
-
-  const rendered = body.data;
-
-  if (rendered.state === "unparsed") {
-    return (
-      <Nothing
-        kind="failed"
-        detail={rendered.problem ?? "This message's body could not be read. The original is unchanged."}
-      />
-    );
-  }
-
-  return (
-    <>
-      {rendered.blockedRemote > 0 ? (
-        <p className="notice dim">
-          {rendered.blockedRemote} remote resource{rendered.blockedRemote === 1 ? "" : "s"} withheld. Loading
-          them would tell the sender you opened this.
-        </p>
-      ) : null}
-      {rendered.truncated ? <p className="notice dim">Shown truncated. The original is complete.</p> : null}
-      <Attachments parts={rendered.attachments} receiptId={id} />
-      <Links links={rendered.links} />
-      {rendered.state === "html" && rendered.html !== null ? (
-        <iframe
-          className="message-body"
-          title="Message body"
-          // Neither allow-scripts nor allow-same-origin. See the header — this is the trust boundary.
-          sandbox=""
-          referrerPolicy="no-referrer"
-          srcDoc={rendered.html}
-        />
-      ) : (
-        <pre className="message-text">{rendered.text ?? ""}</pre>
-      )}
-    </>
-  );
-}
-
-/**
- * The reply context. `Re:` is not doubled, and the quote line names when *this Node accepted* the message
- * rather than when the sender says they wrote it — a sender-supplied Date can be unreadable or absent, and
- * `accepted_at` is the one timestamp the Node observed itself.
- */
-function replyContext(
-  message: MessageRow, mailboxId: string,
-  rendered: RenderedBody | undefined, all: boolean, ownAddresses: readonly string[],
-): ComposerContext {
-  const subject = message.subject ?? "";
-  /*
-   * Quoted from the body the pane already fetched — the same cache entry, so a reply costs no second read.
-   * The plain text when there is one; the HTML's text otherwise, tags dropped, which is a rough quote and
-   * says so by being one. A body not yet fetched leaves the ellipsis the first version always left.
-   */
-  const text = rendered?.text
-    ?? (rendered?.html === null || rendered?.html === undefined ? null
-      : rendered.html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
-  const quoted = text === null ? "> …" : text.trim().split("\n").slice(0, 200).map((line) => `> ${line}`).join("\n");
-  /*
-   * Reply-all: the sender (or their Reply-To) in To, everybody else the sender addressed in Cc, minus this
-   * mailbox's own addresses — a copy to ourselves is the loop `send-breakers.md` exists for. The seal
-   * refuses a duplicate across To and Cc, so the sender is removed from Cc here.
-   */
-  /*
-   * Who a reply goes to: Reply-To if the sender set one, else the From header, else the envelope sender.
-   * The envelope sender was the only choice before, and on mail relayed through a bounce-handling path it is
-   * `bounces@cf-bounce.…` — the return path, which is where bounces go, not where people are (seen on the
-   * live Node, 17 September). The `From:` header is content the sender chose, which for a reply is right.
-   */
-  const sender = rendered?.recipients.replyTo ?? message.from_addr ?? message.envelope_from;
-  const mine = new Set(ownAddresses.map((one) => one.toLowerCase()));
-  const others = all
-    ? [...(rendered?.recipients.to ?? []), ...(rendered?.recipients.cc ?? [])]
-      .filter((one, index, list) => list.indexOf(one) === index && !mine.has(one) && one !== sender.toLowerCase())
-    : [];
-  return {
-    mailboxId,
-    // ADR 36 threads on the message's own id. Absent when the sender sent none, in which case this is a
-    // new message that happens to be addressed back — which is the truth, so it is not faked.
-    inReplyToMessageId: message.message_id ?? undefined,
-    to: sender,
-    cc: others.join(", "),
-    subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-    body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.from_addr ?? message.envelope_from} wrote:\n${quoted}`,
-  };
-}
-
-/**
- * A message nobody prompted (#79).
- *
- * The composer has rendered "New message" in two places since it was written and `inReplyToMessageId` has
- * always been optional — what was missing was any caller that left it out, so every outbound path the product
- * had ran through somebody else having written first. This is that caller, and it is four fields short of
- * `replyContext` on purpose:
- *
- * **No `to`.** A composer that opens pre-addressed to anything is how a message goes to the wrong person, and
- * there is no candidate here that is not a guess. **No `subject`** and **no `body`** for the same reason —
- * `replyContext` derives all three from the message being answered, and there is no such message.
- *
- * **No case, either**, and that is the substantive difference rather than an omission. Reply claims the case
- * in the same act (#42) because two people answering one correspondent is the collision that matters. A
- * message nobody sent has no case to claim and no collision to lose: the mailbox is a place to send *from*,
- * not a conversation somebody else might already be holding.
- */
-function newMessageContext(mailboxId: string): ComposerContext {
-  return { mailboxId };
-}
-
-/**
- * Narrows the listing to one mailbox (#91).
- *
- * ## Why this is a control on the screen and not a rail row
- *
- * The rail lists mailboxes, so a filter here looks like a duplicate — and the first reading of it was that
- * the rail should simply become clickable. It should not, at least not for this: the rail's per-mailbox rows
- * sit **under Queue** and carry *unclaimed* counts. They are about work nobody has taken, which is Layer 3's
- * subject, and repointing them at a filtered inbox would change what they mean rather than give them a
- * meaning. Whether a rail row navigates is a real question and it belongs with the queue, not with paging.
- *
- * ## Why it is not the same control as `StartMessage`'s
- *
- * That one picks a mailbox to **send as** — governance, per-mailbox `send.propose`, and #94's whole argument
- * that it must never be defaulted invisibly. This one picks what to *look at*. So this one **does** default,
- * to every mailbox, because "all" is a truthful description of an unfiltered list rather than a choice made
- * on somebody's behalf. Two controls that look alike and differ in exactly that way, which is why they are
- * separate functions with the reasoning written in both.
- *
- * The options come from `useReadableMailboxes`, which is what this reader may **read**, not where they have
- * work. The two differ exactly for the reader a filter matters most to: a supervised reader holds no
- * `send.propose`, so the work-queue list (`useMailboxes`, what the composer offers) would leave their mailbox
- * out of the filter and its mail reachable only in the unfiltered view. This one picks what to *look at*,
- * and `GET /api/mailboxes/readable` is the Node's answer to that question, made for it.
- */
-function MailboxFilter({ chosen, onChoose }: {
-  chosen: string | null;
-  onChoose: (mailboxId: string | null) => void;
-}) {
-  const mailboxes = useReadableMailboxes();
-  const rows = mailboxes.data?.mailboxes ?? [];
-  // Nothing to narrow with one mailbox, and nothing to narrow at all with none.
-  if (rows.length < 2) return null;
-
-  return (
-    <span className="inbox-filter">
-      <label htmlFor="inbox-mailbox" className="dim">mailbox</label>
-      {" "}
-      <select
-        id="inbox-mailbox"
-        value={chosen ?? ""}
-        onChange={(event) => onChoose(event.target.value === "" ? null : event.target.value)}
-      >
-        <option value="">all mailboxes</option>
-        {rows.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-      </select>
-    </span>
-  );
-}
-
-/**
- * The search field (#107).
- *
- * ## A form, submitted — not search-as-you-type
- *
- * Every keystroke reaching the Node would be one authorization and, for a supervised reader, one
- * `supervised.query` audit entry **per keystroke** — recording mail they never looked at, against
- * `audit.max_detail_bytes`, on the hot read path. §7 records acts and typing is not an act. The same argument
- * `usePages` makes for one page being one request applies letter by letter here.
- *
- * So it submits. A form also gets the Enter key, a labelled control and a real submit button for nothing,
- * which is the accessible answer as well as the cheap one.
- *
- * ## The term is not interpreted here
- *
- * No trimming, no tokenizing, no "did you mean". The Node's `ftsQuery` decides what a search means, and a
- * client with its own opinion is how the shell and the SDK end up disagreeing about the same words. What this
- * does own is the **clear** affordance: a search with no way out is a mailbox that looks empty for ever.
- */
-function SearchField({ term, onSearch }: {
-  term: string | null;
-  onSearch: (next: string | null) => void;
-}) {
-  /*
-   * Local state, so typing does not refetch. `term` is what has been *asked*; `draft` is what is being typed,
-   * and keeping them apart is what makes this a form rather than a subscription to the keyboard.
-   */
-  const [draft, setDraft] = useState(term ?? "");
-
-  return (
-    <form
-      className="inbox-search"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSearch(draft.trim() === "" ? null : draft);
-      }}
-    >
-      {/*
-        * The brand's search pill (#128), and the **form is unchanged**: a label, a real input and a real
-        * submit. What was here was a native `<button>Search</button>` sitting beside an unstyled field —
-        * the one control on the interface that had not been dressed at all, which is what made it the thing
-        * a person noticed first.
-        *
-        * The submit button is still a button, and now carries the magnifier. That matters more than it
-        * looks: the mockup shows an icon inside a field, which is usually built as a decorative glyph and a
-        * field that submits on Enter — and that loses the button, so a person navigating by keyboard has
-        * nothing to land on and a screen reader is told there is no way to run the search. The icon is the
-        * button's face, not a picture beside it.
-        */}
-      <label htmlFor="inbox-q" className="visually-hidden">Search mail</label>
-      <span className="search-pill">
-        <input
-          id="inbox-q"
-          type="search"
-          value={draft}
-          placeholder="Search mail"
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        {/*
-          * "Search", not "Search mail" — the label above already uses that, and **two controls in one form
-          * sharing an accessible name is ambiguous**: a screen reader announces "Search mail, edit" then
-          * "Search mail, button" with nothing to tell them apart. Caught by `search-field.test.tsx`, which
-          * could no longer find either of them unambiguously. The field names itself; the button names the
-          * act.
-          */}
-        <button type="submit" className="search-go" aria-label="Search">
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="6.6" cy="6.6" r="4.6" stroke="currentColor" strokeWidth="1.7" />
-            <path d="M10.1 10.1 L14 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-          </svg>
-        </button>
-      </span>
-      {/*
-        * **The capability, said where somebody can discover it** — and it is a tripwire, not a nicety.
-        *
-        * The field used to be labelled "search" with the placeholder "sender, subject or message text". The
-        * brand's pill wants "Search mail", which is shorter and denies a feature the Node has: a copy test
-        * (deleted 20 September 2026 as a phrase check, AGENTS.md §2c) failed on exactly that, and its
-        * reasoning stands: *"people do not discover a feature the interface denies having"*. Putting the three fields back into the
-        * placeholder would either overflow the pill or truncate at the tail, hiding "message text" —
-        * the one word the test exists for.
-        *
-        * So the pill keeps the brand's two words and the hint carries the rest. The narrower half —
-        * that content access decides how much of it a reader reaches — is on the empty state, where a person
-        * who searched and found nothing is the one who needs it.
-        */}
-      <p className="hint search-hint">Searches senders, subjects and message text.</p>
-      {term === null ? null : (
-        <button
-          type="button"
-          className="search-clear"
-          onClick={() => {
-            setDraft("");
-            onSearch(null);
-          }}
-        >
-          Clear
-        </button>
-      )}
-    </form>
-  );
-}
-
-/**
- * The control that starts one, and the mailbox it will be sent from.
- *
- * The mailbox is **chosen, never inferred**. `From` is the mailbox (ADR 36) and `send.propose` is held per
- * mailbox, so which one this goes from is a real decision with a governance consequence — picking the first
- * row for somebody would put their name on an address they did not choose. `useMailboxes` already returns
- * exactly the mailboxes the caller holds `send.propose` on, so the options need no separate authority check
- * and cannot offer one they may not use.
- *
- * Nothing renders when they hold none: a button that can only fail is worse than no button.
- */
-function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
-  const mailboxes = useMailboxes();
-  const rows = mailboxes.data?.mailboxes ?? [];
-  /**
-   * What has been chosen. `null` means **nobody has chosen yet**, which is a different thing from "the
-   * first one" and is the whole of #94.
-   *
-   * It used to be `from ?? rows[0]!.id`, nine lines under the comment above saying picking the first row
-   * would put somebody's name on an address they did not choose. The `<select>` rendered with that value,
-   * so the first mailbox looked chosen, and pressing the button without touching the dropdown sent from
-   * whichever mailbox `useMailboxes` happened to return first — an order that is not even stable.
-   */
-  const [from, setFrom] = useState<string | null>(null);
-  if (rows.length === 0) return null;
-  /*
-   * One mailbox is not a choice, so it needs no act: there is exactly one possible answer and asking for it
-   * would be ceremony. More than one and the default is **nothing**, because a default here is a governance
-   * decision made on somebody's behalf and then hidden from them by the control that claims to show it.
-   */
-  const chosen = from ?? (rows.length === 1 ? rows[0]!.id : null);
-
-  return (
-    <p className="new-message">
-      {rows.length === 1 ? null : (
-        <>
-          <label htmlFor="new-message-from" className="dim">from</label>
-          {" "}
-          <select
-            id="new-message-from"
-            // The empty string is the unchosen state, and it has to be a real option rather than an absent
-            // value: a `<select>` given a value matching no option shows its first one anyway, which is the
-            // original bug wearing a different implementation.
-            value={chosen ?? ""}
-            onChange={(event) => setFrom(event.target.value === "" ? null : event.target.value)}
-          >
-            <option value="">choose a mailbox…</option>
-            {rows.map((row) => (
-              // The address, not only the name: two mailboxes can be called Support and what a recipient
-              // sees is the address. `addresses` is NULL when a mailbox has none, and `sealManifest` refuses
-              // that mailbox — so it is shown as such rather than silently looking sendable.
-              <option key={row.id} value={row.id}>
-                {row.name}{row.addresses === null ? " (no address)" : ` · ${row.addresses.split(",")[0]!}`}
-              </option>
-            ))}
-          </select>
-          {" "}
-        </>
-      )}
-      <button
-        type="button"
-        className="primary"
-        // Disabled rather than hidden, and rather than opening a composer with no sender: the control has
-        // to say that a choice is missing, not silently do nothing or silently pick. `aria-disabled` is not
-        // used in its place because there is genuinely nothing to activate yet.
-        disabled={chosen === null}
-        onClick={() => { if (chosen !== null) onStart(chosen); }}
-      >
-        new message
-      </button>
-    </p>
-  );
-}
-
-/**
- * What the receiving server established about the sender, in one line a person can act on.
- *
- * DMARC is the verdict that matters — it is the sender's own domain saying whether this message is theirs —
- * so it leads; SPF and DKIM are the evidence beneath it. `none` is most of the internet (the domain
- * publishes no policy) and is said plainly rather than as a warning, so the warning that matters — a `fail`
- * against a domain that asked for `reject` — is the only red thing here. A message from before this Node
- * evaluated authentication says so, rather than reading as clean.
- */
-function Authenticated({ message }: { message: MessageRow }) {
-  if (message.auth_dmarc === null) {
-    return <span className="dim">not evaluated — this message arrived before this Node checked senders</span>;
-  }
-  if (message.auth_dmarc === "absent") {
-    return <span className="dim">no authentication header from the receiving server</span>;
-  }
-  const evidence = `spf ${message.auth_spf ?? "absent"}, dkim ${message.auth_dkim ?? "absent"}`;
-  if (message.auth_dmarc === "pass") {
-    return (
-      <span>
-        <span className="mono">{message.auth_from_domain ?? "the From domain"}</span> vouches for this message
-        (dmarc pass; {evidence})
-      </span>
-    );
-  }
-  if (message.auth_dmarc === "fail") {
-    return (
-      <span className="bad" role="alert">
-        <span className="mono">{message.auth_from_domain ?? "the From domain"}</span> says this message is
-        not theirs (dmarc fail; {evidence}
-        {message.auth_dmarc_policy === null ? "" : `; the domain asks receivers to ${message.auth_dmarc_policy}`})
-      </span>
-    );
-  }
-  return (
-    <span className="dim">
-      {message.auth_from_domain === null ? "the From domain" : message.auth_from_domain} publishes no policy
-      (dmarc {message.auth_dmarc}; {evidence})
-    </span>
-  );
-}
-
-/**
- * Unfinished writing (17 September 2026). `GET /api/drafts` has listed them for months; only a reply could
- * be resumed, because the composer looked a draft up by the message it answered. This lists every draft
- * and opens one by id, so a new message put down is picked up again.
- */
-function Drafts({ onOpen }: { onOpen: (draft: { id: string; mailboxId: string; inReplyToMessageId: string | null }) => void }) {
-  const drafts = useDrafts();
-  const rows = drafts.data?.drafts ?? [];
-  if (rows.length === 0) return null;
-  return (
-    <p className="notice dim drafts-strip">
-      {drafts.data?.truncated
-        ? `newest ${rows.length} drafts, older ones not listed`
-        : `${rows.length} draft${rows.length === 1 ? "" : "s"}`}:{" "}
-      {rows.map((draft, index) => (
-        <span key={draft.id}>
-          {index === 0 ? "" : " · "}
-          <button type="button" className="linkish" onClick={() => onOpen(draft)}>
-            {draft.subject.trim() === "" ? "(no subject)" : draft.subject}
-          </button>
-        </span>
-      ))}
-    </p>
-  );
-}
-
-/**
- * The rest of the conversation, around the message being read (#30's other half).
- *
- * Every other message in the conversation this reader may see, and every send that replied into it, in
- * time order, each folded to a line until opened. The message being read is not repeated here: it is the
- * pane above, with its headers and its body, and this is what came before and after it. Nothing is guessed
- * about grouping — the conversation is the sender's own root, and a message with none is a thread of one.
- */
-function Thread({ conversationId, current }: { conversationId: string | null; current: string }) {
-  const thread = useThread(conversationId);
-  const [open, setOpen] = useState<string | null>(null);
-  if (conversationId === null || !thread.isSuccess) return null;
-  const items: Array<{ key: string; at: string; message?: MessageRow; send?: SendRow }> = [
-    ...thread.data.messages.filter((one) => one.id !== current).map((one) => ({ key: one.id, at: one.accepted_at, message: one })),
-    ...thread.data.sends.map((one) => ({ key: one.id, at: one.state_at, send: one })),
-  ].sort((a, b) => a.at.localeCompare(b.at));
-  if (items.length === 0) return null;
-  return (
-    <section className="thread" aria-label="Conversation">
-      <h3 className="dim">{items.length} other message{items.length === 1 ? "" : "s"} in this conversation</h3>
-      <ul className="thread-list">
-        {items.map((item) => (
-          <li key={item.key}>
-            <button
-              type="button"
-              className="message-row"
-              aria-expanded={open === item.key}
-              onClick={() => setOpen(open === item.key ? null : item.key)}
-            >
-              <span className="message-from mono">
-                {item.message !== undefined
-                  ? item.message.from_addr ?? item.message.envelope_from
-                  : `→ ${item.send!.envelope_to}`}
-              </span>
-              <span className="message-subject">
-                {item.message !== undefined ? item.message.subject ?? "(no subject)" : item.send!.subject}
-                {item.send !== undefined ? <span className="dim"> · sent, {item.send.state}</span> : null}
-              </span>
-              <span className="message-when dim mono">{received(item.at)}</span>
-            </button>
-            {open === item.key && item.message !== undefined ? <MessageBody id={item.message.id} /> : null}
-            {open === item.key && item.send !== undefined ? (
-              <p className="notice dim">
-                A send from this Node. Its bytes are in the outbox
-                {item.send.has_submitted === 1 ? (
-                  <>: <a className="mono" href={`/api/sends/${encodeURIComponent(item.send.id)}/submitted`}>.eml</a></>
-                ) : null}.
-              </p>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/**
- * The words on a message, and a field to add one. Removing is a click on the word. Flat labels rather than
- * folders — the migration says why — so a message never moves; the filter above the list is how a word
- * finds its mail. `message_id` is null for a receipt not yet materialised, and there is nothing to label then.
- */
-function Labels({ message, onFilter }: { message: MessageRow; onFilter: (label: string) => void }) {
-  const queryClient = useQueryClient();
-  const [labels, setLabelsShown] = useState<string[]>(() => labelsOf(message));
-  const [draft, setDraft] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
-  async function change(delta: { add?: string[]; remove?: string[] }) {
-    if (message.message_id === null) return;
-    setProblem(null);
-    const outcome = await setLabels(message.message_id, delta);
-    if (outcome.ok) {
-      setLabelsShown(outcome.labels);
-      setDraft("");
-      await queryClient.invalidateQueries({ queryKey: ["messages"] });
-    } else setProblem(outcome.message);
-  }
-  return (
-    <dd className="labels">
-      {labels.map((label) => (
-        <span key={label} className="state label">
-          <button type="button" className="linkish" onClick={() => onFilter(label)} title={`Show mail labelled ${label}`}>
-            {label}
-          </button>{" "}
-          <button type="button" className="linkish dim" aria-label={`Remove label ${label}`} onClick={() => void change({ remove: [label] })}>
-            ×
-          </button>
-        </span>
-      ))}
-      {message.message_id === null ? null : (
-        <input
-          className="label-add"
-          placeholder="add a label"
-          aria-label="Add a label"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && draft.trim() !== "") {
-              event.preventDefault();
-              void change({ add: [draft] });
-            }
-          }}
-        />
-      )}
-      {problem === null ? null : <span className="bad"> {problem}</span>}
-    </dd>
-  );
-}
-
-function ReadingPane({ message, onReply, onReplyAll, onForward, onFilterLabel }: {
-  message: MessageRow; onReply: () => void; onReplyAll: () => void; onForward: () => void; onFilterLabel: (label: string) => void;
-}) {
-  const queryClient = useQueryClient();
-  /*
-   * Opening a message marks it read (0062), once, without waiting: a bookmark is not worth a spinner. The
-   * list is refetched so the row's weight changes, which is the one place the state is visible. `message_id`
-   * is null for a receipt not yet materialised, which has nothing to bookmark.
-   */
-  useEffect(() => {
-    if (message.read === 1 || message.message_id === null) return;
-    void setRead(message.message_id, true).then(() => queryClient.invalidateQueries({ queryKey: ["messages"] }));
-  }, [message.id, message.message_id, message.read, queryClient]);
-  async function toggleRead() {
-    if (message.message_id === null) return;
-    await setRead(message.message_id, message.read !== 1);
-    await queryClient.invalidateQueries({ queryKey: ["messages"] });
-  }
-  return (
-    <article className="reading-pane" aria-label="Message">
-      {/* h2, not h1. The screen's heading is "Inbox"; a message is a section inside it, and two h1s on
-          one page is the same landmark confusion in heading form. */}
-      <h2 className="message-title">{message.subject ?? <span className="dim">(no subject)</span>}</h2>
-      <dl className="headers">
-        <dt>from</dt>
-        <dd className="mono">{message.from_addr ?? message.envelope_from}</dd>
-        <dt>to</dt>
-        <dd className="mono">{message.envelope_to}</dd>
-        <dt>accepted</dt>
-        <dd className="mono">{received(message.accepted_at)}</dd>
-        <dt>sender</dt>
-        <dd><Authenticated message={message} /></dd>
-        <dt>labels</dt>
-        <Labels key={message.id} message={message} onFilter={onFilterLabel} />
-        <dt>original</dt>
-        <dd>
-          {/* The bytes as they arrived. §12's whole point is that this is producible, so it is a link
-              rather than a feature request. */}
-          <a className="mono" href={`/api/messages/${encodeURIComponent(message.id)}/raw`}>
-            .eml
-          </a>{" "}
-          <span className="dim mono">{message.raw_bytes} bytes</span>
-        </dd>
-      </dl>
-      <p className="row-actions">
-        <button type="button" className="linkish" onClick={onReply}>
-          reply
-        </button>{" "}
-        <button type="button" className="linkish" onClick={onReplyAll}>
-          reply all
-        </button>{" "}
-        {/* A forward carries the original whole, so it needs no claim on the case: nothing is answered. */}
-        <button type="button" className="linkish" onClick={onForward}>
-          forward
-        </button>{" "}
-        {message.message_id === null ? null : (
-          <button type="button" className="linkish dim" onClick={() => void toggleRead()}>
-            {message.read === 1 ? "mark unread" : "mark read"}
-          </button>
-        )}
-      </p>
-      {message.parse_error === null ? null : (
-        <p className="notice dim">
-          Headers were only partly readable: {message.parse_error}. The original is unchanged.
-        </p>
-      )}
-      <MessageBody id={message.id} />
-      <Thread conversationId={message.conversation_id} current={message.id} />
-    </article>
-  );
-}
+/** The server-side filters of the memo's Filter control; each one is a `MESSAGE_PAGE_PARAMS` name. */
+interface Filters { mailbox: string | null; from: string | null; since: string | null; until: string | null }
+const NO_FILTERS: Filters = { mailbox: null, from: null, since: null, until: null };
+const activeFilters = (filters: Filters) => Object.values(filters).filter((one) => one !== null).length;
 
 /**
  * The one control the inbox needed, and deliberately not a redesign of it (#91).
@@ -727,374 +75,1053 @@ function ReadingPane({ message, onReply, onReplyAll, onForward, onFilterLabel }:
  *
  * The stack is component state and is meant to be: it is a scroll position, not a fact about the mailbox, and
  * a reload landing on the newest page is the right behaviour rather than a lost one.
- */
-/**
- * What a full page looks like, so "capped" can be distinguished from "that is all there was".
  *
- * From `BUDGETS` rather than written here: `messages.page_size` is a measured tripwire
- * (`docs/receipts/message-page-size.md`) and a client with its own copy would tell the reader a page was
- * capped at a number the Node had stopped using.
+ * **Every narrowing resets the position**, and that is a correctness requirement rather than a courtesy. A
+ * cursor is a position in one ordering; change the tab, a filter, the label or the search and it is a position
+ * in a different listing — the row it names may not be in it at all, so the page it produces is somewhere
+ * arbitrary, or nowhere. The Node cannot catch this: the cursor is well-formed and the authorization re-runs,
+ * so it answers correctly a question nobody asked.
  */
-const PAGE_FULL = BUDGETS["messages.page_size"];
-
 function usePages() {
   /** The cursors used to reach the current page. Empty means the newest one. */
   const [stack, setStack] = useState<string[]>([]);
-  /** Which mailbox the listing is narrowed to, or null for every mailbox this reader may see. */
-  const [mailbox, setMailbox] = useState<string | null>(null);
   /** What has been searched for, or null for the unsearched listing (#107). */
   const [term, setTerm] = useState<string | null>(null);
   /** The label the listing is narrowed to (0061), or null for any. */
   const [label, setLabel] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("all");
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   return {
     cursor: stack[stack.length - 1] ?? null,
-    mailbox,
     term,
     label,
-    /** Narrowing to a label resets the position, for `narrowTo`'s reason. */
-    labelled: (next: string | null) => {
-      setLabel(next);
-      setStack([]);
-    },
+    tab,
+    filters,
     /** 1-based, for the reader. Never presented as "of N": nothing here knows N and nothing counted it. */
     number: stack.length + 1,
     older: (next: string) => setStack((was) => [...was, next]),
     newer: () => setStack((was) => was.slice(0, -1)),
     newest: () => setStack([]),
-    /**
-     * Narrowing the listing **resets the position**, and that is a correctness requirement rather than a
-     * courtesy.
-     *
-     * A cursor is a position in one ordering. Change the filter and it is a position in a different
-     * ordering — the row it names may not be in the new listing at all, so the page it produces is
-     * somewhere arbitrary, or nowhere. The Node cannot catch this for us: the cursor is well-formed and the
-     * authorization re-runs, so it answers correctly for a question nobody asked.
-     */
-    narrowTo: (next: string | null) => {
-      setMailbox(next);
-      setStack([]);
-    },
-    /**
-     * Searching **resets the position**, for exactly the reason `narrowTo` does and worth stating rather than
-     * leaving to the reader of the line above.
-     *
-     * A cursor is a position in one ordering, and a search is a different listing. The row the cursor names
-     * may not be in the results at all, so keeping it would produce a page from somewhere arbitrary — and the
-     * Node cannot catch it, because the cursor is well-formed and the authorization re-runs. It answers
-     * correctly for a question nobody asked, which is the failure mode `messagePageRequest` refuses a
-     * *malformed* cursor to avoid.
-     */
-    searchFor: (next: string | null) => {
-      setTerm(next);
-      setStack([]);
-    },
+    labelled: (next: string | null) => { setLabel(next); setStack([]); },
+    searchFor: (next: string | null) => { setTerm(next); setStack([]); },
+    show: (next: Tab) => { setTab(next); setStack([]); },
+    filter: (next: Filters) => { setFilters(next); setStack([]); },
   };
 }
 
-export function Inbox() {
+/** Below 768px one pane shows at a time, and the reader carries a way back to the list. */
+const SINGLE_PANE = "(max-width: 767.98px)";
+function onSinglePaneChange(notify: () => void) {
+  const query = matchMedia(SINGLE_PANE);
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+}
+function useSinglePane(): boolean {
+  return useSyncExternalStore(onSinglePaneChange, () => matchMedia(SINGLE_PANE).matches, () => false);
+}
+
+/**
+ * The reply context. `Re:` is not doubled, and the quote line names when *this Node accepted* the message
+ * rather than when the sender says they wrote it — a sender-supplied Date can be unreadable or absent, and
+ * `accepted_at` is the one timestamp the Node observed itself.
+ */
+function replyContext(
+  message: MessageRow, caseId: string,
+  rendered: RenderedBody, all: boolean, ownAddresses: readonly string[],
+): ComposerContext {
+  const subject = message.subject ?? "";
+  /*
+   * Quoted from the body the pane already fetched — the same cache entry, so a reply costs no second read.
+   * The plain text when there is one; the HTML's text otherwise, tags dropped, which is a rough quote and
+   * says so by being one. A body with neither (one the Node could not parse) leaves an ellipsis.
+   */
+  const text = rendered.text
+    ?? (rendered.html === null ? null
+      : rendered.html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+  const quoted = text === null ? "> …" : text.trim().split("\n").slice(0, 200).map((line) => `> ${line}`).join("\n");
+  /*
+   * Who a reply goes to: Reply-To if the sender set one, else the From header, else the envelope sender.
+   * The envelope sender was the only choice before, and on mail relayed through a bounce-handling path it is
+   * `bounces@cf-bounce.…` — the return path, which is where bounces go, not where people are (seen on the
+   * live Node, 17 September). The `From:` header is content the sender chose, which for a reply is right.
+   *
+   * Reply-all: the sender (or their Reply-To) in To, everybody else the sender addressed in Cc, minus this
+   * mailbox's own addresses — a copy to ourselves is the loop `send-breakers.md` exists for. The seal
+   * refuses a duplicate across To and Cc, so the sender is removed from Cc here.
+   */
+  const sender = rendered.recipients.replyTo ?? message.from_addr ?? message.envelope_from;
+  const mine = new Set(ownAddresses.map((one) => one.toLowerCase()));
+  const others = all
+    ? [...rendered.recipients.to, ...rendered.recipients.cc]
+      .filter((one, index, list) => list.indexOf(one) === index && !mine.has(one) && one !== sender.toLowerCase())
+    : [];
+  return {
+    mailboxId: message.mailbox_id,
+    // ADR 36 threads on the message's own id. Absent when the sender sent none, in which case this is a
+    // new message that happens to be addressed back — which is the truth, so it is not faked.
+    inReplyToMessageId: message.message_id ?? undefined,
+    // The case `reply()` just claimed, so the composer claims it again at the seal (#42).
+    caseId,
+    to: sender,
+    cc: others.join(", "),
+    subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+    originalSubject: subjectOf(message),
+    // `fullTime`, the reader's Received: the same instant in the same 24-hour form, not a second clock.
+    body: `\n\nOn ${fullTime(message.accepted_at)}, ${message.from_addr ?? message.envelope_from} wrote:\n${quoted}`,
+  };
+}
+
+/**
+ * The search field (#107).
+ *
+ * ## A form, submitted — not search-as-you-type
+ *
+ * Every keystroke reaching the Node would be one authorization and, for a supervised reader, one
+ * `supervised.query` audit entry **per keystroke** — recording mail they never looked at, against
+ * `audit.max_detail_bytes`, on the hot read path. §7 records acts and typing is not an act. So it submits,
+ * and a form gets the Enter key, a labelled control and a real submit button for nothing.
+ *
+ * The submit button carries the magnifier as its face, not a picture beside the field: a glyph inside a
+ * field that submits on Enter loses the button, so a keyboard has nothing to land on and a screen reader is
+ * told there is no way to run the search. Its name is "Search", not "Search mail" — two controls in one form
+ * sharing an accessible name cannot be told apart by ear. What a search covers (senders, subjects and text,
+ * in every place) is said on the status line once there are results, where the reader is looking.
+ *
+ * ## The term is not interpreted here
+ *
+ * No trimming, no tokenizing, no "did you mean". The Node's `ftsQuery` decides what a search means, and a
+ * client with its own opinion is how the shell and the SDK end up disagreeing about the same words.
+ */
+function SearchField({ term, onSearch }: { term: string | null; onSearch: (next: string | null) => void }) {
+  // `term` is what has been *asked*; `draft` is what is being typed. Keeping them apart is what makes this a
+  // form rather than a subscription to the keyboard.
+  const [draft, setDraft] = useState(term ?? "");
+  return (
+    <form
+      className="inbox-search"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSearch(draft.trim() === "" ? null : draft);
+      }}
+    >
+      <label htmlFor="inbox-q" className="visually-hidden">Search mail</label>
+      <span className="search-pill">
+        <input id="inbox-q" type="search" value={draft} placeholder="Search mail" onChange={(event) => setDraft(event.target.value)} />
+        <button type="submit" className="search-go" aria-label="Search"><Icon name="search" /></button>
+      </span>
+    </form>
+  );
+}
+
+/** A date field's `YYYY-MM-DD` as "26 Sep": the day as written, which is the UTC day the API reads it as. */
+function day(value: string): string {
+  const [, month, date] = value.split("-").map(Number);
+  return `${date} ${MONTHS[month! - 1]}`;
+}
+
+/**
+ * The memo's `[filter]`: mailbox, sender address and a received range, all applied by the Node on every plan.
+ *
+ * Applied, not live: "Apply" is one request, never one per keystroke, for the search field's reason. The dates
+ * are named "on or after" and "on or before" because that is what the API does with a date — `since` is the
+ * start of that UTC day and `until` its **end**, so `until=2026-09-01` includes 1 September
+ * (`packages/contract/src/routes.ts`); "before" would have been a word the listing contradicts.
+ *
+ * The mailbox choice lists what this reader may **read** (`GET /api/mailboxes/readable`), not where they have
+ * work: a supervised reader holds no `send.propose`, and their mailbox would otherwise be missing from the one
+ * control that narrows to it. It defaults to every mailbox, unlike the compose chooser's "never inferred"
+ * (#94): "all" is a true description of an unfiltered list, not a decision made on anybody's behalf.
+ */
+function FilterForm({ filters, mailboxes, onApply }: {
+  filters: Filters;
+  mailboxes: ReadonlyArray<{ id: string; name: string }>;
+  onApply: (next: Filters) => void;
+}) {
+  const [mailbox, setMailbox] = useState(filters.mailbox ?? "");
+  const [from, setFrom] = useState(filters.from ?? "");
+  const [since, setSince] = useState(filters.since ?? "");
+  const [until, setUntil] = useState(filters.until ?? "");
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onApply({
+          mailbox: mailbox === "" ? null : mailbox,
+          from: from.trim() === "" ? null : from.trim(),
+          since: since === "" ? null : since,
+          until: until === "" ? null : until,
+        });
+      }}
+    >
+      {mailboxes.length < 2 ? null : (
+        <>
+          <label htmlFor="inbox-mailbox">Mailbox</label>
+          <select id="inbox-mailbox" value={mailbox} onChange={(event) => setMailbox(event.target.value)}>
+            <option value="">All mailboxes</option>
+            {mailboxes.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          </select>
+        </>
+      )}
+      <label htmlFor="inbox-from">Sender address</label>
+      <input id="inbox-from" type="email" value={from} onChange={(event) => setFrom(event.target.value)} aria-describedby="inbox-from-hint" />
+      <p id="inbox-from-hint" className="hint">
+        The address the sending server gave; it can differ from the From line on forwarded mail.
+      </p>
+      <label htmlFor="inbox-since">Received on or after</label>
+      <input id="inbox-since" type="date" value={since} onChange={(event) => setSince(event.target.value)} />
+      <label htmlFor="inbox-until">Received on or before</label>
+      <input id="inbox-until" type="date" value={until} onChange={(event) => setUntil(event.target.value)} />
+      <p className="row-actions">
+        <button type="submit" className="primary">Apply</button>{" "}
+        <button type="button" className="btn" onClick={() => onApply(NO_FILTERS)}>Clear</button>
+      </p>
+    </form>
+  );
+}
+
+function FilterControl({ filters, mailboxes, onApply }: {
+  filters: Filters;
+  mailboxes: ReadonlyArray<{ id: string; name: string }>;
+  onApply: (next: Filters) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const count = activeFilters(filters);
+  return (
+    <span className="popover-wrap">
+      <button
+        ref={anchor}
+        type="button"
+        className="btn btn-icon filter-button"
+        // The count is part of the name: a number drawn on an icon is otherwise silent.
+        aria-label={count === 0 ? "Filter" : `Filter, ${count} active`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="filter" />
+        {count === 0 ? null : <span className="filter-count">{count}</span>}
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} label="Filter" className="filter-popover popover-down popover-end" anchor={anchor}>
+        <FilterForm
+          filters={filters}
+          mailboxes={mailboxes}
+          onApply={(next) => {
+            setOpen(false);
+            onApply(next);
+          }}
+        />
+      </Popover>
+    </span>
+  );
+}
+
+const TABS: ReadonlyArray<{ id: Tab; label: string; title?: string }> = [
+  { id: "all", label: "All" },
+  { id: "unread", label: "Unread" },
+  // "Mine": the same word as the API's `mine` and the row chip — the case is held by you.
+  { id: "mine", label: "Mine", title: "Cases you hold" },
+];
+
+/**
+ * All, Unread and Mine: three server-side listings (`unread=1`, `mine=1`), never a filter over the rows of
+ * another one, which would show a page of 50 as "the unread mail". No "Waiting" tab: nothing in today's
+ * state defines it honestly and cheaply (ADR 45). Arrow keys move between tabs and Enter or Space opens one:
+ * each opening is a listing request, so a key held down to look along the row does not issue three.
+ */
+function Tabs({ tab, onShow }: { tab: Tab; onShow: (next: Tab) => void }) {
+  const buttons = useRef<Array<HTMLButtonElement | null>>([]);
+  return (
+    <div className="list-tabs" role="tablist" aria-label="Inbox views">
+      {TABS.map((one, index) => (
+        <button
+          key={one.id}
+          ref={(element) => { buttons.current[index] = element; }}
+          id={`inbox-tab-${one.id}`}
+          type="button"
+          role="tab"
+          className="list-tab"
+          aria-selected={tab === one.id}
+          aria-controls="inbox-panel"
+          tabIndex={tab === one.id ? 0 : -1}
+          title={one.title}
+          onClick={() => onShow(one.id)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            buttons.current[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]?.focus();
+          }}
+        >
+          {one.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One row: who, when, what, a line of it, and the chips a person triages by. `stop` is whether it is the list's
+ * one Tab stop (see the list below).
+ */
+function Row({ row, place, selected, stop, onSelect, onFocus }: {
+  row: MessageRow;
+  place: Place;
+  selected: boolean;
+  stop: boolean;
+  onSelect: () => void;
+  onFocus: () => void;
+}) {
+  const address = row.from_addr ?? row.envelope_from;
+  const unread = row.read === 0;
+  return (
+    <li>
+      <button
+        type="button"
+        data-id={row.id}
+        className={`message-row${selected ? " current" : ""}${unread ? " unread" : ""}`}
+        aria-current={selected ? "true" : undefined}
+        tabIndex={stop ? 0 : -1}
+        onClick={onSelect}
+        onFocus={onFocus}
+      >
+        {unread ? <><span className="unread-dot" aria-hidden="true" /><span className="visually-hidden">Unread, </span></> : null}
+        {/* The name the sender chose, with the address one hover away; the reader shows both. */}
+        <span className="row-sender" title={address}>{row.from_name ?? address}</span>
+        {/* When this Node received it: `accepted_at`, the one time it observed itself. */}
+        <time className="row-time" dateTime={row.accepted_at} title={fullTime(row.accepted_at)}>{shortTime(row.accepted_at)}</time>
+        {/* An unmaterialised receipt (R1) has no subject and stays listed: accepted-but-absent is the worst failure. */}
+        <span className="row-subject">{subjectOf(row)}</span>
+        {row.preview === null ? null : <span className="row-preview">{row.preview}</span>}
+        <Chips row={row} place={place} />
+      </button>
+    </li>
+  );
+}
+
+function Chips({ row, place }: { row: MessageRow; place: Place }) {
+  const labels = labelsOf(row);
+  const chips = [
+    // A spoof is visible where triage happens, not only after opening — which would also mark it read.
+    row.auth_dmarc === "fail" ? <span key="auth" className="chip chip-auth-fail">DMARC fail</span> : null,
+    ...labels.map((label) => <span key={`label:${label}`} className="chip chip-label">{label}</span>),
+    row.case_mine === 1 ? <span key="mine" className="chip chip-mine">Mine</span> : null,
+    // Held by somebody else: never by whom here, which the Queue says to those who may work it.
+    row.case_state === "claimed" && row.case_mine === 0 ? <span key="held" className="chip chip-held">Held</span> : null,
+    // Only a search crosses places, so this is where a row from elsewhere says where it is.
+    row.place === place ? null : <span key="place" className="chip chip-place">{PLACE_TITLES[row.place]}</span>,
+  ].filter((chip) => chip !== null);
+  if (chips.length === 0) return null;
+  return <span className="row-chips">{chips}</span>;
+}
+
+/** Where a claim or a forward could not go ahead, bound to the message it is about (R6). */
+interface Blocked {
+  messageId: string;
+  /** The case a held claim lost, which "Take it anyway" steals; null when there is nothing to take. */
+  caseId: string | null;
+  message: string;
+  /** What the steal goes on to do: open the reply composer, or only hold the case. */
+  then: { reply: boolean; all: boolean } | null;
+}
+
+export function Inbox({ place = "inbox" }: { place?: Place } = {}) {
   const pages = usePages();
-  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox, q: pages.term, label: pages.label });
-  const [selected, setSelected] = useState<string | null>(null);
-  const [composing, setComposing] = useState<ComposerContext | null>(null);
-  /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
-  const [blocked, setBlocked] = useState<{ message: string; caseId: string } | null>(null);
+  const searching = pages.term !== null;
+  const tab: Tab = place === "inbox" && !searching ? pages.tab : "all";
+  /*
+   * With no tab, filter or search on `/`, this is `messagesKey({ place: "inbox" })`: the sidebar's count and
+   * this list are one cache entry and one request. A search omits the per-person filters, which the Node
+   * refuses beside `q`, so results span every place and each row says where it is.
+   */
+  const messages = useMessages({
+    cursor: pages.cursor, mailbox: pages.filters.mailbox, q: pages.term, label: pages.label,
+    from: pages.filters.from, since: pages.filters.since, until: pages.filters.until,
+    place: searching ? null : place, unread: tab === "unread", mine: tab === "mine",
+  });
+  const mailboxes = useMailboxes();
+  const readable = useReadableMailboxes();
+  const compose = useCompose();
+  const toast = useToast();
   const queryClient = useQueryClient();
+  const single = useSinglePane();
+
+  const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * The row as it was when selected, so the reader survives a list that drops it: opening a row in the Unread
+   * tab patches it read, and the next natural refetch omits it. The reader stays; the list shows what the Node
+   * returned. Overlaid with the read state this screen itself changed.
+   */
+  const [pinned, setPinned] = useState<MessageRow | null>(null);
+  const [blocked, setBlocked] = useState<Blocked | null>(null);
+  /** J past the last row or K before the first: which row of the page that arrives gets selected. */
+  const [landing, setLanding] = useState<"first" | "last" | null>(null);
+  /** The row whose button takes focus after the next render (J/K, E, and the single-pane Back). */
+  const focusRow = useRef<string | null>(null);
+  const list = useRef<HTMLUListElement>(null);
+  /** The row that last had focus, which keeps the list's one Tab stop while it is on this page. */
+  const [rover, setRover] = useState<string | null>(null);
+
+  const rows = useMemo(() => messages.data?.messages ?? [], [messages.data]);
+  const current = rows.find((row) => row.id === selected) ?? (pinned !== null && pinned.id === selected ? pinned : null);
+  const sendableRows = mailboxes.data?.mailboxes ?? [];
+  const sendable = (message: MessageRow): boolean | null =>
+    mailboxes.isSuccess ? sendableRows.some((box) => box.id === message.mailbox_id) : null;
+  const mailboxName = (id: string) =>
+    readable.data?.mailboxes?.find((box) => box.id === id)?.name ?? sendableRows.find((box) => box.id === id)?.name ?? "this mailbox";
+
+  function select(row: MessageRow | null, focus = false) {
+    setSelected(row?.id ?? null);
+    setPinned(row);
+    // A stale "held by" is worse than asking again: pressing Reply re-asks the Node.
+    setBlocked(null);
+    if (row !== null) setRover(row.id);
+    if (focus) focusRow.current = row?.id ?? null;
+  }
+
+  // The page J or K asked for has arrived: select its nearest row, as `select(row, true)` would.
+  useEffect(() => {
+    if (landing === null || !messages.isSuccess) return;
+    setLanding(null);
+    const row = landing === "first" ? rows[0] : rows[rows.length - 1];
+    if (row === undefined) return;
+    setSelected(row.id);
+    setPinned(row);
+    setBlocked(null);
+    focusRow.current = row.id;
+  }, [landing, messages.isSuccess, rows]);
+
+  /*
+   * One attempt, on the render that follows the request: the row is on screen by then, or it has left the list
+   * (an Unread row the refetch dropped) and focus stays where it is rather than jumping when it reappears. The
+   * early return only saves a DOM query on every other render; `mutants` finds removing it equivalent.
+   *
+   * Below 768px an open message hides the list, and a hidden row cannot take focus: the reader takes it as it
+   * opens (`ReadingPane`), so there is nothing to do here until Back empties the reader.
+   */
+  useEffect(() => {
+    const id = focusRow.current;
+    if (id === null) return;
+    focusRow.current = null;
+    if (single && current !== null) return;
+    const button = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button.message-row") ?? [])
+      .find((one) => one.dataset.id === id);
+    button?.focus();
+    button?.scrollIntoView({ block: "nearest" });
+  });
+
+  /** A request that never reached the Node is its own visible state, never a silent rejection (AGENTS §3). */
+  function unreachable(error: unknown) {
+    toast({ tone: "alert", text: `This Node could not be reached (${(error as Error).message}).` });
+  }
 
   /**
-   * Reply claims the case and opens the composer **in one act** (#42).
+   * Why a claim or a forward did not go ahead, in the message's article after its actions (R6) — and, while a
+   * composer is open, as an alert toast too. The dock covers the whole reader column, so the notice in the
+   * article is out of sight there, and R on a held message looked like R doing nothing. The toast names the
+   * message, since the list's selection can move on while it is up, and carries the same "Take it anyway".
+   * Only one of the two is an alert, so a screen reader hears the sentence once (`notice` below).
+   */
+  function block(notice: Blocked, message: MessageRow) {
+    setBlocked(notice);
+    if (compose.composing === null) return;
+    toast({
+      tone: "alert",
+      text: `${subjectOf(message)}: ${notice.message}`,
+      ...(notice.caseId === null ? {} : {
+        action: { label: "Take it anyway", run: () => void takeAnyway(notice, message).catch(unreachable) },
+      }),
+    });
+  }
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["messages"] });
+    void queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+  }
+
+  /**
+   * Reply claims the case and opens the composer **in one act** (#42), and every path that replies comes
+   * through here: the buttons, R, A and the palette.
    *
    * The guarantee lives in the compare-and-swap, not in a separate gesture, so this is what the reply button
    * does rather than a step before it. Losing the race means the composer does not open and the reader is
-   * told who holds the case — with the option to take it, which is audited.
+   * told who holds the case — with the option to take it, which is audited. The composer claims again at the
+   * seal, because it outlives this screen and the case can change hands while somebody writes.
+   *
+   * `steal` is the case a held notice named: "Take it anyway" takes that one, never the row's by lookup.
+   *
+   * **The body comes first.** Who a reply goes to (Reply-To) and whom a reply-all copies are in the body's
+   * answer, not the row. Reading whatever happened to be cached sent a reply pressed before the body arrived (J
+   * then R) to the From address, with every Cc dropped and a quote of "> …", and the composer never corrected
+   * it. `fetchQuery` on the reader's own key joins its request or returns its answer, so on an open message this
+   * is no second read and no second recorded open. A body that cannot be read opens nothing and claims nothing:
+   * a guessed addressee is the failure this exists to prevent.
    */
-  const mailboxes = useMailboxes();
-  async function reply(message: MessageRow, steal = false, all = false) {
+  async function reply(message: MessageRow, all: boolean, steal: string | null = null) {
     setBlocked(null);
-    if (message.case_id === null) {
-      // Honest rather than silent: mail with no case cannot be claimed, so composing would produce a reply
-      // nobody holds and the collision mechanism would not apply to it.
-      setBlocked({
-        message: "This message has no case yet, so it cannot be claimed. It predates the queue.",
-        caseId: "",
-      });
+    // Before the claim: a reply the sealing dock will not make room for must not hold a case nobody opened.
+    if (compose.refuseWhileSealing()) return;
+    const caseId = steal ?? message.case_id;
+    if (caseId === null) {
+      // Mail with no case cannot be claimed, so composing would produce a reply nobody holds.
+      block({ messageId: message.id, caseId: null, message: "This message has no case yet, so it cannot be claimed. It predates the queue.", then: null }, message);
       return;
     }
-    const outcome = steal ? await stealCase(message.case_id) : await claimCase(message.case_id);
-    await queryClient.invalidateQueries({ queryKey: ["messages"] });
-    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
-    if (outcome.ok) {
-      const rendered = queryClient.getQueryData<RenderedBody>(["body", message.id]);
-      const own = mailboxes.data?.mailboxes.find((box) => box.id === message.mailbox_id)?.addresses?.split(",") ?? [];
-      setComposing(replyContext(message, message.mailbox_id, rendered, all, own));
+    let rendered: RenderedBody;
+    try {
+      rendered = await queryClient.fetchQuery(bodyQuery(message.id));
+    } catch (error) {
+      block({
+        messageId: message.id, caseId: null, then: null,
+        message: `${(error as Error).message} Without it, who a reply goes to and whom it copies are unknown, so nothing was claimed or opened. Try again.`,
+      }, message);
       return;
     }
-    setBlocked({ message: outcome.message, caseId: message.case_id });
+    // Again once the body is in: a seal started while it was on its way would otherwise meet the claim below. Only
+    // one started during the claim's own request still finds the case claimed, and `open` then says the dock is
+    // sealing (R3C-REPLY-SEAL-WINDOW).
+    if (compose.refuseWhileSealing()) return;
+    const outcome = steal !== null ? await stealCase(caseId) : await claimCase(caseId);
+    refresh();
+    if (!outcome.ok) {
+      block({ messageId: message.id, caseId: outcome.kind === "held" ? caseId : null, message: outcome.message, then: { reply: true, all } }, message);
+      return;
+    }
+    const own = sendableRows.find((box) => box.id === message.mailbox_id)?.addresses?.split(",") ?? [];
+    compose.open(replyContext(message, caseId, rendered, all, own));
   }
 
-  // The heading is rendered before any of the states below, and that ordering is the fix rather than a
-  // style: with it inside the branches, a loading or empty inbox was a screen with no level-one heading —
-  // which the advisory axe run caught on the first pass. A screen's name should not depend on whether its
-  // data arrived.
-  /*
-   * `StartMessage` lives in the heading, which is rendered before every branch below — so it is present
-   * while the inbox is loading, when it is empty, and when it is full.
-   *
-   * The empty case is the one that matters and the reason it is here rather than beside the reading pane.
-   * That screen currently says "Nothing has arrived yet — send one to an address routed here", which until
-   * now was advice the product could not take: a Node with no mail had no way to send any. A fresh install
-   * could receive before it could speak.
-   */
-  const heading = (
-    <>
-    <header className="ledger-head">
-      <h1>Inbox</h1>
-      {/*
-        `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
-        `{n} messages` was true only while the listing returned everything there was; against a page it
-        states a count of the archive and prints the size of a page. Nothing here knows the total — no query
-        counted one — so the honest sentence names what is on the screen and which page it is.
-      */}
-      {messages.isSuccess ? (
-        <p className="dim mono">
-          {messages.data.messages.length} shown{pages.number === 1 ? "" : ` · page ${pages.number}`}
-          {pages.mailbox === null ? "" : " · one mailbox"}
-          {/*
-            A searched page says so, because `3 shown` over a mailbox of nine hundred is only honest if the
-            reader can see that a filter is on. The empty case is the one that matters: without this, a search
-            that matched nothing is a screen indistinguishable from an empty mailbox.
+  function forward(message: MessageRow) {
+    setBlocked(null);
+    if (message.message_id === null) {
+      block({ messageId: message.id, caseId: null, message: "This message has not been filed yet, so there is nothing to forward. Try again in a minute.", then: null }, message);
+      return;
+    }
+    const subject = message.subject ?? "";
+    compose.open({
+      mailboxId: message.mailbox_id,
+      forwardOfMessageId: message.message_id,
+      subject: /^fwd?:/i.test(subject) ? subject : `Fwd: ${subject}`,
+      originalSubject: subjectOf(message),
+      body: "",
+    });
+  }
 
-            **A full page of results says it is capped**, and this is the honest form of a decision rather than
-            a nicety. A search returns one page of the best matches by relevance and there is no way to page
-            further, because bm25 rank shifts as mail arrives and a cursor into a ranked list would skip and
-            repeat rows silently. So a reader seeing exactly a page's worth needs to know that narrowing the
-            words is how to see different mail — otherwise "50 shown" reads as "50 matches", which is a claim
-            nothing here can make.
-          */}
-          {pages.term === null
-            ? ""
-            : messages.data.messages.length < PAGE_FULL
-              ? " · searched"
-              : " · best matches — narrow the words to see others"}
-        </p>
-      ) : null}
-      <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
-    </header>
-    <div className="inbox-tools">
-      <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
-      <SearchField term={pages.term} onSearch={pages.searchFor} />
-      <Drafts onOpen={(draft) => setComposing({ mailboxId: draft.mailboxId, draftId: draft.id, ...(draft.inReplyToMessageId === null ? {} : { inReplyToMessageId: draft.inReplyToMessageId }) })} />
-      {pages.label === null ? null : (
-        <p className="notice dim">
-          Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
-          <button type="button" className="linkish" onClick={() => pages.labelled(null)}>show all</button>
-        </p>
+  /** Next steps' Claim: take the case to work it later. A held answer is the same collision notice Reply shows. */
+  async function claim(message: MessageRow) {
+    // For the type: the step is offered only on an open case. Equivalent under `mutants`, and said so here.
+    if (message.case_id === null) return;
+    setBlocked(null);
+    const caseId = message.case_id;
+    const outcome = await claimCase(caseId);
+    refresh();
+    if (outcome.ok) toast({ text: "Claimed." });
+    else if (outcome.kind === "held") block({ messageId: message.id, caseId, message: outcome.message, then: { reply: false, all: false } }, message);
+    else toast({ tone: "alert", text: outcome.message });
+  }
+
+  async function release(message: MessageRow) {
+    // For the type: the step is offered only on a case this reader holds.
+    if (message.case_id === null) return;
+    const outcome = await releaseCase(message.case_id);
+    refresh();
+    toast(outcome.ok ? { text: "Released to the queue." } : { tone: "alert", text: outcome.message });
+  }
+
+  /**
+   * "Take it anyway" steals **the case the notice names**, never the current row's by lookup: the notice is
+   * bound to its message, and the case is the one whose claim was lost.
+   */
+  async function takeAnyway(notice: Blocked, message: MessageRow) {
+    // For the type: the button exists only on a notice that names a case.
+    if (notice.caseId === null) return;
+    if (notice.then?.reply === true) {
+      await reply(message, notice.then.all, notice.caseId);
+      return;
+    }
+    const outcome = await stealCase(notice.caseId);
+    refresh();
+    if (outcome.ok) {
+      setBlocked(null);
+      toast({ text: "Claimed." });
+    } else block({ ...notice, caseId: outcome.kind === "held" ? notice.caseId : null, message: outcome.message }, message);
+  }
+
+  /** Read state: patched into the cached rows on success, the Node's words on refusal. */
+  async function markRead(message: MessageRow, read: boolean) {
+    // For the type: every caller has already checked the id (and `standing_content`, which implies it).
+    if (message.message_id === null) return;
+    const id = message.message_id;
+    const result = await setRead(id, read);
+    if (!result.ok) {
+      toast({ tone: "alert", text: result.message });
+      return;
+    }
+    patchReadInCache(queryClient, id, read ? 1 : 0);
+    setPinned((was) => (was !== null && was.message_id === id ? { ...was, read: read ? 1 : 0 } : was));
+  }
+
+  /**
+   * Moves a message to another of the reader's places, with an Undo that puts it back where it was.
+   *
+   * No optimistic removal: the row leaves the view when the Node has said so, by one listing refetch — the
+   * one request this act costs. The selection moves on to the next row of the list as it stood, which is
+   * where a person working down a queue expects to be.
+   */
+  async function move(message: MessageRow, to: Place) {
+    // For the type, as in `markRead`.
+    if (message.message_id === null) return;
+    const id = message.message_id;
+    const from = message.place;
+    const result = await setPlace(id, to);
+    if (!result.ok) {
+      toast({ tone: "alert", text: result.message });
+      return;
+    }
+    if (!searching && to !== place && selected === message.id) {
+      const at = rows.findIndex((row) => row.id === message.id);
+      // With focus, as J would: the row that had it (or the menu that did it) is about to leave the screen.
+      select(at === -1 ? null : rows[at + 1] ?? rows[at - 1] ?? null, true);
+    }
+    void queryClient.invalidateQueries({ queryKey: ["messages"] });
+    toast({
+      text: MOVED[to],
+      action: {
+        label: "Undo",
+        run: () => void (async () => {
+          const back = await setPlace(id, from);
+          if (!back.ok) {
+            toast({ tone: "alert", text: back.message });
+            return;
+          }
+          void queryClient.invalidateQueries({ queryKey: ["messages"] });
+          toast({ text: `Moved back to ${PLACE_TITLES[from]}.` });
+        })().catch(unreachable),
+      },
+    });
+  }
+
+  /** Why a key did nothing for this reader, said rather than swallowed. */
+  function withheld(message: MessageRow, act: "reply" | "file"): boolean {
+    if (act === "reply" && sendable(message) === false) {
+      toast({ text: `Replying from ${mailboxName(message.mailbox_id)} needs send.propose on it, which you do not hold.` });
+      return true;
+    }
+    if (act === "file" && message.message_id === null) {
+      toast({ text: "This message has not been filed yet. Try again in a minute." });
+      return true;
+    }
+    if (act === "file" && message.standing_content === 0) {
+      toast({ text: `Filing and read state need mailbox.content.read on ${mailboxName(message.mailbox_id)}, which you do not hold.` });
+      return true;
+    }
+    // Not yet known: the mailbox list is still loading. Said rather than guessed either way, in the words the
+    // shell's Compose uses for the same moment.
+    if (act === "reply" && sendable(message) === null) {
+      toast({ text: "Still reading which mailboxes you can send from." });
+      return true;
+    }
+    return false;
+  }
+
+  function archive(message: MessageRow) {
+    if (withheld(message, "file")) return;
+    if (message.place === "archive") {
+      toast({ text: "Already in Archive." });
+      return;
+    }
+    void move(message, "archive").catch(unreachable);
+  }
+
+  /**
+   * J and K. Within a page they cost nothing (the rows are here) and one body each, which opening is. Past
+   * either end they do exactly what Older and Newer do — one listing request, which the key press asked for —
+   * and land on the nearest row of the page that arrives. Nothing is fetched ahead of the key.
+   */
+  function step(by: 1 | -1) {
+    const at = current === null ? -1 : rows.findIndex((row) => row.id === current.id);
+    // Nothing selected (or the selection left the list): J starts at the top, K does nothing — the redesign
+    // names only J's first press. `mutants` finds this branch equivalent on page one, which is where it runs.
+    if (at === -1) {
+      if (by === 1 && rows[0] !== undefined) select(rows[0], true);
+      return;
+    }
+    const next = rows[at + by];
+    if (next !== undefined) {
+      select(next, true);
+      return;
+    }
+    const cursor = messages.data?.next_cursor ?? null;
+    if (by === 1 && cursor !== null) {
+      pages.older(cursor);
+      setLanding("first");
+    } else if (by === -1 && pages.number > 1) {
+      pages.newer();
+      setLanding("last");
+    }
+  }
+
+  useShortcuts([
+    { key: "r", description: "Reply", run: () => { if (current !== null && !withheld(current, "reply")) void reply(current, false).catch(unreachable); } },
+    { key: "a", description: "Reply all", run: () => { if (current !== null && !withheld(current, "reply")) void reply(current, true).catch(unreachable); } },
+    { key: "f", description: "Forward", run: () => { if (current !== null && !withheld(current, "reply")) forward(current); } },
+    { key: "e", description: "Archive", run: () => { if (current !== null) archive(current); } },
+    { key: "j", description: "Next message", run: () => step(1) },
+    { key: "k", description: "Previous message", run: () => step(-1) },
+    { key: "i", shift: true, description: "Mark unread", run: () => { if (current !== null && !withheld(current, "file")) void markRead(current, false).catch(unreachable); } },
+  ]);
+
+  /*
+   * The palette's message commands, each gated exactly as its button is. Memoised on what decides which
+   * commands exist, and run through a ref to the latest handlers, so registering them does not churn on every
+   * render and a command never acts on a message selected before it.
+   */
+  const latest = useRef({ current, reply, forward, move, markRead });
+  latest.current = { current, reply, forward, move, markRead };
+  const canSend = current === null ? null : sendable(current);
+  const commands = useMemo<readonly PaletteCommand[] | null>(() => {
+    if (current === null) return null;
+    const run = (act: (message: MessageRow) => unknown) => () => {
+      const message = latest.current.current;
+      if (message !== null) void Promise.resolve(act(message)).catch(unreachable);
+    };
+    const found: PaletteCommand[] = [];
+    if (canSend === true) {
+      found.push(
+        { id: "message.reply", label: "Reply", hint: "R", run: run((message) => latest.current.reply(message, false)) },
+        { id: "message.reply-all", label: "Reply all", hint: "A", run: run((message) => latest.current.reply(message, true)) },
+        { id: "message.forward", label: "Forward", hint: "F", run: run((message) => latest.current.forward(message)) },
+      );
+    }
+    if (current.standing_content === 1 && current.message_id !== null) {
+      if (current.place !== "archive") found.push({ id: "message.archive", label: "Archive", hint: "E", run: run((message) => latest.current.move(message, "archive")) });
+      if (current.place !== "trash") found.push({ id: "message.trash", label: "Move to Trash", run: run((message) => latest.current.move(message, "trash")) });
+      found.push(current.read === 1
+        ? { id: "message.unread", label: "Mark unread", hint: "Shift+I", run: run((message) => latest.current.markRead(message, false)) }
+        : { id: "message.read", label: "Mark read", run: run((message) => latest.current.markRead(message, true)) });
+    }
+    return found;
+    // The handlers are read through `latest`; these are what decide which commands exist.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, current?.place, current?.read, current?.standing_content, current?.message_id, canSend]);
+  useRegisterCommands(commands);
+
+  // The palette's "Search mail for …", run here once and cleared, so a return to this screen does not re-run it.
+  const pending = usePendingSearch();
+  useEffect(() => {
+    if (pending.pending === null) return;
+    pages.searchFor(pending.pending);
+    pending.clear();
+    // `pages` and `pending` are new objects each render; the request itself is what this runs on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending.pending]);
+
+  const title = PLACE_TITLES[place];
+  const data = messages.data;
+  const narrowed = activeFilters(pages.filters) > 0 || pages.label !== null;
+  const clearFilters = () => {
+    pages.filter(NO_FILTERS);
+    pages.labelled(null);
+  };
+
+  /*
+   * The count (#91, R12), as the words the visible count and the spoken status below both use, so the two
+   * cannot say different things. Never a total nothing counted: `n` only on page one when the Node says nothing
+   * older is visible, `n+` when it says more is, "Page K" further on, and nothing at all while unknown, while
+   * searching (the status line counts matches) or when the page is empty — including a page the lookback cut
+   * short, which always carries a cursor and so is never "0".
+   */
+  const shown = data?.messages.length ?? 0;
+  const figure = data === undefined || shown === 0 || searching ? null
+    : pages.number > 1 ? `Page ${pages.number}` : `${shown}${data.next_cursor === null ? "" : "+"}`;
+  const noun = shown === 1 && data?.next_cursor === null ? "message" : "messages";
+  const count = figure === null ? null
+    : pages.number > 1 ? figure : <>{figure}<span className="visually-hidden"> {noun}</span></>;
+
+  const chips: Array<{ key: string; text: string; clear: () => void }> = [];
+  if (pages.filters.mailbox !== null) chips.push({ key: "mailbox", text: `Mailbox: ${mailboxName(pages.filters.mailbox)}`, clear: () => pages.filter({ ...pages.filters, mailbox: null }) });
+  if (pages.filters.from !== null) chips.push({ key: "from", text: `From: ${pages.filters.from}`, clear: () => pages.filter({ ...pages.filters, from: null }) });
+  if (pages.filters.since !== null) chips.push({ key: "since", text: `On or after ${day(pages.filters.since)}`, clear: () => pages.filter({ ...pages.filters, since: null }) });
+  if (pages.filters.until !== null) chips.push({ key: "until", text: `On or before ${day(pages.filters.until)}`, clear: () => pages.filter({ ...pages.filters, until: null }) });
+
+  const found = searching && data !== undefined && data.messages.length > 0 ? data.messages.length : null;
+  const status = (
+    <>
+      {found === null ? null : (
+        /*
+          **A full page of results says it is capped.** A search returns one page of the best matches by
+          relevance and cannot page further — bm25 rank shifts as mail arrives, so a cursor into it would skip
+          and repeat rows silently. A reader seeing exactly a page's worth must know that narrowing the words
+          is how to see different mail, or "50" reads as "50 matches", which nothing counted.
+        */
+        <>
+          {found < PAGE_FULL
+            ? `Searched senders, subjects and text in all mail, including Archive and Trash · ${found} match${found === 1 ? "" : "es"}`
+            : `Best ${found} matches — narrow the words to see others`}{" "}
+          <button type="button" className="linkish" onClick={() => pages.searchFor(null)}>Clear search</button>
+        </>
       )}
-    </div>
+      {pages.label === null ? null : (
+        <>
+          Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
+          <button type="button" className="linkish" onClick={() => pages.labelled(null)}>Show all</button>
+        </>
+      )}
+      {place === "trash" && !searching ? <>Trash keeps messages until you move them back. Nothing here is deleted.</> : null}
+      {chips.map((chip) => (
+        <span key={chip.key} className="chip chip-filter">
+          {chip.text}
+          <button type="button" className="chip-remove" aria-label={`Remove filter: ${chip.text}`} onClick={chip.clear}>×</button>
+        </span>
+      ))}
     </>
   );
+  const hasStatus = found !== null || pages.label !== null || (place === "trash" && !searching) || chips.length > 0;
 
   /*
-   * Rendered in **every** branch, not only the populated one.
+   * What a submitted search or an applied filter came back with, in one sentence, for a screen reader: the
+   * list and the status line change silently otherwise (WCAG 4.1.3). Its own element, always in the DOM (a
+   * live region inserted with its text is often not read), rather than the status line, which mounts and
+   * unmounts and holds buttons that would be read out with it. Empty while the answer is pending (a new key has
+   * no data yet) and on an unnarrowed listing, so opening mail, J/K and paging the Inbox say nothing; a failure
+   * is the failed notice's own alert.
    *
-   * `StartMessage` sits in the heading and the heading precedes all four returns, so a composer mounted only
-   * beside the reading pane would let somebody open one on an empty inbox and watch nothing happen — state
-   * set, no dock. That is the failure mode of putting a new entry point on a screen written around a list.
+   * Built from the count's words and the empty state's sentence, never from the row count alone: page two of a
+   * filtered list is "Page 2", not a total, and an empty page says what the screen says of it (a lookback that
+   * stopped, nothing older), never a zero the screen is careful not to print (#91: a page is never a total).
    */
-  const composer = composing === null
-    ? null
-    : <Composer context={composing} onClose={() => setComposing(null)} />;
-
-  if (messages.isPending) return <>{heading}<Nothing kind="loading" />{composer}</>;
-  if (messages.isError) {
-    return <>{heading}<Nothing kind="failed" detail={messages.error.message} />{composer}</>;
+  let heard = "";
+  if (data !== undefined && (searching || narrowed)) {
+    const n = data.messages.length;
+    if (searching) heard = n === 0 ? "No mail matches those words." : n >= PAGE_FULL ? `Best ${n} matches.` : `${n} match${n === 1 ? "" : "es"}.`;
+    else if (figure === null) heard = emptyState().detail;
+    else if (pages.number > 1) heard = `${figure} of the mail that matches these filters.`;
+    else heard = `${figure} ${noun} match${noun === "message" ? "es" : ""} these filters.`;
   }
 
-  const rows = messages.data.messages;
-  if (rows.length === 0) {
+  let body: React.ReactNode;
+  if (messages.isPending) body = <Nothing kind="loading" />;
+  else if (messages.isError) body = <Nothing kind="failed" detail={messages.error.message} />;
+  else if (rows.length === 0) {
+    const empty = emptyState();
+    body = (
+      <div className="list-empty">
+        <Nothing kind="empty" detail={empty.detail} action={empty.action} />
+        {empty.actions === undefined ? null : <p className="row-actions">{empty.actions}</p>}
+      </div>
+    );
+  }
+  else {
     /*
-     * Two different empties, and saying the wrong one is #101 again in a new place (#91).
-     *
-     * *"Nothing has arrived yet"* is a statement about the whole Node, and on page four it is simply false —
-     * mail arrived, it is on pages one to three. A page past the end says so and offers the way back, because
-     * the reader who is looking at it got there by pressing a control this screen rendered.
-     */
-    return (
-      <>
-        {heading}
-        {pages.term !== null ? (
-          /*
-            A search that matched nothing, which is a **third** empty and the reason this branch comes first
-            (#107).
-
-            The two below are statements about the Node and about the page. This one is a statement about the
-            words: mail may well have arrived and be sitting on page one unsearched. Saying "no messages are
-            visible to you yet" here would be false, and offering the routing check would send somebody to
-            diagnose their DNS because they misspelled a supplier's name.
-
-            So it names the term back, says what was searched, and offers the way out — a search with no
-            clear affordance is a mailbox that stays empty for ever. `unfiltered` is deliberately **not**
-            passed: this list is filtered, by the search and by authorization both, and claiming nothing has
-            been hidden would be the exact opposite of true.
-          */
-          <>
-            <Nothing
-              kind="empty"
-              detail={`No mail matches those words${
-                pages.mailbox === null ? "" : " in this mailbox"
-              }. Every word has to appear, and it has to appear in the same place — a word from a subject `
-                + "and a word from a message's text will not match together. Message text is searched only "
-                + "in mailboxes where you can read content; elsewhere this searched subjects and senders."}
-            />
-            <p className="row-actions">
-              <button type="button" className="linkish" onClick={() => pages.searchFor(null)}>
-                clear the search
-              </button>
-            </p>
-          </>
-        ) : pages.number === 1 ? (
-          /*
-            What an empty list means, and nothing further (#101).
-
-            It used to say "This Node is claimed and routing is live", concluded from an empty result set —
-            which establishes neither. Email Routing never enabled, MX records pointing elsewhere, a
-            catch-all aimed at another Worker, no address configured at all: every one produces this same
-            screen, and the sentence told the reader it was working.
-
-            `doctor`'s `inbound_routing` finding is what can answer it: whether an address exists, whether
-            anything has ever arrived, and plainly that whether routing points here *now* needs the
-            Cloudflare dashboard, because that lives in the account and this Node holds no token for it.
-          */
-          <Nothing
-            kind="empty"
-            detail="No messages are visible to you yet. Whether mail can reach this Node is a separate question — Doctor's inbound routing check answers it."
-            action={{ to: "/doctor", label: "check inbound routing" }}
+      One Tab stop for the whole list, so Tab goes from the list to the reader in one press rather than past
+      every row (fifty at `messages.page_size`), with shortcuts off as well as on. The stop is the row that last
+      had focus if it is on this page, else the one being read, else the first; there is always exactly one, or
+      the list could not be reached at all.
+    */
+    const stop = rows.some((row) => row.id === rover) ? rover
+      : rows.some((row) => row.id === selected) ? selected : rows[0]!.id;
+    body = (
+      /*
+        A plain list of buttons, with `aria-current` marking the one being read. Not a `listbox` of `option`s
+        wrapping buttons: axe rejects that as `nested-interactive`. The arrow keys and Home/End move focus
+        between rows and nothing else: opening is a recorded open for a supervised reader and marks the message
+        read, so it stays on Enter, a click, and J and K, which move focus to the row they open.
+      */
+      <ul ref={list} className="message-list" aria-label="Messages" onKeyDown={arrows}>
+        {rows.map((row) => (
+          <Row
+            key={row.id} row={row} place={place} selected={row.id === selected} stop={row.id === stop}
+            onSelect={() => select(row)} onFocus={() => setRover(row.id)}
           />
-        ) : (
-          /*
-            Page two or later, which is a different statement and the reason this branches at all (#91). An
-            empty *later* page does not mean nothing has arrived — it means nothing is older than where the
-            reader is standing. Saying "nothing has arrived yet" here would be false, and saying anything
-            about routing would be false twice.
-          */
-          <>
-            <Nothing kind="empty" detail="Nothing older on this page." />
-            <p className="row-actions">
-              <button type="button" className="linkish" onClick={pages.newest}>newest</button>
-            </p>
-          </>
-        )}
-        {composer}
-      </>
+        ))}
+      </ul>
     );
   }
 
-  const current = rows.find((row) => row.id === selected) ?? null;
+  /** ArrowUp/Down and Home/End between the rows, focus only; no wrap. */
+  function arrows(event: React.KeyboardEvent<HTMLUListElement>) {
+    const buttons = Array.from(list.current?.querySelectorAll<HTMLButtonElement>("button.message-row") ?? []);
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (at === -1) return;
+    const to = event.key === "ArrowDown" ? Math.min(at + 1, buttons.length - 1)
+      : event.key === "ArrowUp" ? Math.max(at - 1, 0)
+        : event.key === "Home" ? 0
+          : event.key === "End" ? buttons.length - 1 : null;
+    if (to === null) return;
+    // The list scrolls itself otherwise, which moves the page under the row instead of the row.
+    event.preventDefault();
+    buttons[to]!.focus();
+    buttons[to]!.scrollIntoView({ block: "nearest" });
+  }
+
+  /**
+   * What an empty page means, in the one sentence that is true of it, and the ways on from it. The sentence is
+   * also what the status region says of an empty filtered page (`heard`).
+   */
+  function emptyState(): { detail: string; action?: { to: AppRoute; label: string }; actions?: React.ReactNode } {
+    if (searching) {
+      /*
+        A statement about the words, not the Node: mail may well be sitting on page one unsearched, so
+        offering the routing check here would send somebody to diagnose their DNS because they misspelled a
+        supplier's name. Names what was searched, and the way out.
+      */
+      return {
+        detail: `No mail matches those words${pages.filters.mailbox === null ? "" : " in this mailbox"}. Every word `
+          + "has to appear, and it has to appear in the same place — a word from a subject and a word from a "
+          + "message's text will not match together. Message text is searched only in mailboxes where you can "
+          + "read content; elsewhere only subjects and senders are searched.",
+        actions: <button type="button" className="linkish" onClick={() => pages.searchFor(null)}>Clear search</button>,
+      };
+    }
+    if (data?.lookback_exhausted === true) {
+      /*
+        The lookback stopped with nothing found (§2.1.4 of the redesign): the Node looked at its bound of the
+        messages this reader can see and none matched. Neither "empty" nor the routing sentence is known, so
+        the words say what was looked at and what was not found, and offer to look further back — one request,
+        exactly what Older runs with this page's cursor. The bound is the one the Node says it used.
+      */
+      const scope = pages.number === 1 ? "newest" : "next";
+      const looked = data.max_lookback === null ? "" : ` ${data.max_lookback.toLocaleString()}`;
+      const older = pages.number === 1 ? "" : " older";
+      const tail = tab === "unread" ? "is unread" : tab === "mine" ? "is in a case you hold" : "is in your Inbox";
+      return {
+        detail: `None of the ${scope}${looked}${older} messages you can see${narrowed ? " that match these filters" : ""} ${tail}.`,
+        actions: (
+          <>
+            <button type="button" className="btn" onClick={() => { if (data.next_cursor !== null) pages.older(data.next_cursor); }}>
+              Look further back
+            </button>
+            {pages.number === 1 ? null : <> <button type="button" className="linkish" onClick={pages.newest}>Newest</button></>}
+            {narrowed ? <> <button type="button" className="linkish" onClick={clearFilters}>Clear filters</button></> : null}
+          </>
+        ),
+      };
+    }
+    if (pages.number > 1) {
+      /*
+        Page two or later: nothing is older than where the reader is standing, which is not "nothing has
+        arrived" — the reader got here by pressing a control this screen rendered, so it offers the way back.
+      */
+      return {
+        detail: "Nothing older on this page.",
+        actions: <button type="button" className="linkish" onClick={pages.newest}>Newest</button>,
+      };
+    }
+    if (narrowed) {
+      return {
+        detail: "Nothing matches these filters.",
+        actions: <button type="button" className="linkish" onClick={clearFilters}>Clear filters</button>,
+      };
+    }
+    if (tab === "unread") return { detail: "Nothing unread in your Inbox." };
+    if (tab === "mine") return { detail: "You hold no cases in your Inbox." };
+    if (place === "archive") return { detail: "Nothing archived." };
+    if (place === "trash") return { detail: "Your Trash is empty." };
+    /*
+      What an empty Inbox means, and nothing further (#101). It used to say "routing is live", concluded from
+      an empty result set, which establishes neither: routing never enabled, MX elsewhere, a catch-all aimed at
+      another Worker all produce this screen. "Visible" because authorization happens inside the SQL, so an
+      empty list routinely means "nothing you may see". Doctor's `inbound_routing` finding is what can answer
+      the rest.
+    */
+    return {
+      detail: "No messages are visible in your Inbox. Whether mail can reach this Node is a separate question — Doctor's inbound routing check answers it.",
+      action: { to: "/doctor", label: "Check inbound routing" },
+    };
+  }
+
+  const showTabs = place === "inbox" && !searching;
+  const cursor = data?.next_cursor ?? null;
+  const notice = current !== null && blocked !== null && blocked.messageId === current.id ? (
+    // An alert only with no composer open: with one, `block` raised the same words as an alert toast.
+    <p className="notice bad collision" role={compose.composing === null ? "alert" : undefined}>
+      {blocked.message}
+      {blocked.caseId === null ? null : (
+        <>
+          {" "}
+          {/* Available to any colleague and audited — the escape hatch the absent timeout depends on. */}
+          <button type="button" className="linkish" onClick={() => void takeAnyway(blocked, current).catch(unreachable)}>
+            Take it anyway
+          </button>
+        </>
+      )}
+    </p>
+  ) : null;
+  const steps = current === null ? null : deterministicNextSteps({
+    message: current,
+    canSend: sendable(current) === true,
+    claim: () => void claim(current).catch(unreachable),
+    release: () => void release(current).catch(unreachable),
+    showFromSender: (address) => pages.filter({ ...pages.filters, from: address }),
+  });
 
   return (
-    <>
-    {heading}
-    <div className="split">
-      {/*
-        A plain list of buttons, with `aria-current` marking the one being read.
-
-        This was a `role="listbox"` of `role="option"`s wrapping buttons, and axe was right to reject it:
-        `nested-interactive` — an option must not contain an interactive control, because a screen reader
-        user then has two things to operate for one row and the listbox's own keyboard model never applies.
-        A real listbox would mean owning arrow keys, Home/End and typeahead; a list of buttons is the
-        pattern that is already correct, and `aria-current` says which one is open without claiming a
-        selection model this list does not implement.
-
-        It surfaced only once the inbox had a message in it. The earlier clean run rendered an empty
-        inbox, so the list did not exist to be checked — worth remembering about any harness that
-        measures whatever state the fixture happens to be in.
-      */}
-      <ul className="message-list" aria-label="Messages">
-        {rows.map((row) => (
-          <li key={row.id}>
-            <button
-              type="button"
-              className={`message-row${row.id === selected ? " current" : ""}${row.read === 1 ? "" : " unread"}`}
-              aria-current={row.id === selected ? "true" : undefined}
-              onClick={() => setSelected(row.id)}
-            >
-              <span className="message-from mono">{row.from_addr ?? row.envelope_from}</span>
-              <span className="message-subject">
-                {row.subject ?? <span className="dim">(no subject)</span>}
-                {labelsOf(row).map((label) => <span key={label} className="state label"> {label}</span>)}
-              </span>
-              <span className="message-when dim mono">{received(row.accepted_at)}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {/*
-        The pager (#91). Two buttons, each rendered only when it can do something.
-
-        `older` exists exactly when `next_cursor` is non-null, which is the Node saying there is at least one
-        more row **this reader may see at this instant** — not that the archive continues. So an absent button
-        is the honest end of the list and never a disabled control the reader has to test.
-
-        Not a page-number list: producing one needs a total, nothing counted a total, and a count is the one
-        thing a listing authorized in SQL cannot cheaply have.
-      */}
-      {messages.data.next_cursor === null && pages.number === 1 ? null : (
-        <nav className="row-actions" aria-label="Pages">
-          {pages.number === 1 ? null : (
-            <button type="button" className="linkish" onClick={pages.newer}>newer</button>
-          )}
-          {messages.data.next_cursor === null ? null : (
-            <button
-              type="button"
-              className="linkish"
-              onClick={() => pages.older(messages.data.next_cursor!)}
-            >
-              older
-            </button>
-          )}
-        </nav>
-      )}
-      {current === null ? (
-        <p className="reading-pane notice dim">Select a message.</p>
-      ) : (
-        <ReadingPane
-          message={current}
-          // From is the mailbox (ADR 36), so composing needs to know which one. It is read off the message
-          // being replied to rather than guessed: that address is routed to exactly one mailbox.
-          onReply={() => void reply(current)}
-          onReplyAll={() => void reply(current, false, true)}
-          onFilterLabel={pages.labelled}
-          onForward={() => {
-            setBlocked(null);
-            // `message_id` is null for a receipt not yet materialised; there is nothing to forward then.
-            if (current.message_id === null) {
-              setBlocked({ message: "This message has not been filed yet, so there is nothing to forward. Try again in a minute.", caseId: "" });
-              return;
-            }
-            setComposing({
-              mailboxId: current.mailbox_id,
-              forwardOfMessageId: current.message_id,
-              subject: /^fwd?:/i.test(current.subject ?? "") ? current.subject ?? "" : `Fwd: ${current.subject ?? ""}`,
-              body: "",
-            });
-          }}
-        />
-      )}
-      {blocked === null ? null : (
-        <p className="notice bad" role="alert">
-          {blocked.message}
-          {blocked.caseId === "" || current === null ? null : (
-            <>
-              {" "}
-              {/* Available to any colleague and audited — the escape hatch the absent timeout depends on. */}
-              <button type="button" className="linkish" onClick={() => void reply(current, true)}>
-                take it anyway
-              </button>
-            </>
-          )}
-        </p>
-      )}
-      {composer}
+    <div className="mail-panes" data-view={current === null ? "list" : "reader"}>
+      <section className="list-pane" aria-label="Message list">
+        <header className="list-head">
+          <h1 className="list-title">{title}</h1>
+          {count === null ? null : <span className="list-count">{count}</span>}
+        </header>
+        <div className="list-tools">
+          {/* Keyed by the term, so a search the palette started shows in the field. */}
+          <SearchField key={pages.term ?? ""} term={pages.term} onSearch={pages.searchFor} />
+          <FilterControl filters={pages.filters} mailboxes={readable.data?.mailboxes ?? []} onApply={pages.filter} />
+        </div>
+        {showTabs ? <Tabs tab={tab} onShow={pages.show} /> : null}
+        {hasStatus ? <p className="list-status">{status}</p> : null}
+        <p className="visually-hidden" role="status">{heard}</p>
+        <div
+          className="list-scroll"
+          {...(showTabs ? { id: "inbox-panel", role: "tabpanel", "aria-labelledby": `inbox-tab-${tab}` } : {})}
+        >
+          {body}
+        </div>
+        {/*
+          The pager (#91), inside the list pane, each button only when it can do something. `Older` exists
+          exactly when `next_cursor` is non-null — the Node saying at least one more row is visible to this reader
+          now — so an absent button is the honest end of the list. A page the lookback cut short is an ordinary
+          page with a cursor. An empty page carries its own way on, in the words above.
+        */}
+        {rows.length === 0 || (cursor === null && pages.number === 1) ? null : (
+          <nav className="pager" aria-label="Pages">
+            {pages.number === 1 ? null : <button type="button" className="btn btn-ghost" onClick={pages.newer}>Newer</button>}
+            {pages.number > 2 ? <button type="button" className="btn btn-ghost" onClick={pages.newest}>Newest</button> : null}
+            {cursor === null ? null : <button type="button" className="btn btn-ghost" onClick={() => pages.older(cursor)}>Older</button>}
+          </nav>
+        )}
+      </section>
+      <section className="reader-column">
+        {current === null ? (
+          <div className="reader-empty">
+            <p>No message selected</p>
+            {/* Only where there is a list to move through: an empty Trash or search has none. */}
+            {shortcutsEnabled() && rows.length > 0 ? <p>J and K move through the list</p> : null}
+          </div>
+        ) : (
+          <>
+            <ReadingPane
+              key={current.id}
+              message={current}
+              sendable={sendable(current)}
+              mailboxName={mailboxName(current.mailbox_id)}
+              onReply={(all) => void reply(current, all).catch(unreachable)}
+              onForward={() => forward(current)}
+              onMove={(to) => void move(current, to).catch(unreachable)}
+              onMarkRead={(read) => void markRead(current, read).catch(unreachable)}
+              onFilterLabel={pages.labelled}
+              notice={notice}
+              nextSteps={steps === null ? null : <NextSteps steps={steps.steps} finding={steps.finding} />}
+              back={single ? {
+                label: title,
+                run: () => {
+                  focusRow.current = current.id;
+                  select(null);
+                },
+              } : null}
+            />
+            <Thread conversationId={current.conversation_id} current={current.id} />
+          </>
+        )}
+      </section>
     </div>
-    </>
   );
 }

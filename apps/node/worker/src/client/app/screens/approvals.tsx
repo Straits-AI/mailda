@@ -93,20 +93,20 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
       <h2>{words.title}</h2>
       <p>{words.what}</p>
       <dl className="headers">
-        <dt>subject</dt>
+        <dt>Subject</dt>
         <dd className="mono">{row.subjectId}</dd>
-        <dt>asked by</dt>
+        <dt>Asked by</dt>
         <dd className="mono">{row.actorUserId}</dd>
-        <dt>asked</dt>
+        <dt>Asked</dt>
         <dd className="mono">{when(row.requestedAt)}</dd>
-        <dt>lapses</dt>
+        <dt>Lapses</dt>
         {/*
           An approval can expire, and a send whose approval lapsed is refused terminally — "compose again,
           and the new message gets its own approval". Somebody deciding today needs to know they are the
           reason it will or will not make it, so the deadline is a header rather than a detail.
         */}
         <dd className="mono">{row.expiresAt === null ? "does not lapse" : when(row.expiresAt)}</dd>
-        <dt>needs</dt>
+        <dt>Needs</dt>
         <dd>{progress(row)}</dd>
       </dl>
 
@@ -139,7 +139,7 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
             */}
             <span className="dim">You have decided this. </span>
             <button className="quiet" type="button" onClick={() => void act(() => withdrawDecision(row.id))} disabled={busy}>
-              take my decision back
+              Take my decision back
             </button>
           </>
         ) : (
@@ -150,11 +150,11 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
               onClick={() => void act(() => decide(row.id, "approve"))}
               disabled={busy}
             >
-              approve
+              Approve
             </button>
             {" "}
             <button className="quiet" type="button" onClick={() => void act(() => decide(row.id, "deny"))} disabled={busy}>
-              deny
+              Deny
             </button>
           </>
         )}

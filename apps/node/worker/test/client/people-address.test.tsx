@@ -10,11 +10,8 @@ import { answerWith, calls, reset } from "./session-stub.ts";
  * its detail names the command that finishes the job.
  */
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  useRouterState: () => ({ location: { pathname: "/people" } }),
-  Link: ({ children }: { children?: unknown }) => children,
-}));
+const route = vi.hoisted(() => ({ pathname: "/people" }));
+vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { People } = await import("../../src/client/app/screens/people.tsx");
 
@@ -39,12 +36,12 @@ function mount(routing: { state: string; detail: string }, boxes = [BOX]) {
 
 // By id: the invite form has an "Address" label too, so the label alone matches twice.
 async function field() {
-  await screen.findByText("add the address");
+  await screen.findByText("Add the address");
   return document.querySelector("#new-address") as HTMLInputElement;
 }
 async function add(address: string) {
   fireEvent.change(await field(), { target: { value: address } });
-  fireEvent.click(screen.getByText("add the address"));
+  fireEvent.click(screen.getByText("Add the address"));
 }
 const status = async () => (await screen.findByRole("status")).textContent ?? "";
 
@@ -79,7 +76,7 @@ describe("adding an address on People", () => {
     mount({ state: "rule_written", detail: "" }, [BOX, { ...BOX, id: "mbx_two", name: "Invoices" }]);
     fireEvent.change(await field(), { target: { value: "bills@example.test" } });
     fireEvent.change(screen.getByLabelText("Mailbox"), { target: { value: "mbx_two" } });
-    fireEvent.click(screen.getByText("add the address"));
+    fireEvent.click(screen.getByText("Add the address"));
     await waitFor(() => {
       const sent = calls.find((call) => call.method === "POST" && call.path === "/api/addresses");
       expect(sent!.body).toEqual({ address: "bills@example.test", mailboxId: "mbx_two" });

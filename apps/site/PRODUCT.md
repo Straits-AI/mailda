@@ -24,7 +24,7 @@ Mailda is an open-source, customer-owned mail-operations system deployed into th
 
 ## Capabilities
 
-Receiving through Cloudflare Email Routing; reading with SPF/DKIM/DMARC verdicts, attachment and link judgement, quarantine; threads, labels, read state; composing with Cc/Bcc, reply-all, forwarding, attachments, drafts; queue with claim/hand-over/close and response clocks; policies, approvals, domain pauses, breakers, suppression; Butlers (deterministic, refused `llm.*` nodes); people, teams, passkeys, delegated agents with pinned capability ceilings; matters, holds, supervised reads, e-discovery exports; backup and a drilled restore; doctor; a CLI; a generated SDK, Skill and MCP server.
+Receiving through Cloudflare Email Routing; reading with SPF/DKIM/DMARC verdicts, attachment and link judgement, quarantine; threads, labels, read state, archive and trash (restorable); composing with Cc/Bcc, reply-all, forwarding, attachments, drafts; queue with claim/hand-over/close and response clocks; policies, approvals, domain pauses, breakers, suppression; Butlers (deterministic, refused `llm.*` nodes); people, teams, passkeys, delegated agents with pinned capability ceilings; matters, holds, supervised reads, e-discovery exports; backup and a drilled restore; doctor; a CLI; a generated SDK, Skill and MCP server.
 
 ## Constraints
 

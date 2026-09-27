@@ -7,7 +7,7 @@ import { claimNode, seedClaimSecret } from "../src/claim.ts";
 import { isAdmin } from "../src/access.ts";
 import { verifyAccessToken } from "../src/auth/jwt.ts";
 import { clearKeyCache } from "../src/auth/keys.ts";
-import { drainOutbox, pendingEvents } from "../src/outbox.ts";
+import { drainOutbox } from "../src/outbox.ts";
 
 const SECRET = "bootstrap-secret-from-install";
 const PASSWORD = "a-long-enough-owner-passphrase";
@@ -168,29 +168,22 @@ describe("outbox publisher (§22, #9)", () => {
   it("does not advance the flag when the handler fails", async () => {
     const ctx = createFrozenCtx(1_840_000_000_000);
     const at = new Date(ctx.now() - 60_000).toISOString();
+    const id = ctx.id("evt");
     await env.CATALOG.prepare(
       "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
-    ).bind(ctx.id("evt"), "org_x", "mail.ingress.accepted", "{}", at).run();
+    ).bind(id, "org_x", "mail.ingress.accepted", "{}", at).run();
 
     const failed = await drainOutbox(env, ctx, async () => {
       throw new Error("consumer exploded");
     });
     expect(failed.drained).toBe(0);
-    // Still pending — a failed handler must never silently lose the event (§24).
-    expect((await pendingEvents(env, ctx)).length).toBeGreaterThan(0);
+    // Still pending, a failed handler must never silently lose the event (§24), and it carries its attempt.
+    expect(await env.CATALOG.prepare("SELECT published_at, attempts FROM outbox WHERE id = ?").bind(id).first())
+      .toEqual({ published_at: null, attempts: 1 });
 
+    // Claimable again once its backoff has passed, and published by a handler that returns.
+    ctx.advance(5_000);
     const ok = await drainOutbox(env, ctx, async () => {});
     expect(ok.drained).toBeGreaterThan(0);
-  });
-
-  it("ignores rows too fresh to be considered stranded", async () => {
-    const ctx = createFrozenCtx(1_850_000_000_000);
-    await env.CATALOG.prepare(
-      "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
-    ).bind(ctx.id("evt"), "org_y", "t", "{}", new Date(ctx.now()).toISOString()).run();
-
-    // The fast path may still be in flight; sweeping immediately would duplicate for nothing.
-    const events = await pendingEvents(env, ctx);
-    expect(events.some((e) => e.orgId === "org_y")).toBe(false);
   });
 });

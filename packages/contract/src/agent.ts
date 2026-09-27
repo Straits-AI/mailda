@@ -124,6 +124,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/quarantine/:messageId/hold",
     "PUT /api/messages/:messageId/read",
+    // Filing a message in the caller's own Inbox, Archive or Trash (0067): per person, destroys nothing, and
+    // Trash is a place that can always be left, so it is undone by the same route.
+    "PUT /api/messages/:messageId/place",
     "POST /api/butlers",
     "PUT /api/butlers/:butlerId/draft",
     "POST /api/matters",
@@ -191,7 +194,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "Dispatch hands every due send to the transport **now**. It starts no new send, which is what its "
     + "previous entry said, and that is not the question the tier asks: mail leaves, and mail leaving is the "
     + "one act in this product nobody can undo.\n\nIt also contradicted a promise made three files away. "
-    + "The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this "
+    + "The MCP handshake tells every client that these tools 'read, draft and place mail; they do not send' — and this "
     + "one sent. A guarantee stated in a handshake and broken by a capability list is worse than no "
     + "guarantee, because a client has been told it can stop checking.",
     "POST /api/sends/dispatch",
@@ -519,9 +522,11 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
   ),
   ...changing("operator",
     "Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and "
-    + "reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.",
+    + "reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide. Re-queuing "
+    + "the previews the backfill gave up on is worth doing only once a person knows the fault is over.",
     "POST /api/maintenance/reseal",
     "POST /api/maintenance/reconcile",
+    "POST /api/maintenance/requeue-previews",
     "PATCH /api/mailboxes/:mailboxId",
     "POST /api/mailboxes",
     // An address is where mail arrives, and either act may write or delete a routing rule on the customer's zone.

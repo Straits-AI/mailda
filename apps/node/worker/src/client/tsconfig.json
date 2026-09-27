@@ -12,12 +12,13 @@
     "jsx": "react-jsx",
     // esbuild resolves these; tsc only needs to agree about the types.
     "types": ["react", "react-dom"],
-    // `/app/session.js`, `/app/delivery.js` and `/app/config.js` are resolved by the browser at runtime and
+    // `/app/session.js`, `/app/delivery.js`, `/app/theme.js` and `/app/config.js` are resolved by the browser at runtime and
     // left alone by esbuild. TypeScript reads a leading slash as a path on disk, so an ambient
     // `declare module` for them never matches — these map the specifier onto its hand-written types instead.
     "paths": {
       "/app/session.js": ["./app/types/session.d.ts"],
       "/app/delivery.js": ["./app/types/delivery.d.ts"],
+      "/app/theme.js": ["./app/types/theme.d.ts"],
       "/app/config.js": ["./app/types/config.d.ts"]
     }
   },

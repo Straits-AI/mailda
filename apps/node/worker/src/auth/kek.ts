@@ -1,6 +1,6 @@
 import { DEFAULT_FRAME_BYTES, open as openFrames, seal, utf8 } from "@mailda/evidence";
 
-import { aesKeyFrom, vault } from "../keyvault.ts";
+import { aesKeyFrom, requireOpeningKey, vault } from "../keyvault.ts";
 
 /**
  * Credential wrapping (ADR 22, ADR 28).
@@ -26,7 +26,7 @@ import { aesKeyFrom, vault } from "../keyvault.ts";
  *
  * The generation is prefixed to the ciphertext as `v<n>.<base64>`, because a wrapped credential in
  * D1 has no metadata to hang it on the way an R2 object does. Rotating the credential key therefore
- * leaves existing signing keys unwrappable-but-known rather than silently corrupt: `openingKey`
+ * leaves existing signing keys unwrappable-but-known rather than silently corrupt: `requireOpeningKey`
  * reports the generation it cannot find, and `doctor` surfaces it.
  *
  * Values without a prefix are generation 0 — written before the vault existed.
@@ -77,7 +77,7 @@ export async function unwrapCredential(env: Env, wrapped: string): Promise<strin
   const generation = match === null ? 0 : Number(match[1]);
   const payload = match === null ? wrapped : wrapped.slice(match[0].length);
 
-  const key = await aesKeyFrom((await vault(env).openingKey("credential", generation)).secret);
+  const key = await aesKeyFrom((await requireOpeningKey(env, "credential", generation)).secret);
   const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
   const plaintext = await openFrames(key, {
     header: bytes.subarray(0, HEADER_BYTES),

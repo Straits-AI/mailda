@@ -55,8 +55,9 @@ async function cost(from: string | null): Promise<Cost> {
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: null, since: null, until: null, from, conversationId: null, label: null },
+    page: { after: null, mailboxId: null, q: null, since: null, until: null, from, conversationId: null, label: null, place: null, unread: false, mine: false },
     limit: BUDGETS["messages.page_size"] + 1,
+    lookback: null,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
   return { rowsRead: result.meta.rows_read ?? 0, rows: result.results.length };
@@ -73,8 +74,9 @@ async function planFor(from: string | null): Promise<string> {
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: null, since: null, until: null, from, conversationId: null, label: null },
+    page: { after: null, mailboxId: null, q: null, since: null, until: null, from, conversationId: null, label: null, place: null, unread: false, mine: false },
     limit: BUDGETS["messages.page_size"] + 1,
+    lookback: null,
   });
   const explained = await testEnv.CATALOG.prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
     .bind(...query.params).all<{ detail: string }>();

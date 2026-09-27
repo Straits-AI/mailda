@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Scroller } from "../chrome.tsx";
 import {
   GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam,
   revokeAccess, revokeInvitation, setTeamMember,
@@ -105,7 +105,7 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
         <input id="new-mailbox-name" value={name} placeholder="Invoices" onChange={(event) => setName(event.target.value)} />
         {" "}
         <button className="quiet" type="button" onClick={() => void create()} disabled={busy || name.trim() === ""}>
-          create a mailbox
+          Create a mailbox
         </button>
       </p>
     </section>
@@ -165,7 +165,7 @@ function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => 
         ) : null}
         {" "}
         <button className="quiet" type="button" onClick={() => void add()} disabled={busy || address.trim() === "" || (boxes.length > 1 && mailboxId === "")}>
-          add the address
+          Add the address
         </button>
       </p>
     </section>
@@ -225,7 +225,7 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
         <input id={`rename-${box.id}`} value={name} onChange={(event) => setName(event.target.value)} />
         {" "}
         <button className="quiet" type="button" onClick={() => void rename()} disabled={busy || name.trim() === "" || name.trim() === box.name}>
-          rename
+          Rename
         </button>
       </p>
       {addresses.length === 0
@@ -236,7 +236,7 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
               <li key={address}>
                 <span className="mono">{address}</span>
                 {" "}
-                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>remove</button>
+                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>Remove</button>
               </li>
             ))}
           </ul>
@@ -292,7 +292,7 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
         />
         {" "}
         <button className="quiet" type="button" onClick={() => void send()} disabled={busy || email.trim() === ""}>
-          mint an invitation
+          Mint an invitation
         </button>
       </p>
 
@@ -312,7 +312,7 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
       )}
 
       {invitations.isSuccess && invitations.data.invitations.length > 0 ? (
-        <div className="scroller">
+        <Scroller label="Invited, not yet arrived">
           <table>
             <caption className="dim">Invited, and not yet arrived.</caption>
             <thead>
@@ -331,13 +331,13 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
                       went stale rather than wondering whether they ever sent it. */}
                   <td>{row.expired ? <span className="dim">expired — mint another</span> : "waiting"}</td>
                   <td>
-                    <button type="button" className="linkish" onClick={() => void withdraw(row.id)}>withdraw</button>
+                    <button type="button" className="linkish" onClick={() => void withdraw(row.id)}>Withdraw</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       ) : null}
     </section>
   );
@@ -432,7 +432,7 @@ function Roster({
           <input id={`rename-${team.id}`} aria-label={`Name of ${team.name}`} value={name} onChange={(event) => setName(event.target.value)} />
           {" "}
           <button type="button" className="linkish" onClick={() => void onRename(team.id, name)} disabled={name.trim() === "" || name.trim() === team.name}>
-            rename
+            Rename
           </button>
         </label>
       </td>
@@ -517,11 +517,11 @@ function Teams({ people }: { people: PersonRow[] }) {
         {" "}
         <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
         {" "}
-        <button className="quiet" type="button" onClick={() => void add()} disabled={name.trim() === ""}>create</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={name.trim() === ""}>Create</button>
       </p>
 
       {teams.isSuccess && teams.data.teams.length > 0 ? (
-        <div className="scroller">
+        <Scroller label="Teams and their members">
           <table>
             <thead>
               <tr><th scope="col">Team</th><th scope="col">Members</th></tr>
@@ -532,7 +532,7 @@ function Teams({ people }: { people: PersonRow[] }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       ) : (
         <Nothing kind="empty" detail="No teams. Approval stages can name one once it exists." />
       )}
@@ -543,16 +543,16 @@ function Teams({ people }: { people: PersonRow[] }) {
 /**
  * Your own passkeys (#84, ADR 29).
  *
- * **On the People screen and scoped to yourself**, which is a decision rather than a placement of
- * convenience. Everything else here is an administrator acting on *other* people — granting, inviting, team
- * membership — and this is the one block that is about the person reading it. Keeping the two together is
- * what makes "who is in this organization and how do they get in" one page, and the heading says whose
- * credentials these are so nobody reads the list as somebody else's.
+ * **Rendered by Settings, not by People.** It lived here while People was the only screen about accounts, and
+ * People is refused to anybody without `org.admin`, so only administrators could reach their own passkeys
+ * although the passkey routes are member-scoped. Settings is every person's own screen, so every person now
+ * manages their own there; the component stays in this file because it is about how a person signs in, which
+ * is what the rest of this file administers for others.
  *
  * Every account today is password-only, which is why registration is here at all: ADR 29 makes passkeys
  * primary, and a primary mechanism nobody can adopt without reinstalling is not primary.
  */
-function Passkeys() {
+export function Passkeys() {
   const passkeys = usePasskeys();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
@@ -581,7 +581,7 @@ function Passkeys() {
   const held = passkeys.data?.passkeys ?? [];
 
   return (
-    <section className="passkeys" aria-label="Your passkeys">
+    <section className="settings-block passkeys" aria-label="Your passkeys">
       <h2>Your passkeys</h2>
       <p className="dim">
         A passkey signs you in with your device instead of a password. Your password still works — it is the
@@ -622,7 +622,7 @@ function Passkeys() {
                       onClick={() => void forget(passkey.id)}
                       disabled={busy}
                     >
-                      remove
+                      Remove
                     </button>
                   </td>
                 </tr>
@@ -641,7 +641,7 @@ function Passkeys() {
         />
       </label>
       <p>
-        <button className="quiet" type="button" onClick={() => void add()} disabled={busy}>add a passkey</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy}>Add a passkey</button>
       </p>
     </section>
   );
@@ -690,15 +690,12 @@ export function People() {
   return (
     <>
       {heading}
-      {/* Yours, not theirs: everything else on this screen is an administrator acting on other
-          people, and the heading says so. */}
-      <Passkeys />
       <p className="dim">Everybody with an account on this Node.</p>
 
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
           <MailboxHead box={box} onChanged={refresh} />
-          <div className="scroller">
+          <Scroller label={`Who may do what in ${box.name}`}>
             <table>
               <thead>
                 <tr><th scope="col">Person</th><th scope="col">May</th></tr>
@@ -718,13 +715,13 @@ export function People() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
         </section>
       ))}
 
       <section className="people-mailbox" aria-label="Administering the organization">
         <h2>The organization</h2>
-        <div className="scroller">
+        <Scroller label="Who administers the organization">
           <table>
             <thead>
               <tr><th scope="col">Person</th><th scope="col">May</th></tr>
@@ -749,7 +746,7 @@ export function People() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       </section>
 
       <Invite onInvited={refresh} />

@@ -72,7 +72,8 @@ async function cost(
   window: { since?: string | null; until?: string | null } = {},
 ): Promise<Cost> {
   const query = messagePageQuery({
-    readerId: "usr_reader",
+    // The reader whose own state is seeded below: a correlated probe into rows nobody has measures nothing.
+    readerId: READER,
     nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
@@ -83,9 +84,10 @@ async function cost(
     },
     page: {
       after: null, mailboxId, q: term === null ? null : ftsQuery(term),
-      since: window.since ?? null, until: window.until ?? null, from: null, conversationId: null, label: null,
+      since: window.since ?? null, until: window.until ?? null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false,
     },
     limit: BUDGETS["messages.page_size"] + 1,
+    lookback: null,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
   return { rowsRead: result.meta.rows_read ?? 0, rows: result.results.length };
@@ -93,7 +95,7 @@ async function cost(
 
 async function planFor(term: string | null): Promise<string> {
   const query = messagePageQuery({
-    readerId: "usr_reader",
+    readerId: READER,
     nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
@@ -102,8 +104,9 @@ async function planFor(term: string | null): Promise<string> {
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null, conversationId: null, label: null },
+    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false },
     limit: BUDGETS["messages.page_size"] + 1,
+    lookback: null,
   });
   const explained = await testEnv.CATALOG.prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
     .bind(...query.params).all<{ detail: string }>();
@@ -155,6 +158,35 @@ beforeAll(async () => {
       `${receiptId}@example.net`, `thr_srch${String(n).padStart(22, "0")}`, subject,
       `sender-${n}@supplier.example.net`, acceptedAt, acceptedAt, receiptId, acceptedAt,
       `${receiptId}@example.net`, `cnv_srch${String(n).padStart(22, "0")}`));
+    /*
+     * **The reader's own state and the row projections, seeded** (0062, 0067, 0068, cases), as a settled Node
+     * holds them — the corpus `message-page-size.md` sizes the lookback on. Without these rows every new
+     * column is a probe into an empty table and reads nothing, which is how the `read` column went unmeasured.
+     * By delivery index: one in twenty in Trash, half the rest in Archive, one in five unread, one in twenty a
+     * case the reader holds, and every delivery a case. 70 % carry a display name; every one a sealed preview
+     * of a Latin line's width (~200 base64 characters).
+     */
+    const conversation = `cnv_srch${String(n).padStart(22, "0")}`;
+    statements.push(testEnv.CATALOG.prepare(
+      `UPDATE messages SET from_name = ?, preview_sealed = ?, preview_generation = 1, preview_state = 'projected'
+        WHERE id = ?`,
+    ).bind(n % 10 < 7 ? `Supplier desk ${String(n).padStart(4, "0")}` : null, "A".repeat(200), messageId));
+    statements.push(testEnv.CATALOG.prepare(
+      `INSERT INTO cases (id, org_id, conversation_id, mailbox_id, state, state_at, assignee, claimed_at, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(`cas_srch${String(n).padStart(22, "0")}`, ORG, conversation, MAILBOX, n % 20 === 3 ? "claimed" : "open",
+      acceptedAt, n % 20 === 3 ? READER : null, n % 20 === 3 ? acceptedAt : null, acceptedAt));
+    if (n % 5 !== 1) {
+      statements.push(testEnv.CATALOG.prepare(
+        "INSERT INTO message_reads (org_id, user_id, message_id, read_at) VALUES (?,?,?,?)",
+      ).bind(ORG, READER, messageId, acceptedAt));
+    }
+    if (n % 2 === 0) {
+      statements.push(testEnv.CATALOG.prepare(
+        `INSERT INTO message_places (org_id, user_id, message_id, receipt_id, accepted_at, place, placed_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).bind(ORG, READER, messageId, receiptId, acceptedAt, n % 20 === 0 ? "trash" : "archive", acceptedAt));
+    }
     statements.push(indexMessage(testEnv, messageId));
     /*
      * **A body for every message, and the figures depend on it.** The first version of this fixture indexed

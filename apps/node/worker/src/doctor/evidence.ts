@@ -4,30 +4,64 @@ import type { Ctx } from "@mailda/runtime";
 import { bodyIndexState, unindexedMessages } from "../search.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../reconcile.ts";
 import { type Finding } from "../doctor.ts";
+import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
 /**
- * Is the outbox draining? An unpublished row older than the sweeper's own staleness cutoff means
- * the Durable Object alarm is not firing, and §22's guarantee is that events are *eventually*
- * delivered — a stalled outbox turns "eventually" into "never" without any error anywhere.
+ * Is the outbox draining? An unpublished row older than `STALLED_OUTBOX_MS` is one the sweeper should have
+ * published long ago, and §22's guarantee is that events are *eventually* delivered: a stalled outbox turns
+ * "eventually" into "never" without any error anywhere.
+ *
+ * Two causes, told apart by `attempts` (0069), because their fixes are different. A row never tried means the
+ * sweeper is not running at all. A row tried and still unpublished is being retried on its backoff
+ * (`src/outbox.ts`), and either its handler threw, with the reason in the log (`outbox.handler_failed`), or it
+ * was in a pass the platform killed (a CPU or memory limit), which leaves an attempt and no log entry.
+ *
+ * An unreadable outbox is a failed finding, not a clean one: "no stalled events" is a claim, and a query that
+ * did not run cannot make it.
  */
 export async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
   const cutoff = new Date(ctx.now() - STALLED_OUTBOX_MS).toISOString();
-  const row = await env.CATALOG.prepare(
-    `SELECT COUNT(*) AS stalled, MIN(created_at) AS oldest
-       FROM outbox WHERE published_at IS NULL AND created_at < ?`,
-  ).bind(cutoff).first<{ stalled: number; oldest: string | null }>().catch(() => null);
+  let row: { stalled: number; failing: number | null; oldest: string | null } | null;
+  try {
+    row = await env.CATALOG.prepare(
+      `SELECT COUNT(*) AS stalled, SUM(attempts > 0) AS failing, MIN(created_at) AS oldest
+         FROM outbox WHERE published_at IS NULL AND created_at < ?`,
+    ).bind(cutoff).first<{ stalled: number; failing: number | null; oldest: string | null }>();
+  } catch (error) {
+    return [{
+      check: "outbox_draining",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `The outbox could not be read: ${(error as Error).message.split("\n")[0]}`,
+      fix: "check the `catalog_reachable` and `migrations_applied` findings in this same report first; the outbox "
+        + "table and its retry columns come from the migrations",
+    }];
+  }
 
   const stalled = row?.stalled ?? 0;
+  const failing = row?.failing ?? 0;
+  const untried = stalled - failing;
+  const fixes = [
+    ...(failing > 0 ? [
+      `${failing} event(s) were tried and not published: when the handler threw, the log's `
+      + "`outbox.handler_failed` entries carry the reason; an event with attempts and no entry was in a pass the "
+      + "platform killed (a CPU or memory limit), which shows in the Worker's own invocation logs, not this one. "
+      + "Each is retried on its backoff until it publishes",
+    ] : []),
+    ...(untried > 0 ? [
+      "the OUTBOX_SWEEPER alarm is not firing: check the durable_objects binding and the migrations tag that declares the class",
+    ] : []),
+  ];
   return [{
     check: "outbox_draining",
     severity: "degraded",
     discloses: "data",
     ok: stalled === 0,
     detail: stalled === 0
-      ? "No outbox events older than the sweeper's cutoff."
-      : `${stalled} unpublished event(s) older than ${STALLED_OUTBOX_MS / 1000}s; oldest ${row?.oldest}.`,
-    ...(stalled === 0 ? {} : {
-      fix: "the OUTBOX_SWEEPER alarm is not firing — check the durable_objects binding and the migrations tag that declares the class",
-    }),
+      ? `No unpublished outbox events older than ${STALLED_OUTBOX_MS / 1000}s.`
+      : `${stalled} unpublished event(s) older than ${STALLED_OUTBOX_MS / 1000}s (${failing} tried and failing, `
+        + `${untried} never tried); oldest ${row?.oldest}.`,
+    ...(stalled === 0 ? {} : { fix: fixes.join("; ") }),
   }];
 }
 
@@ -491,5 +525,63 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
       ? undefined
       : "`mailda search repair` lists them with the reason each failed and puts them back in the queue. "
         + "Fix the cause first — a repair that runs into the same failure spends its attempts again",
+  }];
+}
+
+/**
+ * How many messages still owe a row preview and sender name (0068), and how many never will.
+ *
+ * One grouped query over the partial index `msg_preview_open`, which holds only rows not yet `projected`: its
+ * cost is the backlog, like `body_index_backlog`'s, and a caught-up Node reads nothing. The term
+ * `preview_state <> 'projected'` is spelled as the index spells it, because SQLite uses a partial index only
+ * when the query repeats its terms (0068, point 5).
+ *
+ * `report`, and `ok` until something **failed**: a pending message lists with its subject and address, which
+ * is complete and honest, just plainer. A failed one could not be read: its evidence is missing, which
+ * `evidence_present` reports, or every attempt to read it failed, which a vault or storage fault that is over
+ * by now can have caused. So the fix names both the checks that say whether the fault is over and the route
+ * that puts the rows back, since nothing else would.
+ */
+export async function checkPreviews(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+  const counts = await env.CATALOG.prepare(
+    `SELECT preview_state AS state, COUNT(*) AS n FROM messages
+      WHERE preview_state <> 'projected' GROUP BY preview_state`,
+  ).all<{ state: string; n: number }>().then((result) => result.results).catch(() => null);
+  if (counts === null) {
+    return [{
+      check: "preview_backlog",
+      severity: "report",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say how many messages list without a preview.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+  const pending = counts.find((row) => row.state === "pending")?.n ?? 0;
+  const failed = counts.find((row) => row.state === "failed")?.n ?? 0;
+  return [{
+    check: "preview_backlog",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: failed === 0,
+    detail: pending === 0 && failed === 0
+      ? "Every message on this Node has its row preview and sender name."
+      : [
+        pending === 0 ? null
+          : `${pending} message(s) have no row preview or sender name yet; they list with their subject and `
+            + `address. The backfill projects up to ${PREVIEW_BACKFILL_LIMIT} on each scheduled pass that finds the `
+            + "body and authentication backfills idle.",
+        failed === 0 ? null
+          : `${failed} could not be projected: their evidence is missing, or reading it failed on every attempt `
+            + "the backfill makes (a vault or storage fault, which may be over by now). Each message is otherwise "
+            + "untouched.",
+      ].filter((line) => line !== null).join(" "),
+    fix: failed > 0
+      ? "once `evidence_present` and `key_vault` read ok, POST /api/maintenance/requeue-previews puts them "
+        + "back in the backfill's queue; any whose evidence is missing return here after one pass"
+      : pending > 0
+        ? "nothing — this falls on its own; if it stops falling, check the logs for `preview.backfill_failed`"
+        : undefined,
   }];
 }

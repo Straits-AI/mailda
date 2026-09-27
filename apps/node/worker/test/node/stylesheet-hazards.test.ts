@@ -39,7 +39,7 @@ import { describe, expect, it } from "vitest";
  *
  * ## The class recurred three times in one week, and a general guard was attempted and rejected
  *
- * This file guards `SHELL_CSS` and only that constant. The same mistake then happened three more times, in
+ * This file guards the stylesheet literal and only that. The same mistake then happened three more times, in
  * three different files, with this warning on screen each time:
  *
  * | where | what the compiler said |
@@ -66,7 +66,7 @@ import { describe, expect, it } from "vitest";
 const srcDir = join(import.meta.dirname, "..", "..", "src");
 
 const stylesheetSources = [
-  join(import.meta.dirname, "..", "..", "src", "ui.ts"),
+  join(import.meta.dirname, "..", "..", "src", "shell-css.ts"),
 ];
 
 /**
@@ -81,10 +81,14 @@ const stylesheetSources = [
  * Both patterns are kept rather than the old one replaced: an inline `<style>` in a future document would
  * carry the same two hazards, and a guard that stopped seeing the shape it was written for is how this
  * check comes to pass by finding nothing. The `it` below fails on zero regions for exactly that reason.
+ *
+ * The constant then moved again, out of `ui.ts` into `src/shell-css.ts`, where the rules are the literal
+ * `RULES` and `SHELL_CSS` is the theme blocks `src/theme.ts` generates followed by it. The generated part
+ * holds no comments and is built by code, so the literal written by hand is the one with the hazards.
  */
 function stylesheets(source: string): string[] {
   const blocks: string[] = [];
-  for (const pattern of [/<style>([\s\S]*?)<\/style>/g, /const SHELL_CSS = `([\s\S]*?)`;/g]) {
+  for (const pattern of [/<style>([\s\S]*?)<\/style>/g, /const RULES = `([\s\S]*?)`;/g]) {
     for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
       blocks.push(match[1]!);
     }

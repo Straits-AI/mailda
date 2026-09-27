@@ -199,7 +199,7 @@ describe("doctor", () => {
   it("notices a stalled outbox, and ignores rows still within the sweeper's window", async () => {
     const ctx = createSystemCtx();
 
-    // Fresh: the fast path may still be in flight, so this is not a fault.
+    // Fresh: the sweeper may not have claimed it yet, so this is not a fault.
     await testEnv.CATALOG.prepare(
       "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
     ).bind(ctx.id("evt"), "org_1", "t", "{}", new Date(ctx.now()).toISOString()).run();

@@ -31,7 +31,7 @@ export const EXPECTED_TABLES = [
   // Migration 0060: what an authored send attached, as evidence.
   "send_attachments",
   // Migration 0061: words people put on messages. 0062: which messages each person has opened.
-  "message_labels", "message_reads",
+  "message_labels", "message_reads", "message_places",
   // Migration 0012 (durable drafts).
   "drafts",
   // Migration 0014 (Layer 3: conversations and cases).

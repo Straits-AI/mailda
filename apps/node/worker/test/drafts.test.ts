@@ -145,17 +145,20 @@ describe("replying twice resumes rather than forking", () => {
     expect(found?.body).toBe("We have revised the schedule.");
   });
 
-  it("cannot hold two drafts for the same reply", async () => {
-    await saveDraft(testEnv, atTime(3_200_000_100_000), ORG, AUTHOR, null, {
+  it("cannot hold two drafts for the same reply, and says which one it holds", async () => {
+    const first = await saveDraft(testEnv, atTime(3_200_000_100_000), ORG, AUTHOR, null, {
       ...composition, inReplyToMessageId: "<original@example.net>",
     });
     // The unique index is the guard. Without it a person replies twice, writes in the second dock, and the
-    // first draft rots — with the interface unable to say which one to open.
-    await expect(
-      saveDraft(testEnv, atTime(3_200_000_200_000), ORG, AUTHOR, null, {
-        ...composition, inReplyToMessageId: "<original@example.net>",
-      }),
-    ).rejects.toThrow();
+    // first draft rots — with the interface unable to say which one to open. Two tabs reach it, so the refusal
+    // is a 409 that names the draft in progress, not the raw constraint as a 500.
+    const second = await saveDraft(testEnv, atTime(3_200_000_200_000), ORG, AUTHOR, null, {
+      ...composition, inReplyToMessageId: "<original@example.net>",
+    }).then(() => null, (error: unknown) => error);
+    expect(second).toBeInstanceOf(CallerError);
+    expect([(second as CallerError).code, (second as CallerError).status]).toEqual(["E_DRAFT_EXISTS", 409]);
+    expect((second as CallerError).message).toContain(first.id);
+    expect(await listDrafts(testEnv, ORG, AUTHOR)).toHaveLength(1);
   });
 
   it("takes a person's recipients from the person, even on a reply (#52)", async () => {

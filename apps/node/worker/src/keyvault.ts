@@ -152,26 +152,23 @@ export class KeyVault extends DurableObject<Env> {
   }
 
   /**
-   * The key that opens an object sealed under a given generation.
+   * The key that opens an object sealed under a given generation, or `null` when this vault never held it.
    *
    * Returns the legacy constant for generation 0, which is the only reason a Node deployed before
    * the vault can still read its own mail.
+   *
+   * **A missing generation is an answer, not a throw.** An RPC method that throws is logged by workerd as an
+   * `uncaught exception` of the object it threw in, even when the caller catches the rejection: measured under
+   * the test pool's verbose workerd, not on Cloudflare. A lost vault is a state with a documented remedy, not a
+   * fault in the vault, so it must not read as one on every read. `requireOpeningKey` turns the `null` into
+   * `E_VAULT_UNKNOWN_GENERATION` in the caller's isolate, with the same text the throw here used to carry.
    */
-  async openingKey(purpose: KeyPurpose, generation: number): Promise<VaultKey> {
+  async openingKey(purpose: KeyPurpose, generation: number): Promise<VaultKey | null> {
     if (generation === LEGACY_GENERATION) {
       return { generation: LEGACY_GENERATION, secret: LEGACY_SECRETS[purpose] };
     }
     const secret = await this.ctx.storage.get<string>(AT(purpose, generation));
-    if (secret === undefined) {
-      throw new Error(
-        `E_VAULT_UNKNOWN_GENERATION  ${purpose} generation ${generation} is not in this vault\n` +
-          "  why      an object records a key this Node has never held — a restored backup whose " +
-          "Durable Object storage did not come with it, or the wrong Node\n" +
-          "  fix      POST /api/recovery/redeem with one of the ten recovery codes printed at claim; " +
-          "the data is intact but unreadable without its key",
-      );
-    }
-    return { generation, secret };
+    return secret === undefined ? null : { generation, secret };
   }
 
   /**
@@ -311,6 +308,21 @@ export class KeyVault extends DurableObject<Env> {
 /** The one vault. A second instance would be a second set of keys and a silent data loss. */
 export function vault(env: Env) {
   return env.KEY_VAULT.getByName("node");
+}
+
+/** The key that opens a generation, or the refusal naming why this Node cannot and what restores it. */
+export async function requireOpeningKey(env: Env, purpose: KeyPurpose, generation: number): Promise<VaultKey> {
+  const key = await vault(env).openingKey(purpose, generation);
+  if (key === null) {
+    throw new Error(
+      `E_VAULT_UNKNOWN_GENERATION  ${purpose} generation ${generation} is not in this vault\n` +
+        "  why      an object records a key this Node has never held — a restored backup whose " +
+        "Durable Object storage did not come with it, or the wrong Node\n" +
+        "  fix      POST /api/recovery/redeem with one of the ten recovery codes printed at claim; " +
+        "the data is intact but unreadable without its key",
+    );
+  }
+  return key;
 }
 
 /**

@@ -251,6 +251,20 @@ export const BODY_SEARCH_RELATIONS = [
   "mailbox.content.read",
 ] as const satisfies readonly MailboxRelation[];
 
+/**
+ * Every standing relation that lets a person act on a message in their own view — mark it read, label it,
+ * place it (0067) — and see its row preview (0068).
+ *
+ * Its own deliberate list, for the reason `BODY_SEARCH_RELATIONS` gives for not coupling lists: whether a new
+ * read relation may search bodies and whether it may file mail are two decisions. `readableMessage`
+ * (`outbound/manifest.ts`) is the gate for the acts and the listing's `standing_content` column is the
+ * disclosure of the same fact, and both read this constant, so the column cannot say "you may" where the gate
+ * says no. Standing only: a supervised grant is an investigation's recorded access, never a place to file mail.
+ */
+export const STANDING_CONTENT_RELATIONS = [
+  "mailbox.content.read",
+] as const satisfies readonly MailboxRelation[];
+
 export function isGrantable(relation: string): relation is Grantable {
   return Object.hasOwn(GRANTABLE, relation)
     && GRANTABLE[relation as Relation].conferredBy === "admin_grant";

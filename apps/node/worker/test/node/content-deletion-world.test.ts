@@ -182,6 +182,13 @@ const SITES: Site[] = [
     why: "Marking a message unread (0062) deletes the caller's own bookmark row. The message is untouched.",
   },
   {
+    file: "src/places.ts",
+    target: "message_places",
+    content: false,
+    why: "Putting a message back in the caller's Inbox (0067) deletes their own filing row. The message, its "
+      + "evidence and everybody else's view are untouched.",
+  },
+  {
     file: "src/labels.ts",
     target: "message_labels",
     content: false,

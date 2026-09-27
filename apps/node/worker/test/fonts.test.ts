@@ -52,7 +52,7 @@ describe("the fonts are served from this origin", () => {
     /*
      * The asset table beside them is 60 seconds, so an over-the-air update (ADR 24) takes effect on the next
      * load rather than appearing to have silently not happened. A font is the opposite case: the name carries
-     * the family and the weight, so a new weight is a new URL and this file will never change. Paying 71 KB
+     * the family and the weight, so a new weight is a new URL and this file will never change. Paying 97 KB
      * on every load to keep a freshness guarantee that cannot apply is waste with no upside.
      */
     const cache = clientAsset(SERVED[0]!)!.headers.get("cache-control");

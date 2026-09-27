@@ -129,14 +129,19 @@ describe("every read of the search index names the organization it is reading fo
      * When it fails, the fix is not to update the number. It is to delete the message's index row in the same
      * function, declare that delete in the content-deletion inventory, and delete this test — replacing it
      * with the guard assertion the inventory requires.
+     *
+     * The index is not the only row keyed by a message id that would outlive it. `message_places` (0067) holds
+     * each person's filing by `message_id`, and a filing row for a message that no longer exists would list
+     * nowhere and be deleted by nothing. The 0068 projections are columns of `messages` and die with the row.
      */
     const deleters = sourceFiles("src").filter((file) =>
       /DELETE\s+FROM\s+messages\b/i.test(readFileSync(join(workerDir, file), "utf8")));
     expect(
       deleters.length === 0 ? null : `${deleters.join(", ")} deletes a message row, and `
       + `${INDEX} has no delete — the search index would keep answering with the subject line of a message `
-      + "the product has been told to forget, with no message left for any deletion path to reach. "
-      + "Add the index delete beside it, declare it in content-deletion-world, and replace this test.",
+      + "the product has been told to forget, with no message left for any deletion path to reach — and "
+      + "message_places (0067) would keep each person's filing row for a message that is gone. "
+      + "Add both deletes beside it, declare them in content-deletion-world, and replace this test.",
     ).toBeNull();
   });
 

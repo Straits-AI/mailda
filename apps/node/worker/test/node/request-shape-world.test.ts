@@ -140,6 +140,12 @@ describe("every closed set the contract declares is a closed set the boundary en
       // make the Node ask the token which account it sees, and refuse between two, for a value the caller
       // had supplied.
       "PUT /api/provider/token",
+      // Filing a message (0067): one field, and a misspelled `place` dropped would be refused as "not a
+      // place" for the wrong reason; strict names the typo instead.
+      "PUT /api/messages/:messageId/place",
+      // Handing over a case, strict since `holder` (R5): a misspelled `holder` dropped would hand the case
+      // over without the compare-and-swap the giver asked for, which is the silent steal it exists to stop.
+      "PUT /api/cases/:caseId/assignee",
     ]));
     expect(sets.some((set) => set.path.join(".") === "conditions")).toBe(true);
     expect(sets.some((set) => set.path.join(".") === "stages.0")).toBe(true);
@@ -342,6 +348,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",
       "POST /api/provider/sending", "POST /api/provider/subscription",
       "POST /api/quarantine/:messageId/hold", "POST /api/search/repair",
+      "PUT /api/cases/:caseId/assignee", "PUT /api/messages/:messageId/place",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/token",
     ]);
     expect(tolerant.sort()).toEqual([
@@ -384,8 +391,6 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/recovery/conflicts/:restoreId/acknowledge",
       "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
-      // Handing over a case: an id or an address, either one, and nothing a misspelling could empty.
-      "PUT /api/cases/:caseId/assignee",
       "PUT /api/drafts",
       // Labels (0061): two lists of free words; nothing a misspelled field could silently empty into.
       "PUT /api/messages/:messageId/labels",

@@ -183,6 +183,23 @@ npx wrangler d1 execute CATALOG --remote --env "" --file=../../../backup-<date>/
 The search index's tables exist for the same reason; only their contents are missing. The backfill repopulates
 them from the evidence, and `mailda search list` reports what it could not parse.
 
+**Places and row projections travel in the catalog** (ADR 45). A person's Archive and Trash are rows of
+`message_places`, and the sender's display name and the sealed preview are columns of `messages` (0068), so
+all of them come across with the dump and nothing re-derives them. A preview sealed under a key the destination's
+vault does not hold reads as no preview, like the body it came from, and the listing says so in a log line
+rather than failing. To rebuild every projection from the evidence instead, put the rows back to `pending`:
+
+```sh
+npx wrangler d1 execute CATALOG --remote --env "" --command "UPDATE messages SET preview_state = 'pending', preview_attempts = 0" -y
+```
+
+and the preview backfill re-derives each one, up to `PREVIEW_BACKFILL_LIMIT` (`src/preview.ts`) on each
+scheduled pass that finds the body and authentication backfills idle;
+`doctor` reports the backlog as it falls. When only the rows the backfill gave up on need another pass (the
+vault or the bucket was unreachable while it ran), an administrator's `POST /api/maintenance/requeue-previews`
+puts back every `failed` row of the organization and nothing else, which is the remedy `doctor`'s
+`preview_backlog` names once `evidence_present` and `key_vault` read ok.
+
 **The vault is the part that needs a person.** Content keys live in a Durable Object, which is *not* in the D1
 dump. That is ADR 28 working as designed, and it is why the escrow exists. Redeem one of the ten ADR 29
 recovery codes against the destination Node to install the keys the catalog's evidence was sealed under. Ten

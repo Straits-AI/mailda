@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
  * Enforces the `stale_when` clause of docs/receipts/message-metadata-bytes.md.
  *
  * That receipt measured 1,253 bytes per message against a specific schema. Its own
- * staleness condition is "the messages or mailbox_items schema changes, an index is
+ * staleness condition is "the messages, mailbox_items or message_places schema changes, an index is
  * added or removed". A receipt that silently outlives its schema is exactly the landmine
  * AGENTS.md describes: a number that still reads as verified.
  *
@@ -101,11 +101,21 @@ const MEASURED_SHAPE = {
       // Added by migration 0064 (a hold's reason in words). NULL on every row but the handful held on
       // request; re-measured 19 September 2026 before this line: see the receipt.
       "quarantine_note",
+      /*
+       * Added by migration 0068 (row projections, ADR 45) on 26 September 2026 without remeasuring, which
+       * broke the rule at the foot of this file on purpose and withdrew the receipt's shard thresholds until
+       * it was. Remeasured against real remote D1 on 27 September: 1,788 → 2,058 bytes per message for these
+       * columns (a sealed preview on every row is most of it), and 2,089 once the script's ids were corrected
+       * to their true width. See docs/receipts/message-metadata-bytes.md.
+       */
+      "from_name", "preview_sealed", "preview_generation", "preview_state", "preview_attempts",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",
       // 0044's selector, and the one thing in that migration that cost measurable bytes.
       "msg_body_index_due",
+      // 0068's backfill selector. Partial and empty once the backfill has caught up: it cost its root page.
+      "msg_preview_open",
     ],
   },
   mailbox_items: {
@@ -114,6 +124,12 @@ const MEASURED_SHAPE = {
       "flags", "sent_at", "created_at",
     ],
     indexes: ["mbi_unique", "mbi_by_mailbox_bucket"],
+  },
+  // Added by migration 0067 (a person's places). Per person per filed message, so the receipt prices it as
+  // its own figure, `message.metadata.bytes_per_filed_place`: 391 bytes, measured 27 September 2026.
+  message_places: {
+    columns: ["org_id", "user_id", "message_id", "receipt_id", "accepted_at", "place", "placed_at"],
+    indexes: ["mpl_by_place"],
   },
 } as const;
 

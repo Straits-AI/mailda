@@ -75,7 +75,7 @@ function measuredColumns(table: string): string[] {
 }
 
 describe("the byte-measurement corpus follows the schema it claims to measure", () => {
-  for (const table of ["messages", "mailbox_items"]) {
+  for (const table of ["messages", "mailbox_items", "message_places"]) {
     it(`declares the same ${table} columns the drift guard pins`, () => {
       /*
        * Order included, not just membership. SQLite stores a row as values in declaration order with a header
@@ -98,6 +98,7 @@ describe("the byte-measurement corpus follows the schema it claims to measure", 
     expect(scriptColumns("messages").length).toBeGreaterThan(20);
     expect(measuredColumns("messages").length).toBeGreaterThan(20);
     expect(scriptColumns("mailbox_items").length).toBeGreaterThan(5);
+    expect(scriptColumns("message_places").length).toBeGreaterThan(5);
   });
 
   it("seeds every NOT NULL column, since a default is not a measurement", () => {

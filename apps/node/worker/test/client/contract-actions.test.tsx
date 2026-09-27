@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as session from "./session-stub.ts";
@@ -15,16 +15,14 @@ import { answerWith, calls, reset } from "./session-stub.ts";
  * `ledgers.tsx` explains beside *let it go*.
  */
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  useRouterState: () => ({ location: { pathname: "/" } }),
-  Link: ({ children }: { children?: unknown }) => children,
-}));
+const route = vi.hoisted(() => ({ pathname: "/" }));
+vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { Outbox } = await import("../../src/client/app/screens/ledgers.tsx");
 const { Butlers } = await import("../../src/client/app/screens/butlers.tsx");
 const { Matters } = await import("../../src/client/app/screens/matters.tsx");
-const { InstrumentBar } = await import("../../src/client/app/chrome.tsx");
+const { Settings } = await import("../../src/client/app/screens/settings.tsx");
+const { ShellProvider, useCompose } = await import("../../src/client/app/shell-context.tsx");
 
 function mount(node: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -49,7 +47,15 @@ const SENDS = {
 };
 
 const posted = (path: string) => calls.find((call) => call.method === "POST" && call.path === path);
-const alert = async () => (await screen.findByRole("alert")).textContent ?? "";
+/** The alert with words in it: a screen inside the shell also has the shell's toast alert region, empty. */
+async function alert(): Promise<string> {
+  let said = "";
+  await waitFor(() => {
+    said = screen.getAllByRole("alert").map((one) => one.textContent ?? "").find((text) => text !== "") ?? "";
+    expect(said).not.toBe("");
+  });
+  return said;
+}
 
 beforeEach(reset);
 
@@ -69,9 +75,9 @@ describe("releasing a Butler's send from the outbox", () => {
     mountOutbox(true);
     await screen.findByText("on butler_release_required");
     // One gate, one button: the policy hold beside it gets *let it go* and not this.
-    expect(screen.getAllByRole("button", { name: "release" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "let it go" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "release" }));
+    expect(screen.getAllByRole("button", { name: "Release" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Let it go" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
     await waitFor(() => { expect(posted("/api/sends/snd_butler_release_required/release")).toBeDefined(); });
     expect(posted("/api/sends/snd_butler_release_required/release-hold")).toBeUndefined();
   });
@@ -79,8 +85,18 @@ describe("releasing a Butler's send from the outbox", () => {
   it("renders the Node's refusal with its reason token", async () => {
     mountOutbox(false);
     await screen.findByText("on butler_release_required");
-    fireEvent.click(screen.getByRole("button", { name: "release" }));
+    fireEvent.click(screen.getByRole("button", { name: "Release" }));
     expect(await alert()).toContain("not_found: this send is no longer waiting on a Butler's gate");
+  });
+});
+
+describe("an Outbox row with no subject", () => {
+  it("names its button (no subject), so the row is not a nameless control", async () => {
+    answerWith((call) => (call.path.startsWith("/api/sends") && call.method === "GET"
+      ? Response.json({ ...SENDS, sends: [{ ...send("policy_hold"), subject: "" }, { ...send("butler_release_required"), subject: "  " }] })
+      : undefined));
+    mount(<Outbox />);
+    await waitFor(() => { expect(screen.getAllByRole("button", { name: "(no subject)" })).toHaveLength(2); });
   });
 });
 
@@ -109,8 +125,8 @@ describe("running a Butler run again", () => {
   it("posts mode re-run to the replay route for a finished run, and names the new run", async () => {
     mountButlers(false);
     // The unfinished run has no button: two rows, one control.
-    await waitFor(() => { expect(screen.getAllByRole("button", { name: "run again" })).toHaveLength(1); });
-    fireEvent.click(screen.getByRole("button", { name: "run again" }));
+    await waitFor(() => { expect(screen.getAllByRole("button", { name: "Run again" })).toHaveLength(1); });
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => { expect(posted("/api/butler-runs/run_1/replay")).toBeDefined(); });
     expect(posted("/api/butler-runs/run_1/replay")!.body).toEqual({ mode: "re-run" });
     expect((await screen.findByRole("status")).textContent).toContain("bv_1-brp_2");
@@ -119,13 +135,18 @@ describe("running a Butler run again", () => {
   it("says what a re-run is, and renders the refusal whole", async () => {
     mountButlers(true);
     await waitFor(() => { expect(screen.getByText(/nothing leaves this Node by itself/)).toBeDefined(); });
-    fireEvent.click(screen.getByRole("button", { name: "run again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
     expect(await alert()).toBe(REFUSED);
   });
 });
 
+/*
+ * Both sign-outs live on Settings since the redesign moved them out of the bottom bar, which now holds only
+ * the connection and the health verdict. Settings is also past the first-run gate, so a gated administrator
+ * can always leave.
+ */
 describe("signing out everywhere", () => {
-  function mountBar(ok: boolean) {
+  function mountSettings(ok: boolean) {
     answerWith((call) => {
       if (call.path === "/api/auth/logout-everywhere") {
         return ok
@@ -134,23 +155,83 @@ describe("signing out everywhere", () => {
       }
       return undefined;
     });
-    mount(<InstrumentBar />);
+    mount(<ShellProvider><Settings /></ShellProvider>);
   }
 
   it("posts to the logout-everywhere route, beside the ordinary sign out", async () => {
-    mountBar(true);
-    expect(screen.getByRole("button", { name: "sign out" })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "sign out everywhere" }));
+    mountSettings(true);
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
     await waitFor(() => { expect(posted("/api/auth/logout-everywhere")).toBeDefined(); });
     // This page signs out after the Node revoked, so the order is revoke then sign out, not sign out alone.
     await waitFor(() => { expect(session.signOuts).toBe(1); });
   });
 
   it("renders a refusal rather than pretending the other devices were signed out", async () => {
-    mountBar(false);
-    fireEvent.click(screen.getByRole("button", { name: "sign out everywhere" }));
+    mountSettings(false);
+    fireEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
     expect(await alert()).toBe(REFUSED);
     expect(session.signOuts).toBe(0);
+  });
+});
+
+describe("signing out saves the open draft first", () => {
+  /*
+   * Signing out unmounts the shell, and the composer's last-chance save then runs with no session: the words
+   * typed in the autosave pause were lost (the recorded loss `d-signout-pause` used to assert). So Settings asks
+   * the shell's composer to save first, and a save the Node refuses keeps the session and says why.
+   */
+  function OpenComposer() {
+    const compose = useCompose();
+    return <button type="button" onClick={() => compose.open({ mailboxId: "mbx_test" })}>Open composer</button>;
+  }
+  const puts = () => calls.filter((call) => call.path === "/api/drafts" && call.method === "PUT");
+
+  async function typeAndSignOut(refuse: boolean, button: "Sign out" | "Sign out everywhere") {
+    answerWith((call) => {
+      if (call.path === "/api/drafts" && call.method === "PUT") {
+        return refuse
+          ? Response.json({ error: "E_LEGAL_HOLD", message: "A legal hold covers this mailbox." }, { status: 409 })
+          : Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "", updatedAt: "2026-09-26T09:00:00.000Z" } });
+      }
+      if (call.path === "/api/auth/logout-everywhere") return Response.json({ error: "signed_out", message: "Signed out of 1 session(s).", refreshable: false });
+      return undefined;
+    });
+    mount(<ShellProvider><OpenComposer /><Settings /></ShellProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Open composer" }));
+    const body = await screen.findByRole("textbox", { name: "Message" });
+    fireEvent.change(body, { target: { value: "typed in the pause" } });
+    expect(puts(), "the autosave already wrote, so this proves nothing").toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: button }));
+  }
+
+  it("writes the pause's words before the session ends, for either sign-out", async () => {
+    for (const button of ["Sign out", "Sign out everywhere"] as const) {
+      await typeAndSignOut(false, button);
+      await waitFor(() => { expect(session.signOuts).toBe(1); });
+      expect(puts()).toHaveLength(1);
+      expect((puts()[0]!.body as { body: string }).body).toBe("typed in the pause");
+      cleanup();
+      reset();
+    }
+  });
+
+  it("keeps the session when the Node refuses the draft, says why, and offers that same sign-out, by its name, anyway", async () => {
+    // By name because "Sign out everywhere anyway" ends every session on every device, beside a plain Sign out.
+    for (const button of ["Sign out", "Sign out everywhere"] as const) {
+      await typeAndSignOut(true, button);
+      expect(await alert()).toBe(
+        "Your draft was not saved on your Node when you asked to sign out, so you are still signed in: A legal hold covers this mailbox.",
+      );
+      expect(session.signOuts).toBe(0);
+      expect(posted("/api/auth/logout-everywhere"), "the refused draft did not hold the revocation back").toBeUndefined();
+      fireEvent.click(screen.getByRole("button", { name: `${button} anyway` }));
+      await waitFor(() => { expect(session.signOuts).toBe(1); });
+      expect(posted("/api/auth/logout-everywhere") !== undefined, `${button} anyway ran the other sign-out`)
+        .toBe(button === "Sign out everywhere");
+      cleanup();
+      reset();
+    }
   });
 });
 
@@ -184,7 +265,7 @@ describe("a completed export's objects", () => {
 
   it("reads the manifest through the object route and links every object it names", async () => {
     mountMatters(true);
-    fireEvent.click(await screen.findByRole("button", { name: "objects" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Objects" }));
     const link = await screen.findByRole("link", { name: "rcp_b.eml" });
     expect(link.getAttribute("href")).toBe("/api/exports/exp_1/objects/rcp_b.eml");
     expect(screen.getByRole("link", { name: "rcp_a.eml" })).toBeDefined();
@@ -194,7 +275,7 @@ describe("a completed export's objects", () => {
 
   it("renders the Node's 404 for anybody but the requester", async () => {
     mountMatters(false);
-    fireEvent.click(await screen.findByRole("button", { name: "objects" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Objects" }));
     expect(await alert()).toContain("No such export object, or you do not have access to it.");
   });
 });

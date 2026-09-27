@@ -15,6 +15,7 @@ import { dispatchDue } from "./outbound/dispatch.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { backfillBodyIndex, backfillSearchIndex } from "./search-backfill.ts";
 import { backfillAuthentication } from "./authentication-backfill.ts";
+import { backfillPreviews } from "./preview-backfill.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 import { clientAsset } from "./ui.ts";
 import { resolve, type Call, type Handler } from "./router.ts";
@@ -22,6 +23,7 @@ import { HANDLERS } from "./routes/index.ts";
 import { armSweeper, hashHex, unauthenticated } from "./routes/support.ts";
 import { principalFor } from "./authz-read.ts";
 
+import { nextDue } from "./outbox.ts";
 export { OutboxSweeper } from "./outbox.ts";
 export { KeyVault } from "./keyvault.ts";
 /**
@@ -83,17 +85,19 @@ const handler = {
   },
 
   /**
-   * The cron sweep (#41, #63 part B). Two jobs: recording first-response breaches, and delivering the
-   * notifications that have fallen due.
+   * The cron sweep (#41, #63 part B). Independent jobs, run in order: the inbound outbox backstop,
+   * first-response breaches, the search, authentication, body and preview backfills, due notifications, and the
+   * outbound backstop, each described where it runs.
    *
-   * Deliberately thin, and deliberately two *scans*. Cron documents no retry, so anything here has to be
-   * repaired by the next minute's run rather than depending on this one — which a query over due rows is and
-   * a cursor would not be.
+   * Deliberately thin, and deliberately *scans*. Cron documents no retry, so anything here has to be repaired
+   * by the next minute's run rather than depending on this one — which a query over due rows is and a cursor
+   * would not be.
    *
-   * **The two jobs are independent and are kept that way.** Each has its own `try`, so a failure in one does
-   * not cost the other a run — a §7 notice is a legal obligation and a first-response breach is a promise to a
-   * customer, and neither is a good reason to drop the other. The alternative, one `try` around both, is how
-   * a scheduled handler quietly stops doing its second job.
+   * **The jobs are independent and are kept that way.** Each has its own `try`, so a failure in one does not
+   * cost the others a run — a §7 notice is a legal obligation and a first-response breach is a promise to a
+   * customer, and neither is a good reason to drop the other. The alternative, one `try` around them all, is
+   * how a scheduled handler quietly stops doing its second job. A failure's own log line cannot end the sweep
+   * either: `log` never throws, and falls back to the console when the catalog will not take the line.
    *
    * Errors are logged rather than thrown. A throw here reaches Cloudflare's scheduled-event machinery, which
    * has no retry to offer and no operator watching it; the log is inside the product where `doctor` can see
@@ -106,6 +110,32 @@ const handler = {
       // An unclaimed Node has no cases to sweep and nobody to notify. Not an error, and not worth a log line
       // every minute for the lifetime of an uninstalled Node.
       if (orgId === null) return;
+
+      /*
+       * The inbound backstop, first because it is the cheapest job here and the one mail waits on.
+       *
+       * `OutboxSweeper`'s alarm publishes every accepted message and re-arms itself while work remains, but an
+       * alarm can still be lost: the arming RPC after acceptance can fail, and an alarm handler that keeps
+       * throwing is retried six times and then dropped by the platform. Nothing else would wake the sweeper for
+       * that message until somebody loaded a page or more mail arrived.
+       *
+       * So: one indexed query a minute, and an arm only when an event is due now and unpublished. Not "when
+       * anything is unpublished", because a failing event waiting out its backoff is unpublished and not due,
+       * and arming for it every minute would undo the backoff. Not logged when it arms: at the tick an event
+       * can be due for the ordinary reason (it arrived a moment ago and its alarm is about to fire), which this
+       * query cannot tell from a lapse; `doctor`'s `outbox_draining` reports a lapse that lasts.
+       */
+      try {
+        const due = await nextDue(env);
+        if (due !== null && due <= clock.now()) await env.OUTBOX_SWEEPER.getByName("node").schedule();
+      } catch (error) {
+        await log(env, clock, {
+          level: "error",
+          event: "outbox.backstop_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          orgId,
+        });
+      }
 
       try {
         const outcome = await sweepResponseClocks(env, clock, orgId);
@@ -157,10 +187,20 @@ const handler = {
         }).catch(() => undefined);
       }
 
+      /*
+       * Whether the two R2-reading passes below did nothing this invocation. The preview pass reads R2 per
+       * message too, and runs only when both are idle, so one invocation never does more of that work than it
+       * did before 0068. A pass that threw stays `false`: it is not idle, and the preview pass waits for it.
+       */
+      let authenticationIdle = false;
+      let bodiesIdle = false;
+
       try {
-        // Senders of messages from before 0055, evaluated a few a minute. Same shape as the two above: logged
-        // only when it did something, and a failure is `warn` — an unevaluated sender is shown as exactly that.
+        // Senders of messages from before 0055, evaluated a few a minute. Same shape as the search backfill
+        // above: logged only when it did something, and a failure is `warn` — an unevaluated sender is shown as
+        // exactly that.
         const evaluated = await backfillAuthentication(env, clock);
+        authenticationIdle = evaluated === 0;
         if (evaluated > 0) {
           await log(env, clock, {
             level: "info",
@@ -191,6 +231,7 @@ const handler = {
          * two indexes catch up independently and one being stuck is not a reason for the other to be.
          */
         const bodies = await backfillBodyIndex(env, clock);
+        bodiesIdle = bodies === 0;
         if (bodies > 0) {
           await log(env, clock, {
             level: "info",
@@ -206,6 +247,41 @@ const handler = {
           event: "search.body_backfill_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
         }).catch(() => undefined);
+      }
+
+      if (authenticationIdle && bodiesIdle) {
+        try {
+          /*
+           * Row previews and sender names (0068) for mail ingest did not project. Its own try block, like
+           * every pass here. `doctor`'s `preview_backlog` counts what is left, so this logs only when it did
+           * something, and warns when a message could not be projected.
+           */
+          const previews = await backfillPreviews(env, clock);
+          if (previews.projected > 0) {
+            await log(env, clock, {
+              level: "info",
+              event: "preview.backfilled",
+              message: `Projected the row preview and sender name of ${previews.projected} message(s).`,
+              orgId,
+              detail: { projected: previews.projected },
+            });
+          }
+          if (previews.retried > 0 || previews.failed > 0) {
+            await log(env, clock, {
+              level: "warn",
+              event: "preview.backfill_failed",
+              message: `${previews.retried + previews.failed} message(s) could not be projected: ${previews.reason ?? "unknown"}`,
+              orgId,
+              detail: { retried: previews.retried, failed: previews.failed, reason: previews.reason },
+            });
+          }
+        } catch (error) {
+          await log(env, clock, {
+            level: "warn",
+            event: "preview.backfill_failed",
+            message: (error as Error).message.split("\n")[0] ?? "unknown",
+          }).catch(() => undefined);
+        }
       }
 
       try {
@@ -296,8 +372,9 @@ const handler = {
       return;
     }
 
-    // Fast-path publication, with the DO alarm as the safety net (#9). waitUntil so accepting
-    // the message is never delayed by publication.
+    // Publication is the outbox sweeper's, and it starts now: this arms its alarm for the present instant, and
+    // the event just committed is claimable at once (`src/outbox.ts` says why there is no second publisher
+    // here). `waitUntil` so accepting the message never waits on the Durable Object.
     ctx.waitUntil(armSweeper(env));
   },
 

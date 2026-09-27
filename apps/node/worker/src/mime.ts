@@ -25,6 +25,8 @@ export interface ParsedHeaders {
   referencesRoot: string | null;
   subject: string;
   from: string;
+  /** The From header's display name (0068), or null — see `displayNameOf`. */
+  fromName: string | null;
   date: string | null;
 }
 
@@ -37,21 +39,30 @@ export interface ParsedHeaders {
  * client accepts.
  */
 export function headerBlock(raw: Uint8Array): string {
+  return splitHeaders(raw).block;
+}
+
+/**
+ * `headerBlock`, and whether the bound cut it: `truncated` is true when no separator was found inside
+ * `mime.max_header_bytes` and the message is longer than that, so what is returned is a prefix rather than
+ * the whole block. The headers route says so rather than presenting a prefix as the block.
+ */
+export function splitHeaders(raw: Uint8Array): { block: string; truncated: boolean } {
   const limit = Math.min(raw.length, MAX_HEADER_BYTES);
   for (let i = 0; i + 1 < limit; i++) {
     if (raw[i] === 0x0a && raw[i + 1] === 0x0a) {
-      return new TextDecoder().decode(raw.subarray(0, i));
+      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false };
     }
     if (
       i + 3 < limit &&
       raw[i] === 0x0d && raw[i + 1] === 0x0a && raw[i + 2] === 0x0d && raw[i + 3] === 0x0a
     ) {
-      return new TextDecoder().decode(raw.subarray(0, i));
+      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false };
     }
   }
   // No separator found. Treat what we have as headers rather than discarding the message: §24 says
   // accepted mail is never lost, and a header-only message is still readable.
-  return new TextDecoder().decode(raw.subarray(0, limit));
+  return { block: new TextDecoder().decode(raw.subarray(0, limit)), truncated: raw.length > MAX_HEADER_BYTES };
 }
 
 /**
@@ -188,6 +199,60 @@ export function addressesOf(value: string, limit = 100): string[] {
   return out;
 }
 
+/**
+ * A sender-chosen string stored (0068) and rendered in the list; sized, not measured: a real display name is
+ * a few words, and a cap keeps a hostile one from becoming a paragraph in every row.
+ */
+export const NAME_CHARS = 128;
+
+/**
+ * A bare domain (`paypal.com`, or `whуmelabs.test` with a Cyrillic `у`): as a display name it claims to be an
+ * organization it may not be. Letters and digits of any script, because a homoglyph is a letter of another
+ * one; the separators are the four IDNA treats as a dot, as they read after NFKC (U+FF0E becomes `.`, U+FF61
+ * becomes U+3002).
+ */
+const DOMAIN_SHAPED = /^[\p{L}\p{N}\p{M}-]+([.\u3002][\p{L}\p{N}\p{M}-]+)+$/u;
+
+/**
+ * The display name of a `From` header (0068), or null.
+ *
+ * The part before the first unquoted `<`; no `<` is a bare address, which has no name. Quotes stripped and
+ * `\"`/`\\` unescaped, encoded words decoded, control and format characters removed, whitespace collapsed.
+ *
+ * **Null when the name looks like an address or a domain**, and that is a security rule rather than tidiness.
+ * A display name is whatever the sender typed, so `"ceo@whymelabs.test" <x@evil.example>` would put the
+ * address it impersonates at the head of a list row, where the real address is the smaller text. Such a
+ * name says nothing true that the address does not, so it is dropped rather than shown. The check reads the
+ * name after NFKC, which folds the lookalike at signs (U+FF20, U+FE6B) into `@`, and the name returned is that
+ * folded form, so what was checked is what is shown.
+ *
+ * **Null when nothing visible is left**, for the same reason: a name of Hangul fillers (U+3164) renders as a
+ * blank sender line. Default-ignorable code points are removed with the control and format characters, and a
+ * name with no letter or digit left (U+2800 alone, punctuation alone) is not a name.
+ */
+export function displayNameOf(fromHeader: string): string | null {
+  let quoted = false;
+  let end = -1;
+  for (let i = 0; i < fromHeader.length; i++) {
+    const char = fromHeader[i];
+    if (char === "\\" && quoted) { i++; continue; }
+    if (char === '"') quoted = !quoted;
+    else if (char === "<" && !quoted) { end = i; break; }
+  }
+  if (end === -1) return null;
+  let name = fromHeader.slice(0, end).trim();
+  if (name.length >= 2 && name.startsWith('"') && name.endsWith('"')) {
+    name = name.slice(1, -1).replace(/\\(["\\])/g, "$1");
+  }
+  name = decodeEncodedWords(name)
+    .normalize("NFKC")
+    .replace(/[\p{C}\p{Default_Ignorable_Code_Point}]/gu, (char) => (/\s/.test(char) ? " " : ""))
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!/[\p{L}\p{N}]/u.test(name) || name.includes("@") || DOMAIN_SHAPED.test(name)) return null;
+  return Array.from(name).slice(0, NAME_CHARS).join("");
+}
+
 /** The address from a `From` header, without its display name. */
 export function addressOf(value: string): string {
   const bracketed = /<([^<>]+)>/.exec(value);
@@ -224,6 +289,7 @@ export function parseHeaders(raw: Uint8Array): ParsedHeaders {
     referencesRoot: references[0] ?? null,
     subject: decodeEncodedWords(first("subject") ?? ""),
     from: addressOf(first("from") ?? ""),
+    fromName: displayNameOf(first("from") ?? ""),
     date: sentAt(first("date")),
   };
 }

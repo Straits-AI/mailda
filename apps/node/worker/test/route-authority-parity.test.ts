@@ -108,7 +108,7 @@ let memberCookie = "";
 beforeEach(async () => {
   for (
     const table of ["relationship_tuples", "users", "node_claim", "mailboxes", "sessions", "refresh_tokens",
-      "login_attempts", "teams", "matters", "policies", "butlers", "message_labels", "message_reads"]
+      "login_attempts", "teams", "matters", "policies", "butlers", "message_labels", "message_reads", "message_places"]
   ) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table} WHERE 1=1`).run().catch(() => undefined);
   }
@@ -216,6 +216,7 @@ const BODIES: Record<string, unknown> = {
   "PUT /api/messages/:messageId/labels": { add: ["parity"] },
   "POST /api/mailboxes": { name: "Parity Invoices" },
   "PUT /api/messages/:messageId/read": { read: true },
+  "PUT /api/messages/:messageId/place": { place: "archive" },
   "PUT /api/cases/:caseId/assignee": { userId: MEMBER },
 };
 

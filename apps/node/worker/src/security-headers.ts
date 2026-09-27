@@ -82,8 +82,8 @@ export const CONTENT_SECURITY_POLICY = [
   // the whole point — a page about owning your mail must not hand a third party every viewer's IP address,
   // and `fonts/README.md` records why the brand's Satoshi was never shipped.
   "font-src 'self'",
-  // `data:` for the favicon and the grain texture, both inline SVG in `ui.ts` for the same custody reason
-  // the fonts are local: a page about owning your mail must not fetch anything from anywhere.
+  // `data:` for the favicon, an inline SVG in `ui.ts` for the same custody reason the fonts are local: a page
+  // about owning your mail must not fetch anything from anywhere.
   "img-src 'self' data:",
   "connect-src 'self'",
   "frame-src 'self'",

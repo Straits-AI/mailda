@@ -56,8 +56,9 @@ async function pageFor(subject: string): Promise<string[]> {
       metadata: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: null , since: null, until: null, from: null, conversationId: null, label: null },
+    page: { after: null, mailboxId: null, q: null , since: null, until: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false },
     limit: 51,
+    lookback: null,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
   return result.results.map((row) => row.id);

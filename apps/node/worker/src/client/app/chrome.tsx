@@ -1,374 +1,661 @@
-import { Link, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
+import { onlineManager, useQueryClient, type QueryCacheNotifyEvent, type QueryClient } from "@tanstack/react-query";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { MARK_IS_AUTHORED } from "../../brand.ts";
 import { Mark } from "./mark.tsx";
 
 import {
-  signOutEverywhere, useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends,
-  type NotificationRow,
+  useApprovals, useDoctor, useDrafts, useMailboxes, useMessages, useNotifications, useSends,
+  type DoctorReport, type NotificationRow, type SendsResponse,
 } from "./api.ts";
 import type { AppRoute } from "../../app-routes.ts";
+import { healthRows, type HealthStatus } from "./health.ts";
+import { SetupUnfinished } from "./onboarding.tsx";
+import { useCompose, useToast, useToastAction } from "./shell-context.tsx";
+import { Icon, type IconName } from "./ui/icons.tsx";
+import { CommandPalette } from "./ui/palette.tsx";
+import { Modal, Popover } from "./ui/popover.tsx";
+import { shortcutsEnabled, useShortcuts, type Shortcut } from "./ui/shortcuts.ts";
 
 /**
- * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
+ * The chrome: a grouped sidebar, the main column, and a status bar along the bottom.
  *
- * ## Why a rail
+ * ## Why a sidebar, and why grouped
  *
- * Layer 3 is *share* — shared mailboxes, assignment, reply-collision, cases with SLA clocks — and it needs
- * a persistent list of mailboxes carrying per-item counts and claim state. That is what a rail is. Route
- * tabs are not, and choosing them would mean bolting a rail on at Layer 3 and rewriting the chrome around
- * it. The rail was built with one row in it before a second mailbox could exist; People creates them now.
+ * Layer 3 is *share* (shared mailboxes, assignment, reply-collision, cases with SLA clocks) and it needs a
+ * persistent list of mailboxes carrying per-item counts and claim state (#32). That is what a sidebar is,
+ * and it is why the per-mailbox rows survive the regrouping, under Workspace. The rows are
+ * `GET /api/mailboxes`, read on every load: which mailboxes this person may work is a decision about
+ * visibility, which ADR 11 puts on the server on every request, never in a client-side list.
  *
- * The rows are `GET /api/mailboxes`, read on every load: which mailboxes this person may work is a decision
- * about visibility, which ADR 11 puts on the server on every request, never in a client-side list.
+ * The groups (Mail, Workspace, Automate, Admin, and Settings at the foot) render from `SIDEBAR_HOME`, a
+ * `Record<AppRoute, …>`: a route added without a home is a compile error, and a route with one appears. No
+ * link is hidden by role. The screens behind Butlers, Agents and People are refused to anybody without
+ * `org.admin`, and the screen says so; hiding the link would be a second, weaker copy of the Node's decision,
+ * in the navigation, where it cannot be enforced.
  *
- * ## Why the top status strip does not survive
+ * ## What replaced the instrument bar
  *
- * Layer 1 put node state in the top-right, which is where a reader's eye rests when there is nothing else
- * competing. With a rail present it is not, and the counts belong next to the mailboxes they describe. So
- * the session countdown, the `doctor` verdict and the outbound counts move to a bottom instrument bar —
- * the same instrument-panel language, in the place the eye now leaves last.
+ * The bottom bar held a session countdown, the hostname, the outbound counts, the doctor verdict and both
+ * sign-outs. It now holds two derived facts, whether the Node is answering and what the doctor says, and
+ * everything else moved where it is used: the countdown and both sign-outs to Settings, the hostname to
+ * Settings and the health popover, the outbound counts to the Outbox row and the popover.
  */
+
+/** Every route's name in the interface. The palette and the narrow layout's title read it. */
+export const ROUTE_LABELS: Record<AppRoute, string> = {
+  "/": "Inbox",
+  "/queue": "Queue",
+  "/approvals": "Approvals",
+  "/rules": "Rules",
+  "/people": "People",
+  "/matters": "Matters",
+  "/butlers": "Butlers",
+  "/agents": "Agents",
+  "/limits": "Limits",
+  "/outbox": "Outbox",
+  "/audit": "Audit",
+  "/log": "Log",
+  "/doctor": "Doctor",
+  "/setup": "Setup",
+  "/drafts": "Drafts",
+  "/archive": "Archive",
+  "/trash": "Trash",
+  "/settings": "Settings",
+};
 
 /**
- * The session countdown, which is on screen for a reason rather than as decoration.
+ * Where each route lives in the sidebar, in the order the rows render. `{ tabOf }` is a route reached by a
+ * section tab on another route's screen rather than by a row of its own: Rules is a tab beside Butlers,
+ * under "Automations".
  *
- * An access token that silently expires is the exact failure the session layer exists to prevent, so its
- * clock is visible where a person can watch it happen. `Date.now()` is correct here: this is a page with
- * one user, one tab and one clock, and the ctx seam is a Worker concern (see eslint.config.js).
+ * Rules are send policies, not automations in the Butler sense, and they sit here anyway because both answer
+ * "what does this Node do with mail without a person deciding each time"; the tab and the screen still say
+ * "Rules".
  */
-function SessionClock() {
-  const [readout, setReadout] = useState<string | null>(null);
+export const SIDEBAR_HOME: Record<AppRoute, "mail" | "workspace" | "automate" | "admin" | "foot" | { tabOf: AppRoute }> = {
+  "/": "mail", "/queue": "mail", "/drafts": "mail", "/outbox": "mail", "/archive": "mail", "/trash": "mail",
+  "/people": "workspace", "/matters": "workspace", "/approvals": "workspace",
+  "/butlers": "automate", "/rules": { tabOf: "/butlers" }, "/agents": "automate",
+  "/doctor": "admin", "/limits": "admin", "/audit": "admin", "/log": "admin", "/setup": "admin",
+  "/settings": "foot",
+};
 
-  useEffect(() => {
-    function tick() {
-      if (!isSignedIn()) return setReadout(null);
-      const expiresAt = accessExpiresAt();
-      if (expiresAt === null) return setReadout(null);
-      const remaining = Math.max(0, expiresAt - Date.now());
-      const minutes = Math.floor(remaining / 60_000);
-      const seconds = Math.floor((remaining % 60_000) / 1000);
-      setReadout(`renews in ${minutes}:${String(seconds).padStart(2, "0")}`);
-    }
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  if (readout === null) return null;
-  // `aria-live` deliberately absent. A countdown that announces itself every second makes a screen reader
-  // unusable; the information is available on focus, and the states that matter — renewing, signed out —
-  // are announced by the surfaces that change.
-  return <span className="field session mono">session · {readout}</span>;
+/**
+ * The section tabs over a route's screen: the route itself, then every route whose home is `{ tabOf: it }`.
+ * Derived, so a route given a `tabOf` home gets its tab without a second list to remember.
+ */
+export function tabsOf(parent: AppRoute): Array<{ to: AppRoute; label: string }> {
+  const children = (Object.keys(SIDEBAR_HOME) as AppRoute[]).filter((route) => {
+    const home = SIDEBAR_HOME[route];
+    return typeof home === "object" && home.tabOf === parent;
+  });
+  return [parent, ...children].map((to) => ({ to, label: ROUTE_LABELS[to] }));
 }
 
-/** The Node's verdict on itself, in the one place an operator will keep glancing at. */
-function DoctorVerdict() {
-  const doctor = useDoctor();
-  if (doctor.isPending) return <span className="field dim mono">doctor · reading</span>;
-  if (doctor.isError) {
-    // A doctor that cannot be read is itself a finding, and saying nothing would read as healthy.
-    return <span className="field mono state state-outcome_unknown">doctor · unreachable</span>;
-  }
-  const verdict = doctor.data!.verdict;
-  const failing = doctor.data!.findings.filter((finding) => !finding.ok).length;
+/** The one row whose sidebar name differs from its route's: the group's word, over Butlers and Rules. */
+const SIDEBAR_LABEL: Partial<Record<AppRoute, string>> = { "/butlers": "Automations" };
+
+const ROUTE_ICONS: Record<AppRoute, IconName> = {
+  "/": "inbox", "/queue": "queue", "/approvals": "approvals", "/rules": "automations", "/people": "people",
+  "/matters": "matters", "/butlers": "automations", "/agents": "agents", "/limits": "limits", "/outbox": "outbox",
+  "/audit": "audit", "/log": "log", "/doctor": "health", "/setup": "setup", "/drafts": "drafts",
+  "/archive": "archive", "/trash": "trash", "/settings": "settings",
+};
+
+type Group = "mail" | "workspace" | "automate" | "admin" | "foot";
+
+function routesIn(group: Group): AppRoute[] {
+  return (Object.keys(SIDEBAR_HOME) as AppRoute[]).filter((route) => SIDEBAR_HOME[route] === group);
+}
+
+/** The views that are the mail layout (list and reader) rather than a ledger screen. */
+const MAIL_ROUTES: ReadonlySet<string> = new Set(["/", "/archive", "/trash"]);
+
+/**
+ * Below 1120px the sidebar becomes a drawer. The same breakpoint as the stylesheet's `data-layout` rules,
+ * which read the attribute this sets rather than a media query of their own, so the two cannot disagree.
+ */
+const NARROW = "(max-width: 1119.98px)";
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const query = matchMedia(NARROW);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+export function useNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, () => matchMedia(NARROW).matches);
+}
+
+/**
+ * Starting a new message, from Compose, C and the palette alike (#94: the mailbox is chosen, never inferred).
+ *
+ * While the mailbox list is still being read, or could not be read, C says that rather than "you hold it on
+ * none": an empty list that is only unanswered is not an answer (§5C).
+ */
+export function useStartCompose(): () => void {
+  const mailboxes = useMailboxes();
+  const compose = useCompose();
+  const toast = useToast();
+  return () => {
+    if (mailboxes.isSuccess) compose.start(mailboxes.data.mailboxes);
+    else if (mailboxes.isError) toast({ tone: "alert", text: mailboxes.error.message });
+    else toast({ text: "Still reading which mailboxes you can send from." });
+  };
+}
+
+/**
+ * Compose: the one way a new message starts.
+ *
+ * Absent when this person may send from no mailbox (`useMailboxes` returns exactly the mailboxes they hold
+ * `send.propose` on): a button that can only fail is worse than none, and C says why instead. `compact` is
+ * the narrow layout's icon-only button; at any width exactly one Compose exists.
+ */
+export function ComposeButton({ compact = false }: { compact?: boolean }) {
+  const mailboxes = useMailboxes();
+  const compose = useCompose();
+  const rows = mailboxes.data?.mailboxes ?? [];
+  if (rows.length === 0) return null;
   return (
-    <Link to="/doctor" className="field mono linkish" title={`${failing} check(s) not ok`}>
-      doctor · <span className={`state verdict-${verdict}`}>{verdict}</span>
+    <button
+      type="button"
+      className={compact ? "primary compose-button compact" : "primary compose-button"}
+      // The key is named only while it works: with single-key shortcuts off, "(C)" names a key that does nothing.
+      // Read at render, like every hint that names a key; the switch applies from the next render.
+      title={shortcutsEnabled() ? "Compose (C)" : "Compose"}
+      aria-label={compact ? "Compose" : undefined}
+      aria-haspopup={rows.length > 1 ? "dialog" : undefined}
+      onClick={() => compose.start(rows)}
+    >
+      <Icon name="compose" />
+      {compact ? null : <span>Compose</span>}
+    </button>
+  );
+}
+
+/** One sidebar link: icon, name and, when known, a count. */
+function Row({ to, name, count = null, onNavigate, className = "rail-row", current = false, title }: {
+  to: AppRoute;
+  name: string;
+  count?: React.ReactNode;
+  onNavigate?: () => void;
+  className?: string;
+  /** Marked current by the caller, for a row whose link is not the current page (Automations on /rules). */
+  current?: boolean;
+  title?: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className={current ? `${className} current` : className}
+      activeProps={{ className: `${className} current` }}
+      aria-current={current ? "true" : undefined}
+      title={title}
+      onClick={() => onNavigate?.()}
+    >
+      <Icon name={ROUTE_ICONS[to]} />
+      <span className="rail-name">{name}</span>
+      {count === null ? null : <span className="num">{count}</span>}
     </Link>
   );
 }
 
-/** Counts, next to nothing that could be mistaken for them. */
-function OutboundCounts() {
-  const sends = useSends();
-  if (!sends.isSuccess) return null;
-  const held = sends.data.sends.filter((send) => send.state === "held").length;
-  // Counted separately rather than folded into `held`, and shown whenever it is non-zero. A policy-gated send
-  // is pending mail somebody is waiting on, so leaving it out of the bar would make the bar under-report the
-  // outbox — and folding it into `held` would say a person can release it by waiting, which is what `held`
-  // means and is exactly what `awaiting` does not.
-  const awaiting = sends.data.sends.filter((send) => send.state === "awaiting").length;
-  return (
-    <span className="field">
-      <span className="key">handed over today</span>
-      <span className="mono num">{sends.data.daily.handedOver}</span>
-      {held > 0 ? (
-        <>
-          <span className="key">held</span>
-          <span className="mono num">{held}</span>
-        </>
-      ) : null}
-      {awaiting > 0 ? (
-        <>
-          <span className="key">awaiting</span>
-          <span className="mono num">{awaiting}</span>
-        </>
-      ) : null}
-    </span>
-  );
-}
-
-export function InstrumentBar() {
-  const [problem, setProblem] = useState<string | null>(null);
-
-  /**
-   * Every session, every device. The Node revokes first and this page signs out second, so a revocation
-   * that did not happen is rendered rather than hidden behind a page that merely looks signed out.
-   */
-  async function everywhere() {
-    setProblem(null);
-    const outcome = await signOutEverywhere();
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    await logout();
-  }
-
-  return (
-    <footer className="instrument-bar" aria-label="Node status">
-      <span className="field">
-        <span className="dot live" />
-        <span>listening</span>
-      </span>
-      <span className="field mono">{location.host}</span>
-      <OutboundCounts />
-      <span className="bar-spacer" />
-      <DoctorVerdict />
-      <SessionClock />
-      {problem === null ? null : <span className="bad" role="alert">{problem}</span>}
-      <button type="button" className="linkish" onClick={() => void logout()}>
-        sign out
-      </button>
-      <button
-        type="button"
-        className="linkish"
-        title="Ends every session you hold, on every device, including this one."
-        onClick={() => void everywhere()}
-      >
-        sign out everywhere
-      </button>
-    </footer>
-  );
-}
-
 /**
- * The rail. Mailboxes first, then the ledgers.
+ * The sidebar.
  *
- * The ledgers — outbox, audit, log — are full-width tables rather than rail-and-pane, because for a
- * ledger a table genuinely is the right form. That split is the one thing variant A got right and it is
- * kept.
+ * Every count here is a figure only once it is known (a zero while loading is a claim about an unread list,
+ * §5C), and a page is never printed as a total (#91): `+` whenever the Node said more exist.
  */
-export function Rail() {
-  const messages = useMessages();
+export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  /*
+   * The same query key as the Inbox's default view (`messagesKey({ place: "inbox" })`), so on `/` with no tab,
+   * filter or search the count and the list are **one** request. That matters beyond cost: each listing a
+   * supervised reader fetches writes one `supervised.query`, so a second key would be a second audit entry
+   * for the same page. Elsewhere it refreshes at most once a minute on focus, or when an act invalidates it.
+   */
+  const inbox = useMessages({ place: "inbox" }, { staleTime: 60_000 });
   const mailboxes = useMailboxes();
   const sends = useSends();
+  const drafts = useDrafts();
   const approvals = useApprovals();
-  const state = useRouterState();
-  const path = state.location.pathname;
+  const inAdmin = SIDEBAR_HOME[path as AppRoute] === "admin";
+  // Starts open on an Admin route so the first paint already shows the current row. The effect below would
+  // open it one frame later anyway, which is why a mutation of this initialiser survives the sidebar test:
+  // the difference is a flash, not a state a test can hold after `render` has flushed the effects.
+  const [adminOpen, setAdminOpen] = useState(inAdmin);
 
-  const unparsed = messages.isSuccess
-    ? messages.data.messages.filter((message) => message.parse_error !== null).length
+  // Entering an Admin route opens its group, so the current row is never folded away.
+  useEffect(() => {
+    if (inAdmin) setAdminOpen(true);
+  }, [inAdmin]);
+
+  const unparsed = inbox.isSuccess
+    ? inbox.data.messages.filter((message) => message.parse_error !== null).length
     : 0;
 
+  function count(route: AppRoute): React.ReactNode {
+    switch (route) {
+      case "/": {
+        if (!inbox.isSuccess) return null;
+        const { messages, next_cursor: next, lookback_exhausted: exhausted } = inbox.data;
+        // An empty page the lookback cut short is not "0" and not "0+": nothing is known about the Inbox
+        // beyond the newest messages it looked through, so no figure is the honest one.
+        if (messages.length === 0 && exhausted) return null;
+        return `${messages.length}${next === null ? "" : "+"}`;
+      }
+      case "/queue": {
+        // The depth of work nobody has taken: unclaimed, not total, or a busy queue reads as a backlog.
+        if (!mailboxes.isSuccess || mailboxes.data.mailboxes.length === 0) return null;
+        return mailboxes.data.mailboxes.reduce((total, box) => total + box.unclaimed, 0);
+      }
+      case "/drafts": {
+        if (!drafts.isSuccess || drafts.data.drafts.length === 0) return null;
+        return `${drafts.data.drafts.length}${drafts.data.truncated ? "+" : ""}`;
+      }
+      case "/outbox": {
+        // What is waiting on somebody: held (the hold window) and awaiting (a policy gate). Counted among the
+        // newest the Outbox lists, so `+` when that page is truncated. Handed-over sends are not work.
+        if (!sends.isSuccess) return null;
+        const waiting = sends.data.sends.filter((send) => send.state === "held" || send.state === "awaiting").length;
+        return waiting === 0 ? null : `${waiting}${sends.data.truncated ? "+" : ""}`;
+      }
+      case "/approvals": {
+        // The only Workspace row that is work: somebody is waiting on a decision.
+        if (!approvals.isSuccess || approvals.data.approvals.length === 0) return null;
+        return approvals.data.approvals.length;
+      }
+      default:
+        return null;
+    }
+  }
+
+  const row = (route: AppRoute) => (
+    <li key={route}>
+      <Row to={route} name={SIDEBAR_LABEL[route] ?? ROUTE_LABELS[route]} count={count(route)} onNavigate={onNavigate} />
+    </li>
+  );
+
   return (
-    <nav className="rail" aria-label="Mailboxes and ledgers">
+    <nav className="rail" aria-label="Navigation">
       {/*
-        * The brand's primary lockup: symbol then word (#128).
-        *
-        * This read `MAIL<span class="accent">DA</span>` — the instrument panel's idea of a wordmark, which
-        * survived the brand landing in the pre-authentication shell because nothing connected the two. The
-        * mark existed in `brand.ts` and was consumed exactly once, by `ui.ts`, so the screen a person
-        * actually works in was the one place the identity was absent.
-        *
-        * The word is real text in the display face, not a path: selectable, translatable, and read aloud as
-        * a name rather than skipped as a picture. `brand.ts` argues that at length.
-        *
-        * The **symbol** is gated on `MARK_IS_AUTHORED`, which is false: the mark in `brand.ts` is a by-eye
-        * reconstruction that does not read as the symbol at 26px — a squiggle with a dot, checked against a
-        * screenshot rather than against the sentence that claimed otherwise. So the interim is the wordmark
-        * in type, which is a design decision rather than an approximation of somebody else's, and the
-        * symbol appears the moment the designer's vector replaces the path.
+        * The brand's primary lockup: symbol then word (#128). The word is real text, not a path: selectable,
+        * translatable, and read aloud as a name. The symbol is gated on `MARK_IS_AUTHORED`, which has been
+        * true since 18 September 2026 (the trace `brand.ts` describes, checked by render); the gate stays so
+        * a placeholder could never again stand in for the symbol.
         */}
       <p className="wordmark">
-        {MARK_IS_AUTHORED ? <Mark size={26} /> : null}
+        {MARK_IS_AUTHORED ? <Mark size={20} /> : null}
         <span>Mailda</span>
       </p>
+      {/* In the drawer the narrow layout's bar holds the one Compose, so the drawer's rail has none. */}
+      {onNavigate === undefined ? <ComposeButton /> : null}
 
-      <p className="rail-heading" id="rail-mailboxes">
-        mailboxes
-      </p>
-      <ul className="rail-list" aria-labelledby="rail-mailboxes">
-        <li>
-          <Link to="/" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Inbox</span>
-            {/*
-              A count only once it is known. A zero rendered while loading is a claim about an unread list,
-              which is precisely the §5C distinction between "empty" and "not yet answered".
+      <p className="rail-heading" id="rail-mail">Mail</p>
+      <ul className="rail-list" aria-labelledby="rail-mail">
+        {routesIn("mail").flatMap((route) => route === "/" && unparsed > 0
+          ? [
+            row(route),
+            // Accepted but not parsed: listed, and counted here, so "accepted but absent" never happens
+            // quietly (Blueprint §24).
+            <li key="unparsed" className="rail-note">
+              <span className="state state-outcome_unknown">{unparsed} unparsed</span>
+            </li>,
+          ]
+          : [row(route)])}
+      </ul>
 
-              **`+` when more exist, because this number is a page and not a total** (#91). It always was —
-              the listing was capped at fifty long before it was paginated — so the rail has been printing a
-              page size where a reader reasonably reads a total, and the same commit that added paging
-              renamed the inbox heading to `{n} shown` for exactly that reason while leaving this one as a
-              bare figure. Two numbers from one query, one of them honest.
-
-              `next_cursor` already answers it, so this costs nothing: a null means nothing older is visible
-              and the figure is the whole of what this reader may see. A real total would need a second
-              authorization-scoped `COUNT`, and it is not worth a query to turn `50+` into `4,213`.
-            */}
-            {messages.isSuccess ? (
-              <span className="mono num">
-                {messages.data.messages.length}{messages.data.next_cursor === null ? "" : "+"}
-              </span>
-            ) : null}
-          </Link>
-        </li>
+      <p className="rail-heading" id="rail-workspace">Workspace</p>
+      <ul className="rail-list" aria-labelledby="rail-workspace">
         {/*
-          The queues, one row per mailbox, with the count of **unclaimed** work.
-
-          This is what the rail was chosen over route tabs for, and it carried one hardcoded row from the day
-          it shipped until now, because nothing could tell it which mailboxes existed. The number is
-          unclaimed rather than total on purpose: a queue's depth is the work nobody has taken, and counting
-          claimed cases alongside it would make a busy queue look like a backlog.
+          The queues, one row per mailbox, with the count of **unclaimed** work: what the sidebar was chosen
+          over route tabs for (#32). They link to the Queue without selecting the mailbox (its picker is the
+          screen's own state), and never carry the current fill: the Queue row does.
         */}
-        {mailboxes.isSuccess && mailboxes.data.mailboxes.length > 0 ? (
-          <li className="rail-queues">
-            <Link to="/queue" className="rail-row" activeProps={{ className: "rail-row current" }}>
-              <span className="rail-name">Queue</span>
-              <span className="mono num">
-                {mailboxes.data.mailboxes.reduce((total, box) => total + box.unclaimed, 0)}
+        {(mailboxes.data?.mailboxes ?? []).map((box) => (
+          <li key={box.id}>
+            <Link
+              to="/queue"
+              className="rail-row rail-mailbox"
+              activeProps={{ className: "rail-row rail-mailbox" }}
+              title={`${box.unclaimed} unclaimed, ${box.claimed} in progress, ${box.mine} mine`}
+              onClick={() => onNavigate?.()}
+            >
+              <Icon name="mailbox" />
+              <span className="rail-name">{box.name}</span>
+              <span className="num">
+                {box.unclaimed}
+                {/* Hair spaces about the dot: with ordinary ones a ten-letter name gave up three pixels to "· 1 mine"
+                    at the rail's width and lost its last letters (measured in Chromium: 10px against 6px). */}
+                {box.mine > 0 ? <span className="rail-mine">{"\u200A·\u200A"}{box.mine} mine</span> : null}
               </span>
             </Link>
-            <ul className="rail-sublist">
-              {mailboxes.data.mailboxes.map((box) => (
-                <li key={box.id} className="rail-subrow">
-                  <span className="rail-name dim">{box.name}</span>
-                  <span className="mono num dim" title={`${box.unclaimed} unclaimed, ${box.claimed} in progress, ${box.mine} yours`}>
-                    {box.unclaimed}
-                    {box.mine > 0 ? <span className="rail-mine"> · {box.mine} yours</span> : null}
-                  </span>
-                </li>
-              ))}
-            </ul>
           </li>
-        ) : null}
-        {unparsed > 0 ? (
-          <li className="rail-note">
-            <span className="state state-outcome_unknown">{unparsed} unparsed</span>
-          </li>
-        ) : null}
+        ))}
+        {routesIn("workspace").map(row)}
       </ul>
 
-      <p className="rail-heading" id="rail-ledgers">
-        ledgers
-      </p>
-      <ul className="rail-list" aria-labelledby="rail-ledgers">
-        <li>
-          {/*
-            Approvals is first among the ledgers because it is the only one that is *work*: the others record
-            what happened, this one is a queue of decisions somebody is waiting on. The count is the point —
-            an approver who has to open a screen to discover they are blocking a message will not open it.
-          */}
-          <Link to="/approvals" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Approvals</span>
-            {approvals.isSuccess && approvals.data.approvals.length > 0
-              ? <span className="mono num">{approvals.data.approvals.length}</span>
-              : null}
-          </Link>
-        </li>
-        <li>
-          {/*
-            "Rules" rather than "Policies": the word a person uses for what their organization does with
-            mail. The screen renders each one as a sentence for the same reason.
-          */}
-          <Link to="/rules" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Rules</span>
-          </Link>
-        </li>
-        <li>
-          <Link to="/people" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">People</span>
-          </Link>
-        </li>
-        <li>
-          <Link to="/matters" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Matters</span>
-          </Link>
-        </li>
-        <li>
-          {/*
-            Butlers sits with the ledgers rather than the mailboxes, and the placement is the claim: a
-            Butler is not a place mail lands, it is a standing account of what this Node does without a
-            person. The screen is refused to anybody without `org.admin` (§5C, as a 404), so the link is
-            shown to everyone and the answer is given by the screen — hiding it would be a second, weaker
-            copy of the authority decision, in the navigation, where it cannot be enforced.
-          */}
-          <Link to="/butlers" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Butlers</span>
-          </Link>
-        </li>
-        <li>
-          {/*
-            * Beside Butlers, because the two are the same question from different directions: what acts
-            * without a person present, and under whose authority. Refused to anybody without `org.admin` as a
-            * 404, like Butlers, so the link is shown to everyone and the screen gives the answer.
-            */}
-          <Link to="/agents" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Agents</span>
-          </Link>
-        </li>
-        <li>
-          {/* Beside the outbox, because it is the answer to "why is nothing going out". */}
-          <Link to="/limits" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Limits</span>
-          </Link>
-        </li>
-        <li>
-          <Link to="/outbox" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Outbox</span>
-            {sends.isSuccess ? <span className="mono num">{sends.data.sends.length}</span> : null}
-          </Link>
-        </li>
-        <li>
-          <Link to="/audit" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Audit</span>
-          </Link>
-        </li>
-        <li>
-          <Link to="/log" className="rail-row" activeProps={{ className: "rail-row current" }}>
-            <span className="rail-name">Log</span>
-          </Link>
-        </li>
+      <p className="rail-heading" id="rail-automate">Automate</p>
+      <ul className="rail-list" aria-labelledby="rail-automate">
+        {routesIn("automate").map((route) => {
+          // On a route that is a tab of this row's screen (Rules under Automations), the row is the current
+          // item in the set without being a link to this page: `aria-current="true"`, not "page".
+          const tabHere = (Object.keys(SIDEBAR_HOME) as AppRoute[]).some((other) => {
+            const home = SIDEBAR_HOME[other];
+            return other === path && typeof home === "object" && home.tabOf === route;
+          });
+          return (
+            <li key={route}>
+              <Row
+                to={route}
+                name={SIDEBAR_LABEL[route] ?? ROUTE_LABELS[route]}
+                current={tabHere}
+                onNavigate={onNavigate}
+              />
+            </li>
+          );
+        })}
       </ul>
 
-      {/* The rail is also where an operator finds the diagnostic, because it is the screen they need when
-          something else has stopped working — and, beside it, the screen that connects this Node to the
-          Cloudflare account it runs in. Both belong at the foot: they are where somebody goes when the
-          Node is not yet working or has stopped, rather than part of a day's mail. */}
+      {/* Collapsible, never hidden: Admin is where somebody goes when the Node is not working. */}
+      <button
+        type="button"
+        className="rail-group-toggle"
+        aria-expanded={adminOpen}
+        aria-controls="rail-admin"
+        onClick={() => setAdminOpen((open) => !open)}
+      >
+        <span>Admin</span>
+        <Icon name={adminOpen ? "chevron-down" : "chevron-right"} />
+      </button>
+      {adminOpen ? (
+        <ul className="rail-list" id="rail-admin">
+          {routesIn("admin").map(row)}
+        </ul>
+      ) : null}
+
       <ul className="rail-list rail-foot">
-        <li>
-          <Link
-            to="/setup"
-            className="rail-row"
-            activeProps={{ className: "rail-row current" }}
-            aria-current={path === "/setup" ? "page" : undefined}
-          >
-            <span className="rail-name dim">Setup</span>
-          </Link>
-        </li>
-        <li>
-          <Link
-            to="/doctor"
-            className="rail-row"
-            activeProps={{ className: "rail-row current" }}
-            aria-current={path === "/doctor" ? "page" : undefined}
-          >
-            <span className="rail-name dim">Doctor</span>
-          </Link>
-        </li>
+        {routesIn("foot").map(row)}
       </ul>
     </nav>
   );
 }
+
+/* ------------------------------------------------------------------ the status bar ------------------ */
+
+/**
+ * Whether the Node is answering, from **every** query rather than the doctor poll alone.
+ *
+ * The newest query outcome decides. A success, or an error that is an HTTP answer (a `ReadFailure`: the Node
+ * answered, even if with a refusal), is "answered"; an error that is a `TypeError` is fetch rejecting, which
+ * is no answer at all; any other error (a non-JSON 200's `SyntaxError`) still came from something that
+ * answered. "listening" used to be a literal here, printed whatever the Node was doing.
+ */
+type Reach = "answered" | "unreachable";
+
+function reachOf(action: { type: string; error?: unknown }): Reach | null {
+  if (action.type === "success") return "answered";
+  if (action.type === "error") return action.error instanceof TypeError ? "unreachable" : "answered";
+  return null;
+}
+
+/** The outcome already in the cache when the bar mounts: the most recently settled query's. */
+function settledReach(client: QueryClient): Reach | null {
+  let newest: { at: number; reach: Reach } | null = null;
+  for (const query of client.getQueryCache().getAll()) {
+    const { dataUpdatedAt, errorUpdatedAt, error } = query.state;
+    const at = Math.max(dataUpdatedAt, errorUpdatedAt);
+    if (at === 0 || (newest !== null && at <= newest.at)) continue;
+    // `>` against `>=` differs only when a success and a TypeError land in the same millisecond on one query,
+    // which a mutation run reports as a survivor; either reading of that instant is defensible.
+    const reach: Reach = errorUpdatedAt > dataUpdatedAt && error instanceof TypeError ? "unreachable" : "answered";
+    newest = { at, reach };
+  }
+  return newest?.reach ?? null;
+}
+
+function subscribeOnline(onChange: () => void): () => void {
+  return onlineManager.subscribe(onChange);
+}
+
+export function useConnection(): { state: "connected" | "offline" | "unreachable" | "checking"; word: string } {
+  const client = useQueryClient();
+  const [reach, setReach] = useState<Reach | null>(() => settledReach(client));
+  const online = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline());
+
+  useEffect(() => client.getQueryCache().subscribe((event: QueryCacheNotifyEvent) => {
+    if (event.type !== "updated") return;
+    const next = reachOf(event.action);
+    if (next !== null) setReach(next);
+  }), [client]);
+
+  if (!online) return { state: "offline", word: "Offline" };
+  if (reach === null) return { state: "checking", word: "Checking…" };
+  if (reach === "unreachable") return { state: "unreachable", word: "Unreachable" };
+  return { state: "connected", word: "Connected" };
+}
+
+const STATUS_WORDS: Record<HealthStatus, string> = {
+  ok: "ok",
+  "ok-visible": "ok in your checks",
+  degraded: "degraded",
+  refuse: "refuse",
+  report: "report",
+  absent: "not in your report",
+  none: "no checks",
+};
+
+function ago(at: string): string {
+  const seconds = Math.round((Date.parse(at) - Date.now()) / 1000);
+  const words = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(seconds) < 60) return words.format(seconds, "second");
+  if (Math.abs(seconds) < 3_600) return words.format(Math.round(seconds / 60), "minute");
+  return words.format(Math.round(seconds / 3_600), "hour");
+}
+
+/**
+ * What the doctor said, by area (D9). The report arrives as a prop from the status bar's own `useDoctor`.
+ *
+ * **This must not call `useDoctor` itself.** A second observer mounting while the report is more than a
+ * minute old refetches it, and a doctor run costs up to ~220 subrequests
+ * (`docs/receipts/doctor-check-cost.md`). For the same reason there is no "check now" here: Open Doctor is
+ * the way to a fresh run. The outbound counts come from the sidebar's cached `["sends"]`, never a new fetch.
+ */
+export function HealthPopover({ open, onClose, anchor, report, error }: {
+  open: boolean;
+  onClose: () => void;
+  anchor: React.RefObject<HTMLElement | null>;
+  report: DoctorReport | undefined;
+  error: Error | null;
+}) {
+  const queryClient = useQueryClient();
+  const sends = open ? queryClient.getQueryData<SendsResponse>(["sends"]) : undefined;
+  const health = report === undefined ? null : healthRows(report);
+
+  return (
+    <Popover open={open} onClose={onClose} label="Health" className="health-popover popover-up popover-end" anchor={anchor}>
+      <h2 className="health-title">
+        Health{report === undefined ? null : <> <span className={`state verdict-${report.verdict}`}>{report.verdict}</span></>}
+      </h2>
+      {error !== null ? <p className="bad" role="alert">{error.message}</p> : null}
+      {health === null ? (error === null ? <Nothing kind="loading" /> : null) : (
+        <>
+          <ul className="health-rows">
+            {health.rows.map((row) => (
+              <li key={row.area} className="health-row">
+                <span className="health-area">{row.label}</span>
+                {row.status === "absent" || row.status === "none"
+                  ? <span className="health-absent">{STATUS_WORDS[row.status]}</span>
+                  : (
+                    <span className={`state verdict-${row.status === "ok-visible" ? "ok" : row.status}`}>
+                      {STATUS_WORDS[row.status]}{row.failing > 0 ? ` · ${row.failing} failing` : ""}
+                    </span>
+                  )}
+              </li>
+            ))}
+          </ul>
+          {sends === undefined ? null : <OutboundCounts sends={sends} />}
+          {health.reduced ? (
+            <p className="health-note">
+              Some checks describe this organisation's mail and are for administrators. The verdict counts them too.
+            </p>
+          ) : null}
+          <p className="health-meta">
+            Last health check {new Date(report!.at).toLocaleTimeString(undefined, { hour12: false })} · {ago(report!.at)}
+            <br />
+            This Node {location.host}
+          </p>
+        </>
+      )}
+      <Link to="/doctor" className="health-open" onClick={onClose}>Open Doctor</Link>
+    </Popover>
+  );
+}
+
+/**
+ * Held and awaiting are counted separately: a policy-gated send is pending mail somebody is waiting on, and
+ * folding it into `held` would say waiting releases it, which is what `awaiting` does not mean. Both are
+ * counted among the newest sends the Outbox lists, so `+` when that page is truncated (#91).
+ */
+function OutboundCounts({ sends }: { sends: SendsResponse }) {
+  const plus = sends.truncated ? "+" : "";
+  const held = sends.sends.filter((send) => send.state === "held").length;
+  const awaiting = sends.sends.filter((send) => send.state === "awaiting").length;
+  return (
+    <p className="health-meta">
+      Outbound: handed over today {sends.daily.handedOver} · held {held}{plus} · awaiting {awaiting}{plus}
+    </p>
+  );
+}
+
+/**
+ * The bottom bar: whether the Node is answering, and what the doctor says. Nothing else: no hostname, no
+ * countdown, no counts, no sign-out (each moved where it is used; see the top of this file).
+ *
+ * It owns the only `useDoctor` observer the chrome needs, which is why the popover takes the report as a prop.
+ */
+export function StatusBar() {
+  const doctor = useDoctor();
+  const connection = useConnection();
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+
+  return (
+    <footer className="status-bar" aria-label="Node status">
+      {/* A polite live region, always mounted: the word changes rarely, and a change is news (WCAG 4.1.3). */}
+      <span className="connection" role="status">
+        <span className={`dot dot-${connection.state}`} />
+        {connection.word}
+      </span>
+      <span className="popover-wrap">
+        <button
+          ref={button}
+          type="button"
+          className="health-button"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen((was) => !was)}
+        >
+          Health:{" "}
+          {doctor.isSuccess
+            ? <span className={`state verdict-${doctor.data.verdict}`}>{doctor.data.verdict}</span>
+            : doctor.isError ? "could not be read" : "checking…"}
+        </button>
+        <HealthPopover
+          open={open}
+          onClose={() => setOpen(false)}
+          anchor={button}
+          report={doctor.data}
+          error={doctor.error}
+        />
+      </span>
+    </footer>
+  );
+}
+
+/* ------------------------------------------------------------------ the layout ---------------------- */
+
+/**
+ * The authenticated layout, below the gate.
+ *
+ * Wide (≥ 1120px): sidebar, main column, status bar. Narrow: one column with a bar holding the menu button,
+ * the screen's name and a compact Compose; the sidebar is a modal `<dialog>` drawer that exists **only while
+ * open**, so no off-screen link sits in the tab order and `showModal()` makes the rest inert.
+ *
+ * The bands (setup unfinished, §7 notices) precede the outlet on every route: §7's notice is one a person
+ * must meet, and there is no route somebody must visit to be told.
+ */
+export function Shell() {
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  const narrow = useNarrow();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const startCompose = useStartCompose();
+  const undo = useToastAction();
+
+  // A navigation, or the window widening past the breakpoint, closes the drawer.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [path, narrow]);
+
+  const shortcuts: Shortcut[] = [{ key: "c", description: "Compose", run: startCompose }];
+  if (undo !== null) shortcuts.push({ key: "z", description: "Undo", run: undo });
+  useShortcuts(shortcuts);
+
+  const closeDrawer = () => setDrawerOpen(false);
+
+  return (
+    <div className="app-shell" data-layout={narrow ? "narrow" : "wide"}>
+      {narrow ? null : <Rail />}
+      {/* A div, not a `main`: the mount point is `<main id="app">`, and a second `main` landmark inside it is
+          the structural defect axe exists to catch. */}
+      <div className={MAIL_ROUTES.has(path) ? "app-main mail" : "app-main"}>
+        {narrow ? (
+          <header className="mobile-bar">
+            <button
+              ref={menuButton}
+              type="button"
+              className="btn btn-icon menu-button"
+              aria-label="Open navigation"
+              aria-haspopup="dialog"
+              aria-expanded={drawerOpen}
+              onClick={() => setDrawerOpen(true)}
+            >
+              <Icon name="menu" />
+            </button>
+            <span className="mobile-title">{ROUTE_LABELS[path as AppRoute] ?? "Mailda"}</span>
+            <ComposeButton compact />
+          </header>
+        ) : null}
+        <SetupUnfinished />
+        <Notices />
+        <Outlet />
+      </div>
+      <StatusBar />
+      {narrow && drawerOpen ? (
+        <Modal
+          className="drawer"
+          label="Navigation"
+          onClose={closeDrawer}
+          returnTo={menuButton}
+          // A click on the backdrop lands on the dialog itself; one on the rail lands inside it.
+          onClick={(event) => { if (event.target === event.currentTarget) closeDrawer(); }}
+        >
+          <Rail onNavigate={closeDrawer} />
+          {/* After the rail, so focus opens on its first link; a way out that a touch screen reader can find,
+              where Escape and the backdrop are not. */}
+          <button type="button" className="btn btn-icon drawer-close" aria-label="Close navigation" onClick={closeDrawer}>
+            <Icon name="close" />
+          </button>
+        </Modal>
+      ) : null}
+      <CommandPalette />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ shared pieces ------------------- */
 
 /**
  * The four empty states §5C requires kept distinct, as one component so they cannot drift apart.
@@ -415,10 +702,21 @@ export function Copyable({ text, label }: { text: string; label: string }) {
           );
         }}
       >
-        {copied ? "copied" : `copy ${label}`}
+        {copied ? "Copied" : `Copy ${label}`}
       </button>
     </span>
   );
+}
+
+/**
+ * What a table sits in: when it is wider than the screen, this scrolls sideways, and a keyboard must be able to
+ * reach it to scroll it (WCAG 2.1.1; axe's `scrollable-region-focusable`). So it is a named region in the Tab
+ * order, as the notices band is. Always, not only while it overflows: whether it does depends on the Node's
+ * words and the window, and following that would take a resize observer on every table. At 390 the breakers on
+ * /limits overflowed with nothing in them to focus (R2AXE-4).
+ */
+export function Scroller({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="scroller" tabIndex={0} role="region" aria-label={label}>{children}</div>;
 }
 
 export function Truncated({ when, shown, noun }: { when: boolean; shown: number; noun: string }) {
@@ -523,7 +821,9 @@ export function Notices() {
   if (!notices.isSuccess || notices.data.notifications.length === 0) return null;
 
   return (
-    <section className="notices" aria-label="Notifications">
+    // Focusable, so a keyboard can scroll it: the stylesheet bounds its height, and fifty non-dismissible
+    // notices must never squeeze the screen below them to nothing.
+    <section className="notices" aria-label="Notifications" tabIndex={0}>
       <Truncated when={notices.data.truncated} shown={notices.data.notifications.length} noun="notices" />
       {notices.data.notifications.map((notice) => {
         const { headline, meta } = noticeText(notice);

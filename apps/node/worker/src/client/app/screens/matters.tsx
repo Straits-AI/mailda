@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Scroller } from "../chrome.tsx";
 import {
   type ExportManifest, MATTER_TYPES, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
   placeHold, readExportManifest, requestExport, runExport, useExports, useHolds, useMailboxes, useMatters,
@@ -144,7 +144,7 @@ export function Matters() {
               "Matter opened.",
             )}
           >
-            open a matter
+            Open a matter
           </button>
         </div>
 
@@ -153,7 +153,7 @@ export function Matters() {
         ) : (matters.data?.matters ?? []).length === 0 ? (
           <Nothing kind="empty" detail="No matters. Nothing is under investigation." />
         ) : (
-          <div className="scroller">
+          <Scroller label="Matters">
             <table>
               <thead>
                 <tr>
@@ -182,7 +182,7 @@ export function Matters() {
                             "Matter closed. The people whose mail was read will be told.",
                           )}
                         >
-                          close
+                          Close
                         </button>
                       ) : <span className="dim">—</span>}
                     </td>
@@ -190,7 +190,7 @@ export function Matters() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
         )}
       </section>
 
@@ -237,7 +237,7 @@ export function Matters() {
               "Hold placed. Nothing in that mailbox can be deleted now.",
             )}
           >
-            hold this mailbox
+            Hold this mailbox
           </button>
         </div>
 
@@ -246,7 +246,7 @@ export function Matters() {
         ) : (holds.data?.holds ?? []).length === 0 ? (
           <Nothing kind="empty" detail="Nothing is held." />
         ) : (
-          <div className="scroller">
+          <Scroller label="Holds">
             <table>
               <thead>
                 <tr>
@@ -277,7 +277,7 @@ export function Matters() {
                             "Asked. Two other people have to agree before this hold lifts.",
                           )}
                         >
-                          ask to lift
+                          Ask to lift
                         </button>
                       )}
                     </td>
@@ -285,7 +285,7 @@ export function Matters() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
         )}
       </section>
 
@@ -342,14 +342,14 @@ export function Matters() {
               "Asked. Two people have to approve before you can read anything.",
             )}
           >
-            ask to read
+            Ask to read
           </button>
         </div>
 
         {(supervised.data?.supervised ?? []).length === 0 ? (
           <Nothing kind="empty" detail="Nobody has been granted a supervised read." />
         ) : (
-          <div className="scroller">
+          <Scroller label="Supervised reads">
             <table>
               <thead>
                 <tr>
@@ -380,7 +380,7 @@ export function Matters() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
         )}
       </section>
 
@@ -416,13 +416,13 @@ export function Matters() {
               "Asked. Two other administrators have to agree before it runs; then run it here, and download from its manifest.",
             )}
           >
-            ask to export
+            Ask to export
           </button>
         </div>
         {(exports.data?.exports ?? []).length === 0 ? (
           <Nothing kind="empty" detail="No exports have been requested." />
         ) : (
-          <div className="scroller">
+          <Scroller label="Copies taken out">
             <table>
               <thead>
                 <tr>
@@ -454,7 +454,7 @@ export function Matters() {
                           className="linkish"
                           onClick={() => void run(() => runExport(row.id), "Export run.")}
                         >
-                          run
+                          Run
                         </button>
                       ) : (
                         <>
@@ -465,7 +465,7 @@ export function Matters() {
                           {" · "}
                           {objects[row.id] === undefined ? (
                             <button type="button" className="linkish" onClick={() => void listObjects(row.id)}>
-                              objects
+                              Objects
                             </button>
                           ) : (
                             <ul className="export-objects">
@@ -485,7 +485,7 @@ export function Matters() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
         )}
       </section>
     </>

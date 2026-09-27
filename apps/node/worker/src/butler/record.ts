@@ -442,15 +442,22 @@ export async function replaysOf(env: Env, orgId: string, runId: string): Promise
 }
 
 /**
- * The run a manifest was proposed by, or null.
+ * The run a manifest was proposed by, and the state its record is in, or null.
  *
- * One query, on `bre_by_subject`. What the release act needs: a person releases a **send**, and the run
- * parked on it is what has to be told. A manifest with no run is an ordinary human-composed send, which is
- * the majority case and is not an error here — it simply has nothing to resume.
+ * One query, on `bre_by_subject` and then `butler_runs`' primary key. What the release act needs: a person
+ * releases a **send**, and the run parked on it is what has to be told — but only a run whose record reads
+ * `awaiting_release` is parked, so the state comes back in the same round trip. A manifest with no run is an
+ * ordinary human-composed send, which is the majority case and is not an error here — it simply has nothing
+ * to resume.
  */
-export async function runOfSubject(env: Env, orgId: string, subject: string): Promise<string | null> {
-  const row = await env.CATALOG.prepare(
-    "SELECT run_id FROM butler_run_effects WHERE org_id = ? AND subject = ? ORDER BY seq LIMIT 1",
-  ).bind(orgId, subject).first<{ run_id: string }>();
-  return row?.run_id ?? null;
+export async function runOfSubject(
+  env: Env,
+  orgId: string,
+  subject: string,
+): Promise<{ id: string; state: RunState } | null> {
+  return await env.CATALOG.prepare(
+    `SELECT r.id, r.state FROM butler_run_effects e
+       JOIN butler_runs r ON r.org_id = e.org_id AND r.id = e.run_id
+      WHERE e.org_id = ? AND e.subject = ? ORDER BY e.seq LIMIT 1`,
+  ).bind(orgId, subject).first<{ id: string; state: RunState }>();
 }

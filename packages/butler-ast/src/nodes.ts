@@ -170,7 +170,10 @@ export const NODE_KINDS = {
   },
   label: {
     status: "reserved",
-    because: "There is no label or tag concept anywhere in the schema.",
+    because:
+      "Labels exist (0061) as a person's act on a message they may read, audited with that person as the "
+      + "actor. No Butler effect writes them, and one would first need deciding whose authority a Butler "
+      + "labels under.",
   },
   route: {
     status: "reserved",
@@ -180,7 +183,10 @@ export const NODE_KINDS = {
   },
   archive: {
     status: "reserved",
-    because: "There is no archived state on a mailbox item or a case.",
+    because:
+      "Archive is a place in one person's own view (0067), a row per person rather than a state of the "
+      + "mailbox item or the case. A Butler has no view of its own to file into, and filing into a person's "
+      + "would change a view that is theirs alone.",
   },
   quarantine: {
     status: "reserved",

@@ -312,6 +312,55 @@ callers will read:
   next fifty has to narrow the words. There is no paging to offer, which is why the field is null rather than
   a position that would half-work.
 
+**`place`, `unread` and `mine` joined them with the interface redesign** (26 September 2026, ADR 45), and each is
+a per-person filter the Node applies, because a filter over one page in a client reads that page as everything
+(#91). `place` is `inbox`, `archive` or `trash`; `unread` and `mine` accept exactly `1`, and anything else,
+`0` and `true` included, is a 422 `E_MESSAGE_PAGE_FILTER` rather than a guess. Any of the three with `q` is a 422
+`E_MESSAGE_PAGE_SEARCH_FILTER`: a residual filter inside each ranked arm has a cost nobody has measured, and the
+refusal says to search without it, since every result already carries its `place`, `read` and `case_mine`.
+
+Three things a caller needs from the descriptions, which is where a generated client reads them:
+
+- **`lookback_exhausted` is on every listing response**, and it is `true` only when a request with
+  `place=inbox`, `unread=1` or `mine=1` looked back through `messages.max_lookback` of the messages the caller
+  can see without filling the page. `next_cursor` then resumes after the last message it **looked at**, not after
+  the last row it returned, so a page can be empty and still carry a cursor. It is never a reason to stop and
+  never a total: follow `next_cursor`, which is `null` only when nothing further back is visible. The route's
+  summary and each of the three parameters end with the same sentence naming the budget, because the contract
+  does not import budgets and an agent learns the limit where it meets it (AGENTS.md §3). The figure itself is
+  the response's `max_lookback`: the bound that request looked back through, or `null` when it used none. A
+  searched page is always `false`, and so is an Archive or Trash page without `unread=1` or `mine=1`; with
+  either, Archive and Trash are bounded the same way.
+- **The row gained six fields**, and their nulls mean different things. `place` is never null (`inbox` for a
+  receipt not yet materialised, which nothing can file). `from_name` is null when the From header had no
+  display name, when the name looked like an address or a domain, or when the backfill has not reached the
+  message. `preview` is null for any reader without standing content read on the delivery's mailbox, always
+  under a supervised grant, and when there is no body text or no projection yet. `standing_content` is `1`
+  exactly when the caller may mark read, label and place that message. `case_mine` is `1` when the caller holds
+  the delivery's case (always `0` for an agent, since people hold cases), and `case_state` is the case's state
+  or null, never who holds it.
+- **Two routes and two fields are new.** `PUT /api/messages/:messageId/place` takes `{ "place": … }` and answers
+  `{ messageId, place }`: idempotent, the caller's own view only, tier `act`, capability `mail.place`, and a
+  missing or non-string place is `E_PLACE_UNKNOWN` rather than coerced into one. `GET
+  /api/messages/:receiptId/headers` answers the header block as text with `truncated` and `limit_bytes`
+  (`mime.max_header_bytes`), under the body's authority and record. `PUT /api/cases/:caseId/assignee` takes an
+  optional `holder`, the holder the giver saw (a user id, or `null` for unclaimed), and refuses as `held` when
+  the case's holder is no longer it, so a hand-over cannot overwrite a colleague's claim made while the giver
+  was looking. That request is now strict: a field it does not know (a misspelled `holder`) is refused as
+  `E_ASSIGN_FIELD_UNKNOWN` rather than dropped, since a dropped `holder` would skip the compare-and-swap, and a
+  `holder` that is neither a string nor `null` is refused as `E_ASSIGN_HOLDER_INVALID` for the same reason. The
+  `case.assigned` entry's `from` is the holder the swap replaced, which is the `holder` given when there is one.
+  The place request is strict the same way (`E_PLACE_FIELD_UNKNOWN`). Each row of `GET /api/drafts` carries
+  `caseId`, the case of the message a draft answers, so a resumed reply can claim it before it is sealed. A second
+  draft of the same reply (`PUT /api/drafts` with no id, from a second tab) is refused as 409 `E_DRAFT_EXISTS`,
+  naming the draft in progress, where the unique index used to surface as a 500.
+
+**`POST /api/maintenance/requeue-previews`** puts every row preview the backfill gave up on back in its queue and
+answers `{ requeued, message }`: `org.admin`, tier `operator`, and the remedy `doctor`'s `preview_backlog` names
+once `evidence_present` and `key_vault` read ok. Every failed row of the caller's organization rather than named
+ones, unlike `POST /api/search/repair`, because no preview failure is deterministic: a body that cannot be parsed
+projects as a row with no preview, and missing evidence returns to failed after one pass.
+
 ### Responses are validated by default
 
 That is the difference between the SDK and a wrapper around `fetch`. A Node that has drifted is caught at the

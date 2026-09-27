@@ -116,7 +116,14 @@ export interface RouteSpec {
  * wrote a handler that answers every verb, which is worth a conversation rather than a silent addition.
  */
 /**
- * The two query parameters `GET /api/messages` reads, spelled once (#91).
+ * Where a person keeps a message in their own view (0067), exported here beside the parameter that filters by it.
+ * Defined in `schemas.ts`, because this file imports that one and a cycle back would read `PLACES` before it is
+ * initialised.
+ */
+export { PLACES } from "./schemas.ts";
+
+/**
+ * The query parameters `GET /api/messages` reads, spelled once (#91).
  *
  * Three surfaces name them — the registry entry below, `listMessages` which parses them, and the interface
  * which sends them — and a query parameter is a name a client can only get wrong silently: a `?cursor=` the
@@ -125,7 +132,20 @@ export interface RouteSpec {
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
 export const MESSAGE_PAGE_PARAMS =
-  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from", conversation: "conversation", label: "label" } as const;
+  {
+    cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from",
+    conversation: "conversation", label: "label", place: "place", unread: "unread", mine: "mine",
+  } as const;
+
+/**
+ * The sentence every per-person filter of `GET /api/messages` ends with, and its summary carries: the limit is
+ * named where the caller meets it (AGENTS §3). The contract does not import budgets, so the budget is named, not
+ * quoted; the SDK and the Skill are generated from these strings, which is how an agent learns it.
+ */
+const LOOKBACK_SENTENCE = "With place=inbox, unread or mine, one request looks back through at most "
+  + "messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how "
+  + "many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks "
+  + "further back.";
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -291,7 +311,7 @@ export const ROUTES = [
     authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] },
     method: "GET", path: "/api/messages",
     summary: "Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to "
-      + "continue; null means nothing older is visible",
+      + "continue; null means nothing older is visible. " + LOOKBACK_SENTENCE,
     /*
      * The first route to declare query parameters, and #91 is why the field exists rather than the paging
      * being documented in this sentence and reachable only from the browser. `listMessages` returned the
@@ -342,6 +362,22 @@ export const ROUTES = [
           + "is how a thread is read. Same authorization as the listing: a message you may not see is not "
           + "in the thread. Pages like any other listing.",
       },
+      {
+        name: MESSAGE_PAGE_PARAMS.place,
+        description: "Only mail in this place of yours: inbox, archive or trash. Omit for every place. Places "
+          + "are per person — another reader's Inbox is unaffected — and every listed message carries its own "
+          + "in `place`. Not combinable with `q`. " + LOOKBACK_SENTENCE,
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.unread,
+        description: "`1` for only mail you have not opened (per person, 0062). Omit for both. Not combinable "
+          + "with `q`. " + LOOKBACK_SENTENCE,
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.mine,
+        description: "`1` for only mail whose case, in the mailbox it was delivered to, you hold — the same "
+          + "`mine` as a mailbox's count. Not combinable with `q`. " + LOOKBACK_SENTENCE,
+      },
     ],
     response: S.messageListResponse,
   },
@@ -363,6 +399,19 @@ export const ROUTES = [
     method: "GET", path: "/api/messages/:receiptId/attachments/:ordinal",
     summary: "One attached part's bytes, by its position in the body route's `attachments`. A copy leaving the Node, so it takes message.export like the original and is recorded as an export",
     authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] },
+  },
+  {
+    /*
+     * The header block is content (subjects, recipients, routing), so it takes the body's authority and record:
+     * under a supervised grant it is recorded as an open, exactly as the body is. Not `message.export`: it is
+     * text to read, capped at mime.max_header_bytes, not the original's bytes as a file (that is /raw).
+     */
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    method: "GET", path: "/api/messages/:receiptId/headers",
+    summary: "One message's header block as it arrived, as text to read (not the original as a file, which is "
+      + "/raw and an export). Content, so the body's authority and record: recorded as an open under a "
+      + "supervised grant. Takes the receipt id",
+    response: S.messageHeadersResponse,
   },
   { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
@@ -433,6 +482,14 @@ export const ROUTES = [
     summary: "Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id.",
     request: S.setLabelsRequest,
     response: S.labelsSetResponse,
+  },
+  {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    method: "PUT", path: "/api/messages/:messageId/place",
+    summary: "Put a message in your Inbox, Archive or Trash (0067). Yours alone; destroys nothing; Trash is "
+      + "restorable. Takes the msg_ id",
+    request: S.setPlaceRequest,
+    response: S.placeSetResponse,
   },
   { method: "POST", path: "/api/conversations/merge", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 
@@ -846,6 +903,7 @@ export const ROUTES = [
 
   // ---- maintenance ------------------------------------------------------------------------------------
   { method: "POST", path: "/api/maintenance/reseal", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reseal evidence under the current key", response: S.resealResponse },
+  { method: "POST", path: "/api/maintenance/requeue-previews", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Put every row preview the backfill gave up on back in its queue", response: S.previewsRequeuedResponse },
   {
     method: "POST", path: "/api/maintenance/reconcile", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reconcile stored evidence against its metadata",
     query: [

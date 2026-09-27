@@ -1,6 +1,10 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, it } from "vitest";
 
+import { BUDGETS } from "@mailda/budgets";
+
+import { messagePageQuery, type MessagePage } from "../src/authz-read.ts";
+import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 import { seed, type Corpus } from "./seed.ts";
 
 let corpus: Corpus;
@@ -174,5 +178,38 @@ describe("query plans", () => {
       [corpus.orgId, ...Array.from({ length: 2 }, () => new Date().toISOString()),
         new Date().toISOString(), new Date().toISOString(), "rcpt_z", 51],
     );
+
+    /*
+     * The shipped listing's three plans (0067, §7 Q-A), from the builder itself rather than restated.
+     *
+     * **The lookback** is the claim worth reading: a `CO-ROUTINE` for the inner walk driven by
+     * `ir_org_accepted`, then `SCAN w` with **no** `USE TEMP B-TREE FOR ORDER BY` — the order is read out of
+     * the co-routine, so the outer `LIMIT` stops it as soon as the page fills. A temporary B-tree here would
+     * mean the whole lookback is read before the first row returns, which is the cost `ROW_NUMBER()` was
+     * rejected for (`message-page-size.md`). **The placed plan** must `SCAN p USING INDEX mpl_by_place`-style
+     * seek the filing table first: its cost is a page only while the filing table drives.
+     */
+    const at = new Date().toISOString();
+    const shipped = (page: Partial<MessagePage>) => messagePageQuery({
+      orgId: corpus.orgId, subjects: [corpus.typicalUser], readerId: corpus.typicalUser, nowIso: at,
+      sponsor: { sql: "", params: [] },
+      supervised: {
+        metadata: liveGrantsBySubject(corpus.orgId, corpus.typicalUser, at, SCOPES_FOR_METADATA),
+        content: liveGrantsBySubject(corpus.orgId, corpus.typicalUser, at, SCOPES_FOR_CONTENT),
+      },
+      page: {
+        after: null, mailboxId: null, q: null, since: null, until: null, from: null, conversationId: null,
+        label: null, place: null, unread: false, mine: false, ...page,
+      },
+      limit: 51,
+      lookback: page.place === "inbox" || page.unread === true || page.mine === true
+        ? BUDGETS["messages.max_lookback"] : null,
+    });
+    const lookback = shipped({ place: "inbox" });
+    await explain("inbox (the lookback — shipped)", lookback.sql, lookback.params);
+    await explain("inbox (the lookback's edge, only after a page that did not fill)", lookback.edge!.sql,
+      lookback.edge!.params);
+    const placed = shipped({ place: "archive" });
+    await explain("archive (the placed plan, driven by mpl_by_place)", placed.sql, placed.params);
   });
 });

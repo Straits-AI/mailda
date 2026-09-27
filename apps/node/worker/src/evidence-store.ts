@@ -1,6 +1,6 @@
 import { type Bytes, DEFAULT_FRAME_BYTES, open as openFrames, openStream, seal } from "@mailda/evidence";
 
-import { aesKeyFrom, LEGACY_KEY_GENERATION, vault } from "./keyvault.ts";
+import { aesKeyFrom, LEGACY_KEY_GENERATION, requireOpeningKey, vault } from "./keyvault.ts";
 
 /**
  * Raw MIME storage (§12, #7, #16).
@@ -62,16 +62,36 @@ export function runKeyCache(): RunKeyCache {
   return { opening: new Map(), sealing: null };
 }
 
-async function contentKeyFor(
+/**
+ * The content key of one generation, for opening (ADR 28). Exported for the one other thing sealed under it:
+ * a message's row preview (0068, `preview.ts`), which must open under exactly the key its evidence does.
+ */
+export async function contentOpeningKey(
   env: Env,
   generation: number,
   cache?: RunKeyCache,
 ): Promise<CryptoKey> {
   const cached = cache?.opening.get(generation);
   if (cached !== undefined) return cached;
-  const key = await aesKeyFrom((await vault(env).openingKey("content", generation)).secret);
+  const key = await aesKeyFrom((await requireOpeningKey(env, "content", generation)).secret);
   cache?.opening.set(generation, key);
   return key;
+}
+
+/**
+ * The newest content key and its generation, for sealing. Always the highest generation: `sealingKey` never
+ * returns the legacy constant, so nothing is written under a published key even by mistake. Exported for the
+ * row preview (0068), which ingest seals with the same key as the evidence, in the same run.
+ */
+export async function contentSealingKey(
+  env: Env,
+  cache?: RunKeyCache,
+): Promise<{ generation: number; key: CryptoKey }> {
+  if (cache?.sealing) return cache.sealing;
+  const key = await vault(env).sealingKey("content");
+  const derived = { generation: key.generation, key: await aesKeyFrom(key.secret) };
+  if (cache !== undefined) cache.sealing = derived;
+  return derived;
 }
 
 export interface StoredEvidence {
@@ -106,15 +126,7 @@ export async function putEvidence(
     metadata?: Record<string, string>;
   } = {},
 ): Promise<StoredEvidence> {
-  // Always the highest generation. `sealingKey` never returns the legacy constant, so a Node cannot
-  // write a new object under a published key even by mistake.
-  const cached = options.cache?.sealing;
-  const sealing = cached ?? await (async () => {
-    const key = await vault(env).sealingKey("content");
-    const derived = { generation: key.generation, key: await aesKeyFrom(key.secret) };
-    if (options.cache !== undefined) options.cache.sealing = derived;
-    return derived;
-  })();
+  const sealing = await contentSealingKey(env, options.cache);
   const sealed = await seal(sealing.key, plaintext, DEFAULT_FRAME_BYTES);
 
   const object = new Uint8Array(sealed.header.length + sealed.body.length);
@@ -227,7 +239,7 @@ async function openWithoutALabel(
   let last: unknown = null;
   for (const generation of candidates) {
     try {
-      const plaintext = await openFrames(await contentKeyFor(env, generation, cache), fetched);
+      const plaintext = await openFrames(await contentOpeningKey(env, generation, cache), fetched);
       return { plaintext, generation };
     } catch (error) {
       // Kept, not swallowed: if every candidate fails the caller gets a real decrypt error rather than a
@@ -250,7 +262,7 @@ export async function getEvidence(
 ): Promise<Bytes> {
   const fetched = await fetchSealed(env, blobKey);
   if (!fetched.declared) return (await openWithoutALabel(env, fetched, cache)).plaintext;
-  return openFrames(await contentKeyFor(env, fetched.generation, cache), fetched);
+  return openFrames(await contentOpeningKey(env, fetched.generation, cache), fetched);
 }
 
 /**
@@ -274,7 +286,7 @@ export async function streamEvidence(env: Env, blobKey: string): Promise<Readabl
     const key = await keyThatOpensTheFirstFrame(env, fetched);
     return openStream(key, fetched);
   }
-  return openStream(await contentKeyFor(env, fetched.generation), fetched);
+  return openStream(await contentOpeningKey(env, fetched.generation), fetched);
 }
 
 /** The first candidate key whose first frame authenticates. Throws the last failure if none does. */
@@ -282,7 +294,7 @@ async function keyThatOpensTheFirstFrame(env: Env, fetched: FetchedEvidence): Pr
   const candidates = [LEGACY_KEY_GENERATION, ...await vault(env).generations("content")];
   let last: unknown = null;
   for (const generation of candidates) {
-    const key = await contentKeyFor(env, generation);
+    const key = await contentOpeningKey(env, generation);
     const reader = openStream(key, fetched).getReader();
     try {
       await reader.read();
@@ -310,7 +322,7 @@ export async function openForReseal(
    */
   if (!fetched.declared) return openWithoutALabel(env, fetched);
   return {
-    plaintext: await openFrames(await contentKeyFor(env, fetched.generation), fetched),
+    plaintext: await openFrames(await contentOpeningKey(env, fetched.generation), fetched),
     generation: fetched.generation,
   };
 }

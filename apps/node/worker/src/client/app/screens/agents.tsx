@@ -161,7 +161,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         * shipped — an administrator setting up automation for a colleague is the ordinary case — and the form
         * always sent the signed-in user, so the wider half of the route was unreachable from the product.
         */}
-      <label>
+      <label className="field-row">
         <span>Acting for</span>
         <select
           value={chosenSponsor ?? ""}
@@ -178,7 +178,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         </span>
       </label>
 
-      <label>
+      <label className="field-row">
         <span>Name</span>
         <input
           value={name}
@@ -277,7 +277,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         )) : null}
       </fieldset>
 
-      <label>
+      <label className="field-row">
         <span>Expires after (days)</span>
         <input
           type="number"
@@ -471,7 +471,7 @@ export function Agents() {
                       */}
                     {where.state === "live" ? (
                       <button type="button" className="linkish" onClick={() => void withdraw(agent.id)}>
-                        withdraw
+                        Withdraw
                       </button>
                     ) : null}
                   </td>

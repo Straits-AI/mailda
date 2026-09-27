@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { DOCTOR_CHECKS } from "@mailda/contract/schemas";
+
 /**
  * Does every check name `src/doctor.ts` *refers to* exist?
  *
@@ -159,8 +161,8 @@ describe("every check name the repository's prose refers to is one a check emits
   });
 
   it("names no check that does not exist", () => {
-    const emittedElsewhere = emittedNames(source);
-    const wrong = elsewhere.filter((one) => !emittedElsewhere.includes(one.name));
+    // The registry, which the test below holds equal to what the doctor emits (AGENTS §2c, rung 2).
+    const wrong = elsewhere.filter((one) => !(DOCTOR_CHECKS as readonly string[]).includes(one.name));
     expect(
       wrong.map((one) => `${one.where} → ${one.name}`),
       "prose points an operator at a doctor finding that no check emits. A migration comment is exactly "
@@ -200,8 +202,20 @@ describe("every check name doctor.ts refers to is one a check emits", () => {
     ).toBeNull();
   });
 
+  it("lists in the contract's registry exactly the names the doctor emits", () => {
+    /*
+     * `DOCTOR_CHECKS` (`packages/contract/src/schemas.ts`) is what `Finding.check` is typed as, so a check
+     * emitting a name the registry lacks does not compile. The other direction is this test's: a name the
+     * registry keeps after its check is deleted would sit in the client's health mapping describing nothing.
+     * Anti-vacuity: the parse must find the forty-odd names the doctor emits before the sets are compared.
+     */
+    expect(emitted.length, "the emitted-name parse found too few names — it has stopped matching")
+      .toBeGreaterThan(40);
+    expect([...emitted].sort()).toEqual([...DOCTOR_CHECKS].sort());
+  });
+
   it("refers to no name that nothing emits", () => {
-    const dangling = referenced.filter((reference) => !emitted.includes(reference.name));
+    const dangling = referenced.filter((reference) => !(DOCTOR_CHECKS as readonly string[]).includes(reference.name));
     expect(
       dangling.length === 0 ? null
         : dangling.map((reference) => `${reference.name} (${reference.where})`).join("; ")

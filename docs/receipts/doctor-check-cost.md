@@ -1,7 +1,7 @@
 ---
 id: doctor-check-cost
 kind: measured-tripwire
-measured_on: 2026-08-28
+measured_on: 2026-09-26
 stale_when: >
   Cloudflare changes the per-invocation subrequest ceiling on either plan again, the Worker starts declaring a
   limits.subrequests block (which would override the platform default), R2 head stops counting as a
@@ -15,6 +15,26 @@ values:
   doctor.max_subrequests_per_run: 220
   doctor.stalled_outbox_seconds: 600
 ---
+
+## Correction, 26 September 2026: `preview_backlog`, one grouped query and one subrequest
+
+`preview_backlog` (0068) counts the messages that still owe a row preview and sender name, and the ones that
+never will. One `GROUP BY preview_state` over the partial index `msg_preview_open`, which holds only rows not
+yet projected, so its cost is the backlog (zero rows on a caught-up Node), like `body_index_backlog`'s; no R2
+and no per-row cost. It lives in `src/doctor/evidence.ts`, which stays batch-free
+(`test/node/doctor-meter-honesty.test.ts`); the backfill that batches is its own file.
+
+Measured by removing the check and re-running the same fixture in the same session
+(`apps/node/worker/test/outbound-recheck.test.ts`, "reports the withheld sends"):
+
+```
+without   subrequests=32  d1=27  r2=5  findings=30
+with      subrequests=33  d1=28  r2=5  findings=31
+```
+
+**+1 subrequest, +1 D1 query, +1 finding.** Against `doctor.max_subrequests_per_run = 220` the run sits at 33,
+6.7× inside it, and `values:` is untouched. The baseline had moved again since the last correction here (28 on
+the search fixtures), on a different fixture; the delta above is the only figure this correction claims.
 
 ## Addition, 20 September 2026: `doctor.stalled_outbox_seconds`, measured on the live Node
 
@@ -395,7 +415,7 @@ bound at all.
 A Worker invocation may issue at most **10,000 subrequests** on Paid. It was **1,000** when this
 derivation was run (the same cap #4 sized service-binding fan-out against), and that figure was withdrawn
 on 11 February 2026, per the first correction above. Both D1 queries and R2 operations spend one.
-`message-metadata-bytes.md` measured that a 10 GB shard holds **~8.5 million messages**, so "check every
+`message-metadata-bytes.md` measures that a 10 GB shard holds **millions of messages**, so "check every
 receipt" is not a bounded operation and never becomes one.
 
 **200 receipts, most recent first.** The derivation below is the one that actually produced 200, kept as
@@ -412,8 +432,8 @@ correction above.)
 | ~790 | headroom, so adding a check never silently pushes this over the cap; ~9,790 under the live Paid ceiling |
 
 The bound is **visible in the output**, not just in this file. The finding's detail line reads
-`200 of 8,500,000 receipt(s) checked, most recent 200`, because a check that examines 200 rows of
-8.5 million and reports "ok" is a check that lies, and AGENTS.md forbids a cap the reader cannot
+`200 of N receipt(s) checked, most recent 200`, N the live count, because a check that examines 200 rows
+of millions and reports "ok" is a check that lies, and AGENTS.md forbids a cap the reader cannot
 see. Most recent first because a blob that has just gone missing is the one a human can still act
 on; older losses need the §24 reconciler, not a diagnostic.
 

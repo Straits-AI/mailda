@@ -72,24 +72,33 @@ export interface Capability {
 export const CAPABILITIES: readonly Capability[] = [
   {
     id: "mail.read",
-    says: "Read mail: list the mailboxes you may read, page their messages, open one, and fetch the "
-      + "original bytes. The original `.eml` needs `message.export` as well as content read — the route "
+    says: "Read mail: list the mailboxes you may read, page their messages, open one or read its header "
+      + "block, and fetch the original bytes. The original `.eml` needs `message.export` as well as content read — the route "
       + "checks both.",
     reachesContent: true,
     routes: [
       "GET /api/mailboxes/readable",
       "GET /api/messages",
       "GET /api/messages/:receiptId/body",
+      "GET /api/messages/:receiptId/headers",
       "GET /api/messages/:receiptId/raw",
       "GET /api/messages/:receiptId/attachments/:ordinal",
     ],
   },
   {
     id: "mail.label",
-    says: "Put words on a message, or take them off, to find it again. Reads nothing a mail.read holder "
-      + "cannot; changes nothing but the words, and every change is audited with the words named.",
+    says: "Put words on a message, or take them off, to find it again, and mark it read or unread for "
+      + "yourself. Reads nothing a mail.read holder cannot. A label change is audited with the words named; "
+      + "read state is your own bookmark and is not.",
     reachesContent: false,
     routes: ["PUT /api/messages/:messageId/labels", "PUT /api/messages/:messageId/read"],
+  },
+  {
+    id: "mail.place",
+    says: "Move a message between your Inbox, Archive and Trash. Your own view only: nobody else's Inbox "
+      + "changes, nothing is destroyed, and Trash can always be moved back.",
+    reachesContent: false,
+    routes: ["PUT /api/messages/:messageId/place"],
   },
   {
     id: "mail.hold",

@@ -334,14 +334,14 @@ describe("reading a pinned ceiling back", () => {
     // offer that completes by doing nothing — and reads as if it did something.
     mount([agent({ revokedAt: "2026-08-02T00:00:00.000Z" })]);
     await screen.findByText("revoked");
-    expect(screen.queryByRole("button", { name: "withdraw" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Withdraw" })).toBeNull();
   });
 
   it("calls DELETE with the agent's id when withdrawn", async () => {
     mount([agent()]);
     await screen.findByText("nightly triage");
     const { fireEvent } = await import("@testing-library/react");
-    fireEvent.click(screen.getByRole("button", { name: "withdraw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
     await waitFor(() =>
       expect(seen("/api/agents/agt_one000000000000000000001").length).toBeGreaterThan(0));
   });

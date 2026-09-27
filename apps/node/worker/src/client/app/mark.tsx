@@ -29,7 +29,7 @@ export function Mark({ size = 26, title = null }: { size?: number; title?: strin
       height={height}
       viewBox={MARK_VIEWBOX}
       /*
-       * `currentColor`, so the rail's `--rail-text` reaches it and one variant serves both schemes. The dot
+       * `currentColor`, so the sidebar's text colour reaches it and one variant serves both themes. The dot
        * keeps Flow Blue: the brand sheet publishes a monochrome lockup *and* a full-colour one, and picking
        * between them is a decision rather than a default — see `MarkOptions.dot` in `brand.ts`.
        */

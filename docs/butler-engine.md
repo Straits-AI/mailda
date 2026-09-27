@@ -493,7 +493,7 @@ compose the message, which is what #60 gave a policy hold's release to. The gate
 *seen* it, not because a stricter authority is owed; `approval.decide` would have made this the approval
 machinery with none of its guarantees.
 
-The outbox offers it as *release* on a row whose reason is `butler_release_required` and on no other row,
+The outbox offers it as *Release* on a row whose reason is `butler_release_required` and on no other row,
 because `release-hold` clears a different gate and one button for both would walk a send past whichever it
 was actually on (`docs/application-shell.md`).
 
@@ -508,6 +508,13 @@ A timeout ends the **run**, never the send. The manifest stays `awaiting`, still
 cancellable. Letting a clock hand mail over would make this a delay rather than a gate. The timeout is
 `approval.send_expiry_seconds`, reused rather than invented: a release is a person agreeing to a Butler's send
 in substance, and this Node must not hold two opinions about how long somebody has to decide about one send.
+
+So a release asks the platform about the instance only when the run record reads `awaiting_release`. A run the
+record shows as ended (a timed-out one is `stopped`) has no instance waiting on the event, and the answer is
+`resumed: false` without a `get` or a `sendEvent`. Whether the platform would refuse an event for a completed
+instance it still retains is unmeasured, and the record is what keeps `resumed` from depending on it. A run
+that still reads `awaiting_release` but whose instance the platform no longer has is closed `finished` with
+`released_after_run_expired`.
 
 ---
 
@@ -676,7 +683,7 @@ assumes a first attempt.
 | `retry-effect` | `POST /api/sends/:id/retry` | one manifest's `state`, `fidelity`, `submitted_key` | that manifest back to `held`, audited `send.retried`; then dispatch, under the **original** key |
 | `resend-may-duplicate` | the same route, named mode | the same three, plus the envelope and the author's **typed** body | a **new** manifest under a **new** key with `resend_of` set, audited `send.resent` |
 
-The Butlers screen offers `re-run` as *run again* on every finished run, and says beside the button that the
+The Butlers screen offers `re-run` as *Run again* on every finished run, and says beside the button that the
 run is new and its writes are real; the release gate above is what keeps a re-run from sending anything on its
 own.
 

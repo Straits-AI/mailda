@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing, Truncated } from "../chrome.tsx";
+import { Nothing, Scroller, Truncated } from "../chrome.tsx";
 import {
   type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
   setAttachmentLimits, setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
@@ -12,10 +12,11 @@ import {
  *
  * ## Three states, and colour is not what distinguishes them
  *
- * Unclaimed, mine, and somebody else's. Each carries a word and a position as well as a colour, because
- * `contrast-tokens.md` proves exactly **one** token — `--dim`. `--signal`, `--alarm` and `--live` have never
- * been measured, so nothing here may rely on colour alone (Blueprint §5C/§5D). That is a live constraint, not
- * a stylistic preference, and it is why every row states its state in text.
+ * Unclaimed, mine, and somebody else's. Each carries a word and a position as well as a colour. Since
+ * 26 September 2026 `contrast-tokens.md` measures every text and indicator token on every ground in both
+ * themes, but a colour that passes contrast still tells nobody who cannot tell two hues apart which state a
+ * row is in, so nothing here may rely on colour alone (Blueprint §5C/§5D). That is why every row states its
+ * state in text.
  *
  * ## The age is shown and never enforced
  *
@@ -38,7 +39,7 @@ import {
 function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
-  if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>hand to…</button>;
+  if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>Hand to…</button>;
   return (
     <span className="hand-to">
       <input
@@ -46,7 +47,7 @@ function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
         onChange={(event) => setEmail(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter" && email.trim() !== "") { event.preventDefault(); onAssign(email.trim()); } }}
       />
-      <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>hand over</button>
+      <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>Hand over</button>
     </span>
   );
 }
@@ -149,7 +150,7 @@ function CaseRowView({
 }) {
   const unclaimed = row.assignee === null;
   // The state word, which is the channel that does not depend on colour being measured.
-  const state = unclaimed ? "unclaimed" : mine ? "yours" : "held";
+  const state = unclaimed ? "unclaimed" : mine ? "mine" : "held";
 
   return (
     <tr className={mine ? "case-row mine" : unclaimed ? "case-row" : "case-row theirs"}>
@@ -200,15 +201,15 @@ function CaseRowView({
       <td className="num case-actions">
         {unclaimed ? (
           <button type="button" className="linkish" onClick={() => onAct("claim", row.id)}>
-            claim
+            Claim
           </button>
         ) : mine ? (
           <>
             <button type="button" className="linkish" onClick={() => onAct("release", row.id)}>
-              release
+              Release
             </button>
             <button type="button" className="linkish" onClick={() => onAct("close", row.id)}>
-              close
+              Close
             </button>
             <HandTo onAssign={(email) => onAssign(row.id, email)} />
           </>
@@ -216,7 +217,7 @@ function CaseRowView({
           // Available to any colleague, deliberately. Restricting it to administrators recreates the
           // blocked queue the absent timeout would otherwise have prevented, and there is no third answer.
           <button type="button" className="linkish" onClick={() => onAct("steal", row.id)}>
-            take
+            Take
           </button>
         )}
       </td>
@@ -351,7 +352,7 @@ export function Queue() {
       <h1>Queue</h1>
       {mailboxes.isSuccess && mailboxes.data.mailboxes.length > 1 ? (
         <label className="queue-picker">
-          <span className="dim mono">mailbox</span>
+          <span className="dim mono">Mailbox</span>
           <select
             value={mailboxId ?? ""}
             onChange={(event) => setSelected(event.target.value)}
@@ -405,7 +406,7 @@ export function Queue() {
           Empty means "promise nothing", which is the same request as null.
         */}
         <label className="target-edit">
-          <span className="dim mono">minutes</span>
+          <span className="dim mono">Minutes</span>
           <input
             type="number"
             min={1}
@@ -531,7 +532,7 @@ export function Queue() {
                   </td>
                   <td className="num">
                     <button type="button" className="linkish" onClick={() => void onRelease(one.messageId)}>
-                      release
+                      Release
                     </button>
                   </td>
                 </tr>
@@ -545,12 +546,12 @@ export function Queue() {
       {picked.length === 2 ? (
         <p className="notice">
           Two cases picked. <button type="button" className="linkish" onClick={() => void onMerge()}>
-            merge them
+            Merge them
           </button>{" "}
           <span className="dim">
             — most merges are refused, and the refusal names the pair to resolve first.
           </span>{" "}
-          <button type="button" className="linkish" onClick={() => setPicked([])}>clear</button>
+          <button type="button" className="linkish" onClick={() => setPicked([])}>Clear</button>
         </p>
       ) : null}
 
@@ -571,7 +572,7 @@ export function Queue() {
       ) : cases.data.cases.length === 0 ? (
         <Nothing kind="empty" detail="Nothing waiting in this queue." />
       ) : (
-        <div className="scroller">
+        <Scroller label="Cases">
         <table className="queue-table">
           <thead>
             <tr>
@@ -601,7 +602,7 @@ export function Queue() {
             ))}
           </tbody>
         </table>
-        </div>
+        </Scroller>
       )}
     </section>
   );

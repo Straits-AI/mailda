@@ -34,9 +34,15 @@ export interface StubMailbox {
   id: string;
   name: string;
   addresses: string | null;
+  /** The queue counts the sidebar sums; zero when a test does not care. */
+  unclaimed?: number;
+  claimed?: number;
+  mine?: number;
 }
 
-const ONE_MAILBOX: StubMailbox[] = [{ id: "mbx_test", name: "Support", addresses: "support@example.test" }];
+const ONE_MAILBOX: StubMailbox[] = [
+  { id: "mbx_test", name: "Support", addresses: "support@example.test", unclaimed: 0, claimed: 0, mine: 0 },
+];
 
 let mailboxes: StubMailbox[] = ONE_MAILBOX;
 /** The inbox list. Empty by default, which is the state most of these tests are about. */
@@ -98,7 +104,7 @@ export function seen(prefix: string): string[] {
 }
 
 export function answerMailboxes(rows: StubMailbox[]): void {
-  mailboxes = rows;
+  mailboxes = rows.map((row) => ({ unclaimed: 0, claimed: 0, mine: 0, ...row }));
 }
 
 export function answerMessages(rows: unknown[]): void {
@@ -149,7 +155,12 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     if (call.path.startsWith(prefix)) return Response.json(body(call.path));
   }
   if (path.startsWith("/api/mailboxes")) return Response.json({ mailboxes });
-  if (path.startsWith("/api/messages")) return Response.json({ messages });
+  /*
+   * A whole answer, cursor included. Without `next_cursor` every default fixture read as "more exist", so the
+   * rail and the list printed `n+` for a page that was the whole of it, and a mistake in the `+` rule (#91)
+   * could not show. `lookback_exhausted: false` for the same reason: the listing always carries it.
+   */
+  if (path.startsWith("/api/messages")) return Response.json({ messages, next_cursor: null, lookback_exhausted: false });
   /*
    * The rail reads these two as well, and reads them **unguarded** — `approvals.data.approvals.length`. A
    * default of `{}` therefore does not render an empty rail, it throws, and the test that mounted it fails
@@ -157,6 +168,16 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
    * empty objects, so a component that mounts chrome gets a quiet rail instead of a crash.
    */
   if (path.startsWith("/api/approvals")) return Response.json({ approvals: [] });
+  // Settings reads who is signed in and their passkeys; a person, so no screen renders an agent's words.
+  if (path === "/api/me") {
+    return Response.json({
+      signedIn: true, principalId: "usr_test", principalKind: "user", userId: "usr_test", delegatorUserId: null,
+      organizationId: "org_test", email: "ana@example.test",
+    });
+  }
+  if (path.startsWith("/api/auth/passkeys")) return Response.json({ passkeys: [] });
+  // The shell's §7 band reads this on every screen, and reads `notifications` unguarded.
+  if (path === "/api/notifications") return Response.json({ notifications: [], truncated: false });
   // The setup progress reads these on Setup and, for doctor, on every screen; `findings` is read unguarded.
   if (path === "/api/doctor") return Response.json({ verdict: "ok", claimed: true, at: "2026-09-24T00:00:00.000Z", findings: [] });
   if (path.startsWith("/api/provider/delivery-events")) return Response.json({ delivery: [] });

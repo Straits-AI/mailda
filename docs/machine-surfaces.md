@@ -16,23 +16,23 @@ would come to disagree about which acts are safe, which is the worst thing they 
 
 | tier | may be offered | what it is | count |
 |:--|:--|:--|--:|
-| `read` | yes | answers a question, changes nothing | 41 |
-| `act` | yes | changes something, and a person can undo it | 12 |
+| `read` | yes | answers a question, changes nothing | 42 |
+| `act` | yes | changes something, and a person can undo it | 13 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 33 |
-| `operator` | **no** | installation, credentials, maintenance | 56 |
+| `operator` | **no** | installation, credentials, maintenance | 57 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
 after every row of this table was found to be wrong at once: 41/12/25/17 against an actual 39/9/29/25. A table
 of counts in a document about completeness reads as evidence of completeness, and nothing was watching it.
 
-**The tier is necessary and not sufficient**, and that column used to say "offered" flat. 53 routes are `read`
-or `act`; **28** are offered. The difference is the second question, can a machine ever be *provisioned* for
+**The tier is necessary and not sufficient**, and that column used to say "offered" flat. 55 routes are `read`
+or `act`; **30** are offered. The difference is the second question, can a machine ever be *provisioned* for
 this route, and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |
 |:--|--:|:--|
-| the tier | 90 | `POST /api/sends`; sealing a send is the one act nobody can undo |
+| the tier | 91 | `POST /api/sends`; sealing a send is the one act nobody can undo |
 | `org.admin`, which no mint confers | 22 | `GET /api/people`, `POST /api/butlers` |
 | a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys`: 200, and an empty list, for ever |
 | requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |

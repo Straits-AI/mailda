@@ -884,7 +884,9 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
     // test — and `test/node/doctor-check-names.test.ts` catches any `fix:` still pointing at the name.
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
     const report = await runDoctor(testEnv, atTime(AUGUST_10));
-    expect(report.findings.some((f) => f.check === "legal_hold_lift_path")).toBe(false);
+    // Widened to a string: `Finding.check` is closed by `DOCTOR_CHECKS`, which no longer lists the name, so the
+    // compiler already refuses a check that emits it; this asserts the report agrees at runtime.
+    expect(report.findings.some((f) => (f.check as string) === "legal_hold_lift_path")).toBe(false);
     expect(JSON.stringify(report)).not.toContain("no way to lift");
   });
 

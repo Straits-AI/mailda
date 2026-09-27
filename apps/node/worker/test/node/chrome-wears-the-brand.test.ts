@@ -1,185 +1,108 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { SHELL_CSS } from "../../src/shell-css.ts";
+import { GROUNDS } from "../../src/theme.ts";
 import { withoutComments } from "../without-comments.ts";
+import { cssRules } from "./support/theme-blocks.ts";
 
 /**
- * The brand reaches both shells, and the search field is a control rather than a shape (#128).
+ * The brand reaches both shells, and the sidebar and the search field are styled as the controls they are
+ * (#128).
  *
- * ## The defect this closes is a *connection*, not a value
+ * ## The defect this closed was a *connection*, not a value
  *
  * `brand.ts`, the palette and the mark all shipped. `markSvg()` was consumed exactly once — by `ui.ts`, the
  * pre-authentication shell — and the React chrome went on rendering a text wordmark from the instrument
- * panel it replaced. Every value was right and nothing joined them, so the identity was on the sign-in page
- * and missing from the product. No test could see that, because each file was individually correct.
+ * panel it replaced. Every value was right and nothing joined them.
  *
- * ## Why lexical, and what it cannot do
+ * ## What moved to render tests, and why
  *
- * It cannot tell whether the rail *looks* right — `test/client/rail-identity.test.tsx` drives the component
- * and `test/node/contrast.test.ts` measures the colours. What this holds is that both consumers exist and
- * neither has quietly grown its own copy of the geometry, which is the shape of the failure that happened.
+ * This file used to pin JSX strings in `chrome.tsx` and `inbox.tsx`: the wordmark's `<span>`, the mark's
+ * gate, the search button's attributes. Those were lexical checks on the wording of a component, which fail
+ * when the code is rewritten rather than when the property breaks (AGENTS.md §2c). The wordmark is now held by
+ * the sidebar's render test and the search field's names by the search field's render test, both of which
+ * mount the component and read what a person or a screen reader gets. What stays here reads an artifact (the
+ * served `SHELL_CSS`) or literal path data, which has no rendered form to test.
  */
 
 const worker = join(import.meta.dirname, "../..");
-const chrome = () => withoutComments(join(worker, "src/client/app/chrome.tsx"));
-const inbox = () => withoutComments(join(worker, "src/client/app/screens/inbox.tsx"));
-const ui = () => withoutComments(join(worker, "src/ui.ts"));
+const source = (path: string): string => withoutComments(join(worker, path));
+const rules = cssRules(SHELL_CSS);
 
-describe("both shells wear the mark", () => {
-  it("sets the name in the display face, and not as two coloured halves", () => {
+describe("the mark is drawn from brand.ts", () => {
+  it("gates the pre-authentication page's mark on the artwork being real", () => {
     /*
-     * The lockup the rail actually renders today. `MAIL<span class="accent">DA</span>` was the instrument
-     * panel's wordmark, kept alive by nothing connecting `brand.ts` to the chrome — and it is not the brand's
-     * anyway: the sheet sets one word, initial capital, in the display face.
+     * The mark in `brand.ts` is a by-eye reconstruction and at 26px it renders as a squiggle with a dot, so no
+     * shell draws it until the designer's vector lands and `MARK_IS_AUTHORED` flips. The document is a string
+     * in `ui.ts`, not a component, so this is its only test.
      */
-    const source = chrome();
-    expect(source).toContain("<span>Mailda</span>");
-    expect(source).not.toContain("MAIL<span");
-  });
-
-  it("gates the symbol on the artwork being real, in both shells", () => {
-    /*
-     * **The measurement, held.** The mark in `brand.ts` is a by-eye reconstruction and at 26px it renders as
-     * a squiggle with a dot — checked against a screenshot, which is what the sentence claiming it "reads as
-     * the Mailda symbol at interface sizes" had never been. So neither shell draws it, and both are gated on
-     * the same flag rather than one of them being quietly fixed.
-     *
-     * This asserts the *wiring*, not the flag's value: when the designer's vector lands, `MARK_IS_AUTHORED`
-     * flips and both shells start drawing without either being edited. A shell that hardcoded the mark back
-     * in would fail here.
-     */
-    for (const [name, source] of [["chrome", chrome()], ["ui", ui()]] as const) {
-      expect(source, `${name} does not gate the mark`).toContain("MARK_IS_AUTHORED");
-    }
-    expect(chrome()).toMatch(/MARK_IS_AUTHORED \? <Mark/);
-    expect(ui()).toMatch(/MARK_IS_AUTHORED \? markSvg/);
+    expect(source("src/ui.ts")).toMatch(/MARK_IS_AUTHORED \? markSvg/);
   });
 
   it("gates the favicon too, which is the smallest and least forgiving place a mark appears", () => {
-    /*
-     * `brand.ts`'s own header said the reconstruction was "not fine for a favicon at 16 px" while the
-     * favicon was drawing it. A tab icon is where a wrong shape is least recoverable: nobody looks closely
-     * enough to see it is wrong, only that the tab is unfamiliar.
-     */
-    expect(withoutComments(join(worker, "src/brand.ts"))).toMatch(/if \(!MARK_IS_AUTHORED\) \{/);
+    expect(source("src/brand.ts")).toMatch(/if \(!MARK_IS_AUTHORED\) \{/);
   });
 
-  it("draws the mark from brand.ts in both, never from a literal path", () => {
+  it("never carries its own path data in either shell", () => {
     /*
      * The rule `brand.ts` states: one geometry, two consumers. A path pasted into either file is the way a
      * logo ends up subtly different in two places, and it is invisible in review because both look right.
      */
-    for (const [name, source] of [["chrome", chrome()], ["ui", ui()]] as const) {
-      expect(source, `${name} carries its own path data`).not.toMatch(/d="M\d/);
+    for (const path of ["src/client/app/chrome.tsx", "src/ui.ts"]) {
+      expect(source(path), `${path} carries its own path data`).not.toMatch(/d="M\d/);
     }
-    expect(chrome()).toMatch(/from "\.\/mark\.tsx"/);
   });
 });
 
-describe("no rail rule reaches for a colour tuned against the page", () => {
+describe("the sidebar's surfaces are ones the contrast matrix measured", () => {
   /**
-   * The gap a mutation found, and it is the one this whole change turns on.
+   * The rail used to be an Ink island inside a light page, and this block held that no rail rule reached for
+   * a colour tuned against the page: on Ink, every page-tuned token failed AA. That ban is retired because
+   * its premise is gone, not because it was inconvenient. The sidebar is `--bg-sidebar` in both themes now,
+   * and `contrast.test.ts` checks every text token against every ground, the sidebar's included.
    *
-   * `contrast.test.ts` measures **tokens**. It proves `--live` fails on Ink and `--rail-live` clears it, and
-   * both stay true no matter which of them `.rail-mine` actually uses — so putting the failing token back
-   * passed every contrast assertion. Measuring a value is not the same as measuring where it is used.
-   *
-   * And it generalises, because every page-tuned token fails on Ink:
-   *
-   *     --live        #2F6F4E   3.01
-   *     --warn        #9A5410   3.14
-   *     --alarm       #A5342A   2.68
-   *     --accent-text #436BA8   3.36
-   *     --text        #0F1720   1.00   (invisible)
-   *
-   * So this is a closed world over the rail's rules rather than a patch for the one that broke: any of the
-   * five inside a rail rule is unreadable, and the next person to style a rail row will reach for whichever
-   * one names the thing they mean.
+   * What that matrix cannot see is a sidebar rule painting a surface that is **not** a ground: a text token
+   * on it would then sit on a colour nobody measured. So this is the property the old ban approximated,
+   * stated exactly: every fill a sidebar rule sets is transparent or one of the measured grounds.
    */
-  const PAGE_TUNED = ["live", "warn", "alarm", "accent-text", "text"] as const;
+  const rail = rules.filter((rule) => rule.selectors.some((selector) => /\.rail(?![a-z])/.test(selector)));
 
-  /** Every declaration block in the stylesheet whose selector mentions the rail. */
-  function railRules(): Array<{ selector: string; body: string }> {
-    const found: Array<{ selector: string; body: string }> = [];
-    for (const match of ui().matchAll(/([^{}]*\.rail[^{}]*)\{([^}]*)\}/g)) {
-      found.push({ selector: (match[1] ?? "").trim(), body: match[2] ?? "" });
-    }
-    return found;
-  }
-
-  it("finds the rail's rules, so nothing below passes by scanning none", () => {
-    const rules = railRules();
-    expect(rules.length).toBeGreaterThan(6);
-    expect(rules.some((rule) => rule.selector.includes(".rail-row"))).toBe(true);
+  it("finds the sidebar's rules, so nothing below passes by reading none", () => {
+    expect(rail.length).toBeGreaterThan(6);
+    expect(rail.some((rule) => rule.selectors.includes(".rail-row"))).toBe(true);
   });
 
-  it("uses none of the page's tuned colours", () => {
-    const offending: string[] = [];
-    for (const rule of railRules()) {
-      /*
-       * `.rail-row.current` is the exception, and it is a real one rather than an escape hatch: that row is
-       * the brand's **Sky pill**, so its contents sit on a light fill and the page's tokens are the correct
-       * ones there. Ink on Sky is 15.41. Named by selector so the exemption cannot silently widen.
-       */
-      if (rule.selector.includes(".current")) continue;
-      for (const token of PAGE_TUNED) {
-        if (new RegExp(`var\\(--${token}\\)`).test(rule.body)) {
-          offending.push(`${rule.selector} uses var(--${token})`);
-        }
-      }
-    }
-    expect(
-      offending,
-      "a rail rule uses a colour tuned against the light page. On Ink all five fail AA — --text is 1.00, "
-      + "which is invisible. Use the --rail-* token beside it.",
-    ).toEqual([]);
+  it("paints no sidebar surface outside the measured grounds", () => {
+    const allowed = new Set(["transparent", "none", ...GROUNDS.map((ground) => `var(--${ground})`)]);
+    const offending = rail.flatMap((rule) => rule.declarations
+      .filter(({ property }) => property === "background" || property === "background-color")
+      .filter(({ value }) => !allowed.has(value))
+      .map(({ property, value }) => `${rule.selectors.join(", ")} { ${property}: ${value} }`));
+    expect(offending, "a sidebar fill the contrast matrix does not cover: use a ground token").toEqual([]);
   });
 
-  it("still allows the accent as a fill, which is a component and not text", () => {
-    // Anti-vacuity in the other direction: a rule banning every page token would ban Flow Blue from the
-    // current row's marker, where 3.99 on Ink is correct for a 3:1 component.
-    const current = railRules().find((rule) => rule.selector.includes(".rail-row.current"));
-    expect(current?.body).toContain("var(--accent)");
+  it("marks the current row with the accent as well as the active fill", () => {
+    // The fill is 1.38:1 against the sidebar, so the accent bar is what carries "you are here".
+    const current = rules.find((rule) => rule.selectors.includes(".rail-row.current"));
+    const body = current?.declarations.map(({ value }) => value).join(";") ?? "";
+    expect(body).toContain("var(--accent)");
+    expect(body).toContain("var(--surface-active)");
   });
 });
 
-describe("the search field is a control", () => {
-  it("has a submit button carrying the icon, not a decorative glyph", () => {
-    /*
-     * The usual way the mockup's icon-in-a-field is built is a `<span>` with an SVG and a form that submits
-     * on Enter — which loses the button, so a keyboard has nothing to land on and a screen reader is told
-     * the search cannot be run. The icon has to *be* the button.
-     */
-    const source = inbox();
-    expect(source).toMatch(/<button type="submit"[^>]*className="search-go"/);
-    expect(source).toMatch(/aria-label="Search"/);
+describe("the search field is styled as a field", () => {
+  it("styles the form at all, which is what was first reported", () => {
+    // `.inbox-search` had no rule anywhere in the stylesheet: the one control that had never been dressed.
+    expect(rules.some((rule) => rule.selectors.includes(".inbox-search"))).toBe(true);
   });
 
-  it("gives the field and the button different names", () => {
+  it("gives the pill an edge that identifies it, not just a fill", () => {
     /*
-     * Both were "Search mail" first, and `search-field.test.tsx` could then find neither unambiguously —
-     * which is the test noticing what a screen reader would: "Search mail, edit" and "Search mail, button"
-     * with nothing to tell them apart.
+     * WCAG 1.4.11 wants 3:1 for the visual information identifying a control, and the pill's fill is about
+     * 1.1:1 against the list. `contrast.test.ts` measures the token; this holds that the pill uses it.
      */
-    const source = inbox();
-    expect(source).toContain('className="visually-hidden">Search mail<');
-    expect(source).not.toContain('aria-label="Search mail"');
-  });
-
-  it("styles the field at all, which is what was reported", () => {
-    // `.inbox-search` had **no rule anywhere** in the stylesheet. The field was the one control on the
-    // interface that had never been dressed, which is why it was the first thing anybody noticed.
-    const source = ui();
-    expect(source).toContain(".search-pill");
-    expect(source).toContain(".inbox-search {");
-  });
-
-  it("gives the pill an edge that identifies it, not just the brand's fill", () => {
-    /*
-     * WCAG 1.4.11 wants 3:1 for the visual information identifying a control, and the brand's Mist-on-White
-     * pill is 1.10 — so the fill is decoration and the edge is the control. `contrast.test.ts` measures the
-     * token; this holds that the pill actually uses it rather than a hairline that looks nicer.
-     */
-    expect(ui()).toMatch(/\.search-pill\s*\{[^}]*var\(--control-edge\)/);
+    const pill = rules.find((rule) => rule.selectors.includes(".search-pill"));
+    expect(pill?.declarations.find(({ property }) => property === "border")?.value).toContain("var(--control-edge)");
   });
 });

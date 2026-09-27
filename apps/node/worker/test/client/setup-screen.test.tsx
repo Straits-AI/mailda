@@ -119,7 +119,7 @@ function mount(
 async function propose(domain: string, address: string) {
   fireEvent.change(await screen.findByLabelText("Subdomain"), { target: { value: domain } });
   fireEvent.change(screen.getByLabelText("Address to route here"), { target: { value: address } });
-  fireEvent.click(screen.getByText("see what pointing this here would do"));
+  fireEvent.click(screen.getByText("See what pointing this here would do"));
 }
 
 beforeEach(reset);
@@ -144,7 +144,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     });
 
     await propose("mail.example.com", "inbox@mail.example.com");
-    fireEvent.click(await screen.findByText("do this"));
+    fireEvent.click(await screen.findByText("Do this"));
 
     await waitFor(() => {
       const posted = calls.find((one) => one.path === "/api/provider/receiving" && one.method === "POST");
@@ -195,7 +195,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     });
 
     await propose("mail.example.com", "inbox@mail.example.com");
-    fireEvent.click(await screen.findByText("do this"));
+    fireEvent.click(await screen.findByText("Do this"));
 
     const said = await screen.findByRole("status");
     expect(said.textContent).toContain("no routing rule was made");
@@ -226,7 +226,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     });
 
     await propose("mail.example.com", "inbox@mail.example.com");
-    fireEvent.click(await screen.findByText("do this"));
+    fireEvent.click(await screen.findByText("Do this"));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("the zone changed since this plan was read");
@@ -248,10 +248,10 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     fireEvent.change(await screen.findByLabelText("Domain", { selector: "#setup-subscribe-domain" }), {
       target: { value: "mail.example.com" },
     });
-    fireEvent.click(screen.getByText("see what subscribing this would do"));
+    fireEvent.click(screen.getByText("See what subscribing this would do"));
     expect(await screen.findByText(/Would publish 2 event types/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText("subscribe this domain"));
+    fireEvent.click(screen.getByText("Subscribe this domain"));
     // Two statuses once applied: the outcome, and the plan's own "already subscribed" from the re-read.
     expect(await screen.findByText(/delivery events now reach this Node/)).toBeTruthy();
 
@@ -273,9 +273,9 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     fireEvent.change(await screen.findByLabelText("Domain", { selector: "#setup-subscribe-domain" }), {
       target: { value: "mail.example.com" },
     });
-    fireEvent.click(screen.getByText("see what subscribing this would do"));
+    fireEvent.click(screen.getByText("See what subscribing this would do"));
     expect((await screen.findByRole("alert")).textContent).toContain("onboard it first");
-    expect((screen.getByText("subscribe this domain") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("Subscribe this domain") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -295,14 +295,14 @@ describe("the connection, one API token", () => {
     expect(screen.getByText("Registrar Domains Read")).toBeTruthy();
     expect(screen.getByText("Optional.")).toBeTruthy();
     expect(screen.getByText(NOTE)).toBeTruthy();
-    expect(screen.getByText("open the token page").getAttribute("href")).toBe("https://dash.cloudflare.com/profile/api-tokens");
+    expect(screen.getByText("Open the token page").getAttribute("href")).toBe("https://dash.cloudflare.com/profile/api-tokens");
     expect(screen.queryByLabelText("Account id")).toBeNull();
   });
 
   it("sends the token to PUT /api/provider/token and clears the field, whatever the answer", async () => {
     mount({ provider: unconnected, tokenAnswers: [{ status: 422, body: { error: "E_PROVIDER_TOKEN_REFUSED", message: "E_PROVIDER_TOKEN_REFUSED  the token is not active\n  fix      make a new one" } }] });
     fireEvent.change(await screen.findByLabelText("API token"), { target: { value: "tok-once" } });
-    fireEvent.click(screen.getByText("connect"));
+    fireEvent.click(screen.getByText("Connect"));
     await waitFor(() => {
       const sent = calls.find((call) => call.method === "PUT" && call.path === "/api/provider/token");
       expect(sent, "the token was never sent").toBeDefined();
@@ -321,11 +321,11 @@ describe("the connection, one API token", () => {
       ],
     });
     fireEvent.change(await screen.findByLabelText("API token"), { target: { value: "tok-two" } });
-    fireEvent.click(screen.getByText("connect"));
+    fireEvent.click(screen.getByText("Connect"));
     const account = await screen.findByLabelText("Account id");
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok-two" } });
     fireEvent.change(account, { target: { value: "1e0170aaabc90ecf5f466128d1f0466a" } });
-    fireEvent.click(screen.getByText("connect"));
+    fireEvent.click(screen.getByText("Connect"));
     await waitFor(() => {
       const puts = calls.filter((call) => call.method === "PUT" && call.path === "/api/provider/token");
       expect(puts).toHaveLength(2);
@@ -337,7 +337,7 @@ describe("the connection, one API token", () => {
     mount();
     const held = await screen.findByText(/Connected to account/);
     expect(held.textContent).toContain("Connected to account Example Ltd (acc_one) since");
-    fireEvent.click(screen.getByText("forget this token"));
+    fireEvent.click(screen.getByText("Forget this token"));
     await waitFor(() => {
       expect(calls.some((call) => call.method === "DELETE" && call.path === "/api/provider/token")).toBe(true);
     });
@@ -372,7 +372,7 @@ describe("the apex catch-all", () => {
     const box = await screen.findByLabelText("Route every address at example.com to this Node (catch-all)");
     expect(screen.getByText(/Currently: worker → butler, enabled\./)).toBeTruthy();
     fireEvent.click(box);
-    fireEvent.click(screen.getByText("do this"));
+    fireEvent.click(screen.getByText("Do this"));
     await waitFor(() => {
       const posted = calls.find((one) => one.path === "/api/provider/receiving" && one.method === "POST");
       expect(posted, "the confirmation was never sent").toBeDefined();
@@ -386,7 +386,7 @@ describe("the apex catch-all", () => {
     mount({ receiving: apex, outcome: takenOver });
     await propose("example.com", "hello@example.com");
     await screen.findByLabelText("Route every address at example.com to this Node (catch-all)");
-    fireEvent.click(screen.getByText("do this"));
+    fireEvent.click(screen.getByText("Do this"));
     await waitFor(() => {
       const posted = calls.find((one) => one.path === "/api/provider/receiving" && one.method === "POST");
       expect(posted).toBeDefined();

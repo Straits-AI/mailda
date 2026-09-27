@@ -7,7 +7,7 @@ import { Nothing, Truncated } from "../chrome.tsx";
 import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
   type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, repairSearch,
-  resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
+  requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
   useSends, useTransport, verifyEvidence,
 } from "../api.ts";
 
@@ -60,7 +60,7 @@ function Recipients({ send }: { send: SendRow }) {
   if (send.recipients.length === 0) return null;
   return (
     <>
-      <dt>recipients</dt>
+      <dt>Recipients</dt>
       <dd>
         <div className="recipients">
           {orderRecipients(send.recipients).map((recipient) => {
@@ -187,8 +187,8 @@ export function Outbox() {
           Resending <span className="mono">{resendTarget.subject}</span> mints a new message and may deliver it twice —
           the first attempt's outcome is unknown, not failed. Say why, for the trail:{" "}
           <input className="mono resend-reason" aria-label="Why resend" value={resendReason} onChange={(event) => setResendReason(event.target.value)} />{" "}
-          <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>resend anyway</button>{" "}
-          <button type="button" className="linkish dim" onClick={() => setResending(null)}>never mind</button>
+          <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>Resend anyway</button>{" "}
+          <button type="button" className="linkish dim" onClick={() => setResending(null)}>Never mind</button>
         </p>
       )}
 
@@ -236,7 +236,8 @@ export function Outbox() {
                         aria-controls={`detail-${send.id}`}
                         onClick={() => setOpen(expanded ? null : send.id)}
                       >
-                        {send.subject}
+                        {/* Said, as the inbox rows say it: a blank subject left the row's only button nameless. */}
+                        {send.subject.trim() === "" ? <span className="dim">(no subject)</span> : send.subject}
                       </button>
                     </td>
                     <td className="dim mono">{(JSON.parse(send.envelope_to) as string[]).join(", ")}</td>
@@ -270,7 +271,7 @@ export function Outbox() {
                                 className="linkish"
                                 onClick={() => void release(send.id)}
                               >
-                                let it go
+                                Let it go
                               </button>
                               {" · "}
                             </>
@@ -288,7 +289,7 @@ export function Outbox() {
                                 title="A Butler wrote this. Releasing it puts it in the ordinary hold window, where it can still be stopped."
                                 onClick={() => void releaseFromGate(send.id)}
                               >
-                                release
+                                Release
                               </button>
                               {" · "}
                             </>
@@ -299,7 +300,7 @@ export function Outbox() {
                             already hold.
                           */}
                           <button type="button" className="linkish" onClick={() => void stop(send.id)}>
-                            stop
+                            Stop
                           </button>
                         </>
                       ) : (
@@ -307,7 +308,7 @@ export function Outbox() {
                           {send.retry.mode === null ? null : (
                             <>
                               <button type="button" className="linkish" title={send.retry.why} onClick={() => void retry(send)}>
-                                {send.retry.mode === "retry-effect" ? "retry" : "resend…"}
+                                {send.retry.mode === "retry-effect" ? "Retry" : "Resend…"}
                               </button>
                               {" · "}
                             </>
@@ -328,20 +329,20 @@ export function Outbox() {
                   <tr id={`detail-${send.id}`} className="detail" hidden={!expanded}>
                     <td colSpan={5}>
                       <dl>
-                        <dt>what this means</dt>
+                        <dt>What this means</dt>
                         <dd>{state.note}</dd>
                         {reason === null ? null : (
                           <>
-                            <dt>why</dt>
+                            <dt>Why</dt>
                             <dd>{reason.note}</dd>
                           </>
                         )}
                         <Recipients send={send} />
-                        <dt>manifest</dt>
+                        <dt>Manifest</dt>
                         <dd className="mono">{send.id}</dd>
                         {send.last_error === null ? null : (
                           <>
-                            <dt>reported</dt>
+                            <dt>Reported</dt>
                             <dd>{send.last_error}</dd>
                           </>
                         )}
@@ -404,7 +405,7 @@ export function Audit() {
       <header className="ledger-head">
         <h1>Audit</h1>
         <button type="button" className="linkish" onClick={() => void verify()}>
-          verify chain
+          Verify chain
         </button>
       </header>
       {verdict === null ? null : <p className="notice mono">{verdict}</p>}
@@ -591,7 +592,7 @@ function SendingCredentials() {
           onClick={() => void save()}
           disabled={busy || accountId.trim() === "" || apiToken === ""}
         >
-          save credentials
+          Save credentials
         </button>
       </p>
     </section>
@@ -632,13 +633,13 @@ function Remedy({ finding }: { finding: DoctorFinding }) {
   if (finding.check === "evidence_present") return <EvidenceVerify />;
   if (finding.ok) return null;
   if (finding.check === "migrations_applied") {
-    return <OneAct label="apply migrations" run={async () => {
+    return <OneAct label="Apply migrations" run={async () => {
       const outcome = await applyMigrations();
       return outcome.ok ? { ok: true, text: outcome.value.message } : outcome;
     }} />;
   }
   if (finding.check === "evidence_key_generation") {
-    return <OneAct label="reseal a batch" run={async () => {
+    return <OneAct label="Reseal a batch" run={async () => {
       const outcome = await resealEvidence();
       if (!outcome.ok) return outcome;
       const { resealed, alreadyCurrent, failed, remaining, targetGeneration } = outcome.value;
@@ -652,6 +653,12 @@ function Remedy({ finding }: { finding: DoctorFinding }) {
   if (finding.check === "evidence_orphans" || finding.check === "draft_bodies_stranded") return <Collect />;
   if (finding.check === "recovery_key_conflicts") return <Acknowledge />;
   if (finding.check === "body_index_failed") return <SearchRepair />;
+  if (finding.check === "preview_backlog") {
+    return <OneAct label="Requeue failed previews" run={async () => {
+      const outcome = await requeuePreviews();
+      return outcome.ok ? { ok: true, text: `${outcome.value.requeued} requeued. ${outcome.value.message}` } : outcome;
+    }} />;
+  }
   return null;
 }
 
@@ -682,7 +689,7 @@ function OneAct({ label, run, disabled = false }: { label: string; run: () => Pr
 function Collect() {
   const [armed, setArmed] = useState(false);
   if (!armed) {
-    return <p><button type="button" className="quiet" onClick={() => setArmed(true)}>collect them…</button></p>;
+    return <p><button type="button" className="quiet" onClick={() => setArmed(true)}>Collect them…</button></p>;
   }
   return (
     <>
@@ -691,7 +698,7 @@ function Collect() {
         period, stranded draft bodies and export residue. It is refused for the whole organization while a
         legal hold stands.
       </p>
-      <OneAct label="delete them now" run={async () => {
+      <OneAct label="Delete them now" run={async () => {
         const outcome = await reconcileEvidence(true);
         if (!outcome.ok) return outcome;
         const { orphansDeleted, draftBodiesDeleted, exportObjectsDeleted } = outcome.value;
@@ -702,7 +709,7 @@ function Collect() {
         };
       }} />
       {" "}
-      <button type="button" className="linkish dim" onClick={() => setArmed(false)}>never mind</button>
+      <button type="button" className="linkish dim" onClick={() => setArmed(false)}>Never mind</button>
     </>
   );
 }
@@ -718,13 +725,13 @@ function Acknowledge() {
   const [conclusion, setConclusion] = useState("");
   return (
     <>
-      <label className="field-row" htmlFor="ack-restore"><span>restore id</span>
+      <label className="field-row" htmlFor="ack-restore"><span>Restore id</span>
         <input id="ack-restore" className="mono" value={restoreId} onChange={(event) => setRestoreId(event.target.value)} /></label>
-      <label className="field-row" htmlFor="ack-scope"><span>what was examined</span>
+      <label className="field-row" htmlFor="ack-scope"><span>What was examined</span>
         <input id="ack-scope" value={scope} onChange={(event) => setScope(event.target.value)} /></label>
-      <label className="field-row" htmlFor="ack-conclusion"><span>what was concluded</span>
+      <label className="field-row" htmlFor="ack-conclusion"><span>What was concluded</span>
         <input id="ack-conclusion" value={conclusion} onChange={(event) => setConclusion(event.target.value)} /></label>
-      <OneAct label="record the assessment" run={async () => {
+      <OneAct label="Record the assessment" run={async () => {
         const outcome = await acknowledgeConflict(restoreId.trim(), scope, conclusion);
         if (!outcome.ok) return outcome;
         const { acknowledged } = outcome.value;
@@ -784,7 +791,7 @@ function RecoveryCodes() {
     <>
       {minted === null ? (
         <p>
-          <button type="button" className="quiet" disabled={busy} onClick={() => void rotate()}>mint a new set</button>
+          <button type="button" className="quiet" disabled={busy} onClick={() => void rotate()}>Mint a new set</button>
           {" "}
           <span className="dim">Ten codes, shown once. Confirming one retires any previous sheet.</span>
         </p>
@@ -803,13 +810,13 @@ function RecoveryCodes() {
         </div>
       )}
       <label className="field-row" htmlFor="recovery-code">
-        <span>confirm one code</span>
+        <span>Confirm one code</span>
         <input id="recovery-code" type="password" className="mono" autoComplete="off" value={code}
           onChange={(event) => setCode(event.target.value)} />
       </label>
       <p>
         <button type="button" className="quiet" disabled={busy || code.trim() === ""} onClick={() => void confirm()}>
-          confirm
+          Confirm
         </button>
         {" "}
         <span className="dim">Compared against the hash, never spent. Type it; nothing here fills it in for you.</span>
@@ -853,7 +860,7 @@ function SearchRepair() {
           {failed.data.failed.map((row) => (
             <tr key={row.messageId}>
               <td>
-                <input type="checkbox" aria-label={`repair ${row.messageId}`} checked={chosen.has(row.messageId)}
+                <input type="checkbox" aria-label={`Repair ${row.messageId}`} checked={chosen.has(row.messageId)}
                   onChange={() => toggle(row.messageId)} />
               </td>
               <td className="mono">{row.messageId}</td>
@@ -866,7 +873,7 @@ function SearchRepair() {
       </table>
       <p className="dim">Tick the ones worth retrying — fix the cause first.</p>
       {/* Mounted whether or not anything is ticked, so the answer outlives the selection it was about. */}
-      <OneAct label={`requeue ${chosen.size} message(s)`} disabled={chosen.size === 0} run={async () => {
+      <OneAct label={`Requeue ${chosen.size} message(s)`} disabled={chosen.size === 0} run={async () => {
         const outcome = await repairSearch([...chosen]);
         if (!outcome.ok) return outcome;
         setChosen(new Set());
@@ -898,11 +905,11 @@ function EvidenceVerify() {
   return (
     <>
       <p>
-        <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>verify a batch</button>
+        <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>Verify a batch</button>
         {verdict?.resumeAfter == null ? null : (
           <>
             {" "}
-            <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>continue from where it stopped</button>
+            <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>Continue from where it stopped</button>
           </>
         )}
       </p>

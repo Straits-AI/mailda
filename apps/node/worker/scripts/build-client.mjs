@@ -65,8 +65,10 @@ const result = await build({
   // evaluates. `/app/config.js` is served, not on disk (`ui.ts`), and is external for a third reason: the
   // alternative was importing `@mailda/budgets` here, which bundles the whole 218-entry table for one
   // integer — +7,960 bytes raw, +2,783 gzip, measured with this very line. See `composer.tsx`.
-  // Types for all three: `src/client/app/types/`, mapped by `src/client/tsconfig.json`.
-  external: ["/app/session.js", "/app/delivery.js", "/app/config.js"],
+  // `/app/theme.js` is external for the first reason: the framework-free script applies the viewer's theme
+  // before anything renders and Settings changes it, and one module instance on the page is one answer.
+  // Types for all four: `src/client/app/types/`, mapped by `src/client/tsconfig.json`.
+  external: ["/app/session.js", "/app/delivery.js", "/app/theme.js", "/app/config.js"],
   // React reads this to strip development-only warnings and the dev-mode reconciler. Without it the
   // bundle carries both, which is both larger and slower.
   define: { "process.env.NODE_ENV": '"production"' },
