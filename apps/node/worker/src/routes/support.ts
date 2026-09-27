@@ -1,4 +1,5 @@
-import { idPattern, type IdPrefix } from "@mailda/runtime";
+import { createSystemCtx, idPattern, type IdPrefix } from "@mailda/runtime";
+import { log } from "../audit.ts";
 import { type PolicyConditions } from "../policy.ts";
 import { stageOf, type Stages } from "../approvals.ts";
 import { clearedCookies, sessionCookies, type IssuedSession } from "../auth/session.ts";
@@ -162,13 +163,20 @@ export async function organizationId(env: Env): Promise<string | null> {
   return row?.org_id ?? null;
 }
 
-/** Ensures a sweep is scheduled. Idempotent — the DO only sets an alarm if none is pending. */
+/** Wakes the outbox sweeper now (`OutboxSweeper.schedule`); an alarm already due is left as it is. */
 export async function armSweeper(env: Env): Promise<void> {
   try {
     await env.OUTBOX_SWEEPER.getByName("node").schedule();
-  } catch {
-    // A failure to arm is not a failure to accept mail. The next request arms it again, and
-    // the row stays visibly unpublished meanwhile — which is the honest state.
+  } catch (error) {
+    // A failure to arm is not a failure to accept mail, so it is not thrown at the caller. The row stays
+    // unpublished and due, which the minute cron's backstop (`scheduled` in `src/index.ts`) finds and arms
+    // for; logged so a sweeper that cannot be reached is a line an operator can read, not a minute's delay
+    // nobody can explain.
+    await log(env, createSystemCtx(), {
+      level: "warn",
+      event: "outbox.arm_failed",
+      message: (error as Error).message.split("\n")[0] ?? "unknown",
+    });
   }
 }
 

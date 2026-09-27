@@ -429,6 +429,17 @@ and the alarm retries. That is at-least-once with retry, which is the property t
 adds *decoupling*, and for this pipeline the trigger is still ahead: **it arrives when a handler needs
 to be slow**: scanning, an LLM call, an outbound webhook.
 
+**Publication starts at once, and a failed event waits alone.** Accepting a message arms the sweeper's alarm
+for the present instant, and a row that has never been tried is claimable at once. There is no in-request fast
+path; there never was one, though this repository described one until 27 September 2026, and the five-second
+claim cutoff that made room for it delayed every message and let the alarm lapse over one accepted just before a
+sweep. Each claim writes `attempts` and `retry_at` on the row before the handler runs (0069), so a failure, or
+a pass killed outright, leaves that event backing off (five seconds, doubling, capped at five minutes), and a
+retried event is claimed after every event with fewer attempts, so one that kills its pass cannot head the next.
+The minute cron arms the sweeper whenever an event is due and unclaimed, so a lost alarm costs about a minute,
+one cron interval plus the cron's lateness (`receipts/cron-lateness.md`). `doctor`'s `outbox_draining` tells a
+failing event from a sweeper that is not running. The argument, with the costs, is at the top of `apps/node/worker/src/outbox.ts` and in ADR 31.
+
 There *is* now a queue on this Worker, and it is worth being precise about why it does not contradict
 the above. It carries **delivery outcomes inbound from Cloudflare**, which are not
 this Node's own work items: a Node cannot receive its own bounces, and Queues event subscriptions are

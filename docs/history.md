@@ -3597,6 +3597,27 @@ run: that the accessibility run leaves the queue as it found it, which the reply
 the second round's five runs were on one Node, where they were on two; and that a toast's focus path was
 asserted, where it was checked in Chromium and no test in the repository runs it.
 
+One change in that round was not in the interface, and it grew into the outbox's publication rather than a patch to
+it. A message accepted just before a sweep that a page load had armed stayed accepted and out of the inbox until
+something unrelated woke the Node: the sweep found it younger than the five-second claim cutoff, asked the same
+question, whether anything was claimable, to decide whether to wake again, and let the alarm lapse. Reproduced on a
+local Node (a page load, a delivery half a second later, not in the inbox after 40 seconds, listed 5 seconds after
+the next page load). The cutoff existed to keep the sweeper from racing an in-request "fast path" that the email
+handler, `apps/node/worker/src/outbox.ts` and ADR 31 had described since Layer 1 and that was never built: the
+handler only armed the alarm, five seconds out, so every message had waited at least five seconds for a race with
+nothing. The sweeper's alarm is now the only publisher, armed for the present instant on acceptance, and a row
+never tried is claimable at once; building the described path was rejected, with the argument in the module and in
+ADR 31's amendment. Each claim writes `attempts` and `retry_at` before its handler runs (migration 0069), so a
+failed event, or one whose pass was killed, backs off on its own row (five seconds doubling to a five-minute cap),
+and a retried event is claimed after every event with fewer attempts, so one that kills its pass cannot head the
+next; the old claim, the 25 oldest unpublished rows, let 25 failing events stop all publication. The minute cron
+arms the sweeper whenever an event is due and unclaimed, the three swallowed catches on the path now log
+(`outbox.handler_failed` at each doubling of attempts, `outbound.sweep_failed` from the alarm,
+`outbox.arm_failed`), and `doctor`'s `outbox_draining` tells a failing event from a sweeper that is not running. On
+a fresh local Node five single deliveries were listed 90 to 411 ms after acceptance, including one half a second
+after a page load and one while the next alarm was a failing event's backoff 19 seconds away. Twenty-one cases in
+`apps/node/worker/test/outbox.test.ts`, each seen red under a mutation of the line it covers.
+
 ## The convergence review's fourth round (27 September 2026)
 
 A fifth pass, and again what nobody had looked at from a keyboard.

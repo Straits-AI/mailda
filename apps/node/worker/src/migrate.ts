@@ -66,6 +66,7 @@ import m0065 from "../migrations/0065_attachment_limits.sql";
 import m0066 from "../migrations/0066_provider_token.sql";
 import m0067 from "../migrations/0067_message_places.sql";
 import m0068 from "../migrations/0068_message_projections.sql";
+import m0069 from "../migrations/0069_outbox_retry.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -188,6 +189,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0066_provider_token.sql", sql: m0066 },
   { name: "0067_message_places.sql", sql: m0067 },
   { name: "0068_message_projections.sql", sql: m0068 },
+  { name: "0069_outbox_retry.sql", sql: m0069 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

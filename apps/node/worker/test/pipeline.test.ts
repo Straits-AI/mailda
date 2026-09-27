@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
-import { drainOutbox, pendingEvents } from "../src/outbox.ts";
+import { drainOutbox } from "../src/outbox.ts";
 import { dispatch, registeredTopics } from "../src/pipeline.ts";
 
 const testEnv = env as unknown as Env;
@@ -38,11 +38,13 @@ describe("processing pipeline (#25)", () => {
     const ctx = createSystemCtx();
     await enqueue("mail.something.nobody.registered");
 
-    const { drained } = await drainOutbox(testEnv, ctx, (event) => dispatch(testEnv, ctx, event));
+    const { drained, failed } = await drainOutbox(testEnv, ctx, (event) => dispatch(testEnv, ctx, event));
     // Nothing consumed it, so nothing claims it was handled. This is the whole point of the registry:
     // adding a topic without deciding what consumes it fails loudly instead of vanishing.
     expect(drained).toBe(0);
-    expect((await pendingEvents(testEnv, ctx)).length).toBe(1);
+    expect(failed).toBe(1);
+    const row = await testEnv.CATALOG.prepare("SELECT published_at, attempts FROM outbox").first();
+    expect(row).toEqual({ published_at: null, attempts: 1 });
   });
 
   it("names the fix when a topic has no handler", async () => {

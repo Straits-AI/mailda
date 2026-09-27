@@ -6,29 +6,62 @@ import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../recon
 import { type Finding } from "../doctor.ts";
 import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
 /**
- * Is the outbox draining? An unpublished row older than the sweeper's own staleness cutoff means
- * the Durable Object alarm is not firing, and §22's guarantee is that events are *eventually*
- * delivered — a stalled outbox turns "eventually" into "never" without any error anywhere.
+ * Is the outbox draining? An unpublished row older than `STALLED_OUTBOX_MS` is one the sweeper should have
+ * published long ago, and §22's guarantee is that events are *eventually* delivered: a stalled outbox turns
+ * "eventually" into "never" without any error anywhere.
+ *
+ * Two causes, told apart by `attempts` (0069), because their fixes are different. A row never tried means the
+ * sweeper is not running at all. A row tried and still unpublished is being retried on its backoff
+ * (`src/outbox.ts`), and either its handler threw, with the reason in the log (`outbox.handler_failed`), or it
+ * was in a pass the platform killed (a CPU or memory limit), which leaves an attempt and no log entry.
+ *
+ * An unreadable outbox is a failed finding, not a clean one: "no stalled events" is a claim, and a query that
+ * did not run cannot make it.
  */
 export async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
   const cutoff = new Date(ctx.now() - STALLED_OUTBOX_MS).toISOString();
-  const row = await env.CATALOG.prepare(
-    `SELECT COUNT(*) AS stalled, MIN(created_at) AS oldest
-       FROM outbox WHERE published_at IS NULL AND created_at < ?`,
-  ).bind(cutoff).first<{ stalled: number; oldest: string | null }>().catch(() => null);
+  let row: { stalled: number; failing: number | null; oldest: string | null } | null;
+  try {
+    row = await env.CATALOG.prepare(
+      `SELECT COUNT(*) AS stalled, SUM(attempts > 0) AS failing, MIN(created_at) AS oldest
+         FROM outbox WHERE published_at IS NULL AND created_at < ?`,
+    ).bind(cutoff).first<{ stalled: number; failing: number | null; oldest: string | null }>();
+  } catch (error) {
+    return [{
+      check: "outbox_draining",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `The outbox could not be read: ${(error as Error).message.split("\n")[0]}`,
+      fix: "check the `catalog_reachable` and `migrations_applied` findings in this same report first; the outbox "
+        + "table and its retry columns come from the migrations",
+    }];
+  }
 
   const stalled = row?.stalled ?? 0;
+  const failing = row?.failing ?? 0;
+  const untried = stalled - failing;
+  const fixes = [
+    ...(failing > 0 ? [
+      `${failing} event(s) were tried and not published: when the handler threw, the log's `
+      + "`outbox.handler_failed` entries carry the reason; an event with attempts and no entry was in a pass the "
+      + "platform killed (a CPU or memory limit), which shows in the Worker's own invocation logs, not this one. "
+      + "Each is retried on its backoff until it publishes",
+    ] : []),
+    ...(untried > 0 ? [
+      "the OUTBOX_SWEEPER alarm is not firing: check the durable_objects binding and the migrations tag that declares the class",
+    ] : []),
+  ];
   return [{
     check: "outbox_draining",
     severity: "degraded",
     discloses: "data",
     ok: stalled === 0,
     detail: stalled === 0
-      ? "No outbox events older than the sweeper's cutoff."
-      : `${stalled} unpublished event(s) older than ${STALLED_OUTBOX_MS / 1000}s; oldest ${row?.oldest}.`,
-    ...(stalled === 0 ? {} : {
-      fix: "the OUTBOX_SWEEPER alarm is not firing — check the durable_objects binding and the migrations tag that declares the class",
-    }),
+      ? `No unpublished outbox events older than ${STALLED_OUTBOX_MS / 1000}s.`
+      : `${stalled} unpublished event(s) older than ${STALLED_OUTBOX_MS / 1000}s (${failing} tried and failing, `
+        + `${untried} never tried); oldest ${row?.oldest}.`,
+    ...(stalled === 0 ? {} : { fix: fixes.join("; ") }),
   }];
 }
 
