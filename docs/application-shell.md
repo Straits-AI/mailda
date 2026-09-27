@@ -25,27 +25,96 @@ including via a modulepreload, and separately if the import stops being dynamic.
 On sign-out the shell is unmounted before the sign-in form renders. A React root left alive over that form
 keeps issuing requests that now 401 and eventually renders itself back on top of it.
 
-## What the shell looks like: variant B
+## What the shell looks like
 
-Chosen in #32 over two alternatives, on Layer 3 rather than on taste. The next layer is *share* (shared
-mailboxes, assignment, reply-collision, cases), and that needs a persistent list of mailboxes with
-per-item counts and claim state. That is what a rail is. Route tabs are not, so choosing them would have
-meant bolting a rail on at Layer 3 and rewriting the chrome. **The rail therefore exists now with one row
-in it, and Layer 3 adds rows rather than a shape.**
+Chosen first in #32 as *variant B*, on Layer 3 rather than on taste. The next layer was *share* (shared
+mailboxes, assignment, reply-collision, cases), and that needs a persistent list of mailboxes with per-item
+counts and claim state. That is what a sidebar is. Route tabs are not, so choosing them would have meant
+bolting one on at Layer 3 and rewriting the chrome. The redesign of 26 September 2026 kept that argument and
+replaced the shape around it:
 
-- **Rail**: mailboxes, then the ledgers, with `doctor` at the foot because it is what you want when
-  something else has stopped working.
-- **Split list and reading pane** for mail. The composer is **docked**, not a route: replying must not move
-  the original off screen, because for invoice and shipment mail a reply exists to quote a reference from
-  it.
-- **Full-width tables** for the outbox, audit trail and log. For a ledger a table is the right
-  form, the one thing variant A got right, and it is kept.
-- **A bottom instrument bar** carrying the session countdown, the `doctor` verdict, the outbound counts and
-  the two sign-outs: *sign out* ends this device's session, *sign out everywhere* asks the Node to revoke
-  every session this person holds (`POST /api/auth/logout-everywhere`) and signs this page out only once it
-  has answered, so a revocation that did not happen is rendered rather than hidden behind a signed-out page.
-  Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
-  a reader's eye rests, and the counts belong beside the mailboxes they describe.
+- **A grouped sidebar.** *Mail* (Inbox, Queue, Drafts, Outbox, Archive, Trash), *Workspace* (one row per
+  mailbox, then People, Matters, Approvals), *Automate* (Automations, Agents), a collapsible *Admin* (Doctor,
+  Limits, Audit, Log, Setup) and Settings at the foot. The sidebar scrolls rather than squeezing its rows, and a
+  long mailbox name ends in an ellipsis with its counts kept. The groups render from `SIDEBAR_HOME` in
+  `chrome.tsx`, a `Record<AppRoute, …>`, so a route with no home is a compile error rather than a page the
+  navigation cannot reach (AGENTS.md §2c). The per-mailbox rows are #32's argument surviving: they carry the
+  *unclaimed* count and how many you hold as *mine*, and they link to the queue. Nothing is hidden by role, the
+  Admin group included: the screens answer 404 by §5C, and a hidden link would be a weaker copy of that decision
+  (`/butlers` below said it first). Admin is collapsed until somebody opens it, and opens by itself when the
+  route is one of its own.
+- **Three panes for mail**: the sidebar, the list and the message, `216px · 376px · minmax(520px, 1fr)`. Below
+  1120px the shell is one column and the sidebar is a modal `<dialog>` drawer behind a menu button,
+  **rendered only while open**, so no off-screen link sits in the tab order and `showModal()` makes the rest
+  inert. It closes on Escape or its own *Close navigation* button after the links, and gives focus back to the
+  menu button. Below 768px the list and the message take turns: opening a message moves focus to its subject,
+  because the row that had focus is now hidden, and the reader carries a back button named for the place
+  (*Back to Inbox*, visibly *Inbox* beside an arrow) and the place's name as a visually hidden level-one
+  heading, so the screen keeps one. Browser Back leaves the route at every width, as it always has: there is
+  no message URL to go back to.
+- **One composer, which takes the reader column**, not a route. Over a mail screen at 768px and wider it
+  covers the reader column's exact box, anchored to it with CSS anchor positioning, and never the list; its
+  head names what it answers (*Replying to: …*, *Forwarding: …*), because the reader it covers is where that
+  was said, and the quote in the body carries the reference a reply to invoice or shipment mail exists to
+  repeat. The first version docked a card over the column, which covered most of the message and left a
+  clipped strip of it beside the card. On a screen with no reader column (Outbox, Queue,
+  Drafts), or in a browser without anchor positioning, it is a card at the bottom right; below 768px it is
+  the whole screen under the mobile bar and under the bands a screen can carry above it (*Setup is
+  unfinished* and the *Notifications* band), neither of which can be dismissed, so neither may be covered: the
+  last of them is its anchor. Only those two: a screen's own status line (*Matter opened.*) is not a band, so
+  the dock does not start under it and it keeps the screen's margins. A browser without anchor positioning
+  starts it under the bar, where it covers the bands. What it covers leaves the Tab order and the accessibility
+  tree while it is open (`visibility: hidden`, in the same rules that place it, so the two cannot disagree): the
+  reader column's content, or below 768px everything but the bar and the bands, and the bands too where it
+  covers them. Until the fourth convergence round Tab landed on *Reply*, *Assign* and the message frame behind
+  the dock, focus nobody could see (WCAG 2.4.11), and only moving focus away revealed them. The card covers the
+  bottom of the column a screen scrolls in, so on a screen with no reader column that column makes room for the
+  card at its tallest while it is open, and scrolls a control that takes focus above it
+  (`scroll-padding-bottom`); a *Claim* in the Queue's last rows, or an Outbox row's *.eml*, sat under the card
+  and nothing scrolled it clear. Over a mail screen in a browser without anchor positioning nothing makes that
+  room, and the card can still cover a control. Both checked in Chromium, at 1440, 1024 and 390 px wide over the
+  Inbox and at 1440 and 1024 over the Queue and 1024 over the Outbox; the rules for a browser without anchor
+  positioning are not, since Chromium has it, and no test in the repository runs any of them. It lives in the
+  shell rather than in a screen (`shell-context.tsx`), so it **survives navigation**, and because it does, a reply claims its case again at the moment it is sent
+  (*Starting a message*, below). Closing it gives focus back to what opened it, or failing that to the
+  selected row, then to *Compose*.
+- **Full-width tables** for the outbox, audit trail and log. For a ledger a table is the right form, the one
+  thing variant A got right, and it is kept. An outbox row whose subject is blank reads *(no subject)*, as a
+  list row does, so the button that opens it has a name. Every other table that can be wider than its pane (on
+  Limits, Rules, Setup, People, Butlers, Queue and Matters) scrolls sideways inside `Scroller` in `chrome.tsx`:
+  a region named for its table and in the Tab order, so a keyboard can reach and scroll what is past the edge.
+  The name is a required prop, so a new site cannot leave it out. Until the third convergence round these were
+  unnamed `div`s no keyboard could scroll, which axe found once it audited a phone's width (*Accessibility*,
+  below). The ledger sections scroll sideways too and are left as they are: each holds controls of its own, and
+  the 390 px sweep found nothing in them.
+- **A status bar with two things in it**: whether the Node is answering, and the doctor's verdict.
+  *Connected* is derived from the outcome of every query the shell makes (a request that got no answer reads
+  *Unreachable*, an offline browser *Offline*); it replaced a green dot with *listening* written beside it,
+  which nothing had ever computed. The word is a polite `role="status"` region that stays mounted, so a screen
+  reader hears it change. *Health:* and the verdict's own word (`ok`, `degraded`, `refuse`) opens a
+  popover that groups the findings into six areas (Inbound routing, Outbound delivery, Worker and keys,
+  Database and storage, Automation, Access and recovery) and links to Doctor. The popover reads the report
+  the status bar already holds and never fetches one, because a doctor run is dozens of subrequests with
+  `doctor.max_subrequests_per_run` as its ceiling (`doctor-check-cost.md`), and opening a popover is not a
+  reason to spend them. A member's reduced report reads *ok in your checks* rather than *ok*, because
+  the verdict still counts the findings withheld from them.
+
+Six rows and not the five the redesign's brief drew. *Agent runtime* named nothing that exists (agents are
+external principals, ADR 44, and what runs here is Butlers), so that row is §5C's word, *Automation*; and
+*Access and recovery* is added because an unconfirmed recovery sheet and the legal-hold and supervision checks
+can set the verdict, and a verdict no row explains is a riddle. The mapping from every check name to its row is
+a `Record` over the contract's `DOCTOR_CHECKS`, so a new check with no row is a compile error, and a name a
+newer Node sends that this client has never heard of lands under *Other checks* instead of breaking it.
+
+The bottom instrument bar that the status bar replaced carried five things, and each went somewhere named:
+
+| was in the instrument bar | now |
+|:--|:--|
+| the session countdown | Settings. Safe to take out of the permanent chrome because expiry is never silent without it: a failed renewal, a non-refreshable 401 and a 401 that survives a refresh all emit `signed-out` from `session.client.js`, and `app.client.js` then unmounts the shell and renders sign-in |
+| *sign out* and *sign out everywhere* | Settings, with the rule unchanged: *sign out everywhere* asks the Node to revoke every session this person holds (`POST /api/auth/logout-everywhere`) and signs this page out only once it has answered, so a revocation that did not happen is rendered rather than hidden behind a signed-out page. Both save the open composer's draft first (*Drafts*) |
+| the Node's hostname | Settings and the Health popover, for whoever asks |
+| the outbound counts | the Outbox row's count (held and awaiting, `+` when the outbox page was cut short) and the popover's outbound row, read from the cache the sidebar already filled |
+| the doctor verdict | the status bar's *Health:* |
 
 ## The brand, and the four decisions it forced (#branding)
 
@@ -53,6 +122,71 @@ The Mailda identity landed as a brand sheet: **Ink `#0F1720`**, **Flow Blue `#4C
 Satoshi for headings and Inter for body; a continuous-line M with a blue dot. The interface before it was a
 dark "instrument panel": cream on near-black, an editorial serif, one amber signal colour. Applying the
 brand was therefore a repaint rather than a token swap, and four things could not simply be mapped across.
+
+The redesign of 26 September 2026 repainted it a second time, and the first subsection below is that one.
+The four after it were decided on the brand's palette; each rule survived the second repaint, and where a
+value or a token's name changed, the subsection says so.
+
+### Dark first, Dark by default, and the viewer's choice (26 September 2026)
+
+The tokens are named by role: four grounds (`--bg-app`, `--bg-sidebar`, `--bg-list`, `--bg-reader`), four
+surfaces, two dividers, `--control-edge`, three text colours, the accent pair with its hover and
+`--on-accent`, and `--success`, `--warning`, `--danger`. They are declared once in `src/theme.ts` as a
+`Record` per theme, so a token missing from either theme is a compile error, and the stylesheet's theme blocks
+and the body frame's are built by one generator. Every value and every ratio is in
+[the receipt](./receipts/contrast-tokens.md) rather than here, because a copy here would be one that can
+disagree with it.
+
+- **Dark is the default because it is the unqualified `:root`.** A page with no `data-theme`, or with
+  `data-theme="dark"`, is dark on every OS; `:root[data-theme="light"]` is light; `:root[data-theme="system"]`
+  is light only inside `@media (prefers-color-scheme: light)`. So the stylesheet holds exactly one
+  `prefers-color-scheme` and never one for dark: an unqualified light media query would show Light to somebody
+  who chose Dark on a light-mode computer.
+- **The choice is the viewer's**, in Settings > Appearance: Dark, Light or System. It is kept in this browser
+  (`localStorage`) and sent nowhere, because it is a preference about one screen and not an account setting,
+  so a second browser starts in Dark. `/app/theme.js` is one module shared by the framework-free script and
+  the React shell, exactly as `/app/delivery.js` is, and `bootTheme()` is the first statement `app.client.js`
+  runs, so the claim, sign-in and locked-out `doctor` pages honour the choice too. Every storage access is
+  inside a `try` and a refusal is returned rather than swallowed: Settings applies the theme first, so it is
+  live whatever the browser does, then says *"Not saved in this browser; this applies until you reload."*
+  when the browser would not keep it, and says so as well when it could not read a saved one.
+- **System is a choice rather than the default**, because browsers report `light` when the OS states no
+  preference, so following the OS alone showed Light to everybody who had never set one. Decided by the
+  user on 26 September 2026.
+- **A viewer who chose Light may see the sign-in page dark for a moment.** A module script runs after
+  parsing, so the first paint can come before `bootTheme()`. A render-blocking classic script in `<head>` is
+  the upgrade if anybody reports it, at the price of a request before every viewer's first paint, and it is
+  marked `ponytail:` beside the call.
+- **The body frame is told the theme on its own `<html>`.** It is opaque-origin and cannot see the shell's
+  attribute, so its `srcdoc` begins with `<html data-theme="…">`, always one of the three words and never the
+  shell's attribute copied through, and it loads one same-origin stylesheet, `/app/frame.css`, carrying the
+  same three blocks and then rules that use only tokens. There is no `url()` and no font in it, so nothing in
+  that sheet can fetch anything; the frame uses the platform's own UI sans, because a font fetched from an
+  opaque origin would need CORS headers on the fonts. [`mail-security.md`](./mail-security.md) says what an
+  engine that refused the sheet would show.
+- **Inter stays, on six sizes in the application**: 26 px for page titles, 22 for a message's subject, 15 for
+  its body, 14 for everything a person works in, 12 for metadata, and 11 for the sidebar's group labels, the one
+  uppercase thing left. Weights 400 to 700, the four already served. The pre-authentication page is outside the
+  scale on purpose: the redesign repainted it and did not re-set its type, so it keeps the hero type it had, a
+  fluid 30 to 48 px heading, an 18 px wordmark and a 16 px lede. `test/node/type-scale.test.ts` reads the served
+  sheet and fails on any other size. It was needed at once: the claim was false the day it was written (a
+  toast's dismiss glyph at 16 px, now 15) and drifted again while it was being reviewed (the file control's text
+  at 13 px, now 12).
+- **`--mono` is a real system monospace again, for diagnostics only**: `code`, `pre`, `kbd`, header text and
+  Butler source. `.mono` stays what it has been since 21 September, tabular figures in the body face, so its
+  call sites (dates, addresses, counts in the ledgers) did not turn monospace.
+- **A selected state carries a 2px `--accent` indicator, not only a fill**: the current sidebar row, the
+  selected message, the selected tab, the current section tab and the palette's active option. The fills are
+  1.1 to 1.4:1 against their ground, which is decoration and not information.
+- **Fields carry `--control-edge`**, never a divider colour. A divider is 1.0 to 1.5:1 against its ground and
+  would leave a field with no edge WCAG 1.4.11 recognises. Buttons carry fills instead, and a link-button
+  inside text is underlined, because hue alone is not a difference WCAG 1.4.1 accepts.
+- **The brand is extended, and named as extended.** The dark accent is `#78A9FF`, because Flow Blue is 3.99:1
+  on Ink; in light, Flow Blue `#4C77B8` is the non-text accent and a darker blue carries text. The mark's dot
+  and the favicon are unchanged (`BRAND` in `src/brand.ts`).
+- **The redesign's own muted grey failed its first measurement**, 3.10:1 on a selected row, and its red
+  measured 4.13:1 there. Both were adjusted before anything shipped with them, and the receipt keeps both as
+  recorded defects, so a change back fails a test.
 
 ### Flow Blue is not a text colour on two of the brand's own three grounds
 
@@ -66,6 +200,10 @@ for fills, borders, focus rings, icons and the mark's dot, for non-text contrast
 worst case 4.59. The dark theme lifts both to `#6E93CC`, because Flow Blue is 3.99:1 on Ink.
 ([receipt](./receipts/contrast-tokens.md))
 
+The redesign kept the split and changed the values. Light `--accent-text` is darker again, because `#436BA8`
+measured 4.27:1 on the new selected-row surface; the dark theme uses one blue, `#78A9FF`, for both, because it
+clears 4.5:1 on every dark ground.
+
 ### `--signal` was doing two jobs, and the brand is what made that visible
 
 One amber token carried the wordmark, focus rings, hover, selected rows **and** every warning state: a held
@@ -75,7 +213,8 @@ attention. Forty-four uses, split by what each one meant rather than by find-and
 
 The brand also supplies no error or healthy colour. `--alarm` and `--live` are kept from the old palette
 rather than invented, because both were already contrast-tuned and both pass on the new grounds. That is an
-extension of the brand, and it is named as one.
+extension of the brand, and it is named as one. Since the redesign the three are `--warning`, `--danger` and
+`--success`, measured again on eight grounds in both themes.
 
 ### Satoshi is in the type stack and is not in the repository
 
@@ -91,7 +230,8 @@ display face for two headings, and a monospace that had drifted from figures ont
 whole message rows. `--display` and `--mono` both resolve to `--body` (Inter, four weights, 97 KB, served
 from this origin); headings are weight 700 with tight tracking, figures keep their columns with
 `font-variant-numeric: tabular-nums`, and machine text is weight 500 in the dim colour. Satoshi is no longer
-named anywhere.
+named anywhere. (Since 26 September `--display` is gone and `--mono` is a system monospace again, for
+diagnostics only; the first subsection of this section says where it applies.)
 
 **The no-webfont rule was about third parties, not about webfonts.** `ui.ts` said for months that the
 interface loads none, because "a page that fetches a font from a third party hands that third party every
@@ -113,8 +253,9 @@ the shell, the favicon and the app icon all derive from `markSvg()`. Until the r
 should not be used for print, an app-store icon, or anything a customer reads as the identity.
 
 The **wordmark is real text**, not a path: selectable, translatable and readable by a screen reader, where a
-traced word is a picture of a word. The cost is that it renders in Plus Jakarta Sans wherever Satoshi is
-absent, which is the right trade inside the product and the wrong one for a logo file handed to a printer.
+traced word is a picture of a word. The cost is that it renders in the interface's own face, Inter, rather
+than the brand's Satoshi, which is the right trade inside the product and the wrong one for a logo file
+handed to a printer.
 
 ## Paging the inbox (#91)
 
@@ -139,57 +280,81 @@ Three things the screen has to get right, and each is an honesty rule rather tha
 
 - ***older* exists exactly when `next_cursor` is non-null**, the Node saying there is at least one more row
   this reader may see at this instant. The end of the list is an absent control, never a disabled one, for the
-  same reason `StartMessage` renders nothing when somebody holds no sendable mailbox.
-- **The heading says `50 shown`, not `50 messages`.** The old wording was true while the listing returned
-  everything there was; against a page it states a count of the archive and prints the size of a page. Nothing
-  counted a total, and there are no page numbers to click for the same reason.
+  same reason Compose renders nothing when somebody holds no sendable mailbox.
+- **The count is a page, and it says so.** The heading reads `n` when the first page is all there is
+  (`next_cursor` is null), `n+` when there is more, and *Page K* after the first; the sidebar's Inbox count
+  follows the same rule. It is never a total and never *shown*, the word it used until the redesign: `50
+  messages` stated a count of the archive and printed the size of a page, and a real total would be a second
+  authorization-scoped `COUNT` on every listing. A page the lookback cut short (*Places, tabs and previews*,
+  below) always carries a cursor, so it reads `n+`, and when it is empty it prints **no figure**, never `0`:
+  the Node has not looked far enough to know. There are no page numbers to click, for the same reason.
 - **An empty later page does not say "nothing has arrived yet".** That sentence is a claim about the whole Node
   and is false on page four, #101's defect in a new place. It says *"nothing older on this page"* and offers
   the way back, because the reader got there by pressing a control this screen rendered. It is reachable
   without a race, too: the Node said there was more, and by the time the reader asked for it the rows it
   counted could have been revoked.
 
+**J and K page at the ends, and only because a key was pressed.** J on the last row, when there is an older
+page, does what *Older* does and selects that page's first row; K on the first row of a later page does what
+*Newer* does. Nothing is fetched ahead of a key or a click: not the next page, not a neighbour's body, because
+each fetch is an authorization and, for a supervised reader, a recorded act.
+
 `test/client/inbox-pages.test.tsx` mounts the screen for all of it, because the cursor stack is state and
 `newer` is not a function anything can call.
 
-### Narrowing to one mailbox
+### Narrowing: the Filter popover
 
-`?mailbox=` reaches the API, the SDK and the MCP tool, and for a while it reached no control, so the one
-surface a person uses could not do what the ticket asked for. There is a selector in the inbox heading now.
+`?mailbox=`, `?from=`, `?since=` and `?until=` reach the API, the SDK and the MCP tool, and each now reaches a
+control too. The list pane's **Filter** button opens a popover with the mailbox, the sender's address, and
+*Received on or after* and *Received on or before*. The dates say *on or* because that is what the API does:
+`since` is the start of its UTC day and `until` the **end** of its (`until=2026-09-01` includes 1 September), so
+*before 26 Sep* would name a range the listing contradicts. *Apply* is one request, never one per keystroke;
+each active filter becomes a chip with its own remove button under the search field (*Mailbox: Billing*,
+*From: …*, *On or after 1 Sep*, *On or before 26 Sep*), and the button's own name says how many are active
+(*Filter, 2 active*), so a screen reader hears the count and not only a figure beside an icon.
+The Node applies all four on every plan (the plain listing, the per-person tabs, Archive and Trash, and a
+search), so a filter never narrows a page in the browser, where a page would be read as everything.
 
-Three decisions worth having written down:
+Five decisions worth having written down:
 
-- **It is a control on this screen, not a rail row.** The rail lists mailboxes, so a filter here looks like a
-  duplicate. It is not: the rail's per-mailbox rows sit **under Queue** and carry *unclaimed* counts, work
-  nobody has taken, which is Layer 3's subject. Repointing them at a filtered inbox would change what they
-  mean rather than give them a meaning, and whether a rail row navigates is a real question that belongs with
-  the queue.
-- **It defaults, and `StartMessage`'s selector must not** (#94). That one picks a mailbox to *send as*: per
-  mailbox `send.propose`, a governance consequence, and an invisible default puts somebody's name on an
-  address they did not choose. This one picks what to *look at*, so "all mailboxes" is a truthful description
-  of an unfiltered list rather than a decision taken on the reader's behalf. Two controls that look alike and
+- **It is a control on this screen, not a sidebar row.** The sidebar lists mailboxes, so a filter here looks
+  like a duplicate. It is not: the sidebar's per-mailbox rows sit under Workspace and carry *unclaimed*
+  counts, work nobody has taken, which is Layer 3's subject. Repointing them at a filtered inbox would change
+  what they mean rather than give them a meaning. They link to the queue and select nothing there; a
+  `?mailbox=` on `/queue` is a separate change.
+- **It defaults, and Compose's chooser must not** (#94). That one picks a mailbox to *send as*: per mailbox
+  `send.propose`, a governance consequence, and an invisible default puts somebody's name on an address they
+  did not choose. This one picks what to *look at*, so "all mailboxes" is a truthful description of an
+  unfiltered list rather than a decision taken on the reader's behalf. Two controls that look alike and
   differ in exactly that, which is why the reasoning is written in both.
 - **Its options are what the reader may read** (`GET /api/mailboxes/readable`, since 26 September 2026), not
   where they have work. `GET /api/mailboxes` lists mailboxes the caller holds `send.propose` on, which is the
   composer's question; a supervised reader holds none and their mailbox was missing from this filter, its mail
-  reachable only unfiltered. The route existed for the agent surface and the inbox is its first screen.
-- **Changing the filter resets the cursor**, and that is correctness rather than courtesy. A cursor is a
-  position in one ordering; narrow the listing and the row it names may not be in the new one at all, so the
-  page it produces is arbitrary or empty. Nothing server-side can catch it. The cursor is well-formed and
-  the authorization re-runs, so the Node correctly answers a question nobody asked.
+  reachable only unfiltered. The route existed for the agent surface and the inbox is its first screen. The
+  select appears only when there are two or more to choose between.
+- **The sender is the envelope sender**, the address the sending server gave, because that is what `from`
+  filters, and the field's hint says it can differ from the From line on forwarded mail.
+- **Changing a filter resets the cursor**, as changing the tab, the label or the search does, and that is
+  correctness rather than courtesy. A cursor is a position in one ordering; narrow the listing and the row it
+  names may not be in the new one at all, so the page it produces is arbitrary or empty. Nothing server-side
+  can catch it. The cursor is well-formed and the authorization re-runs, so the Node correctly answers a
+  question nobody asked.
 
-One honest limitation, named because the fix is a new authority surface rather than a tidy-up: the options
-come from `useMailboxes`, which returns the mailboxes this reader holds `send.propose` on, **not** what they
-may read. A supervised reader can therefore see mail from a mailbox the filter cannot name, and the
-unfiltered view is the one that shows it. Filtering to fewer rows than exist is safe; the reverse would not
-be. A `mailbox.content.read` listing is the real answer and inventing one for a filter would be a permission
-surface added for a convenience.
+The paragraph that stood here until the redesign, calling the options `useMailboxes` and naming that as an
+honest limitation, was already false: it contradicted the bullet above it from the day the readable route
+landed, and it is gone rather than corrected in place.
 
 ### Searching subjects, senders and bodies (#107)
 
-`?q=` on the same listing, with a field in the inbox heading beside the mailbox selector. Words that must
-**all** appear in a subject line, a sender address, or a message body; the last word matches as a prefix, so a
-part-typed word narrows rather than finding nothing.
+`?q=` on the same listing, with a field at the top of the list pane, labelled and placeheld *Search mail*,
+beside the Filter button. Words that must **all** appear in a subject line, a sender address, or a message
+body; the last word matches as a prefix, so a part-typed word narrows rather than finding nothing.
+
+**A search spans every place.** `place`, `unread` and `mine` are refused together with `q`
+(`E_MESSAGE_PAGE_SEARCH_FILTER`) until their cost inside the ranked arms is measured, so the screen sends none of
+them while searching and hides the tabs. The status line says so (*Searched senders, subjects and text in all
+mail, including Archive and Trash*), and a row found in a place other than the one being viewed carries that
+place as a chip, so a match from Trash is not mistaken for one in the Inbox.
 
 **Bodies are a second index with a stronger authorization, and the query is a union of two arms.** The subject
 and sender index answers to `mailbox.metadata.read` or `mailbox.content.read`; the body index answers to
@@ -233,7 +398,9 @@ Five decisions worth having written down:
   authorization and, for a supervised reader, one `supervised.query` audit entry **per keystroke**, recording
   mail nobody looked at against `audit.max_detail_bytes`. §7 records acts and typing is not an act. Asserted
   by counting requests, because a test that only checked the final request would pass against the wrong
-  implementation.
+  implementation. The command palette holds to the same rule: typing there filters a static list of commands
+  and routes in the browser and sends nothing, and its *Search mail for …* hands the term to this field, one
+  request when chosen.
 - **`MATCH` is a query language, so nothing the user types reaches it.** Measured against a live D1 before
   the sanitiser was written: `AND`, `NOT`, `a OR`, `foo(`, `NEAR(`, `*` and `sub:x` each return
   `fts5: syntax error`. A search box that 500s when somebody types the word "AND" is the feature not working.
@@ -246,14 +413,26 @@ Five decisions worth having written down:
   offer a reader the inbound-routing check because they misspelled a supplier's name. It names what was
   searched and offers a way to clear it. A search with no exit is a mailbox that looks empty for ever.
 
+**The answer is announced once, and nothing else is.** The list and its status line change silently for a screen
+reader, so the list pane holds a visually hidden status region, always in the page, that says one sentence when
+a searched or narrowed listing has its answer: *2 matches.*, *Best N matches.* for a full page, *No mail matches
+those words.*, *1 message matches these filters.*, *12+ messages match these filters.*, and on a later page
+*Page 2 of the mail that matches these filters.* A narrowed page says the count's own words, which the visible
+count is built from too, so it never speaks a total the screen does not print; an empty one says the empty
+screen's sentence (the lookback's *None of the newest N …*, *Nothing older on this page.*, *Nothing matches
+these filters.*), never a zero. It is empty while the
+answer is pending and on an unnarrowed listing, so opening a message, J and K, and paging the Inbox say nothing.
+
 **What the body index costs against ADR 28, and what it does not.** It is *contentless*, `content=''`, so
 it stores the inverted index and no copy of any document. A D1 dump therefore lets somebody **confirm a
 guess** (that a word appears in a message) and not read the message; bodies stay in R2, encrypted. ADR 28 was
 amended in the same change to say exactly that, because its argument turned on the claim that DO-held keys
 defend against a D1 dump, and this narrows it. Two consequences are enforced rather than described: body
-search needs `content.read`, and there are **no body excerpts** in a result list. `snippet()` returns `null`
-on a contentless table, so showing the matching line means fetching and decrypting the message, which is an
-authorized read.
+search needs `content.read`, and the index yields **no excerpt**. `snippet()` returns `null` on a contentless
+table, so showing the matching line would mean fetching and decrypting the message, which is an authorized
+read. A result row may carry the message's stored **preview** (ADR 45), which is not the matching line but the
+start of the body, sealed under the content key and opened only for a reader with standing content read,
+exactly as on every listing row; ADR 28 was amended again to say so.
 
 **The subject index costs nothing against ADR 28.** `subject` and `from_addr` have been plaintext
 columns of `messages` since migration 0002, so an FTS5 index over them discloses nothing a D1 dump did not
@@ -272,7 +451,223 @@ Selecting from the table makes that impossible rather than merely unlikely.
 message's, and `assertNotHeld` already refuses to delete a held message, so a hold pins the index as a
 consequence of a rule enforced in one place. There is no `if (held)` here to forget. And nothing yet deletes a
 message row at all. `search-scope-world.test.ts` asserts that, so the day one appears the assertion fails and
-carries the rule with it, which is stronger than a delete function nobody calls.
+carries the rule with it, which is stronger than a delete function nobody calls. Trash did not change that:
+it is a place, not a deletion (ADR 45), and the rows keyed by a message that would have to die with it,
+`message_places` among them, are named in that assertion's message.
+
+## Places, tabs and previews (ADR 45, 26 September 2026)
+
+**Archive and Trash are places, and a place is yours.** Filing a message moves it in your own view and nobody
+else's: a colleague reading the same shared mailbox keeps it wherever they left it, the unfiltered listing,
+search and the thread still show it, and putting it back in the Inbox deletes only your filing row. *E* archives
+the selected message and the message's *More actions* menu offers *Archive*, *Move to Inbox* and *Move to
+Trash*, each for the places it is not in. The message leaves the list, so the next row is selected and **takes
+focus**, as J would give it, rather than leaving focus on a row that is gone. Every move answers with a toast
+(*Archived.*, *Moved to Trash.*, *Moved to Inbox.*) carrying *Undo*, and an undo that succeeds replaces it with
+*Moved back to Archive.* (or wherever it was), so **Z** cannot run an undo that already finished. The *Undo*
+toast stays until the next toast or until it is dismissed, because an undo that vanishes in six seconds is out
+of reach of a keyboard or screen-reader user; **Z** runs it. A toast with the same words as the one before it is
+announced again, since each is a new element in a live region that stays mounted. While a composer is open the
+toasts move where the dock never is (over the list at full width, to the left below 1120px, over the mobile bar
+below 768px), so *Undo* never lies over *Seal and send*. There is no *Delete* anywhere and no purge: Trash says
+*"Trash keeps messages until you move them back. Nothing here is deleted."*, and it is true. Archiving never
+closes a case and closing a case never archives: the case is the team's *done*, the place is one person's.
+
+**Tabs: All, Unread and Mine**, on the Inbox only and hidden while searching. Each is one request the Node
+answers (`unread=1`, `mine=1`, `place=inbox`), never a filter over a page in the browser, which is #91's
+page-as-total defect in a new place. There is no *Waiting* tab; ADR 45 says why no honest definition of it
+exists yet. The tablist is named *Inbox views* and activates manually: the arrow keys move focus along it and
+Enter, Space or a click opens a tab. Opening a tab is a listing request, a recorded `supervised.query` for a
+supervised reader, so looking along the row must not send three.
+
+**Why the Inbox, Unread and Mine can stop before a page is full.** Each looks back through at most
+`messages.max_lookback` of the messages you can see per request, newest first, and returns what matched with a
+cursor to look further back. The bound exists for exactly the person Archive is built for: somebody who files
+nearly everything, reads everything or holds few cases would otherwise make the default view read all the mail
+they can see to fill one page. When a request stops at the bound with nothing to show, the list says what it
+looked at and what it did not find, *"None of the newest N messages you can see is in your Inbox."* (Unread and
+Mine have their own words, a filter adds *that match these filters*, and a later page says *the next N
+older*), and offers **Look further back**, which is exactly *Older*: one request, onto the same cursor stack,
+so *Newer* comes back here. It never says the Inbox is empty and never shows the routing sentence below, since
+neither is known. *You can see* is exact: the lookback counts only messages this reader may see, so the
+sentence is true and a cursor never names a receipt they cannot. N is the response's `max_lookback`, the bound
+the answering Node says that request used, formatted, and neither a number written into the screen nor the
+bundle's own copy of the budget, which would describe a Node running another one wrongly; when the response
+names no bound the sentence names no figure. A page with some rows that the lookback cut short is an
+ordinary page with a cursor, `n+` and *Older*, with no extra words.
+
+**Archive and Trash never stop that way.** They page from the filing table's own index, so a page of either
+costs a page however much mail is behind it.
+
+**The row** shows the sender's display name, or the address when there is none, with the address as its
+title; the time this Node received it; the subject, or *(no subject)* when the header was blank or could not
+be read; one line of the body; and chips: *DMARC fail* first when the sender's domain disowned the message, so a
+forgery is visible where triage happens rather than only after opening it, which also marks it read; then its
+labels, *Mine* when you hold the case, *Held* when a colleague does, and its place when a search found it
+somewhere other than the view. The selected row carries a 2px accent bar as well as its fill, and
+`aria-current`.
+
+**The name and the preview are projections**, written at ingest and by a backfill for older mail. A row the
+backfill has not reached lists with its subject and address, which is what every row did before. The display
+name is whatever the sender typed, so the reader always shows the address beside it, and the name is judged
+before it is stored: folded with NFKC first, so a full-width `＠` or dot reads as the character it imitates;
+stripped of control, format and default-ignorable characters, so a Hangul filler is not a name; then dropped if
+nothing is left that is a letter or a digit, if it holds an `@`, or if it is shaped like a domain in any script,
+because each is the spoof it would otherwise carry into the list. The preview is made from at most the first
+16,384 characters of the body (`PREVIEW_SCAN_CHARS` in `src/preview.ts`, a provisional bound, sized and not
+measured), so a reply written under a longer quote gets no preview. A row whose preview could not be made (its
+evidence missing, or three reads of it failing) is `failed`, and `doctor`'s `preview_backlog` counts it; an
+administrator's `POST /api/maintenance/requeue-previews` puts every failed row of the organization back in the
+queue once the fault is over; the Doctor screen offers it as *Requeue failed previews* under the failing finding. The preview is opened only for a reader with standing content read on the
+delivery's mailbox. **A supervised reader sees no preview at all**: a preview is message content, content under
+a grant is an open recorded per message, and a listing records one query, so fifty previews would disclose fifty
+messages under a record that says *listed*. Opening the message is the recorded act it always was.
+
+**What the reader offers follows what the Node will allow**, rather than greying out what it will refuse.
+*Reply*, *Reply all*, *Forward* and *Assign* appear only when the delivery's mailbox is one the reader holds
+`send.propose` on, and when it is not the reader says which authority is missing: *"Replying from Support needs
+send.propose on it, which you do not hold."* Read state, labels and places need standing content read (the
+row's `standing_content`), so for a metadata-only or supervised reader those items are not rendered at all. The
+navigation is never trimmed this way; only acts on a message are.
+
+*More actions* is three groups with a rule between them: read state and *Add label…*, then the places, then
+the original (*View headers*, *Download original*). A message's labels are chips on its *to …* line, and only
+when it has some; *Add label…* opens the field in place, focused, with the hint *Label, then Enter* in it,
+rather than a button standing under every message. The *to …* disclosure stays under the pointer that opens
+it, and where the labels and the field fit beside it, adding a label, opening the field or moving between a
+labelled and an unlabelled message does not move the actions under that line; where they do not (a phone, a
+two-pane window at its narrowest with a label, or the details open) they take a line of their own, and the
+actions sit that line lower while it is there. Reserving that line would put an empty one under every message
+without a label, which on a phone is every message. Enter, Escape and a chip's × all give focus back to *More actions*, and so does an item that changes
+nothing on screen (*Mark unread*), rather than dropping it on the page.
+
+**Opening a message marks it read once, and refetches nothing.** The read state is patched into every cached
+listing rather than invalidated, so an open costs one `/body` request and no page listing; before, every open
+refetched every listing on screen, which for a supervised reader was one more `supervised.query` each time. A
+message that belongs to a conversation also lists that conversation for the thread under it (its messages and
+its sends), once per conversation while that answer is fresh, so J and K along one conversation read it from the
+cache: for a supervised reader, one more `supervised.query` per conversation opened. It marks read once per
+open, so *Mark unread* (the menu, or Shift+I) is not undone a moment later, which it was until the redesign: the
+effect keyed on the read flag it had just cleared. A reader without standing content read makes no read request
+at all.
+
+**The details are one level away**: *to* followed by the address the message arrived at stays visible
+(§4B.3), and opening it shows From, To, Cc, Reply-To, Delivered to, Received, the authentication results with
+their sentence, and the size, then *View headers* and *Download original*. *View headers* fetches the header
+block only when asked, with the body's authority and record, capped at `mime.max_header_bytes` and saying so
+when it was cut. The block scrolls inside the dialog as a region named *Header block* in the Tab order, so a
+keyboard can scroll one taller than the dialog; until the third convergence round it was a bare `<pre>` that
+only a pointer could scroll. A long line scrolls sideways rather than wrapping: a folded line keeps the leading
+whitespace that marks it as a continuation, and until the fourth round a soft-wrapped remainder started flush
+left, where only a new field starts, so on a phone a relay's address read as a header of its own. *Download original* says *"Downloading is recorded as an export."* and carries no `download`
+attribute: the route already sends `content-disposition: attachment`, and without the attribute a refusal opens
+as the Node's words instead of being saved as a file of JSON.
+
+**A reply waits for the body that says whom it answers.** To is the Reply-To when there is one and Cc the
+other recipients, both read from the body, so R or A pressed before the body has arrived waits for it (the
+reader's own request, or its cached answer, never a second read) and only then claims and opens. A body that
+cannot be read claims nothing and opens nothing, and the notice says what is unknown, because a reply
+addressed before the body is known goes to the From address rather than the Reply-To, and a reply-all to
+nobody else.
+
+**A refusal about a reply is said where it can be seen.** A refusal to reply or forward (a colleague holds the
+case, the message is not filed yet, its body cannot be read) is said in the reader, and an open composer covers
+the reader, so while one is open the same words are also raised as an alert toast naming the message, carrying
+*Take it anyway* when there is a case; the inline copy then drops its alert role, so a screen reader hears the
+sentence once.
+
+**Next steps** sit below the actions and the labels: *Claim* (when the case is open and you may send; it answers
+*Claimed.*), *Release* (when you hold it; *Released to the queue.*) and *More from this sender*, which filters
+the list by the envelope sender. They are
+deterministic, and none of them wears an AI badge (§4B.4). There is room for an AI result beside them, rendered
+with its label and provenance, and nothing fills it, because no `llm.*` node runs.
+
+## Keyboard
+
+Single-key shortcuts, all switched off together by one checkbox in Settings (WCAG 2.1.4: a person using speech
+input or with a tremor must be able to stop a stray letter from acting):
+
+| key | does |
+|:--|:--|
+| C | Compose: the chooser when you may send from several mailboxes, the composer when one, and a sentence naming `send.propose` when none |
+| R, A, F | reply, reply all, forward the selected message; a reply waits for the body and claims first, exactly as the buttons do; R again on the reply already open keeps what was typed and puts focus back in it |
+| E | archive the selected message, from the place its own row says it is in, and move focus to the row that takes its place; *Already in Archive.* when it is |
+| J, K | next and previous message, paging at the ends |
+| Shift+I | mark the selected message unread |
+| Z | run the visible toast's action, which is *Undo* |
+| Cmd+K on Apple platforms, Ctrl+K elsewhere | the command palette: every route by name, *Compose*, and the selected message's commands, each gated exactly as its button is |
+
+**One predicate decides where a key is text rather than a command**: inside an input, a textarea, a select, an
+editable element, and anything inside a dialog, a menu, a listbox or the composer. `<dialog>` is named
+explicitly, because an attribute selector does not match its implicit role and a key typed into the palette
+would otherwise archive a message behind it. A `<summary>` or a tab button is not text entry, and keys act
+there. A held key's auto-repeat is ignored (holding E must not file a message per repeat, and holding J must
+not open a body per repeat, each a recorded open for a supervised reader), as are Ctrl, Meta and Alt
+combinations and a key already handled. The palette's chord is a modified key, so it works while the others
+are off and from inside a field. It is the platform's own: Cmd+K on Apple platforms, where Ctrl+K in a field
+is the system's *delete to end of line* and is left alone, and Ctrl+K (or the Meta key) elsewhere. A held
+chord opens or closes it once, its repeats swallowed rather than reaching the browser's own Ctrl+K. Its field
+says *Go to or do…*; a command that has a single key shows it (*C*, *R*, *E*, …) only while single keys are
+on, as *Compose*'s tooltip names *C* only then, because a hint for a switched-off key names a key that does
+nothing; and the active option is kept in view as the arrows move it.
+
+**The message list is one Tab stop.** Tab reaches the row that last had focus on this page, else the selected
+row, else the first; ArrowUp, ArrowDown, Home and End move focus along it, without wrapping and without
+opening anything, because an open is a recorded act and marks the message read; Enter or a click opens. One
+Tab then leaves the list for the reader, where before it took one press per row. It stays a list of buttons
+rather than a listbox: a `role="option"` wrapping a button is the `nested-interactive` defect axe found in
+this list once.
+
+**Focus goes back to where it came from.** Every dialog (the palette, the chooser, the headers, the drawer)
+closes before it gives focus back, because while it is modal everything outside it is inert and a `focus()`
+there does nothing; focus used to fall to the page after every Escape, which only a real browser showed. A
+popover (Health, Filter, Assign) focuses its first field on open, or itself when it has none; Escape inside it
+or on its button closes it, and so does focus landing outside both, so Tab past it never leaves it open behind.
+A click on its own button closes it once, also where pressing a button does not focus it (Safari, and Firefox
+on macOS): focus leaves the popover for the page during the press, and that leave is not judged while the press
+is on the button, or the click would open again what the leave had closed. Checked in Chromium by emulating
+that press; not run in WebKit or Firefox. A toast's *Undo* or ×
+gives focus back, when the toast goes, to the control focus arrived from, or to the selected row or *Compose*
+when that control has gone, never to the page. The toasts come last in the page, so by Tab that control is the
+one before them (*Health*, in the status bar), not the row a message was archived from; a press on *Undo* while
+a row has focus gives it back to the row. Both checked in Chromium.
+
+**A popover opens on the side where it fits.** Each popover (Health, Filter, Assign) and the *More actions*
+menu has a side it prefers, the menu leftward from its button and Assign rightward from its own, and keeps it
+when it fits. When the window, or a pane that scrolls and so clips (the reader column), would cut it off at the
+side, it opens on the other side, and when neither fits it is held against the nearer edge. Only the horizontal
+side is corrected: whether it opens up or down (`popover-up`, `popover-down`) stays as its caller chose. It is
+measured once as it opens, before it paints (`useInside` in `ui/popover.tsx`). Until the third convergence round
+the side was fixed: *More actions* opened leftward from a ••• the action bar had wrapped to the column's left
+edge, so at 390 px its labels were cut off and at 768 px the list pane covered them, and Assign ran past a
+768 px window. *More actions* and Assign were checked in Chromium at 390, 768, 860 and 1440 px wide; Health and
+Filter share `useInside` and were opened there only at 1440. No test in the repository runs it.
+
+**The message body shows where focus is.** The body is a `sandbox=""` frame, and Tab into it fires no `focus`
+on the frame element in the page, only a window `blur` with the frame as the active element; so the reader
+marks the frame when the window blurs that way right after a Tab, clears the mark when the window has focus
+back, and draws the accent ring on the mark. A click into the frame draws none, as `:focus-visible` would not.
+Measured in Chromium only.
+
+**A key that cannot apply says why**, in the assertive live region, rather than doing nothing: *"Replying from
+Support needs send.propose on it, which you do not hold."*, *"Still reading which mailboxes you can send
+from."* (also what C and the palette's *Compose* say while the mailbox list is loading, rather than claiming
+you hold none), *"Filing and read state need mailbox.content.read on Support, which you do not hold."*, or
+*"This message has not been filed yet. Try again in a minute."*
+
+**The switch says when it did not stick.** It is kept in this browser; where storage is refused it still
+switches the shortcuts off for this tab and says *"Not saved in this browser; this applies until you reload."*
+rather than looking saved. Where the browser will not even let the page read a saved choice, the keys are on
+and Settings says *"This browser would not let Mailda read a saved shortcut choice, so single-key shortcuts
+start on."*, because the person this switch is for may have saved *off*, and a checked box with no sentence
+would hand their stray letters back to the keys in silence.
+
+**The composer takes focus when it opens**, in the body for a reply (before the quote) and in *To* for a new
+message or a forward, so the next letter typed is text and not *A*, which would otherwise start a reply-all.
+
+**Keys pressed inside the message body do nothing**, and that is correct rather than a gap: the body is a
+sandboxed frame with an opaque origin, and its key events never reach the document. Click outside the body, or
+press Tab until focus leaves it, to use them.
 
 ## The honesty rules live outside React
 
@@ -294,10 +689,10 @@ Every outbound path this product had ran through **somebody else having written 
 reachable only from a message's reply button, and `replyContext` was its one caller.
 
 The composer itself was never the obstacle. `inReplyToMessageId` has always been optional and it renders
-"New message" in two places. What was missing was a caller that left it out. `newMessageContext(mailboxId)`
-is that caller, and it is three fields shorter on purpose: no `to`, no `subject`, no `body`. `replyContext`
-derives all three from the message being answered, and a composer that opens pre-addressed to a guess is
-how a message goes to the wrong person.
+"New message" in two places. What was missing was a caller that left it out. **Compose** is that caller now,
+and the context it opens is the mailbox and nothing else, three fields shorter than a reply's on purpose: no
+`to`, no `subject`, no `body`. `replyContext` derives all three from the message being answered, and a
+composer that opens pre-addressed to a guess is how a message goes to the wrong person.
 
 It also claims **no case**, which is the substantive difference rather than an omission. Reply claims the
 case in the same act (#42) because two people answering one correspondent is the collision that matters. A
@@ -317,12 +712,19 @@ as the thing to avoid, and the line below it did that. What now holds:
 - **One mailbox auto-selects and renders no control.** One option is not a decision, and asking for it would
   be ceremony on the commonest Node there is. The rule is narrower than "never default": a default *among
   alternatives* is never invisible, and where there are no alternatives there is no default.
-- **More than one starts at nothing**, with `new message` disabled until a choice is made. The unchosen state
-  is a real `<option value="">`, not an absent value. A `<select>` whose value matches no option displays
-  its first one anyway, which is the original bug wearing a different implementation.
+- **More than one opens a chooser that starts at nothing**: a dialog, *Choose a mailbox*, whose *Start
+  message* is disabled until a choice is made and disabled again if the empty choice is picked back. The
+  unchosen state is a real `<option value="">`, not an absent value. A `<select>` whose value matches no
+  option displays its first one anyway, which is the original bug wearing a different implementation. The
+  chooser lists exactly the rows Compose was given and runs no query of its own.
+- **None renders no Compose button at all**, since a button that can only fail is worse than none. Pressing
+  **C** then says why, *"Sending needs send.propose on a mailbox, and you hold it on none."*, because a key
+  has no button to be absent from.
 
-The control lives in the heading, which precedes every branch of the screen, so it is present while the
-inbox is loading, when it is full, and, most importantly, when it is **empty**.
+The control lives in the sidebar since the redesign (in the mobile bar below 1120px, and exactly one exists at
+any width), outside every screen, so it is present while the inbox is loading, when it is full, when it is
+**empty**, and on every other screen too. It used to live in the inbox's heading, which was the one place
+that preceded every branch of that screen.
 
 That empty screen used to say *"This Node is claimed and routing is live"* (#101), concluded from an empty
 result set, which establishes neither half. Email Routing never enabled, MX records pointing elsewhere, a
@@ -365,6 +767,11 @@ suite. It sat **below the message body**, so somebody wrote the whole reply and 
 field. From is identity and belongs at the top of a letter. And it was an unstyled full-width native select
 among bare-underline inputs, which read as belonging to another application.
 
+**What sending does is said beside the button, at the weight of a footnote.** *Sent as the mailbox; who wrote it
+is recorded here. Held N s so you can stop it; no recall.*, with N the hold window from `/app/config.js`, and
+the long form one click down behind *How sending works*. It was a three-line paragraph in the dock; the facts
+stay visible and only the explanation folds.
+
 **The send-state words live in `delivery.client.js`, not in the React screen**, and that placement earns its
 keep. They were a literal map in `ledgers.tsx` keyed on `state` alone, which made `outcome_unknown` read *"We
 do not know whether it left"* even in the one case where the Node can prove otherwise: on the authored path
@@ -380,9 +787,9 @@ A policy decision now runs inside `sealManifest`, so a send's state is a policy 
 transport outcome. The shell's outbox therefore renders two states it did not before, and one column it did
 not have.
 
-- **`awaiting`**: a policy gated the send. Rendered with `--signal`, the same colour as `held`, because in
-  both cases the send is waiting on a person and a fifth chip colour would need its own contrast measurement
-  for no new meaning.
+- **`awaiting`**: a policy gated the send. Rendered in `--warning` (`--signal` when this was written), the same
+  colour as `held`, because in both cases the send is waiting on a person and a fifth chip colour would need its
+  own contrast measurement for no new meaning.
 - **`withheld`**: this Node declined. It already existed for withdrawn send authority; a policy denial is the
   second thing that produces it.
 - **`state_reason`**, a machine token beside the state, rendered as its own unpainted chip. The state says what
@@ -402,6 +809,13 @@ this Node can write has none, driven off `POLICY_REASONS`, which is derived from
 rather than written out, so a renamed or added token arrives at the check without anybody remembering to bring
 it. Without that second check the outbox would fall back to rendering `policy_approval_required` at a person,
 which is the failure the first check exists to prevent, reached through the other column.
+
+**The outbox reads itself again when a hold ends.** A `held` send leaves on its own, so the outbox and the
+sidebar's Outbox count re-read five seconds after the earliest `release_at` on the page, and every five seconds
+while a send is still held past its release (or its time does not parse); `awaiting` and `withheld` wait on a
+person and schedule nothing. Before, a held send stayed *held* on screen until something else refreshed the
+page. The wait is one timer, capped at the browser's 2^31−1 ms ceiling, because a longer delay wraps to an
+immediate one and would poll without pause; a hold window is per mailbox and can be an hour.
 
 **The stop button now offers itself on `awaiting` as well as `held`**, and that is not a convenience. Nothing
 in this build clears a policy gate (releasing a hold and deciding an approval are #61's acts), so without it
@@ -431,9 +845,15 @@ shipping deliberately without it.
   a half-written sentence about a customer.
 - **One draft per reply**, enforced by a partial unique index, so replying twice resumes instead of forking
   and leaving the first to rot. The index is partial because SQLite treats every NULL as distinct: as many
-  unrelated new messages as somebody likes. Since 17 September the inbox lists every draft in a strip and
-  the composer resumes one by id, so a new message put down is picked up again; a reply is still found by
-  the message it answers.
+  unrelated new messages as somebody likes. Every draft is listed on `/drafts` (since 26 September; from 17
+  September until then, in a strip above the inbox), and opening one resumes it by id in the shell's one
+  composer, so a new message put down is picked up again; a reply is still found by the message it answers.
+  Opening the draft that is already in the composer keeps it, typing and all, whether it is recognised by the
+  message it answers, the id it was opened with, or the id its first save was given.
+  **A resumed reply carries its case**: the drafts list returns the `caseId` of the message a draft answers,
+  and the composer claims that case before it seals, exactly as a reply started from the message does
+  (*Starting a message*). Without it, a reply put down on Monday and sent on Tuesday would go out while a
+  colleague held the case, which is the collision #42 exists to prevent, reached through a list.
 - **A save that changes nothing writes nothing.** `updated_at` is shown as "saved on your node · HH:MM:SS",
   so it has to mean when the draft last *changed*, not when somebody last opened it. Guarded in
   `saveDraft`, the layer that owns the column, as well as in the composer.
@@ -462,8 +882,8 @@ shipping deliberately without it.
   with `E_LEGAL_HOLD` while recording the attempt as `hold.blocked`. Two consequences a reader should not have
   to discover: pressing **discard** on a held draft answers 409 with the reason, and **sending** from a held
   mailbox succeeds and keeps the draft. The seal happened, so the send route reports `draftRetained: true`
-  rather than failing a message that has already left. The composer's draft list then shows a draft for a sent
-  message, which is the correct state under a hold and not a bug to tidy away.
+  rather than failing a message that has already left. `/drafts` then shows a draft for a sent message, which
+  is the correct state under a hold and not a bug to tidy away.
 - **The composer reads that 409 rather than closing over it.** `apiFetch` *resolves* for a non-ok response,
   so the first version of `discard` closed the dock as though the draft had gone while it was being preserved,
   throwing away the message the route deliberately declines to swallow. It now renders the Node's words
@@ -485,8 +905,43 @@ shipping deliberately without it.
   `discard` and `seal` now wait for any write already in the air, since a PUT landing after a DELETE
   resurrects the draft and one landing after a seal resurrects a sent one; and both read the draft id from
   a ref rather than their own closure, because the write they wait for may be the one that created it.
-  There is also an unmount-only effect that flushes for the paths `close` cannot cover (a rail link, a
-  route change), since cancelling the timer there is the same loss reached sideways.
+  There is also an unmount-only effect that flushes for the paths `close` cannot cover, since cancelling
+  the timer there is the same loss reached sideways. Until the redesign those were a rail link and a route
+  change. The composer lives in the shell now and survives both, so it keeps autosaving across navigation.
+  What unmounts it is opening a different message's composer, which replaces this one (unless this one is
+  sealing, below), and the flush covers that. The unmount flush cannot cover signing out: `logout()` in
+  `session.client.js` ends the session
+  before it emits `signed-out`, and only then does `app.client.js` unmount the shell, so that write goes out
+  with no session and is refused. Measured in Chromium on 27 September 2026: words typed into a reply followed
+  at once by *Sign out*; the unmount's write was answered 401, and the draft came back without them. So
+  **Settings saves the open draft before it ends the session.** *Sign out* and *Sign out everywhere* both ask
+  the composer to save (`Compose.save()` in `shell-context.tsx`), and sign out only once the Node has the
+  words; when it refuses them, the session stays, an alert reads *"Your draft was not saved on your Node when
+  you asked to sign out, so you are still signed in:"* and the Node's own words, and the sign-out it held back is
+  offered again under its own name beside the buttons: *Sign out anyway*, or *Sign out everywhere anyway*,
+  which ends every session and must not read as the plain one. In
+  Chromium the draft's `PUT` now precedes the logout `POST`, and the words typed in the pause reach the draft.
+  What is still lost is a sign-out the Node imposes (a failed renewal, a revocation from another device): it
+  arrives after the session is already gone and cannot be flushed at all.
+  Discard and a successful seal close the dock too and must write nothing after it: a debounce firing while
+  a DELETE is in the air, or the unmount flush after a seal, used to write the draft back, leaving a draft in
+  `/drafts` for a message discarded or already sent. Discard now retires the composer before its first
+  `await` and a seal as soon as its claim succeeds, and `flush()`, the one path every write takes, refuses once
+  it is retired; a DELETE or a seal that is refused or never reaches the Node un-retires it, so a dock that a
+  legal hold keeps open goes on saving. **A seal in the air keeps the words until the Node has answered it.**
+  Close and Discard are disabled while it is, and opening another composer (R on another message, a draft in
+  `/drafts`) keeps this dock and says so in the assertive region, *"Still sealing the open message. Open this
+  again once the Node has answered it."*: replaced, the refusal would land on a dock nobody sees, and a seal that
+  succeeded would close the new one. R on another message claims nothing while a seal is in the air: it is
+  refused (`refuseWhileSealing()` on `useCompose`) before it fetches the body, and again once the body is in,
+  before it claims the case, where until the third convergence round it claimed that message's case first and
+  only then said the dock was sealing, and until the fourth a seal started while the body was on its way still
+  met the claim. Only a seal started during the claim's own request finds the case claimed, and the refusal
+  then comes from `open`, with the same words. So a
+  refusal finds the dock and the words still there; and a write
+  asked for meanwhile (the dock taken away, a sign-out) waits for the seal's answer first: sealed, nothing is
+  written; refused, the words are written as a draft. Before this, the retired flag answered *saved* for words
+  nothing had saved, and a refused seal whose dock had gone lost them.
 
 Nothing about a draft's own lifecycle is audited. A draft is the only write path a person triggers by *typing*
 rather than by deciding, and an entry per autosave would put dozens behind one human action:
@@ -513,7 +968,8 @@ Two TypeScript programs, not one: the browser half needs `lib: DOM` and JSX, and
 have them, or `document` resolving inside `src/index.ts` becomes a runtime error in somebody's mailbox
 instead of a type error. `pnpm typecheck` runs both.
 
-The stylesheet is CSS inside a TypeScript template literal in `src/ui.ts`, which has two hazards worth
+The stylesheet is CSS inside a TypeScript template literal, `RULES` in `src/shell-css.ts` (in `src/ui.ts` until
+26 September 2026), which has two hazards worth
 naming because they have cost real time. A **backtick in a CSS comment** ends the literal; the build fails
 loudly, so the cost is diagnosis rather than a defect. A **stray comment terminator** is the dangerous one:
 the prose after it sits outside any comment, CSS error recovery consumes that prose as a selector up to the
@@ -556,6 +1012,13 @@ directly. That ships the whole 218-entry table to a browser to deliver one integ
 +2,783 gzip** measured against `react-shell-bundle.md`, whose subject is precisely what this bundle costs
 somebody waiting for it) and gives the interface two sources for numbers that must agree with the Node.
 
+**The inbox does import the table, and until 26 September this section did not say so.**
+`screens/inbox.tsx` imports `BUDGETS` for `messages.page_size`, to tell a full page from a short one. (For a
+day during the redesign it also read `messages.max_lookback` there, the N in its lookback sentence; that N now
+comes from the Node's answer, *Places, tabs and previews*.) So the table is in the bundle whichever way the composer reads its one integer, and the bytes above are spent. The
+composer still reads `/app/config.js`; what changed is that keeping the table out of the bundle is no longer a
+reason anybody can give for it.
+
 It also failed #90's draft-flush test when it was tried, and that reason has since **expired**. The test then
 ran on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where wall-clock time also advances the fake clock,
 so a slower module graph could push it past the 1,499 ms boundary it sits on. That was the test
@@ -589,8 +1052,19 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Fourteen routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/agents`,
-`/limits`, `/outbox`, `/audit`, `/log`, `/doctor`, `/setup`.
+Eighteen routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/agents`,
+`/limits`, `/outbox`, `/audit`, `/log`, `/doctor`, `/setup`, `/drafts`, `/archive`, `/trash`, `/settings`.
+
+The redesign renamed no route and removed none, so every bookmark still resolves, which
+`test/node/app-routes-kept.test.ts` holds. `/archive` and `/trash` are the Inbox screen given a place, not
+screens of their own. `/drafts` lists drafts and `/settings` holds the account, the session, passkeys (the
+*Your passkeys* section that People rendered only for administrators until the redesign, so everybody now
+reaches their own), appearance and the keyboard. The sidebar groups routes without renaming them: Doctor, Limits, Audit, Log and
+Setup under a collapsible *Admin*, and Butlers and Rules under *Automations*, where the two screens share
+section tabs. **Rules sitting under Automations is a default taken, and it is arguable.** Rules are send
+*policies*, and Blueprint §5's Admin center lists *Policies and approvals* apart from *Butlers and
+automation*. The group word is a heading; the tab and the screen still say *Rules*, and moving them is one
+entry in `SIDEBAR_HOME`.
 
 `/doctor` carries the remedies its findings name, on the finding and only while it fails: apply migrations,
 reseal a batch, collect orphans (two clicks, since it deletes), record a key-collision assessment, mint and
@@ -610,12 +1084,14 @@ domain, searching the registrar, the handover manifest, the ownership page, and 
 
 ### The first run (25 September 2026)
 
-Until a Node can receive, the application does not show an inbox. Every screen but `/setup` and `/doctor` is
-replaced by one page: *This Node is not ready to use yet*, the progress list, and the next step with its
-action written out two ways. The terminal way is recommended, `curl -fsSL https://mailda.site/update.sh |
-bash` in the clone's directory, because it needs no token: it uses the consent wrangler already holds. The
-browser way is to connect the Node from Setup and set up receiving there. An administrator can open the
-app anyway, per tab, for the case where they know better than the gate.
+Until a Node can receive, the application does not show an inbox. Every screen but `/setup`, `/doctor` and
+`/settings` is replaced by one page: *This Node is not ready to use yet*, the progress list, and the next step
+with its action written out two ways. (`/settings` joined the exceptions with the redesign, because sign-out
+lives there now and an administrator held at the gate must still be able to sign out.) The terminal way is
+recommended, `curl -fsSL https://mailda.site/update.sh | bash` in the clone's directory, because it needs no
+token: it uses the consent wrangler already holds. The browser way is to connect the Node from Setup and set up
+receiving there. An administrator can open the app anyway, per tab, for the case where they know better than the
+gate.
 
 The readiness rule is two facts and nothing more: an address exists (`doctor`'s `inbound_routing.ok`) and
 mail is routed to this Node (the routing step, read live through the grant or as the install's dated
@@ -685,7 +1161,7 @@ and a subscription with a queue and a consumer, from the delivery-events read. T
 *unknown* is its own: a source that could not be read, or one not asked because the connection is not there
 yet, is not the same as *checked and not done*. The last three sources spend the grant, so only Setup reads
 them; the one-line notice above every other screen reads the connection state and `doctor`, both already
-fetched for the rail, and names the first of those two it can see is undone. It says nothing when both are
+fetched by the shell, and names the first of those two it can see is undone. It says nothing when both are
 fine, rather than guessing at what it did not read. `src/client/app/onboarding.tsx`, with the derivation
 tested in `test/client/onboarding.test.ts`.
 
@@ -857,8 +1333,8 @@ rule stops applying. "Which of my messages would this have denied" would mean a 
 #60 gave `policy_hold` to any `send.propose` holder to release and nobody built the act, so for four layers
 the only drain was the author cancelling their own message, the queue-with-no-drain that `deny` was kept out
 of `awaiting` to avoid, and which `dispatch.ts`'s header has named as missing since it was written. Giving
-`hold` a screen made it two clicks away, so the act is built: `POST /api/sends/:id/release-hold`, and *let it
-go* beside *stop* in the outbox.
+`hold` a screen made it two clicks away, so the act is built: `POST /api/sends/:id/release-hold`, and *Let it
+go* beside *Stop* in the outbox.
 
 Only `policy_hold`. `awaiting` is also where an approval-gated send and a rate-broken one sit, each with its
 own drain, and one button for all three would walk a message past whichever gate it was actually on. The
@@ -867,7 +1343,7 @@ is usually the person who wrote it, which is the distinction from `require_appro
 them by design.
 
 The Butler gate is the other one a `send.propose` holder clears, and it has its own button for the same
-reason: *release* appears on a row whose reason is `butler_release_required` and calls
+reason: *Release* appears on a row whose reason is `butler_release_required` and calls
 `POST /api/sends/:id/release`, which puts the send back in the ordinary hold window and wakes the run that
 proposed it if that run is still there. The route answers `not_found` alike for absent, already released and
 not yours (§5C), so the refusal the outbox renders says all three rather than guessing which.
@@ -919,7 +1395,7 @@ together and splitting them would make the common diagnosis a two-screen navigat
 
 Three things it refuses to do, each one a decision made elsewhere that a screen could quietly undo: it does
 not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and
-it does not hide the rail link from non-administrators. The screen answers 404 by §5C, and a hidden link
+it does not hide the sidebar link from non-administrators. The screen answers 404 by §5C, and a hidden link
 would be a second, weaker copy of that authority decision living in the navigation.
 
 ## The interface is tested now, which it was not
@@ -977,13 +1453,21 @@ component does not.
 ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither replaces:
 
 - **Contrast is computed** from the design tokens in `test/node/contrast.test.ts`, which runs in CI and
-  needs no browser. axe cannot do this job here: against this design language it files almost every text
+  needs no browser: every text token on every ground, and every non-text token at 3:1, in both themes. It
+  began as the only way. The page carried a background gradient, and against it axe filed almost every text
   node as `incomplete` ("background color could not be determined due to a background gradient") and
-  returns zero violations, so "proven by axe" would once have meant one node in fourteen examined
-  (`contrast-tokens.md`).
-- **Structure and ARIA are checked by axe**, manually, via `pnpm --filter @mailda/worker run axe`. It runs
-  every route in both themes, signs in with `MAILDA_AXE_EMAIL` / `MAILDA_AXE_PASSWORD`, and refuses to
-  report a run as clean when it checked nothing.
+  returned zero violations, so "proven by axe" would once have meant one node in fourteen examined
+  (`contrast-tokens.md`). The redesign removed the gradient and every translucent surface, so axe can resolve
+  the backgrounds now and checks contrast too. The computed test stays for a reason that outlived the first:
+  it proves the tokens independently of which states a fixture happened to render, where axe proves only the
+  pixels one run put on screen.
+- **Structure and ARIA are checked by axe**, by hand, via `pnpm --filter @mailda/worker run axe -- <origin>`
+  against a running Node (the `--` pnpm passes through is skipped, which until 26 September it was not, so the
+  documented command crashed on `Invalid URL`); it is `scripts/axe.mjs`, not part of the suite. It runs every
+  route and every opened state twice, with the theme stored as Dark and as Light (System is one of the two by
+  definition), signs in with `MAILDA_AXE_EMAIL` / `MAILDA_AXE_PASSWORD`, sets the first-run gate's per-tab
+  override before it navigates (without it a harness Node that is not routed shows every route as the gate, and
+  the run skipped all of them), and refuses to report a run as clean when it checked nothing.
 
   It **imports `APP_ROUTES`** rather than keeping its own list, and that changed because the copy had
   already drifted: its comment read "kept in step with `src/app-routes.ts` by hand, five paths" above an
@@ -1032,27 +1516,131 @@ password, the way in is #83's invitation flow, which is also the only way it has
    everyone else (§5C), and a harness signed in as a non-admin audits empty screens and calls them clean.
 
 **Interaction states are audited too (#82).** A `STATES` list beside `APP_ROUTES` opens the reply composer,
-the new-message composer, the rule editor, the Butler editor, the resume form and a case, then runs the same
-two tag sets over each. They are where the forms are, and every defect axe has caught in this project was in
+the new-message composer, the rule editor, the Butler editor, the resume form and the Queue's *Hand to…*
+field on a case this person holds (with none held it claims the first open case, says so, and releases it
+after the audit; until 27 September this state clicked a row, which opens nothing, and audited the Queue
+again under another name; until the second convergence round its release looked for the row by the
+*Hand to…* field the release takes away, so it timed out every time and reported a draft it could not discard;
+until the third it found the row by its merge checkbox's name, which two cases with one subject share, so a
+twin's *Claim* met its wait before the release had landed; until the fourth it pressed *Release* in the row
+holding the open *Hand to…* field, which a state that failed before the field opened did not have, so its claim
+stayed held; it now presses *Release* in the one row held here (`tr.case-row.mine`, the only one, since the
+state claims only when nothing is held) and waits for that row to stop being held, which it does once the Node
+has released the case and the queue has been read again), and since the
+redesign the forward composer, the message's details, the headers dialog, the Assign popover, the reader at
+390 px, the Health popover, the *More actions* menu, the Filter popover, the command palette and the mobile
+drawer at 390 px, then runs the same two tag sets over each, restoring the viewport after every state. The
+reply and forward states discard the draft they saved, so a run leaves no draft behind, though the case the
+reply claimed, as any reply does, stays held. The *Hand to…* state claims only when no case is held here,
+so a full run usually reaches it with the reply's case held and claims nothing; its release was checked in
+Chromium on its own on 27 September 2026, not by the sweep, against a page built as the Queue meets it: the
+claimed row, a twin with the same subject, and a quarantine row with its own *Release*. The release by the held
+row was checked in Chromium on the same day against a local Node's Queue, by a copy of the script running that
+state alone: once opened as usual, and once made to fail between its claim and its field, where the field's key
+left the case held and this one gave it back. The Butler editor opens
+the first Butler, and on a Node with none presses the product's own *New butler* and says that it left an
+unpublished draft. They are where the forms are, and every defect axe has caught in this project was in
 an interactive control rendered with real content: `aria-allowed-attr` on a listitem, `nested-interactive`
 on the message list, `empty-table-header` on the Butler screen.
 
-A state that fails to open reports `COULD NOT OPEN` and is counted as **unchecked**, never as passing: a Node
-with no paused Butler has no resume form, so the run reports how much of the list this Node could
-show rather than failing. That is the same distinction the route sweep draws with `SKIPPED`, and it is the
-reason these surfaces went unaudited for as long as they did. The mechanism was confirmed honest by running
-it against a Node whose fixture had been wiped, where it reported ten states unopened instead of passing
-them.
+A state that fails to open reports `COULD NOT OPEN` and is counted as **unchecked**, never as passing. That is
+the same distinction the route sweep draws with `SKIPPED`, and it is the reason these surfaces went unaudited
+for as long as they did. The mechanism was confirmed honest by running it against a Node whose fixture had
+been wiped, where it reported ten states unopened instead of passing them. A draft a state saved, and the
+case the *Hand to…* state claimed, are undone whether or not the state opened, so a claim made before a state
+failed is given back too, and an undo that fails says which, *could not release the case this state claimed*,
+beside an audit that still stands. The reply's claim is not undone, as said above.
+
+**One state a healthy Node can lack is reported as such, and only after the Node says so.** Only the loop
+detector places a Butler pause, so a Node whose own Butler list holds none has no resume form: the run reads
+that list with its own session, prints `NOT APPLICABLE … not audited`, names the state in the summary, and
+neither counts it as checked nor fails on it. A refused read of that list, or a control that stops matching,
+is still `COULD NOT OPEN`.
+
+**Since 26 September a state that could not open also makes the run exit non-zero.** Counting it as unchecked
+was honest in the summary and invisible in the exit code, and the reply state proved the difference: it
+located its button by the name *reply*, which matched the *reply all* button as well, so Playwright refused to
+pick one and every run reported the reply composer unopened, with a clean exit, for as long as both buttons
+existed. The states now name their buttons exactly.
+
+**Since 27 September a view is audited only once it has loaded**: nothing in flight for `QUIET_MS`, then no
+*Reading…* notice left on the page, within `SETTLE_MS` (both bounds on the harness, not measurements). The
+harness counts the requests itself, every one the page and its frames start, from before the navigation. It
+first waited for Playwright's `networkidle`, which failed both ways: answered at once after its first time, it
+waited for nothing a click had started, and once the reader's sandboxed body frame had attached it sometimes
+never fired with nothing in flight, which failed three views on a healthy Node. A state is held to the wait
+before its control is pressed and again before its audit, since what a state opens can load too. A view that
+does not settle prints `COULD NOT SETTLE` with what was still loading (the requests in flight, or where
+*Reading…* was still shown), is counted as unaudited, and fails the run like a state that did not open.
+Before, the audit ran the moment the shell
+mounted, and on the slower routes (`/agents`, `/audit`, `/people`, `/doctor`) it audited the loading notice,
+in one theme and not the other: 24 to 26 rules passed there where the loaded screens pass 27 to 30.
+
+**Since the third convergence round a route is audited whole, at three widths.** Every route is audited at
+1280×720, 1024×768 (two panes, the rail a drawer) and 390×844 (one pane), in `ROUTE_VIEWPORTS`. Before each
+audit the window grows until nothing on the page scrolls vertically (the document, and any element that does
+so without a `max-height`), and the view is held to the wait again, since what a taller window shows can load
+too. axe's `target-size` and `color-contrast` judge only what is on screen: `/agents` audited at its top read
+clean, and with its pane scrolled 500 px it failed. A region with a `max-height` (the notices band, the header
+block) keeps scrolling on purpose, so `scrollable-region-focusable` still judges it. A view still taller than
+`MAX_HEIGHT` (a harness bound, not a measurement) is reported `PARTLY SEEN`, listed in the summary, and fails the
+run; a view that grew says how far on the line after its own. The same round added three views per theme: the
+first-run gate, from a context without the override, which is `NOT APPLICABLE` only when the Node renders the
+shell instead, its readiness, and `COULD NOT OPEN` on anything else (until the fourth round it looked for the
+message list, which a ready Node with no mail yet does not render, so such a Node failed the run); and, only on
+a claimed Node (its `/health` says which), the invitation form and a refused sign-in, refused for an address no
+account has, so no operator's lockout counts it.
+
+What it still does not see: the opened states are audited at 1280×720 (the reader and the drawer at 390×844) and
+are not grown; the pre-authentication pages are audited 1280 wide only; the window grows only in height, so the
+columns of a table past the right edge of its `Scroller` or ledger (at 390 px, and wherever a ledger table's
+52rem minimum is wider than its pane) are not on screen when axe looks, and `target-size` and `color-contrast`
+do not judge them; and the header block overflows its dialog only when the newest message carries one of real
+size, which the review's seeded Node did from that round on (24 `Received` hops, DKIM and an ARC set) and a
+Node's own mail may not.
 
 It runs the WCAG tags as the gate and **best-practice rules as advisories**, because the gate provably
 misses things: the duplicate `main` landmark this shell shipped is `landmark-one-main`, which is tagged
 `best-practice` and so invisible to an AA-only run. On the first advisory run it immediately found that the
 Inbox had no level-one heading at all, and that `/log` and `/doctor` lost theirs while loading.
 
-Current state: **12 screens, 0 AA violations, 0 advisories, 12 unproven**, the unproven being the gradient
-contrast that the computed check covers instead. The queue screen is in that count with its clock column,
-its inline response-target field and its merge selection present, which is the point of running it against
-a seeded fixture rather than an empty one.
+Current state, measured on 27 September 2026 after the fourth round of the convergence review, against a freshly
+seeded local Node: **146 views, 0 AA violations, 0 advisories**, exit 0. That is, per theme, the sign-in page,
+the invitation form, a refused sign-in, the eighteen routes at each of three widths, fifteen states and the
+first-run gate, with the resume form not applicable (no Butler was paused). **92 unproven nodes in 8 rule
+results**, all in overlay states: per theme the Filter popover 27, the palette 17, and the Health popover and the
+*More actions* menu one each. Every one is `color-contrast` that axe could not decide, for two reasons. The
+Filter, Health and menu nodes sit under their open popover. The palette's are its own options past the 320 px
+bound of its scrolling list (options 9 to 16, never on screen when axe looks) plus its input's corner, which the
+dialog's rounded clip covers. `test/node/contrast.test.ts` proves all of them from the tokens instead. They are counted in nodes as well as rules since
+26 September, because a rule count alone (the review's run printed *8 unproven*) reads as eight elements when it
+is dozens.
+
+**The narrower sweep had read clean over three defects.** Before that round the sweep audited 68 views, every
+route at 1280×720 and only as far as the window showed. It read 0 AA violations on the redesign, again after the
+integration pass and after the first round, each time on a Node the end-to-end flow had just used, and after the
+second round five times with the request count as the wait, on two Nodes (three runs on one, then two on a
+freshly seeded Node the end-to-end flow had just used), with 94, 98, 96 and then 94 unproven nodes in 10 rule
+results (the Filter popover lists every sender, so the count follows what the flow had delivered). With this
+round's three fixes reverted, the whole-page sweep at three widths found 8 AA violations, three defects in four views in each theme:
+`target-size` on `/agents` at 1280 and 1024, where single-line capability rows stood 23.3 px apart (this body's
+14 px line at 1.45 is 20.3 px; a `.check` row is at least 24 px now), below the fold the old sweep never reached;
+`scrollable-region-focusable` on `/limits` at 390, the breakers table scrolling sideways in a `div` no keyboard
+could reach (the `Scroller` regions, *What the shell looks like*); and the same rule on the headers dialog's
+block, once the fixture carried a header block that overflows. With the growth switched off, the same tree read 0
+AA on `/agents` again, so the growth is what finds it. The wider sweep's first run also found the new regions repeating their
+sections' names on `/people`, `landmark-unique` six times; they are named for what they hold now (*Teams and
+their members*, *Who may do what in …*, *Who administers the organization*).
+
+The redesign's first run had **2 advisories**, both `region` on the sign-in page, one per theme, were the
+wordmark's rack as a `<div>`, its text outside any landmark. The rack is a `<header>` now, which clears them
+and adds no second banner behind sign-in, because the shell hides the rack (`body.shell .rack { display: none
+}`), both confirmed in Chromium. The review's
+full run the day before found ten target-size violations with one root cause: on the five Admin routes, where
+the Admin group opens by itself, the sidebar's rows shrank to fit and its *Admin* toggle measured under 24 px.
+The sidebar now scrolls rather than shrinking them. The last run before the redesign: 12 screens, 0 AA
+violations, 0 advisories, 12 unproven, the unproven being a background gradient the computed check covered
+instead.
 
 **One caveat worth keeping in view:** the harness measures whatever state the fixture happens to be in. The
 first clean run had an empty inbox, so the message list did not exist to be checked; the moment a message

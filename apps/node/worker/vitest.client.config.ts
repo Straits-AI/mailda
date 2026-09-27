@@ -63,6 +63,14 @@ export default defineConfig({
        */
       "/app/delivery.js": fileURLToPath(new URL("./src/client/delivery.client.js", import.meta.url)),
       /*
+       * `/app/theme.js` is the fourth, and a real file like the delivery module: the viewer's theme choice,
+       * which the framework-free script applies first and Settings changes. The real module rather than a
+       * stub, because what `theme.test.tsx` holds is what a browser runs. The second entry is the same module
+       * under the relative name the framework-free script imports it by.
+       */
+      "/app/theme.js": fileURLToPath(new URL("./src/client/theme.client.js", import.meta.url)),
+      "./theme.js": fileURLToPath(new URL("./src/client/theme.client.js", import.meta.url)),
+      /*
        * The framework-free script's own relative imports (#134).
        *
        * `src/client/app.client.js` imports the session and config modules by the relative names the Worker serves,

@@ -119,6 +119,10 @@ const DOCTOR_PATH = [
   // `auditedBatch`. That is the same seam `deciders.ts`, `notice-delivery.ts` and `breakers.ts` /
   // `domain-pause.ts` were carved along, and its header says so.
   join("butler", "pause.ts"),
+  // Added with 0068's `preview_backlog`, which states the preview backfill's per-pass figure and so imports
+  // `PREVIEW_BACKFILL_LIMIT`. The file performs no D1 I/O at all (it seals and opens with WebCrypto); the
+  // constant lives there rather than in `preview-backfill.ts` because that file batches.
+  "preview.ts",
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

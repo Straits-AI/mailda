@@ -68,7 +68,15 @@ describe("the Cloudflare credential is reachable from nothing that carries mail"
      * The second door. An import is not the only way in — raw SQL against `provider_token` would reach the
      * same row without naming the module, which is how a closed world over imports alone would be evaded.
      */
+    /*
+     * Worker code only. `client/` runs in the viewer's browser, which holds no D1 binding and so cannot open
+     * this door, and since 26 September 2026 it names the word for a different reason: `provider_token` is
+     * also the doctor *finding* the credential module reports, and `client/app/health.ts` keys its Health
+     * popover rows by every finding name (a `Record<DoctorCheck, …>`, so it must). The import door above
+     * still scans the client too.
+     */
     const readers = ALL
+      .filter((path) => !relative(path).startsWith("client/"))
       .filter((path) => readFileSync(path, "utf8").includes("provider_token"))
       .map(relative)
       .sort();

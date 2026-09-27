@@ -242,9 +242,9 @@ export function SetupUnfinished() {
     : routed.state === "todo" ? "mail is not routed to this Node yet" : null;
   if (said === null) return null;
   return (
-    <p className="notice" role="status">
+    <p className="notice setup-unfinished" role="status">
       Setup is unfinished: {said}.{" "}
-      <Link to="/setup" className="linkish">go to Setup</Link>
+      <Link to="/setup" className="linkish">Go to Setup</Link>
     </p>
   );
 }

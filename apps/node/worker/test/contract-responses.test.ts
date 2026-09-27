@@ -3,15 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { path, route, schemaCoverage } from "@mailda/contract/routes";
 import { createSystemCtx } from "@mailda/runtime";
+import { BUDGETS } from "@mailda/budgets";
 
 import { log } from "../src/audit.ts";
 import { utf8 } from "@mailda/evidence";
 import { putEvidence } from "../src/evidence-store.ts";
+import { materialiseReceipt } from "../src/materialise.ts";
 import { createButlerDraft } from "../src/butlers.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { publicJwks } from "../src/auth/keys.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
+import { assign as assignCase } from "../src/cases.ts";
 import { dispatchDue } from "../src/outbound/dispatch.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { claimSecretHash } from "../src/claim-secret.ts";
@@ -74,7 +77,7 @@ beforeEach(async () => {
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
-    "mailbox_items", "messages", "message_labels", "message_reads", "cases", "conversations", "ingress_receipts", "send_recipient_events",
+    "mailbox_items", "messages", "message_labels", "message_reads", "message_places", "cases", "conversations", "ingress_receipts", "send_recipient_events",
     "suppression_lifts",
     "relationship_tuples", "users", "node_claim",
   ]) {
@@ -1172,6 +1175,7 @@ describe("the operator and key surfaces", () => {
     const held = await cookie();
     await answers("POST", "/api/maintenance/reconcile", { body: {}, cookie: held });
     await answers("POST", "/api/maintenance/reseal", { body: {}, cookie: held });
+    await answers("POST", "/api/maintenance/requeue-previews", { body: {}, cookie: held });
   });
 
   it("GET /api/approvals, which one person cannot fill either", async () => {
@@ -1591,6 +1595,252 @@ describe("the routes that only exist once mail has landed", () => {
       params: { caseId: delivery.caseId }, body: { userId: colleague }, cookie: held,
     }) as { claimed: true; case: { assignee: string | null } };
     expect(handed.case.assignee).toBe(colleague);
+  });
+
+  /**
+   * A delivery through ingest's own `materialiseReceipt`, so the row carries what ingest projects (0068): the
+   * display name and the sealed preview. `seedDelivery` writes rows the way an older code version would, which
+   * is right for everything else here and would list no preview.
+   */
+  async function ingested(into: { mailboxId: string; address: string }, subject: string): Promise<{
+    receiptId: string; messageId: string;
+  }> {
+    const ctx = createSystemCtx();
+    const receiptId = ctx.id("rcpt");
+    const blobKey = `${ORG}/raw/${receiptId}.eml`;
+    const bytes = utf8([
+      'From: "Aisha Rahman" <aisha@example.net>', `To: ${into.address}`, `Subject: ${subject}`,
+      `Message-ID: <${receiptId}@example.net>`, "Date: Mon, 21 Sep 2026 09:00:00 +0000", "",
+      "The demurrage invoice is attached.",
+    ].join("\r\n"));
+    await putEvidence(testEnv, blobKey, bytes);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
+         blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(receiptId, ORG, ctx.id("pe"), "aisha@example.net", into.address, bytes.length, blobKey, "0".repeat(64),
+      new Date(ctx.now()).toISOString()).run();
+    const outcome = await materialiseReceipt(testEnv, ctx, receiptId);
+    return { receiptId, messageId: outcome.messageId! };
+  }
+
+  type Listed = {
+    messages: Array<{
+      id: string; place: string; from_name: string | null; preview: string | null; standing_content: number;
+      case_mine: number; case_state: string | null;
+    }>;
+    next_cursor: string | null;
+    lookback_exhausted: boolean;
+    max_lookback: number | null;
+  };
+
+  it("places (0067) and the row's projections (0068), carried by every plan the listing has", async () => {
+    const held = await cookie();
+    const delivery = await ingested({ mailboxId, address }, "Placed");
+    const [row] = (await answers("GET", "/api/messages", { cookie: held }) as Listed).messages;
+    expect(row).toMatchObject({
+      id: delivery.receiptId, place: "inbox", from_name: "Aisha Rahman",
+      preview: "The demurrage invoice is attached.", standing_content: 1, case_mine: 0, case_state: "open",
+    });
+
+    expect(await answers("PUT", "/api/messages/:messageId/place", {
+      params: { messageId: delivery.messageId }, body: { place: "archive" }, cookie: held,
+    })).toEqual({ messageId: delivery.messageId, place: "archive" });
+    const page = async (query: string) => await answers("GET", "/api/messages", { cookie: held }, query) as Listed;
+    const inbox = await page("?place=inbox");
+    const archive = await page("?place=archive");
+    const everywhere = await page("");
+    expect(inbox.messages).toEqual([]);
+    expect(archive.messages.map((one) => [one.id, one.place])).toEqual([[delivery.receiptId, "archive"]]);
+    expect(everywhere.messages.map((one) => [one.id, one.place])).toEqual([[delivery.receiptId, "archive"]]);
+    // Every plan answers the field, and none of these three was cut short by the lookback.
+    expect([inbox, archive, everywhere].map((one) => one.lookback_exhausted)).toEqual([false, false, false]);
+    // Only the Inbox looked back, so only it names the bound.
+    expect([inbox, archive, everywhere].map((one) => one.max_lookback))
+      .toEqual([BUDGETS["messages.max_lookback"], null, null]);
+
+    await answers("PUT", "/api/messages/:messageId/place", {
+      params: { messageId: delivery.messageId }, body: { place: "inbox" }, cookie: held,
+    });
+    expect((await page("?place=inbox")).messages.map((one) => one.id)).toEqual([delivery.receiptId]);
+
+    // The searched plan carries the same row, every new field present, and is never cut short.
+    const searched = await page("?q=demurrage");
+    expect(searched.messages.map((one) => [one.id, one.place, one.from_name, one.preview, one.standing_content]))
+      .toEqual([[delivery.receiptId, "inbox", "Aisha Rahman", "The demurrage invoice is attached.", 1]]);
+    expect([searched.lookback_exhausted, searched.max_lookback]).toEqual([false, null]);
+
+    for (const [query, code] of [
+      ["?place=nonsense", "E_MESSAGE_PAGE_FILTER"], ["?q=demurrage&place=inbox", "E_MESSAGE_PAGE_SEARCH_FILTER"],
+    ] as const) {
+      const refused = await SELF.fetch(`${ORIGIN}/api/messages${query}`, { headers: { cookie: held } });
+      expect(refused.status, query).toBe(422);
+      expect((await refused.json() as { error: string }).error).toBe(code);
+    }
+  });
+
+  it("decides standing content per row, so one page mixes previews and none", async () => {
+    /*
+     * Content read on this describe's mailbox, metadata read on a second: one page, two authorities. A gate
+     * evaluated once per reader, or a bind shifted by one, gives both rows the same answer.
+     */
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const second = { mailboxId: ctx.id("mbx"), address: "" };
+    second.address = `${second.mailboxId}@acme.example`;
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(second.mailboxId, ORG, "accounts", at),
+      testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)")
+        .bind(ctx.id("adr"), ORG, second.mailboxId, second.address, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'mailbox.metadata.read','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, second.mailboxId, at),
+    ]);
+    const readable = await ingested({ mailboxId, address }, "Content");
+    const listedOnly = await ingested(second, "Metadata");
+    const page = await answers("GET", "/api/messages", { cookie: await cookie() }) as Listed;
+    const byId = new Map(page.messages.map((one) => [one.id, one]));
+    expect([byId.get(readable.receiptId)?.preview, byId.get(readable.receiptId)?.standing_content])
+      .toEqual(["The demurrage invoice is attached.", 1]);
+    expect([byId.get(listedOnly.receiptId)?.preview, byId.get(listedOnly.receiptId)?.standing_content])
+      .toEqual([null, 0]);
+    // The name is metadata, so both carry it.
+    expect(byId.get(listedOnly.receiptId)?.from_name).toBe("Aisha Rahman");
+  });
+
+  it("GET /api/messages/:receiptId/headers: the header block, and the bound it was read under", async () => {
+    const delivery = await ingested({ mailboxId, address }, "Headers");
+    const block = await answers("GET", "/api/messages/:receiptId/headers", {
+      params: { receiptId: delivery.receiptId }, cookie: await cookie(),
+    }) as { headers: string; truncated: boolean; limit_bytes: number };
+    expect(block.headers).toContain("Subject: Headers");
+    expect(block.headers).not.toContain("demurrage");
+    expect(block.truncated).toBe(false);
+    expect(block.limit_bytes).toBeGreaterThan(0);
+  });
+
+  it("a hand-over compares against the holder the giver saw (R5)", async () => {
+    const held = await cookie();
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const colleague = ctx.id("usr"), rival = ctx.id("usr");
+    await testEnv.CATALOG.batch([colleague, rival].flatMap((person, index) => [
+      testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+        .bind(person, ORG, `${index}@local.invalid`, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, person, mailboxId, at),
+    ]));
+    const assign = (caseId: string, body: unknown) => SELF.fetch(`${ORIGIN}/api/cases/${caseId}/assignee`, {
+      method: "PUT", headers: { "content-type": "application/json", cookie: held }, body: JSON.stringify(body),
+    });
+
+    // The holder the giver saw is still the holder: the hand-over proceeds.
+    const seen = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Seen" });
+    const handed = await assign(seen.caseId, { userId: colleague, holder: null });
+    expect(handed.status, await handed.clone().text()).toBe(200);
+
+    // A rival claims between the giver's look (unclaimed) and the click: refused as held, naming the rival.
+    const raced = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Raced" });
+    await testEnv.CATALOG.prepare("UPDATE cases SET state = 'claimed', assignee = ?, claimed_at = ? WHERE id = ?")
+      .bind(rival, at, raced.caseId).run();
+    const before = await testEnv.CATALOG.prepare("SELECT state, assignee FROM cases WHERE id = ?").bind(raced.caseId).first();
+    const refused = await assign(raced.caseId, { userId: colleague, holder: null });
+    expect(refused.status).toBe(409);
+    const body = await refused.json() as { error: string; heldBy: string };
+    expect([body.error, body.heldBy]).toEqual(["held", rival]);
+    expect(await testEnv.CATALOG.prepare("SELECT state, assignee FROM cases WHERE id = ?").bind(raced.caseId).first())
+      .toEqual(before);
+    const assigned = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE action = 'case.assigned' AND subject = ?",
+    ).bind(raced.caseId).first<{ n: number }>();
+    expect(assigned?.n).toBe(0);
+
+    // Absent, as before: the swap compares against the Node's own read, and the rival's case is handed over.
+    expect((await assign(raced.caseId, { userId: colleague })).status).toBe(200);
+
+    // A misspelled holder is refused by name rather than dropped into an unchecked hand-over.
+    const typo = await assign(seen.caseId, { userId: rival, holdr: colleague });
+    expect(typo.status).toBe(422);
+    expect((await typo.json() as { error: string }).error).toBe("E_ASSIGN_FIELD_UNKNOWN");
+
+    // So is a holder that is neither a user id nor null: dropped, the swap would run against the Node's read.
+    const holding = await testEnv.CATALOG.prepare("SELECT state, assignee FROM cases WHERE id = ?")
+      .bind(raced.caseId).first();
+    for (const holder of [42, { id: rival }]) {
+      const wrong = await assign(raced.caseId, { userId: rival, holder });
+      expect(wrong.status, JSON.stringify(holder)).toBe(422);
+      expect((await wrong.json() as { error: string }).error).toBe("E_ASSIGN_HOLDER_INVALID");
+    }
+    expect(await testEnv.CATALOG.prepare("SELECT state, assignee FROM cases WHERE id = ?").bind(raced.caseId).first())
+      .toEqual(holding);
+    const handedOnce = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE action = 'case.assigned' AND subject = ?",
+    ).bind(raced.caseId).first<{ n: number }>();
+    expect(handedOnce?.n, "a wrong-typed holder handed the case over").toBe(1);
+  });
+
+  it("a hand-over's record names the holder the swap replaced, not the one read before it (R5)", async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const colleague = ctx.id("usr"), passing = ctx.id("usr");
+    await testEnv.CATALOG.batch([colleague, passing].flatMap((person, index) => [
+      testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+        .bind(person, ORG, `record-${index}@local.invalid`, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, person, mailboxId, at),
+    ]));
+    await cookie(); // the giver, USER, may send from the mailbox
+    const { caseId } = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Passed" });
+    // The giver saw it unclaimed. `passing` claims it before the hand-over reads the case and releases it
+    // before the batch runs: staged by releasing inside the batch call, after every read.
+    await testEnv.CATALOG.prepare("UPDATE cases SET state = 'claimed', assignee = ?, claimed_at = ? WHERE id = ?")
+      .bind(passing, at, caseId).run();
+    const catalog = testEnv.CATALOG;
+    const racing = {
+      ...testEnv,
+      CATALOG: new Proxy(catalog, {
+        get(target, key) {
+          if (key === "batch") {
+            return async (statements: D1PreparedStatement[]) => {
+              await target.prepare("UPDATE cases SET state = 'open', assignee = NULL, claimed_at = NULL WHERE id = ?")
+                .bind(caseId).run();
+              return target.batch(statements);
+            };
+          }
+          const value = Reflect.get(target, key) as unknown;
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      }),
+    } as Env;
+    const outcome = await assignCase(racing, ctx, ORG, USER, caseId, colleague, null);
+    expect(outcome.kind).toBe("claimed");
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE action = 'case.assigned' AND subject = ?",
+    ).bind(caseId).first<{ detail: string }>();
+    expect(JSON.parse(entry!.detail), "the trail names a holder the swap did not replace")
+      .toMatchObject({ from: null, to: colleague });
+  });
+
+  it("GET /api/drafts: a reply draft carries its case, a new message none", async () => {
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Reply to me" });
+    await answers("PUT", "/api/drafts", {
+      body: { mailboxId, inReplyToMessageId: delivery.messageId, to: ["customer@example.net"], subject: "Re", body: "b" },
+      cookie: held,
+    });
+    await answers("PUT", "/api/drafts", {
+      body: { mailboxId, to: ["someone@example.net"], subject: "New", body: "b" }, cookie: held,
+    });
+    const listed = await answers("GET", "/api/drafts", { cookie: held }) as {
+      drafts: Array<{ subject: string; caseId: string | null }>;
+    };
+    expect(new Map(listed.drafts.map((one) => [one.subject, one.caseId])))
+      .toEqual(new Map([["Re", delivery.caseId], ["New", null]]));
   });
 
   it("read state: marked on a message, carried by the listing for the caller, and put back (0062)", async () => {
@@ -2249,8 +2499,17 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      *
      * The 137th is `DELETE /api/addresses` (26 September 2026), the mirror of adding one: the row and the
      * literal rule that routed it, with `routing.state` saying which of the two Cloudflare halves happened.
+     *
+     * The 138th and 139th are the redesign's (26 September 2026): `PUT /api/messages/:messageId/place`, each
+     * person's Inbox, Archive and Trash (0067), and `GET /api/messages/:receiptId/headers`, the header block
+     * as text under the body's authority and record.
+     *
+     * The 140th is `POST /api/maintenance/requeue-previews` (26 September 2026): the way back for the row
+     * previews the backfill gave up on. `doctor`'s `preview_backlog` stayed failing with nothing behind its fix
+     * once a vault or storage fault had spent their attempts, which is the permanent alarm the acknowledge route
+     * above was added to end, one layer down.
      */
-    expect(coverage.total).toBe(137);
+    expect(coverage.total).toBe(140);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

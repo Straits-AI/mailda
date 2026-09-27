@@ -20,6 +20,12 @@ the evidence that the contract's primary mechanism was never started.
 It mattered more than when it was written. #83 made a Node able to add people, so a password stopped being
 one operator's own credential on their own Node and became **every colleague's**.
 
+**Every person adds and removes their own passkeys in Settings** (since 26 September 2026). The passkey routes
+were always member-scoped: each acts on the caller's own credentials and nobody else's. The screen was not. It
+sat on People, which renders it only after the directory loads, and the directory is `org.admin`, so until
+then the factor ADR 29 builds Mailda's authentication on could be enrolled from the interface by administrators alone,
+and by every other colleague only through the API.
+
 ### The relying party is derived, never configured
 
 WebAuthn binds a credential to an origin, and the relying-party id is that origin's domain, a
@@ -261,7 +267,9 @@ Exactly one retry happens after a refresh, and a consumed stream cannot be repla
 `window.mailda` exposes `refresh`, `ensureFresh`, `apiFetch`, `accessExpiresAt`, `isSignedIn` and
 `route`. This grants a hostile script nothing new. Cookies are HttpOnly, so an injected script could
 already issue the same same-origin requests with `fetch`. What it buys is a lifecycle an operator can
-watch from a console instead of infer. The status strip shows the countdown for the same reason.
+watch from a console instead of infer. The pre-authentication status strip shows the countdown for the same
+reason. Inside the application it is on Settings: a failed renewal emits `signed-out` and the page returns to
+sign-in, so expiry is never silent without the clock.
 
 ## Verified against a deployed Node
 

@@ -493,7 +493,7 @@ compose the message, which is what #60 gave a policy hold's release to. The gate
 *seen* it, not because a stricter authority is owed; `approval.decide` would have made this the approval
 machinery with none of its guarantees.
 
-The outbox offers it as *release* on a row whose reason is `butler_release_required` and on no other row,
+The outbox offers it as *Release* on a row whose reason is `butler_release_required` and on no other row,
 because `release-hold` clears a different gate and one button for both would walk a send past whichever it
 was actually on (`docs/application-shell.md`).
 
@@ -676,7 +676,7 @@ assumes a first attempt.
 | `retry-effect` | `POST /api/sends/:id/retry` | one manifest's `state`, `fidelity`, `submitted_key` | that manifest back to `held`, audited `send.retried`; then dispatch, under the **original** key |
 | `resend-may-duplicate` | the same route, named mode | the same three, plus the envelope and the author's **typed** body | a **new** manifest under a **new** key with `resend_of` set, audited `send.resent` |
 
-The Butlers screen offers `re-run` as *run again* on every finished run, and says beside the button that the
+The Butlers screen offers `re-run` as *Run again* on every finished run, and says beside the button that the
 run is new and its writes are real; the release gate above is what keeps a re-run from sending anything on its
 own.
 

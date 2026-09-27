@@ -1,12 +1,12 @@
 /**
  * The Mailda Node interface.
  *
- * Design intent — **instrument panel, not dashboard.** This is a device the operator installed
- * into their own Cloudflare account, and it should read like a precision instrument's front
- * panel: exact figures in monospace, hairline rules, states named rather than implied. The
- * product's own rule is that every number carries a receipt, so the interface shows its work
- * instead of rounding it off. That is also why the session countdown is visible: the token
- * lifecycle is real machinery, and machinery an operator can watch is machinery they can trust.
+ * Design intent — **states named rather than implied.** This is a device the operator installed
+ * into their own Cloudflare account. The product's own rule is that every number carries a
+ * receipt, so the interface shows its work instead of rounding it off. That is also why the
+ * session countdown is visible: the token lifecycle is real machinery, and machinery an operator
+ * can watch is machinery they can trust. The look (dark first, one sans family, calm and dense)
+ * is ADR 30 as amended on 26 September 2026; the "instrument panel" it replaced is history.
  *
  * Four states are kept genuinely distinct, because §5C requires it and because collapsing them
  * is how a mail client tells its first lie:
@@ -25,6 +25,14 @@
 import {
   accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, onSessionChange, refresh, start,
 } from "./session.js";
+import { bootTheme } from "./theme.js";
+
+// The viewer's theme, before this script renders anything: the claim, the sign-in and a locked-out doctor honour
+// it, and so does the React shell loaded later. See `theme.client.js`.
+// ponytail: a module script runs after parsing, so a viewer who chose Light may see this page dark for the
+// moment before it runs; a render-blocking classic `<script src="/app/theme.js">` in `<head>` is the upgrade
+// if anyone reports it, at the price of a request before every viewer's first paint.
+bootTheme();
 
 const app = document.getElementById("app");
 const statusStrip = document.getElementById("status");
@@ -79,8 +87,8 @@ function renderStatus(sessionText = null) {
   ];
 
   // No navigation and no counts. This strip now belongs to the *pre-authentication* screens only — once
-  // somebody is signed in the shell takes the page over and carries its own instrument bar, and two
-  // readouts of one session on one page would eventually disagree about it.
+  // somebody is signed in the shell takes the page over and carries its own countdown (on its Settings
+  // screen), and two readouts of one session on one page would eventually disagree about it.
   if (sessionText !== null) {
     items.push(el("span", { class: "field session mono", text: sessionText }));
   }
@@ -570,8 +578,9 @@ async function route() {
  * somebody is actually signed in. The pre-authentication screens — sign-in, first-run claim, and the
  * `doctor` an operator reaches when nothing else works — must render before any of it loads.
  *
- * Layer 1's top status strip does not survive the handover: the shell has its own instrument bar along
- * the bottom, and two readouts of the same session on one page would eventually disagree.
+ * Layer 1's top status strip does not survive the handover: the shell has its own status bar along the
+ * bottom and its own session countdown on Settings, and two readouts of the same session on one page would
+ * eventually disagree.
  */
 let shell = null;
 
@@ -620,7 +629,7 @@ onSessionChange((event) => {
     renderSignIn(event.message ?? null);
   }
   if (event.type === "signed-in") {
-    // No ticker: the shell's instrument bar carries the countdown from here on.
+    // No ticker: the shell's Settings screen carries the countdown from here on.
     void handOverToShell();
   }
 });

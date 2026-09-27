@@ -1,7 +1,7 @@
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
 import {
-  EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, path as routePath, route,
+  EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
   type HttpMethod, type PathFor,
 } from "@mailda/contract/routes";
 
@@ -20,7 +20,8 @@ import {
  *
  * `apiFetch` already performs the one automatic refresh-and-retry on a refreshable 401, so a 401 that
  * reaches this layer means the refresh token is gone and the honest next step is the sign-in form —
- * handled once, in `main.tsx`, rather than per screen. Everything else becomes a rendered failure with
+ * handled once rather than per screen: `session.client.js` emits `signed-out`, and the `onSessionChange`
+ * listener in `app.client.js` unmounts the shell and renders sign-in. Everything else becomes a rendered failure with
  * the Node's own words, because §5C's rule about not claiming an unobserved outcome applies to the
  * interface too: "could not be read" is a different statement from "empty".
  */
@@ -163,7 +164,23 @@ export interface MessageRow {
    * button has nothing to claim and says so rather than composing a reply nobody holds.
    */
   case_id: string | null;
+  /** Where *you* keep it (0067). "inbox" for a receipt not yet materialised. */
+  place: Place;
+  /** The From header's display name (0068); null when there was none, it looked like an address or domain, or it
+   *  is not yet projected. Shown WITH the address in the reader, because a display name is whatever the sender typed. */
+  from_name: string | null;
+  /** One line of the body (0068), opened only where you hold standing content read; null otherwise, and always
+   *  null under a supervised grant (opening the message is the recorded act). */
+  preview: string | null;
+  /** 1 when you hold standing content read on this delivery's mailbox: you may mark it read, label it and place it. */
+  standing_content: 0 | 1;
+  /** 1 when this delivery's case is claimed by you. */
+  case_mine: 0 | 1;
+  /** The case's state, or null when there is none. */
+  case_state: "open" | "claimed" | "closed" | null;
 }
+
+export type Place = (typeof PLACES)[number]; // "inbox" | "archive" | "trash"
 
 export interface RecipientRow {
   manifest_id: string;
@@ -343,6 +360,52 @@ export interface MessagesPage {
    * It goes back exactly as it arrived.
    */
   next_cursor: string | null;
+  /** True when the Node looked back through `messages.max_lookback` messages you can see and stopped before
+   *  filling the page (Inbox, Unread, Mine only); `next_cursor` then looks further back. A page it cut short is
+   *  never a total (#91): the count shows `n+`, or nothing when the page is empty. */
+  lookback_exhausted: boolean;
+  /** How many of the messages you can see this request looked back through at most, or null when the page
+   *  needed no lookback. The Node's own bound, which is what an empty lookback page names. */
+  max_lookback: number | null;
+}
+
+export interface MessagePageQuery {
+  cursor?: string | null;
+  mailbox?: string | null;
+  q?: string | null;
+  label?: string | null;
+  /** The envelope sender, exact (MESSAGE_PAGE_PARAMS.from). */
+  from?: string | null;
+  /** YYYY-MM-DD or an instant (MESSAGE_PAGE_PARAMS.since / until). */
+  since?: string | null;
+  until?: string | null;
+  /** Omitted or null = every place (search, thread). */
+  place?: Place | null;
+  /** true sends unread=1. */
+  unread?: boolean;
+  /** true sends mine=1. */
+  mine?: boolean;
+}
+
+/**
+ * The one query key for a listing. Exported so the sidebar and its test can prove they share the Inbox's entry
+ * (a second key is a second request and, for a supervised reader, a second audit entry).
+ *
+ * The search term goes to the Node **as typed** (#107): no trimming, no tokenizing and no validation here.
+ * `ftsQuery` on the Node turns typing into an FTS5 expression, and a client that pre-processed it would be a
+ * second opinion about what a search means — which is how the SDK and the shell end up searching differently
+ * for the same words. A blank term is normalised to null only so it does not become a query-key variant that
+ * fetches the same page twice.
+ */
+export function messagesKey(page?: MessagePageQuery): readonly [
+  "messages", string | null, string | null, string | null, string | null, string | null, string | null,
+  string | null, Place | null, boolean, boolean,
+] {
+  const q = page?.q === undefined || page.q === null || page.q.trim() === "" ? null : page.q;
+  return [
+    "messages", page?.cursor ?? null, page?.mailbox ?? null, q, page?.label ?? null, page?.from ?? null,
+    page?.since ?? null, page?.until ?? null, page?.place ?? null, page?.unread === true, page?.mine === true,
+  ] as const;
 }
 
 /**
@@ -355,31 +418,71 @@ export interface MessagesPage {
  * this must not hold a page long enough to make that pointless.
  */
 export function useMessages(
-  page?: { cursor?: string | null; mailbox?: string | null; q?: string | null; label?: string | null },
+  page?: MessagePageQuery,
+  options?: { staleTime?: number },
 ): UseQueryResult<MessagesPage, Error> {
-  const cursor = page?.cursor ?? null;
-  const mailbox = page?.mailbox ?? null;
-  const label = page?.label ?? null;
-  /*
-   * The search term goes to the Node **as typed** (#107).
-   *
-   * No trimming, no tokenizing and no validation here. `ftsQuery` on the Node turns typing into an FTS5
-   * expression, and a client that pre-processed it would be a second opinion about what a search means —
-   * which is how the SDK and the shell end up searching differently for the same words. The empty string is
-   * normalised to null only so it does not become a query-key variant that fetches the same page twice.
-   */
-  const q = page?.q === undefined || page.q === null || page.q.trim() === "" ? null : page.q;
+  // The request is built from the key, so what is sent and what is cached cannot disagree.
+  const key = messagesKey(page);
+  const [, cursor, mailbox, q, label, from, since, until, place, unread, mine] = key;
   const search = new URLSearchParams();
   if (cursor !== null) search.set(MESSAGE_PAGE_PARAMS.cursor, cursor);
   if (mailbox !== null) search.set(MESSAGE_PAGE_PARAMS.mailbox, mailbox);
   if (q !== null) search.set(MESSAGE_PAGE_PARAMS.q, q);
   if (label !== null) search.set(MESSAGE_PAGE_PARAMS.label, label);
+  if (from !== null) search.set(MESSAGE_PAGE_PARAMS.from, from);
+  if (since !== null) search.set(MESSAGE_PAGE_PARAMS.since, since);
+  if (until !== null) search.set(MESSAGE_PAGE_PARAMS.until, until);
+  if (place !== null) search.set(MESSAGE_PAGE_PARAMS.place, place);
+  if (unread) search.set(MESSAGE_PAGE_PARAMS.unread, "1");
+  if (mine) search.set(MESSAGE_PAGE_PARAMS.mine, "1");
   const query = search.toString();
 
   return useQuery({
-    queryKey: ["messages", cursor, mailbox, q, label],
+    queryKey: key,
     queryFn: () => read<MessagesPage>(`${GET("/api/messages")}${query === "" ? "" : `?${query}`}`),
     ...AUTHORIZATION_SENSITIVE,
+    ...(options?.staleTime === undefined ? {} : { staleTime: options.staleTime }),
+  });
+}
+
+/**
+ * Sets `read` on every cached listing row carrying this msg_ id, without a refetch (a refetch after every open
+ * is one more listing and, for a supervised reader, one more audit entry). Thread entries hold rows too.
+ */
+export function patchReadInCache(queryClient: QueryClient, messageId: string, read: 0 | 1): void {
+  const patch = (rows: MessageRow[]): MessageRow[] =>
+    rows.some((row) => row.message_id === messageId && row.read !== read)
+      ? rows.map((row) => (row.message_id === messageId ? { ...row, read } : row))
+      : rows;
+  queryClient.setQueriesData<MessagesPage>({ queryKey: ["messages"] }, (page) =>
+    page === undefined ? page : { ...page, messages: patch(page.messages) });
+  queryClient.setQueriesData<{ messages: MessageRow[]; sends: SendRow[] }>({ queryKey: ["thread"] }, (thread) =>
+    thread === undefined ? thread : { ...thread, messages: patch(thread.messages) });
+}
+
+/** PUT /api/messages/:messageId/place. The Node's refusal verbatim on failure. Callers invalidate ["messages"]. */
+export async function setPlace(
+  messageId: string, place: Place,
+): Promise<{ ok: true; place: Place } | { ok: false; message: string }> {
+  const result = await act<{ place: Place }>(at("PUT", "/api/messages/:messageId/place", { messageId }), "PUT", { place });
+  return result.ok ? { ok: true, place: result.value.place } : result;
+}
+
+/**
+ * GET /api/messages/:receiptId/headers, on demand only (enabled when receiptId !== null). The header block is
+ * content: under a supervised grant each fetch is a recorded open, so it is never prefetched and, once read,
+ * never refetched (the evidence it comes from is immutable).
+ */
+export function useMessageHeaders(
+  receiptId: string | null,
+): UseQueryResult<{ headers: string; truncated: boolean; limit_bytes: number }, Error> {
+  return useQuery({
+    queryKey: ["headers", receiptId],
+    queryFn: () => read<{ headers: string; truncated: boolean; limit_bytes: number }>(
+      GET("/api/messages/:receiptId/headers", { receiptId: receiptId! }),
+    ),
+    enabled: receiptId !== null,
+    staleTime: Infinity,
   });
 }
 
@@ -391,11 +494,38 @@ export interface SendsResponse {
   capability: SendCapability;
 }
 
+/**
+ * How long after a held send's `release_at` the Outbox asks again, and how often while one is still held past
+ * it. A presentation cadence, not a measurement: the Node's alarm wakes at `release_at` and hands the send over
+ * within a moment, and 5 s matches the staleness `AUTHORIZATION_SENSITIVE` already accepts.
+ */
+const HELD_RECHECK_MS = 5_000;
+/** The longest delay a browser timer holds (a signed 32-bit count of ms); past it the delay wraps to ~0. */
+const LONGEST_TIMER_MS = 2_147_483_647;
+
+/**
+ * When `["sends"]` next reads itself, or `false` for never on its own.
+ *
+ * `held` is the one state a send leaves by itself, on its own clock, so while one is listed the Outbox row, its
+ * sidebar badge and the health popover would otherwise say "held" for as long as nobody reloaded. The read waits
+ * for the earliest `release_at` rather than polling through the hold window, which can be an hour: the Node's
+ * own sweep sleeps until then for the same reason. `awaiting` and `withheld` wait on a person, whose act
+ * invalidates this query, so they schedule nothing.
+ */
+export function nextSendsRead(data: SendsResponse | undefined, now: number): number | false {
+  const due = (data?.sends ?? []).filter((send) => send.state === "held").map((send) => Date.parse(send.release_at));
+  if (due.length === 0) return false;
+  const earliest = Math.min(...due);
+  if (!Number.isFinite(earliest)) return HELD_RECHECK_MS;
+  return Math.min(Math.max(earliest - now, 0) + HELD_RECHECK_MS, LONGEST_TIMER_MS);
+}
+
 export function useSends(): UseQueryResult<SendsResponse, Error> {
   return useQuery({
     queryKey: ["sends"],
     queryFn: () => read<SendsResponse>(GET("/api/sends")),
     ...AUTHORIZATION_SENSITIVE,
+    refetchInterval: (query) => nextSendsRead(query.state.data, Date.now()),
   });
 }
 
@@ -416,7 +546,7 @@ export function useLogs(): UseQueryResult<{ entries: LogRow[]; truncated: boolea
 }
 
 /**
- * The Node's own verdict on itself, for the instrument bar.
+ * The Node's own verdict on itself, for the status bar and its health popover.
  *
  * Polled rather than fetched once: `doctor` is the thing that tells an operator the Node stopped being
  * able to do its job, and a verdict from the moment the tab opened is the least useful version of that.
@@ -529,7 +659,11 @@ export type ClaimResult =
   | { ok: false; kind: "closed" | "not_found" | "failed"; message: string };
 
 async function caseAct(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
-  const response = await apiFetch(at("POST", "/api/cases/:caseId/:action", { caseId, action }), { method: "POST" });
+  return claimResultOf(await apiFetch(at("POST", "/api/cases/:caseId/:action", { caseId, action }), { method: "POST" }));
+}
+
+/** One reading of a case answer, so a hand-over refused as held names the holder exactly as a lost claim does. */
+async function claimResultOf(response: Response): Promise<ClaimResult> {
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (response.ok) {
     return { ok: true, case: (body?.case ?? null) as CaseRow };
@@ -551,14 +685,16 @@ async function caseAct(caseId: string, action: "claim" | "steal" | "release" | "
   };
 }
 
-/** Hands a case to a colleague by the address they sign in with. The Node refuses one who cannot send from the mailbox. */
-export async function assignCase(caseId: string, email: string): Promise<ClaimResult> {
-  const response = await apiFetch(at("PUT", "/api/cases/:caseId/assignee", { caseId }), {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }),
-  });
-  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true, case: (body?.case ?? null) as CaseRow };
-  return { ok: false, kind: body?.error === "closed" ? "closed" : body?.error === "not_found" ? "not_found" : "failed", message: String(body?.message ?? `This Node answered ${response.status}.`) };
+/**
+ * Hands a case to a colleague by the address they sign in with. The Node refuses one who cannot send from the
+ * mailbox. `holder` is the holder the giver saw (user id, or null for unclaimed); sent when given, so a case taken
+ * in between is refused as held, naming who holds it now, rather than handed over from under them.
+ */
+export async function assignCase(caseId: string, email: string, holder?: string | null): Promise<ClaimResult> {
+  return claimResultOf(await apiFetch(at("PUT", "/api/cases/:caseId/assignee", { caseId }), {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify(holder === undefined ? { email } : { email, holder }),
+  }));
 }
 
 export const claimCase = (id: string) => caseAct(id, "claim");
@@ -699,6 +835,9 @@ export interface DraftListRow {
   to: string[];
   subject: string;
   updatedAt: string;
+  /** The case of the message this draft replies to, in the draft's mailbox; null for a new message or a message
+   *  with no case. The composer claims it before sealing. */
+  caseId: string | null;
 }
 
 /** Every draft of this person's, newest first. What the inbox's Drafts strip lists. */
@@ -706,12 +845,12 @@ export function useDrafts(): UseQueryResult<{ drafts: DraftListRow[]; truncated:
   return useQuery({ queryKey: ["drafts"], queryFn: () => read<{ drafts: DraftListRow[]; truncated: boolean }>(GET("/api/drafts")), ...AUTHORIZATION_SENSITIVE });
 }
 
-/** Marks a message read or unread, for the caller (0062). Fire-and-forget on open; awaited on the toggle. */
-export async function setRead(messageId: string, read: boolean): Promise<{ ok: boolean }> {
-  const response = await apiFetch(at("PUT", "/api/messages/:messageId/read", { messageId }), {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ read }),
-  });
-  return { ok: response.ok };
+/** Marks a message read or unread, for the caller (0062), carrying the Node's refusal verbatim when it refuses. */
+export async function setRead(
+  messageId: string, read: boolean,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const result = await act(at("PUT", "/api/messages/:messageId/read", { messageId }), "PUT", { read });
+  return result.ok ? { ok: true } : result;
 }
 
 /** Puts words on a message or takes them off (0061). Answers the whole set afterwards. */
@@ -981,6 +1120,8 @@ export interface ResealOutcome {
   failed: unknown[];
   remaining: number;
   targetGeneration: number;
+  /** Row previews re-queued for the backfill because their old seal would not open (0068). */
+  previewsRequeued: number;
 }
 
 export const resealEvidence = () => act<ResealOutcome>(at("POST", "/api/maintenance/reseal"));
@@ -1021,6 +1162,10 @@ export function useSearchFailed(): UseQueryResult<{ failed: FailedIndexRow[] }, 
 
 export const repairSearch = (messageIds: string[]) =>
   act<{ requeued: number; message: string }>(at("POST", "/api/search/repair"), "POST", { messageIds });
+
+/** Every row preview the backfill gave up on, back in its queue: a sweep, as the route explains (0068). */
+export const requeuePreviews = () =>
+  act<{ requeued: number; message: string }>(at("POST", "/api/maintenance/requeue-previews"));
 
 export interface EvidenceFault {
   rowId: string;

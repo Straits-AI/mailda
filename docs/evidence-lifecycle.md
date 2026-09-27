@@ -52,8 +52,8 @@ same way, one batch at a time with a *continue* from `resumeAfter`.
 
 Four properties, each preventing a specific failure:
 
-- **Resumable.** A shard holds ~8.5M messages, so no invocation finishes; ~85,000 calls at 100 per
-  batch. Progress is a durable indexed column, not memory.
+- **Resumable.** A shard holds millions of messages (`receipts/message-metadata-bytes.md`), so no invocation
+  finishes; tens of thousands of calls at 100 per batch. Progress is a durable indexed column, not memory.
 - **Verified.** Recomputes the **plaintext** SHA-256 against the receipt and refuses to advance on
   mismatch. This is *why* the receipt stores the plaintext hash rather than the ciphertext's. Decided
   when evidence storage was built, and this is the payoff.
@@ -61,6 +61,21 @@ Four properties, each preventing a specific failure:
   is written before D1: a crash costs one redundant pass, never an unreadable message.
 - **Never destructive on failure.** A message that fails is reported and left readable under its old
   key, not skipped silently and not deleted.
+
+**A message's row preview moves with its evidence** (0068, ADR 45, 26 September 2026). The preview is a line
+of the body stored in D1 sealed under the same content key, so a rotation that re-sealed the evidence and left
+the preview behind would leave that line under the key the rotation was meant to retire. The pass therefore
+re-seals the preview in the same step as its receipt, whether the receipt was re-sealed or found already
+current. The invariant, written beside the code in `src/reseal.ts`: **a preview is never sealed under an older
+generation than its receipt's evidence.** Ingest seals both with one key in one run, the backfill seals under
+the current generation, and this step advances both together, so the receipts still to re-seal are also the
+previews still behind, and the Doctor screen's `evidence_key_generation` finding counts both. A preview whose
+old seal will not open is cleared and put back for the backfill, which re-derives it from the evidence just
+re-sealed, and the response counts those as `previewsRequeued`. Nothing is lost that way: a preview is a
+projection. A preview the backfill itself gave up on is a different state, `failed` (its evidence missing, or
+every read of it failing), and nothing retries it on its own; once `evidence_present` and `key_vault` read ok,
+an administrator's `POST /api/maintenance/requeue-previews` puts every failed row back, as `doctor`'s
+`preview_backlog` says.
 
 ## Reconciliation
 

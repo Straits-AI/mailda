@@ -85,8 +85,9 @@ async function search(term: string | null, who = READER, org = ORG): Promise<str
       metadata: liveGrantsBySubject(org, who, AT, SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(org, who, AT, SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null, conversationId: null, label: null },
+    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false },
     limit: 51,
+    lookback: null,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
   return result.results.map((row) => row.id);
@@ -633,8 +634,9 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
         metadata: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_METADATA),
         content: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_CONTENT),
       },
-      page: { after: null, mailboxId: null, q: ftsQuery("cabotage"), since: null, until: null, from: null, conversationId: null, label: null },
+      page: { after: null, mailboxId: null, q: ftsQuery("cabotage"), since: null, until: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false },
       limit: 51,
+      lookback: null,
     });
     const rows = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)
       .all<{ id: string; supervised_grant_id: string | null }>();
@@ -1135,11 +1137,12 @@ describe("a windowed search leaves out the mail outside the window", () => {
         content: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_CONTENT),
       },
       page: {
-        after: null, mailboxId: null, q: ftsQuery("demurrage"), from: null, conversationId: null, label: null,
+        after: null, mailboxId: null, q: ftsQuery("demurrage"), from: null, conversationId: null, label: null, place: null, unread: false, mine: false,
         since: `${window.since}T00:00:00.000Z`,
         until: window.until === undefined ? null : `${window.until}T23:59:59.999Z`,
       },
       limit: 50,
+      lookback: null,
     });
     const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
     return result.results.map((row) => row.id).sort();
@@ -1196,13 +1199,14 @@ describe("a windowed search leaves out the mail outside the window", () => {
         content: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_CONTENT),
       },
       page: {
-        after: null, mailboxId: null, from: null, conversationId: null, label: null,
+        after: null, mailboxId: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false,
         // Two terms, so the built MATCH carries an alternation for the window to be bound around.
         q: "demurrage OR notice",
         since: `${DAYS[1]}T00:00:00.000Z`,
         until: `${DAYS[1]}T23:59:59.999Z`,
       },
       limit: 50,
+      lookback: null,
     });
     const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
     // Every message matches `notice`; only one is in the window.

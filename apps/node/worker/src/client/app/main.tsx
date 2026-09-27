@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  Outlet,
   RouterProvider,
   createRootRoute,
   createRoute,
@@ -8,9 +7,12 @@ import {
 } from "@tanstack/react-router";
 import { createRoot, type Root } from "react-dom/client";
 
-import { APP_ROUTES } from "../../app-routes.ts";
-import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
-import { SetupUnfinished } from "./onboarding.tsx";
+import { APP_ROUTES, type AppRoute } from "../../app-routes.ts";
+import { Shell, tabsOf } from "./chrome.tsx";
+import { ShellProvider } from "./shell-context.tsx";
+import { SectionTabs } from "./ui/section-tabs.tsx";
+import { Drafts } from "./screens/drafts.tsx";
+import { Settings } from "./screens/settings.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
 import { Agents } from "./screens/agents.tsx";
@@ -50,7 +52,7 @@ import { Gate } from "./screens/first-run.tsx";
  * ## Routing is code-based on purpose
  *
  * TanStack Router's file-based routing generates a route tree and needs a watcher and a generated file in
- * the tree. Fourteen routes do not earn that, and a generated file nobody reads is the shape this repository
+ * the tree. Eighteen routes do not earn that, and a generated file nobody reads is the shape this repository
  * has twice been bitten by. The routes are below, where a reader can count them.
  *
  * There is no route-level data loading. Every read is authorization-filtered per request (ADR 11), so a
@@ -60,26 +62,24 @@ import { Gate } from "./screens/first-run.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
-    /* Until the Node has a routed address, an administrator sees the first-run screen and nothing else.
-       The one-line notice below remains for a member, and for an administrator who opened the app anyway. */
-    <Gate>
-      <div className="app-shell">
-        <Rail />
-        {/* A div, not a `main`. The mount point is `<main id="app">`, and a second `main` landmark inside
-            it is exactly the structural defect axe exists to catch — found by reading the tree of the
-            running shell, not by thinking about it. */}
-        <div className="app-main">
-          {/* Above whatever screen a person came for, because §7's notice is one they must actually meet —
-              and on every route rather than one, because there is no route somebody must visit to be told. */}
-          <SetupUnfinished />
-          <Notices />
-          <Outlet />
-        </div>
-        <InstrumentBar />
-      </div>
-    </Gate>
+    /* The provider is outside the gate so the one composer and the toasts exist on every screen, the
+       first-run screen included. Until the Node has a routed address, an administrator sees the first-run
+       screen and nothing else; the one-line notice in the shell remains for a member, and for an
+       administrator who opened the app anyway. */
+    <ShellProvider>
+      <Gate>
+        <Shell />
+      </Gate>
+    </ShellProvider>
   ),
 });
+
+/**
+ * Butlers and Rules are one sidebar row, "Automations", and two routes: a tab each, so a bookmark to either
+ * still lands on it. The tabs come from the sidebar's own record (`SIDEBAR_HOME`, where Rules is a tab of
+ * Butlers), so the two cannot disagree.
+ */
+const AUTOMATIONS = tabsOf("/butlers");
 
 /**
  * One component per path in `APP_ROUTES`, which the Worker also reads so a deep link returns the page.
@@ -87,14 +87,14 @@ const rootRoute = createRootRoute({
  * The mapping is exhaustive by type: `Record<AppRoute, ...>` means adding a route to the shared list and
  * forgetting the screen is a compile error, rather than a route that serves HTML and renders nothing.
  */
-const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
-  "/": Inbox,
+const SCREENS: Record<AppRoute, () => React.JSX.Element> = {
+  "/": () => <Inbox />,
   "/queue": Queue,
   "/approvals": Approvals,
-  "/rules": Policies,
+  "/rules": () => <><SectionTabs label="Automations" tabs={AUTOMATIONS} /><Policies /></>,
   "/people": People,
   "/matters": Matters,
-  "/butlers": Butlers,
+  "/butlers": () => <><SectionTabs label="Automations" tabs={AUTOMATIONS} /><Butlers /></>,
   "/agents": Agents,
   "/limits": Limits,
   "/outbox": Outbox,
@@ -102,6 +102,11 @@ const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
   "/log": Log,
   "/doctor": Doctor,
   "/setup": Setup,
+  "/drafts": Drafts,
+  // Archive and Trash are the Inbox with a place: the same list and reader over the caller's own filing (ADR 45).
+  "/archive": () => <Inbox place="archive" />,
+  "/trash": () => <Inbox place="trash" />,
+  "/settings": Settings,
 };
 
 const routes = APP_ROUTES.map((path) =>

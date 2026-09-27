@@ -15,6 +15,7 @@ import { dispatchDue } from "./outbound/dispatch.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { backfillBodyIndex, backfillSearchIndex } from "./search-backfill.ts";
 import { backfillAuthentication } from "./authentication-backfill.ts";
+import { backfillPreviews } from "./preview-backfill.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 import { clientAsset } from "./ui.ts";
 import { resolve, type Call, type Handler } from "./router.ts";
@@ -157,10 +158,19 @@ const handler = {
         }).catch(() => undefined);
       }
 
+      /*
+       * Whether the two R2-reading passes below did nothing this invocation. The preview pass reads R2 per
+       * message too, and runs only when both are idle, so one invocation never does more of that work than it
+       * did before 0068. A pass that threw stays `false`: it is not idle, and the preview pass waits for it.
+       */
+      let authenticationIdle = false;
+      let bodiesIdle = false;
+
       try {
         // Senders of messages from before 0055, evaluated a few a minute. Same shape as the two above: logged
         // only when it did something, and a failure is `warn` — an unevaluated sender is shown as exactly that.
         const evaluated = await backfillAuthentication(env, clock);
+        authenticationIdle = evaluated === 0;
         if (evaluated > 0) {
           await log(env, clock, {
             level: "info",
@@ -191,6 +201,7 @@ const handler = {
          * two indexes catch up independently and one being stuck is not a reason for the other to be.
          */
         const bodies = await backfillBodyIndex(env, clock);
+        bodiesIdle = bodies === 0;
         if (bodies > 0) {
           await log(env, clock, {
             level: "info",
@@ -206,6 +217,41 @@ const handler = {
           event: "search.body_backfill_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
         }).catch(() => undefined);
+      }
+
+      if (authenticationIdle && bodiesIdle) {
+        try {
+          /*
+           * Row previews and sender names (0068) for mail ingest did not project. Its own try block, like
+           * every pass here. `doctor`'s `preview_backlog` counts what is left, so this logs only when it did
+           * something, and warns when a message could not be projected.
+           */
+          const previews = await backfillPreviews(env, clock);
+          if (previews.projected > 0) {
+            await log(env, clock, {
+              level: "info",
+              event: "preview.backfilled",
+              message: `Projected the row preview and sender name of ${previews.projected} message(s).`,
+              orgId,
+              detail: { projected: previews.projected },
+            });
+          }
+          if (previews.retried > 0 || previews.failed > 0) {
+            await log(env, clock, {
+              level: "warn",
+              event: "preview.backfill_failed",
+              message: `${previews.retried + previews.failed} message(s) could not be projected: ${previews.reason ?? "unknown"}`,
+              orgId,
+              detail: { retried: previews.retried, failed: previews.failed, reason: previews.reason },
+            });
+          }
+        } catch (error) {
+          await log(env, clock, {
+            level: "warn",
+            event: "preview.backfill_failed",
+            message: (error as Error).message.split("\n")[0] ?? "unknown",
+          }).catch(() => undefined);
+        }
       }
 
       try {

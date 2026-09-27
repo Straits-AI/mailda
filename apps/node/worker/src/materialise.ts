@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { getEvidence } from "./evidence-store.ts";
+import { contentSealingKey, getEvidence, runKeyCache } from "./evidence-store.ts";
+import { sealPreview } from "./preview.ts";
 import { conversationForDelivery } from "./conversations.ts";
 import { caseForDelivery } from "./cases.ts";
 import { clockOnInbound } from "./response-clock.ts";
@@ -84,8 +85,10 @@ export async function materialiseReceipt(
     return { status: "already_present", messageId: existing.id, threadRoot: existing.thread_root_rfc_id ?? undefined };
   }
 
-  // Reaching the evidence is the one thing allowed to throw — it is retryable, and the sweeper will.
-  const raw = await getEvidence(env, receipt.blob_key);
+  // Reaching the evidence is the one thing allowed to throw — it is retryable, and the sweeper will. One key
+  // cache for the run, so the row preview below is sealed without asking the vault twice for one key.
+  const cache = runKeyCache();
+  const raw = await getEvidence(env, receipt.blob_key, cache);
 
   let parseError: string | undefined;
   let headers;
@@ -98,7 +101,9 @@ export async function materialiseReceipt(
   } catch (error) {
     // Defensive: the parser is written not to throw, and if it ever does the message still gets a row.
     parseError = `E_HEADERS_UNPARSED  ${(error as Error).message.split("\n")[0]}`;
-    headers = { messageId: null, inReplyTo: null, referencesRoot: null, subject: "", from: "", date: null };
+    headers = {
+      messageId: null, inReplyTo: null, referencesRoot: null, subject: "", from: "", fromName: null, date: null,
+    };
   }
 
   const messageId = ctx.id("msg");
@@ -167,6 +172,33 @@ export async function materialiseReceipt(
           ? "attachment_type_refused"
           : null;
 
+  /*
+   * The row preview (0068), sealed under the content key with this message's id as additional data, from the
+   * same parse as the index. **Never a reason to fail the ingest**: `getEvidence` above stays the one thing
+   * allowed to throw. If sealing fails (a vault that is cold or overloaded) the row is written `pending` with
+   * no preview, one warning says so, and the backfill (`preview-backfill.ts`) projects it later. A message
+   * with no body text is `projected` with no preview: there is nothing to show, and nothing owed.
+   */
+  const preview: { sealed: string | null; generation: number | null; state: "projected" | "pending" } =
+    { sealed: null, generation: null, state: "projected" };
+  if (bodyWords.kind === "text" && bodyWords.preview !== null) {
+    try {
+      const sealing = await contentSealingKey(env, cache);
+      preview.sealed = await sealPreview(sealing.key, messageId, bodyWords.preview);
+      preview.generation = sealing.generation;
+    } catch (error) {
+      preview.state = "pending";
+      await log(env, ctx, {
+        level: "warn",
+        event: "preview.seal_failed",
+        message: `A row preview could not be sealed at ingest; the backfill will project it: ${
+          (error as Error).message.split("\n")[0] ?? "unknown"}`,
+        orgId: receipt.org_id,
+        detail: { ingressReceiptId: receipt.id, messageId },
+      });
+    }
+  }
+
   // A message with no readable Message-ID still needs a stable identity to thread on, and it must be
   // one that survives re-parsing. The receipt id is derived, unique and already in hand.
   const rfcMessageId = headers.messageId ?? `receipt.${receipt.id}@invalid`;
@@ -201,8 +233,9 @@ export async function materialiseReceipt(
           subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
           in_reply_to, thread_root_rfc_id, parse_error, conversation_id,
           auth_spf, auth_dkim, auth_dmarc, auth_dmarc_policy, auth_from_domain,
-          quarantined_at, quarantine_reason, attachments, attachments_dangerous)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          quarantined_at, quarantine_reason, attachments, attachments_dangerous,
+          from_name, preview_sealed, preview_generation, preview_state)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       messageId, receipt.org_id, timeBucket, receipt.blob_key, receipt.blob_sha256, receipt.raw_bytes,
       rfcMessageId,
@@ -218,6 +251,7 @@ export async function materialiseReceipt(
       verdict?.dmarcPolicy ?? null, verdict?.fromDomain ?? null,
       quarantine === null ? null : at, quarantine,
       attachments?.length ?? null, dangerous,
+      headers.fromName, preview.sealed, preview.generation, preview.state,
     ),
     /*
      * The search index, immediately after the row it is derived from and inside the same batch (#107).

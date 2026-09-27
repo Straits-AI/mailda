@@ -11,6 +11,7 @@ import { setResponseTarget } from "../mailbox-policy.ts";
 import { deleteDraft, DRAFT_LIST_CAP, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
 import { capped } from "../list-cap.ts";
 import { safeFilename } from "../outbound/headers.ts";
+import { unprocessable } from "../errors.ts";
 import { addressList, isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
 
@@ -222,6 +223,17 @@ export const mail = {
 
   "PUT /api/cases/:caseId/assignee": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    // `holder` is who the giver saw holding it; a case that changed hands since is refused as held (R5). Only a
+    // string or null is a holder, and anything else is refused here: dropped, it would hand the case over
+    // against the Node's own read, the unchecked swap the field exists to prevent.
+    if ("holder" in body && typeof body.holder !== "string" && body.holder !== null) {
+      throw unprocessable("E_ASSIGN_HOLDER_INVALID", {
+        what: `holder=${JSON.stringify(body.holder)} is not a user id or null`,
+        why: "the holder is the compare-and-swap guard; dropping it would hand over a case someone else may now hold",
+        fix: "send the holder you saw as a usr_ id, or null for unclaimed; omit it only if you saw nothing",
+      });
+    }
+    const holder = body.holder as string | null | undefined;
     const { assign } = await import("../cases.ts");
     // By id, or by the address a colleague signs in with: the directory is an administrator's read, and a
     // person handing over a case knows their colleague's address, not their `usr_` id. An address that is
@@ -232,7 +244,7 @@ export const mail = {
         .bind(who.orgId, body.email.trim()).first<{ id: string }>();
       toUserId = found?.id ?? "usr_nobody";
     }
-    const outcome = await assign(env, clock, who.orgId, who.userId, params.caseId, toUserId);
+    const outcome = await assign(env, clock, who.orgId, who.userId, params.caseId, toUserId, holder);
     if (outcome.kind === "claimed") return Response.json({ claimed: true, case: outcome.case });
     if (outcome.kind === "not_a_colleague") {
       return Response.json({
@@ -254,6 +266,15 @@ export const mail = {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const { setRead } = await import("../reads.ts");
     return Response.json(await setRead(env, clock, who.orgId, who.userId, params.messageId, body.read !== false));
+  },
+
+  "PUT /api/messages/:messageId/place": async ({ request, env, clock, params, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { setPlace } = await import("../places.ts");
+    // A non-string is not coerced into a place: `["archive"]` is refused as not a place, like a missing one.
+    return Response.json(await setPlace(
+      env, clock, who.orgId, who.userId, params.messageId, typeof body.place === "string" ? body.place : "",
+    ));
   },
 
   "PUT /api/messages/:messageId/labels": async ({ request, env, clock, params, who }) => {
@@ -438,6 +459,25 @@ export const mail = {
         "cache-control": "no-store",
       },
     });
+  },
+
+  /**
+   * One message's header block, as text to read (the reader's "View headers").
+   *
+   * Content — subjects, recipients, routing — so the body's authority and record: `authorize` with
+   * `supervised.opened`, exactly as the body route, and not `message.export`, because this is text to read,
+   * capped at `mime.max_header_bytes`, not the original's bytes as a file (that is `/raw`).
+   *
+   * Cost accepted: `getEvidence` decrypts the whole object to return at most that many bytes. This is an
+   * explicit, on-demand click on a message whose body the reader just opened (the same decrypt), and a bounded
+   * prefix reader would be a second evidence read path for `original-bytes-world.test.ts` to police.
+   */
+  "GET /api/messages/:receiptId/headers": async ({ request, env, clock, params }) => {
+    const allowed = await authorize(env, clock, request, params.receiptId, "supervised.opened");
+    if (!allowed.ok) return allowed.response;
+    const { splitHeaders } = await import("../mime.ts");
+    const { block, truncated } = splitHeaders(await getEvidence(env, allowed.blobKey));
+    return Response.json({ headers: block, truncated, limit_bytes: BUDGETS["mime.max_header_bytes"] });
   },
 
   "GET /api/messages/:receiptId/raw": async ({ request, env, clock, params }) => {

@@ -4,7 +4,7 @@ import { utf8 } from "@mailda/evidence";
 import { EvidenceMissing, getEvidence, putEvidence, sha256Hex } from "./evidence-store.ts";
 import { assertNotHeld } from "./holds.ts";
 import { maySend } from "./authz-read.ts";
-import { CallerError, notFound, unprocessable } from "./errors.ts";
+import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 
 /**
  * Drafts that survive a reload.
@@ -264,7 +264,24 @@ export async function saveDraft(
       JSON.stringify(input.to), JSON.stringify(input.cc ?? []), JSON.stringify(input.bcc ?? []),
       input.subject, bodyKey, bodySha, bodyBytes, at, at,
     )
-    .run();
+    .run()
+    .catch(async (error: unknown) => {
+      /*
+       * A second draft for the same reply: `drafts_one_per_reply` refused the row, and the answer names the one
+       * that holds it. Reached from two tabs replying to one message; it was an `E_UNHANDLED` 500 before. The
+       * body written above has no row, which is the safe side of the gap the comment above describes.
+       */
+      if (!/UNIQUE constraint failed:\s*drafts\.org_id/i.test(String((error as Error | null)?.message))) throw error;
+      const held = await env.CATALOG.prepare(
+        "SELECT id FROM drafts WHERE org_id = ? AND author_user_id = ? AND in_reply_to_message_id = ? LIMIT 1",
+      ).bind(orgId, userId, input.inReplyToMessageId ?? null).first<{ id: string }>();
+      throw conflict("E_DRAFT_EXISTS", {
+        what: `a draft of this reply is already in progress${held === null ? "" : ` (${held.id})`}`,
+        why: "one person holds one draft per message they reply to, so a second reply resumes the first rather "
+          + "than forking it",
+        fix: "open the draft in progress (GET /api/drafts?inReplyTo=<message id>) and save with its id",
+      });
+    });
 
   return {
     id,
@@ -348,6 +365,12 @@ export interface DraftSummary {
   subject: string;
   bodyBytes: number;
   updatedAt: string;
+  /**
+   * The case of the message this draft replies to, in the draft's own mailbox; null for a new message or a
+   * message with no case. So a reply resumed from the Drafts list claims before it seals, as one started from
+   * the message does (#42): the case may have changed hands while the draft sat.
+   */
+  caseId: string | null;
 }
 
 /** The caller's own drafts, newest first. Bodies are not read — a list does not need them. */
@@ -356,12 +379,17 @@ export const DRAFT_LIST_CAP = 50;
 
 export async function listDrafts(env: Env, orgId: string, userId: string): Promise<DraftSummary[]> {
   const { results } = await env.CATALOG.prepare(
-    `SELECT id, mailbox_id, in_reply_to_message_id, to_addresses, subject, body_bytes, updated_at
-       FROM drafts WHERE org_id = ? AND author_user_id = ?
-      ORDER BY updated_at DESC LIMIT ${DRAFT_LIST_CAP + 1}`,
+    // The case: the replied-to message's conversation, in the draft's mailbox (`cas_unique` makes it one row).
+    `SELECT d.id, d.mailbox_id, d.in_reply_to_message_id, d.to_addresses, d.subject, d.body_bytes, d.updated_at,
+            (SELECT c.id FROM messages m
+               JOIN cases c ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
+                           AND c.mailbox_id = d.mailbox_id
+              WHERE m.id = d.in_reply_to_message_id LIMIT 1) AS case_id
+       FROM drafts d WHERE d.org_id = ? AND d.author_user_id = ?
+      ORDER BY d.updated_at DESC LIMIT ${DRAFT_LIST_CAP + 1}`,
   )
     .bind(orgId, userId)
-    .all<Omit<Row, "author_user_id" | "cc_addresses" | "bcc_addresses" | "body_key">>();
+    .all<Omit<Row, "author_user_id" | "cc_addresses" | "bcc_addresses" | "body_key"> & { case_id: string | null }>();
 
   return results.map((row) => ({
     id: row.id,
@@ -371,6 +399,7 @@ export async function listDrafts(env: Env, orgId: string, userId: string): Promi
     subject: row.subject,
     bodyBytes: row.body_bytes,
     updatedAt: row.updated_at,
+    caseId: row.case_id,
   }));
 }
 

@@ -237,8 +237,8 @@ export async function handleMcp(
        * reads the Skill. An absence it has not been warned about is one it will probe.
        */
       instructions:
-        "This Node's mail belongs to the customer whose Cloudflare account it runs in. Tools here read and "
-        + "draft; they do not send. Sealing a send, approving one, publishing a Butler, lifting a hold and "
+        "This Node's mail belongs to the customer whose Cloudflare account it runs in. Tools here read, draft "
+        + "and place mail; they do not send. Sealing a send, approving one, publishing a Butler, lifting a hold and "
         + "granting access are deliberately absent — each needs a person, and several need two distinct "
         + "people, which you cannot be while acting in one person's session. Refusals carry what happened, "
         + "why, and what would change it: read the fix before retrying, because most are not transient.",

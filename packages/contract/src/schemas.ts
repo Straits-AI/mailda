@@ -797,6 +797,27 @@ export const healthResponse = z.object({
   at: isoDate,
 }).loose();
 
+/**
+ * Every check name `runDoctor` can emit. `Finding.check` is typed as `DoctorCheck`, so emitting an unlisted name
+ * is a compile error, and the client's health mapping (a `Record<DoctorCheck, …>`) makes an unmapped name one
+ * too. The wire (`doctorFinding.check`) stays `z.string()`: a newer Node's unknown name lands in "Other checks"
+ * instead of breaking an older client. `apps/node/worker/test/node/doctor-check-names.test.ts` holds this list
+ * equal to the names the doctor's source emits.
+ */
+export const DOCTOR_CHECKS = [
+  "agent_withdrawn_capabilities", "body_index_backlog", "body_index_failed", "butler_execution",
+  "butler_loop_detection", "butler_paused", "butler_run_silence", "catalog_reachable", "credential_key",
+  "delivery_attribution", "delivery_visibility", "doctor_cost", "domain_paused", "draft_bodies_stranded",
+  "evidence_bucket_reachable", "evidence_key_generation", "evidence_orphans", "evidence_present",
+  "inbound_authentication", "inbound_routing", "key_vault", "legal_hold_lift_pending", "legal_hold_mailbox_missing",
+  "legal_holds_active", "legal_hold_unliftable", "migrations_applied", "outbox_draining", "preview_backlog",
+  "provider_token", "recovery_escrow", "recovery_key_conflicts", "recovery_restore_state", "report_reduced",
+  "search_index_backlog", "self_granted_access", "send_breakers", "send_evidence_changed", "sending_events_consumer",
+  "signing_key", "supervision_notice_missing", "supervision_notices_overdue", "supervision_notice_stranded",
+  "transport_adapters", "workers_paid_plan",
+] as const;
+export type DoctorCheck = (typeof DOCTOR_CHECKS)[number];
+
 /** One `doctor` finding. `fix` is present only when there is something to do about it. */
 export const doctorFinding = z.object({
   check: z.string().min(1),
@@ -846,6 +867,17 @@ export const authenticationResult = z.enum([
   "pass", "fail", "softfail", "neutral", "none", "temperror", "permerror", "policy", "absent",
 ]);
 
+/**
+ * Where a person keeps a message in their own view (0067): no row is the Inbox, a row is Archive or Trash.
+ * Defined here rather than in `routes.ts`, which imports this file and re-exports it.
+ */
+export const PLACES = ["inbox", "archive", "trash"] as const;
+/**
+ * "archive" also names an attachment verdict (a zip) and, in the Blueprint, an archive mailbox. Different fields,
+ * deliberately (ADR 45): this one is only ever where *you* keep a message.
+ */
+export const place = z.enum(PLACES);
+
 export const messageRow = z.object({
   id: z.string().min(1),
   message_id: z.string().nullable(),
@@ -876,6 +908,38 @@ export const messageRow = z.object({
   labels_json: z.string(),
   /** Whether the caller has opened this message (0062): SQLite's boolean. */
   read: z.union([z.literal(0), z.literal(1)]),
+  /** Where the caller keeps it (0067). `inbox` for a receipt not yet materialised: nothing can file it. */
+  place: place,
+  /**
+   * The From header's display name (0068). Null when there was none, it looked like an address or a domain,
+   * the headers were unreadable, or it is not yet projected. Whatever the sender typed: show it with the address.
+   */
+  from_name: z.string().nullable(),
+  /**
+   * One line of the body (0068), opened only where the caller holds standing content read. Null otherwise, and
+   * always under a supervised grant: a preview is content, and opening the message is the recorded act.
+   */
+  preview: z.string().nullable(),
+  /** 1 when the caller holds standing content read on the delivery's mailbox: may mark read, label and place. */
+  standing_content: z.union([z.literal(0), z.literal(1)]),
+  /** 1 when this delivery's case is claimed by the caller. Always 0 for an agent: people hold cases. */
+  case_mine: z.union([z.literal(0), z.literal(1)]),
+  /** The case's state, or null when there is none. Never who holds it. */
+  case_state: z.enum(["open", "claimed", "closed"]).nullable(),
+}).strict();
+
+/**
+ * Where to put a message (0067). A string rather than the enum, so a wrong place is refused by the domain with
+ * `E_PLACE_UNKNOWN` naming the value, not by the shape check with a generic one.
+ */
+export const setPlaceRequest = z.object({ place: z.string() }).strict().meta({ refusal: "E_PLACE_FIELD_UNKNOWN" });
+export const placeSetResponse = z.object({ messageId: z.string().min(1), place }).strict();
+
+/** One message's header block as text; `truncated` when no end of headers was found within `limit_bytes`. */
+export const messageHeadersResponse = z.object({
+  headers: z.string(),
+  truncated: z.boolean(),
+  limit_bytes: z.number().int().positive(),
 }).strict();
 
 /** Read state (0062): absent means read. */
@@ -903,6 +967,21 @@ export const messageListResponse = z.object({
    * page — which is how a reader ends up with the same fifty messages and no way to know there are more.
    */
   next_cursor: z.string().nullable(),
+  /**
+   * True when this request looked back through max_lookback of the messages you can see without filling the page
+   * (only with place=inbox, unread=1 or mine=1), so next_cursor resumes after the last message it looked at rather
+   * than after the last row returned, and more may match further back. False otherwise: always on a searched
+   * page, and on an Archive or Trash page without unread=1 or mine=1. Never a reason to stop: follow next_cursor.
+   * A page it cut short is never a total.
+   */
+  lookback_exhausted: z.boolean(),
+  /**
+   * How many of the messages you can see this request looks back through at most (messages.max_lookback), when
+   * place=inbox, unread=1 or mine=1; null when it used no lookback (a searched page, an Archive or Trash page
+   * without unread=1 or mine=1, or no per-person filter). When lookback_exhausted is true, exactly this many were
+   * looked at.
+   */
+  max_lookback: z.number().int().positive().nullable(),
 }).loose();
 
 export const auditRow = z.object({
@@ -1354,7 +1433,23 @@ export const draftRow = z.object({
   updatedAt: isoDate,
 }).strict();
 
-export const draftListResponse = z.object({ drafts: z.array(draftRow.omit({ body: true })), truncated: z.boolean() }).loose();
+/**
+ * The list's row is the fields `listDrafts` reads, not the whole draft: it described `cc`, `bcc` and
+ * `bodyUnavailable` too, which the list never carried, and only a list with nothing in it validated — the
+ * first contract test with a draft in the list found it (26 September 2026).
+ */
+export const draftListResponse = z.object({
+  drafts: z.array(draftRow.pick({
+    id: true, mailboxId: true, inReplyToMessageId: true, to: true, subject: true, bodyBytes: true, updatedAt: true,
+  }).extend({
+    /**
+     * The case of the message this draft replies to, in the draft's mailbox; null for a new message or a message
+     * with no case. The composer claims it before sealing.
+     */
+    caseId: z.string().nullable(),
+  })),
+  truncated: z.boolean(),
+}).loose();
 export const draftSavedResponse = z.object({ draft: draftRow }).strict();
 
 export const sendListResponse = z.object({
@@ -1764,6 +1859,22 @@ export const resealResponse = z.object({
   /** What is left under an older generation — the number `doctor` reports and `reseal` drives to zero. */
   remaining: z.number().int().nonnegative(),
   targetGeneration: z.number().int().nonnegative(),
+  /**
+   * Row previews (0068) whose old seal would not open, so they were cleared and put back for the backfill to
+   * re-derive from the evidence rather than left behind under an older key. Nothing is lost: a preview is a
+   * projection.
+   */
+  previewsRequeued: z.number().int().nonnegative(),
+}).strict();
+
+/**
+ * Row previews (0068) put back in the backfill's queue: every one the backfill gave up on, since what is left
+ * `failed` is evidence that is missing (one pass puts it back) or a read that failed on every attempt, which is
+ * worth another once the vault or storage fault is over.
+ */
+export const previewsRequeuedResponse = z.object({
+  requeued: z.number().int().nonnegative(),
+  message: z.string().min(1),
 }).strict();
 
 
@@ -1939,8 +2050,22 @@ const claimedCase = z.object({
  * a case somebody else holds, and the difference is in the audit trail (`case.claim_taken`) rather than in
  * what the caller gets back.
  */
-/** Who to hand the case to: a `usr_` id, or the address they sign in with. One of the two. */
-export const assignCaseRequest = z.object({ userId: z.string().optional(), email: z.string().optional() });
+/**
+ * Who to hand the case to: a `usr_` id, or the address they sign in with. One of the two.
+ *
+ * Strict since `holder` joined it: a misspelled `holdr` silently dropped would hand the case over without the
+ * compare-and-swap the giver asked for — the silent steal the field exists to prevent — so an unknown field is
+ * refused by name rather than ignored.
+ */
+export const assignCaseRequest = z.object({
+  userId: z.string().optional(),
+  email: z.string().optional(),
+  /**
+   * The holder you saw: a user id, or null for unclaimed. When given and the case's holder is no longer it, the
+   * hand-over is refused as held, naming who holds it now.
+   */
+  holder: z.string().nullable().optional(),
+}).strict().meta({ refusal: "E_ASSIGN_FIELD_UNKNOWN" });
 export const caseAssignedResponse = z.object({ claimed: z.literal(true), case: claimedCase }).strict();
 
 export const caseActionResponse = z.union([

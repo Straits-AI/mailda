@@ -11,12 +11,8 @@ import { answerWith, reset } from "./session-stub.ts";
  * gate that ignores its own override.
  */
 
-let pathname = "/";
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  useRouterState: ({ select }: { select: (s: { location: { pathname: string } }) => unknown }) => select({ location: { pathname } }),
-  Link: ({ children }: { children?: unknown }) => children,
-}));
+const route = vi.hoisted(() => ({ pathname: "/" }));
+vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { Gate } = await import("../../src/client/app/screens/first-run.tsx");
 
@@ -43,7 +39,7 @@ function mount(parts: { addressOk: boolean; provisioned?: unknown; providerStatu
 }
 
 describe("the first-run gate", () => {
-  beforeEach(() => { reset(); pathname = "/"; try { sessionStorage.clear(); } catch { /* no storage in this runner */ } });
+  beforeEach(() => { reset(); route.pathname = "/"; try { sessionStorage.clear(); } catch { /* no storage in this runner */ } });
 
   it("shows the steps and the terminal command, and not the inbox, on a Node with no routed address", async () => {
     mount({ addressOk: false });
@@ -66,12 +62,25 @@ describe("the first-run gate", () => {
 
   it("lets an administrator open the app anyway, for this tab", async () => {
     mount({ addressOk: false });
-    fireEvent.click(await screen.findByText("open the app anyway"));
+    fireEvent.click(await screen.findByText("Open the app anyway"));
     expect(await screen.findByText("THE INBOX")).toBeTruthy();
   });
 
   it("renders /setup as itself, since the from-this-screen way happens there", async () => {
-    pathname = "/setup";
+    route.pathname = "/setup";
+    mount({ addressOk: false });
+    expect(await screen.findByText("THE INBOX")).toBeTruthy();
+  });
+
+  it("renders /doctor as itself, since it is the diagnostic a Node that is not working needs", async () => {
+    route.pathname = "/doctor";
+    mount({ addressOk: false });
+    expect(await screen.findByText("THE INBOX")).toBeTruthy();
+  });
+
+  it("renders /settings as itself, so a gated administrator can always sign out", async () => {
+    // The sign-outs moved from the bottom bar to Settings; a gate over Settings would leave no way out.
+    route.pathname = "/settings";
     mount({ addressOk: false });
     expect(await screen.findByText("THE INBOX")).toBeTruthy();
   });

@@ -8,7 +8,8 @@ import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { listMessages, MAX_WINDOW_DAYS, messagePageRequest } from "../src/authz-read.ts";
 import { indexMessage } from "../src/search.ts";
 import { hashPassword } from "../src/auth/password.ts";
-import { login } from "../src/auth/session.ts";
+import { issueSession, login } from "../src/auth/session.ts";
+import { setPlace } from "../src/places.ts";
 import { decideApproval } from "../src/approvals.ts";
 import { requestSupervisedRead } from "../src/supervised.ts";
 
@@ -134,7 +135,7 @@ async function sessionFor(userId: string): Promise<string> {
 }
 
 beforeEach(async () => {
-  for (const table of ["supervised_grants", "matters", "approval_decisions", "approval_stages", "approvals",
+  for (const table of ["message_places", "message_reads", "supervised_grants", "matters", "approval_decisions", "approval_stages", "approvals",
                        "relationship_tuples", "team_members", "ingress_receipts", "messages", "cases",
                        "conversations", "addresses", "mailboxes", "users", "node_claim", "login_attempts",
                        "sessions", "refresh_tokens", "audit_entries", "log_entries", "outbox"]) {
@@ -921,5 +922,243 @@ describe("a date window on the listing", () => {
     );
     expect(openEnded.since).toBeNull();
     expect(openEnded.until).toBe("2026-08-20T23:59:59.999Z");
+  });
+});
+
+/* ------------------------------------------------------------------------ filing between two pages --- */
+
+describe("filing a message between two pages neither skips nor repeats a row (0067)", () => {
+  /*
+   * The keyset property, on each plan the listing has: the walk, the lookback (`place=inbox`) and the placed
+   * plan (`place=archive`). A cursor is a position, not a row count, so a message leaving or joining the view
+   * behind the reader's back moves nothing on the next page. An `OFFSET` would skip one row per filing.
+   */
+  async function readable(): Promise<string[]> {
+    const { results } = await testEnv.CATALOG.prepare(
+      `SELECT r.id FROM ingress_receipts r JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+        WHERE r.org_id = ? AND a.mailbox_id IN (?, ?) ORDER BY r.accepted_at DESC, r.id DESC`,
+    ).bind(ORG, MAILBOX_KEPT, MAILBOX_LOST).all<{ id: string }>();
+    return results.map((row) => row.id);
+  }
+  async function messageOf(receiptId: string): Promise<string> {
+    return (await testEnv.CATALOG.prepare("SELECT id FROM messages WHERE ingress_receipt_id = ?")
+      .bind(receiptId).first<{ id: string }>())!.id;
+  }
+
+  it("on the walk, the lookback and the placed plan", async () => {
+    const token = await sessionFor(READER);
+    const order = await readable();
+    const file = async (receiptId: string, place: "inbox" | "archive") =>
+      setPlace(testEnv, atTime(AUGUST_20), ORG, READER, await messageOf(receiptId), place);
+
+    for (const query of [{}, { [MESSAGE_PAGE_PARAMS.place]: "inbox" }] as Array<Record<string, string>>) {
+      const first = await page(token, query);
+      // A page-one message filed away between the two requests.
+      await file(first.messages[3]!.id, "archive");
+      const second = await secondPage(token, first, query);
+      expect(second.messages.map((row) => row.id), JSON.stringify(query))
+        .toEqual(order.slice(PAGE, PAGE + second.messages.length));
+      await file(first.messages[3]!.id, "inbox");
+    }
+
+    for (const receiptId of order) await file(receiptId, "archive");
+    const archive = { [MESSAGE_PAGE_PARAMS.place]: "archive" };
+    const first = await page(token, archive);
+    expect(first.messages.map((row) => row.id)).toEqual(order.slice(0, PAGE));
+    // A page-one message put back in the Inbox between the two requests.
+    await file(first.messages[3]!.id, "inbox");
+    const second = await secondPage(token, first, archive);
+    expect(second.messages.map((row) => row.id)).toEqual(order.slice(PAGE, PAGE + second.messages.length));
+    expect(second.messages.length).toBe(Math.min(PAGE, order.length - PAGE));
+  });
+});
+
+/* ---------------------------------------------------------------------------------------- the lookback --- */
+
+describe("Inbox, Unread and Mine look back through at most messages.max_lookback messages (§7 Q-A)", () => {
+  /*
+   * The bound the user chose over a walk that grew with all the mail a reader can see. Its own organization,
+   * so nothing the file's other fixture seeds sits in the order. N is read from the budget, never restated.
+   *
+   * Positions are counted newest first from 1 over the deliveries this reader can see. N + 60 of those, and N
+   * **newer** ones to a mailbox the reader cannot read, which is the premise of (c): a lookback that counted
+   * receipts rather than readable messages would spend itself on those and put its cursor at position zero.
+   */
+  const N = BUDGETS["messages.max_lookback"];
+  const LOOK = "org_lookback";
+  const SEEN = "mbx_lookback_seen";
+  const UNSEEN = "mbx_lookback_unseen";
+  const WHO = createSystemCtx().id("usr");
+  const SUPERVISOR = createSystemCtx().id("usr");
+  let positions: string[] = [];
+  let messages: string[] = [];
+  let unseen: string[] = [];
+
+  function tokenFor(userId: string): Promise<string> {
+    return issueSession(testEnv, atTime(AUGUST_20), { orgId: LOOK, userId }).then((session) => session.accessToken);
+  }
+  function position(n: number): string {
+    return positions[n - 1]!;
+  }
+  async function archiveAllBut(keep: readonly number[]): Promise<void> {
+    const at = new Date(AUGUST_20).toISOString();
+    const rows = positions.flatMap((receiptId, index) => keep.includes(index + 1) ? [] : [testEnv.CATALOG.prepare(
+      `INSERT INTO message_places (org_id, user_id, message_id, receipt_id, accepted_at, place, placed_at)
+       SELECT ?, ?, m.id, r.id, r.accepted_at, 'archive', ? FROM messages m JOIN ingress_receipts r
+           ON r.id = m.ingress_receipt_id WHERE m.id = ?`,
+    ).bind(LOOK, WHO, at, messages[index]!)]);
+    for (let start = 0; start < rows.length; start += 100) await testEnv.CATALOG.batch(rows.slice(start, start + 100));
+  }
+  type Looked = Page & { lookback_exhausted: boolean; max_lookback: number | null };
+  async function lookback(token: string, query: Record<string, string>): Promise<Looked> {
+    return await page(token, query) as Looked;
+  }
+  const cursorAt = async (n: number): Promise<string> => {
+    const row = (await testEnv.CATALOG.prepare("SELECT accepted_at, id FROM ingress_receipts WHERE id = ?")
+      .bind(position(n)).first<{ accepted_at: string; id: string }>())!;
+    return `${row.accepted_at} ${row.id}`;
+  };
+  const INBOX = { [MESSAGE_PAGE_PARAMS.place]: "inbox" };
+
+  beforeEach(async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(AUGUST_20).toISOString();
+    await testEnv.CATALOG.batch([
+      ...[[SEEN, "seen@lookback.example"], [UNSEEN, "unseen@lookback.example"]].flatMap(([mailboxId, address]) => [
+        testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+          .bind(mailboxId, LOOK, mailboxId, at),
+        testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)")
+          .bind(ctx.id("addr"), LOOK, address, mailboxId, at),
+      ]),
+      ...[WHO, SUPERVISOR].map((userId) => testEnv.CATALOG.prepare(
+        "INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)",
+      ).bind(userId, LOOK, `${userId.toLowerCase()}@lookback.example`, at)),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'mailbox.content.read','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), LOOK, WHO, SEEN, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO supervised_grants
+           (id, org_id, subject_id, mailbox_id, scope, matter_id, requested_at, expires_at, granted_at)
+         VALUES (?,?,?,?,'content',NULL,?,?,?)`,
+      ).bind(ctx.id("sgr"), LOOK, SUPERVISOR, SEEN, at, "2099-01-01T00:00:00.000Z", at),
+    ]);
+    positions = []; messages = []; unseen = [];
+    const statements: D1PreparedStatement[] = [];
+    // Newest first: the N unseen, then the N + 60 seen, one minute apart, deterministic ids.
+    const total = N + N + 60;
+    for (let i = 0; i < total; i++) {
+      const seen = i >= N;
+      // Digits only: a cursor's id is checked against the ULID alphabet, which has no L.
+      const receiptId = `rcpt_9${String(i).padStart(25, "0")}`;
+      const messageId = `msg_9${String(i).padStart(25, "0")}`;
+      const acceptedAt = new Date(AUGUST_20 - i * 60_000).toISOString();
+      if (seen) { positions.push(receiptId); messages.push(messageId); } else unseen.push(receiptId);
+      statements.push(
+        testEnv.CATALOG.prepare(
+          `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
+             blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+        ).bind(receiptId, LOOK, `evt_${receiptId}`, "x@outside.example",
+          seen ? "seen@lookback.example" : "unseen@lookback.example", 10, `k/${receiptId}`, "0".repeat(64), acceptedAt),
+        testEnv.CATALOG.prepare(
+          `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id, thread_id,
+             subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at, conversation_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`,
+        ).bind(messageId, LOOK, "2026-08", `k/${receiptId}`, "0".repeat(64), 10, `l-${i}@outside.example`,
+          `thr_L${i}`, `lookback ${i}`, "x@outside.example", acceptedAt, acceptedAt, receiptId, acceptedAt),
+      );
+    }
+    for (let start = 0; start < statements.length; start += 100) {
+      await testEnv.CATALOG.batch(statements.slice(start, start + 100));
+    }
+  });
+
+  it("(a) stops at the lookback with nothing in the Inbox, and resumes after the N-th message it looked at", async () => {
+    const token = await tokenFor(WHO);
+    await archiveAllBut([]);
+    const first = await lookback(token, INBOX);
+    expect(first.messages).toEqual([]);
+    expect(first.lookback_exhausted).toBe(true);
+    // (c) the unreadable receipts neither count toward the lookback nor appear in a cursor.
+    expect(first.next_cursor).toBe(await cursorAt(N));
+    const second = await lookback(token, { ...INBOX, [MESSAGE_PAGE_PARAMS.cursor]: first.next_cursor! });
+    expect([second.messages, second.next_cursor, second.lookback_exhausted]).toEqual([[], null, false]);
+  });
+
+  it("(b) returns what it found, resumes from the lookback's edge rather than the last row, and skips nothing", async () => {
+    const token = await tokenFor(WHO);
+    await archiveAllBut([10, N - 1, N + 20]);
+    const first = await lookback(token, INBOX);
+    expect(first.messages.map((row) => row.id)).toEqual([position(10), position(N - 1)]);
+    expect(first.lookback_exhausted).toBe(true);
+    expect(first.next_cursor, "the cursor resumed after the last row, re-examining N-1..N").toBe(await cursorAt(N));
+    const second = await lookback(token, { ...INBOX, [MESSAGE_PAGE_PARAMS.cursor]: first.next_cursor! });
+    expect(second.messages.map((row) => row.id)).toEqual([position(N + 20)]);
+    expect([second.next_cursor, second.lookback_exhausted]).toEqual([null, false]);
+    for (const listed of [first, second]) {
+      expect(listed.messages.filter((row) => unseen.includes(row.id))).toEqual([]);
+    }
+  });
+
+  it("(d) ends exactly on the last message when there are exactly N, so there is no cursor", async () => {
+    const token = await tokenFor(WHO);
+    // The 60 oldest go, leaving exactly N this reader can see.
+    for (const receiptId of positions.slice(N)) {
+      await testEnv.CATALOG.batch([
+        testEnv.CATALOG.prepare("DELETE FROM messages WHERE ingress_receipt_id = ?").bind(receiptId),
+        testEnv.CATALOG.prepare("DELETE FROM ingress_receipts WHERE id = ?").bind(receiptId),
+      ]);
+    }
+    positions = positions.slice(0, N);
+    await archiveAllBut([]);
+    const only = await lookback(token, INBOX);
+    expect([only.messages, only.next_cursor, only.lookback_exhausted]).toEqual([[], null, false]);
+  });
+
+  it("(e) is never felt by a page that fills, an Archive page, or a search; Unread and Mine exhaust the same way", async () => {
+    const token = await tokenFor(WHO);
+    const full = await lookback(token, INBOX);
+    expect(full.messages).toHaveLength(PAGE);
+    expect(full.lookback_exhausted).toBe(false);
+    expect(full.next_cursor).toBe(await cursorAt(PAGE));
+    // The bound is in the response wherever a lookback ran, and null wherever none did.
+    expect(full.max_lookback).toBe(N);
+
+    await archiveAllBut([]);
+    const archive = await lookback(token, { [MESSAGE_PAGE_PARAMS.place]: "archive" });
+    expect([archive.messages.length, archive.lookback_exhausted, archive.max_lookback]).toEqual([PAGE, false, null]);
+    const trash = await lookback(token, { [MESSAGE_PAGE_PARAMS.place]: "trash" });
+    expect([trash.messages.length, trash.lookback_exhausted, trash.next_cursor, trash.max_lookback])
+      .toEqual([0, false, null, null]);
+    const searched = await lookback(token, { [MESSAGE_PAGE_PARAMS.q]: "lookback" });
+    expect([searched.lookback_exhausted, searched.max_lookback]).toEqual([false, null]);
+
+    // Everything read, and no case held: Unread and Mine look back through N and stop there.
+    const at = new Date(AUGUST_20).toISOString();
+    const reads = messages.map((messageId) => testEnv.CATALOG.prepare(
+      "INSERT INTO message_reads (org_id, user_id, message_id, read_at) VALUES (?,?,?,?)",
+    ).bind(LOOK, WHO, messageId, at));
+    for (let start = 0; start < reads.length; start += 100) await testEnv.CATALOG.batch(reads.slice(start, start + 100));
+    for (const query of [
+      { [MESSAGE_PAGE_PARAMS.unread]: "1" }, { [MESSAGE_PAGE_PARAMS.mine]: "1" },
+      // Archive with Unread is bounded too, so "never on Archive" would be a false promise.
+      { [MESSAGE_PAGE_PARAMS.place]: "archive", [MESSAGE_PAGE_PARAMS.unread]: "1" },
+    ] as Array<Record<string, string>>) {
+      const stopped = await lookback(token, query);
+      expect([stopped.messages, stopped.lookback_exhausted, stopped.next_cursor, stopped.max_lookback],
+        JSON.stringify(query)).toEqual([[], true, await cursorAt(N), N]);
+    }
+  });
+
+  it("(f) records the edge it discloses under a supervised grant, in the page's own query entry", async () => {
+    const token = await tokenFor(SUPERVISOR);
+    const mine = await lookback(token, { [MESSAGE_PAGE_PARAMS.mine]: "1" });
+    expect([mine.messages, mine.lookback_exhausted]).toEqual([[], true]);
+    const edge = mine.next_cursor!.split(" ")[1]!;
+    expect(edge).toBe(position(N));
+    const { results } = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'supervised.query'",
+    ).bind(LOOK).all<{ detail: string }>();
+    expect(results.flatMap((row) => (JSON.parse(row.detail) as { ids: string[] }).ids)).toEqual([edge]);
   });
 });

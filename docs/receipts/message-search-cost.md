@@ -1,7 +1,7 @@
 ---
 id: message-search-cost
 kind: measured-tripwire
-measured_on: 2026-09-05
+measured_on: 2026-09-26
 stale_when: >
   either arm of messagePageQuery's searched plan stops being driven by its virtual table; an arm's inner
   ORDER BY changes from rank; a third arm is added; **a predicate is added to or removed from the searched
@@ -11,16 +11,53 @@ stale_when: >
   text per row; ir_org_accepted or ir_org_sender changes, since the unsearched figures below are seeks against them; `envelope_from` starts being normalised at ingress, which would make the expression index redundant; or
   authz.list.max_rows_read moves; the day token leaves either index or stops coming from accepted_at, which
   would make a windowed search a residual filter again; or the ratio below between rows read and messages in
-  the window changes, since search.max_window_messages is derived from it
+  the window changes, since search.max_window_messages is derived from it; or the row's derived columns
+  (labels, read, place, standing content, the case) move back inside the arms or gain a probe, since they are
+  computed once over the grouped page and each is a seek per returned row
 values:
-  search.max_rows_read_per_page: 771
-  search.windowed_rows_read: 771
+  search.max_rows_read_per_page: 888
+  search.windowed_rows_read: 888
   search.max_window_messages: 400
-  page.rows_read_unbounded: 208
-  page.rows_read_short_window: 101
+  page.rows_read_unbounded: 326
+  page.rows_read_short_window: 156
   sender.rows_read_indexed: 9
   sender.rows_read_unindexed: 1207
 ---
+
+## Remeasured 26 September 2026: 888, with the reader's own rows in the corpus and the new columns outside the arms
+
+The redesign added five columns to every listed row: `place` (0067), `from_name` and the sealed preview
+(0068), `standing_content`, and the case's `case_mine`/`case_state` from one join. **And the corpus now seeds
+the reader's own rows** — `message_reads`, `message_places` and a case per delivery, as a settled Node holds
+them (one in twenty in Trash, half the rest in Archive, one in five unread, one in twenty a case the reader
+holds) — because a correlated probe into an empty table reads nothing, which is how the `read` column (0062)
+and `labels_json` (0061) came to be listed here at costs nobody had measured.
+
+| common term | rows read |
+|:--|--:|
+| before (no reader rows, the old columns) | 771 |
+| the new columns computed **inside each arm**, reader rows seeded | **1,003** |
+| the new columns computed **once over the grouped page**, reader rows seeded (shipped) | **888** |
+
+Inside the arms the derived columns cost five probes on up to twice the page (each arm's 51), and the common
+term passed `authz.list.max_rows_read`. Computed in an outer stage over the ≤ 51 grouped rows instead, the
+same columns cost once per returned row: 888, inside the budget with 112 rows to spare. The two plans answer
+the same rows (the outer stage reads the grouped `message_id`, mailbox and conversation), so this is a cost
+decision and not a change of meaning. `search.max_rows_read_per_page` is set **from** the measurement, never
+raised to meet it: it is the worst of the three terms on this corpus.
+
+The rest moved for the same two reasons, measured by the same run (`test/message-search.measure.test.ts`):
+
+```
+MEASURE message_search  deliveries=1200  plain=326  rare=225 (12 rows)  common=888  two_words=138
+MEASURE page_rows_read unbounded=326 half=325(51 rows) narrow=156(24 rows)
+MEASURE search_windowed  unwindowed=888 (51 rows)  windowed_same_day=888 (51 rows)  rare_windowed=225 (12 rows)  budget=1000
+```
+
+The unsearched figures (`page.rows_read_*`) are the walk with the new columns — the Inbox's own plan is the
+lookback, priced in `message-page-size.md`. The sender figures (9 and 1,207) did not move: that corpus seeds no
+reader rows and the sender seek is what it measures. The tables below are the figures as first recorded, kept
+because they are the argument for the shapes that shipped.
 
 ## Correction, 5 September 2026: the windowed figure was the reason for a refusal, and it is now 771 (#153)
 

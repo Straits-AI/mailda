@@ -77,6 +77,11 @@ const OPERATOR_ROUTES = [
   { method: "POST", path: "/api/maintenance/reseal", why: "re-wraps every credential in the organization" },
   {
     method: "POST",
+    path: "/api/maintenance/requeue-previews",
+    why: "spends the preview backfill on the whole organization's mail",
+  },
+  {
+    method: "POST",
     path: "/api/maintenance/reconcile",
     why: "reads the evidence inventory, and with collect=1 destroys content bytes",
   },

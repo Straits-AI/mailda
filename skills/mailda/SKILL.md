@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 28 capabilities
+## What you can do — 30 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -45,9 +45,10 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getMailboxesReadable` | Mailboxes this caller may read, which is not the work-queue list |
 | `getMatters` | Matters a hold or an export can be scoped to |
 | `getMe` | Who this session is |
-| `getMessages` | Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible |
+| `getMessages` | Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible. With place=inbox, unread or mine, one request looks back through at most messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks further back. |
 | `getMessagesByReceiptIdAttachmentsByOrdinal` | One attached part's bytes, by its position in the body route's `attachments`. A copy leaving the Node, so it takes message.export like the original and is recorded as an export |
 | `getMessagesByReceiptIdBody` | One message's rendered body. Takes the receipt id that GET /api/messages returns as `id` |
+| `getMessagesByReceiptIdHeaders` | One message's header block as it arrived, as text to read (not the original as a file, which is /raw and an export). Content, so the body's authority and record: recorded as an open under a supervised grant. Takes the receipt id |
 | `getMessagesByReceiptIdRaw` | One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does |
 | `getNotifications` | What has changed since the last poll |
 | `getSends` | The outbox |
@@ -63,11 +64,12 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `putDrafts` | Save a draft |
 | `postMatters` | Open a matter |
 | `putMessagesByMessageIdLabels` | Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id. |
+| `putMessagesByMessageIdPlace` | Put a message in your Inbox, Archive or Trash (0067). Yours alone; destroys nothing; Trash is restorable. Takes the msg_ id |
 | `putMessagesByMessageIdRead` | Mark a message read or unread, for you (0062). Takes the msg_ id. `{read: false}` puts it back |
 | `postQuarantineByMessageIdHold` | Hold a received message back from its mailbox's queue, with the reason in words. The act a customer's own classifier reaches; an administrator releases it from GET /api/quarantine |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 115 withheld
+## What you cannot do, and why — 116 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -132,13 +134,13 @@ so you are that one person and can never be the second. These are not permission
 
   Dispatch hands every due send to the transport **now**. It starts no new send, which is what its previous entry said, and that is not the question the tier asks: mail leaves, and mail leaving is the one act in this product nobody can undo.
 
-  It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
+  It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read, draft and place mail; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (56)
+### Operator — running the Node rather than using it (57)
 
-- **`deleteAddresses`, `patchMailboxesByMailboxId`, `postAddresses`, `postMailboxes`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
+- **`deleteAddresses`, `patchMailboxesByMailboxId`, `postAddresses`, `postMailboxes`, `postMaintenanceReconcile`, `postMaintenanceRequeuePreviews`, `postMaintenanceReseal`**
 
-  Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
+  Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide. Re-queuing the previews the backfill gave up on is worth doing only once a person knows the fault is over.
 
 - **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getPeopleByUserIdMailboxes`, `postAgents`**
 

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Scroller } from "../chrome.tsx";
 import {
   createPolicy, publishPolicyVersion, savePolicyDraft, useMailboxes, usePolicies,
   type PolicyConditions, type PolicyVersionRow,
@@ -216,10 +216,10 @@ function Editing({
 
       <p className="policy-actions">
         <button type="button" className="primary" onClick={() => void save()} disabled={busy}>
-          save draft
+          Save draft
         </button>
         {" "}
-        <button className="quiet" type="button" onClick={() => void onDone()} disabled={busy}>cancel</button>
+        <button className="quiet" type="button" onClick={() => void onDone()} disabled={busy}>Cancel</button>
         {/*
           Publishing is refused unless somebody holds `approval.decide` on a mailbox the rule applies to
           (#61) — a `require_approval` rule nobody can satisfy is a rule that stops mail for ever. The
@@ -261,7 +261,7 @@ export function Policies() {
           className="primary"
           onClick={() => setEditing({ policyId: null, name: "new rule" })}
         >
-          new rule
+          New rule
         </button>
       </p>
     </header>
@@ -299,7 +299,7 @@ export function Policies() {
          */
         <Nothing kind="empty" detail="No rules yet. Every message goes as the mailbox and its relations allow." />
       ) : (
-        <div className="scroller">
+        <Scroller label="Rules">
           <table>
             <caption className="dim">
               What each rule does, in the order a reader meets it. A message is decided by the strictest rule
@@ -327,7 +327,7 @@ export function Policies() {
                       className="linkish"
                       onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
                     >
-                      open
+                      Open
                     </button>
                   </td>
                 </tr>
@@ -344,7 +344,7 @@ export function Policies() {
                   <td className="mono">{when(row.created_at)}</td>
                   <td>
                     <button type="button" className="primary" onClick={() => void publish(row.policy_id)}>
-                      publish
+                      Publish
                     </button>
                     {" "}
                     <button
@@ -352,14 +352,14 @@ export function Policies() {
                       className="linkish"
                       onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
                     >
-                      open
+                      Open
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       )}
 
       {editing === null ? null : (

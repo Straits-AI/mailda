@@ -1,12 +1,15 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
+import type { DoctorCheck } from "@mailda/contract/schemas";
 import {
   checkSchema, checkEvidenceBucket, planCheck, checkProviderToken, checkInboundRouting,
   checkInboundAuthentication, checkTransportAdapters,
 } from "./doctor/node.ts";
 import { sendingEventsConsumerCheck, checkDeliveryVisibility, checkBreakers } from "./doctor/delivery.ts";
 import { checkVault, checkCredentialKek, checkSigningKeys } from "./doctor/keys.ts";
-import { checkOutbox, checkEvidence, strandedDraftBodyFindings, checkEvidenceChanged, checkSearchIndex } from "./doctor/evidence.ts";
+import {
+  checkOutbox, checkEvidence, strandedDraftBodyFindings, checkEvidenceChanged, checkSearchIndex, checkPreviews,
+} from "./doctor/evidence.ts";
 import { checkHolds, checkSelfGrants, checkSupervisionNotices, checkAgentCeilings } from "./doctor/governance.ts";
 import { butlerExecutionCheck, checkButlerPauses } from "./doctor/butlers.ts";
 import { checkRecoveryEscrow, checkRecoveryConflicts, checkRecoveryRestores } from "./doctor/recovery.ts";
@@ -55,7 +58,9 @@ export type Severity = "refuse" | "degraded" | "report";
 
 
 export interface Finding {
-  check: string;
+  /** Closed by the contract's registry: emitting an unlisted name is a compile error, and so is a client that
+   *  maps some names and not others (`DOCTOR_CHECKS`, `packages/contract/src/schemas.ts`). */
+  check: DoctorCheck;
   severity: Severity;
   ok: boolean;
   detail: string;
@@ -239,6 +244,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkInboundAuthentication(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),
+    ...(await checkPreviews(env, claim?.org_id ?? null)),
     ...(await checkAgentCeilings(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryRestores(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryConflicts(env, claim?.org_id ?? null)),

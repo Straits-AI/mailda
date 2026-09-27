@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { generationOf, getEvidence, putEvidence } from "../src/evidence-store.ts";
+import { contentOpeningKey, contentSealingKey, generationOf, getEvidence, putEvidence } from "../src/evidence-store.ts";
+import { openPreview, sealPreview } from "../src/preview.ts";
+import { backfillPreviews } from "../src/preview-backfill.ts";
 import { LEGACY_KEY_GENERATION, aesKeyFrom, vault } from "../src/keyvault.ts";
 import { reconcileEvidence } from "../src/reconcile.ts";
 import { resealBatch } from "../src/reseal.ts";
@@ -209,13 +211,136 @@ describe("re-seal (#25)", () => {
     expect(outcome.remaining).toBe(1);
   });
 
-  it("stays inside its measured subrequest budget per batch", () => {
-    const perMessage = BUDGETS["reseal.subrequests_per_message"];
-    const batch = BUDGETS["reseal.batch_size"];
-    // The reason the batch is 100 and not 200: 200 would exceed the cap on a full batch, and that is
-    // a limit that only appears under load. Against the **free** ceiling — the 1,000 this batch size was
-    // derived against, and the one that holds whatever plan the Node turns out to be on (#68).
-    expect(batch * perMessage + 2).toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
+  /*
+   * The row preview (0068) moves with its receipt (R27). Sealed under the content key like the evidence, so a
+   * rotation that moved the evidence and left the preview would leave the old key still opening content.
+   */
+  async function receiptWithPreview(n: number, text: string | null): Promise<{ receiptId: string; messageId: string }> {
+    const ctx = createSystemCtx();
+    const stored = await putEvidence(testEnv, `${ORG}/raw/2026-Q3/p${n}.eml`, RAW);
+    const receiptId = `rcpt_preview_${n}`;
+    const messageId = `msg_preview_${n}`;
+    await insertReceipt(receiptId, stored.blobKey, RAW, stored.keyGeneration, new Date(ctx.now()).toISOString());
+    const sealing = await contentSealingKey(testEnv);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id, thread_id,
+         subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at, preview_sealed,
+         preview_generation, preview_state)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'projected')`,
+    ).bind(messageId, ORG, "2026-Q3", stored.blobKey, "0".repeat(64), RAW.length, `${messageId}@b.com`, `thr_${n}`,
+      "hello", "a@b.com", new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString(), receiptId,
+      new Date(ctx.now()).toISOString(),
+      // `null` text stands for a seal that will not open: right generation, wrong bytes.
+      text === null ? btoa("x".repeat(40)) : await sealPreview(sealing.key, messageId, text), sealing.generation).run();
+    return { receiptId, messageId };
+  }
+
+  it("re-seals each receipt's row preview in the same step, and re-queues one that will not open (R27)", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM messages").run();
+    const ctx = createSystemCtx();
+    const kept = await receiptWithPreview(1, "Invoice INV-2041 is attached");
+    const lost = await receiptWithPreview(2, null);
+    await vault(testEnv).rotate("content");
+
+    const outcome = await resealBatch(testEnv, ctx, ORG);
+    expect([outcome.resealed, outcome.remaining, outcome.previewsRequeued, outcome.failed]).toEqual([2, 0, 1, []]);
+    const behind = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM messages WHERE preview_generation < ?",
+    ).bind(outcome.targetGeneration).first<{ n: number }>();
+    expect(behind?.n, "a preview was left under an older key than its evidence").toBe(0);
+
+    const row = (await testEnv.CATALOG.prepare("SELECT preview_sealed, preview_generation FROM messages WHERE id = ?")
+      .bind(kept.messageId).first<{ preview_sealed: string; preview_generation: number }>())!;
+    expect(row.preview_generation).toBe(outcome.targetGeneration);
+    expect(await openPreview(await contentOpeningKey(testEnv, row.preview_generation), kept.messageId,
+      row.preview_sealed)).toBe("Invoice INV-2041 is attached");
+
+    // Not lost: cleared and owed again, and the backfill re-derives it from the evidence just re-sealed.
+    const requeued = await testEnv.CATALOG.prepare(
+      "SELECT preview_sealed, preview_generation, preview_state FROM messages WHERE id = ?",
+    ).bind(lost.messageId).first();
+    expect(requeued).toEqual({ preview_sealed: null, preview_generation: null, preview_state: "pending" });
+    expect((await backfillPreviews(testEnv, ctx)).projected).toBe(1);
+  });
+
+  it("re-seals the preview of a receipt it finds already current, the state a crash after the R2 write leaves", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM messages").run();
+    const { messageId } = await receiptWithPreview(30, "Quote Q-7 attached");
+    await vault(testEnv).rotate("content");
+    // The crash: evidence re-sealed under the new generation, the receipt and its preview not yet moved.
+    const { blob_key: blobKey } = (await testEnv.CATALOG.prepare("SELECT blob_key FROM messages WHERE id = ?")
+      .bind(messageId).first<{ blob_key: string }>())!;
+    await putEvidence(testEnv, blobKey, RAW);
+
+    const outcome = await resealBatch(testEnv, createSystemCtx(), ORG);
+    expect([outcome.alreadyCurrent, outcome.resealed, outcome.remaining, outcome.failed]).toEqual([1, 0, 0, []]);
+    const row = (await testEnv.CATALOG.prepare("SELECT preview_sealed, preview_generation FROM messages WHERE id = ?")
+      .bind(messageId).first<{ preview_sealed: string; preview_generation: number }>())!;
+    expect(row.preview_generation, "the receipt was marked current beside a preview under the retired key")
+      .toBe(outcome.targetGeneration);
+    expect(await openPreview(await contentOpeningKey(testEnv, row.preview_generation), messageId, row.preview_sealed))
+      .toBe("Quote Q-7 attached");
+  });
+
+  it("costs reseal.subrequests_per_message per message, the preview's two statements included", async () => {
+    /*
+     * The measurement behind the receipt's figure, counted rather than listed: every D1 execution, R2 call
+     * and vault RPC the batch makes. Measured as the **marginal** cost between a batch of one and a batch of
+     * three, so the batch's fixed statements and the run-cached keys (asked once per run) fall out.
+     */
+    await testEnv.CATALOG.prepare("DELETE FROM messages").run();
+    const counted = (): { env: Env; calls: () => number } => {
+      let calls = 0;
+      const statement = (inner: D1PreparedStatement): D1PreparedStatement => ({
+        bind: (...values: unknown[]) => statement(inner.bind(...values)),
+        first: (...args: [string?]) => { calls += 1; return inner.first(...(args as [])); },
+        run: () => { calls += 1; return inner.run(); },
+        all: () => { calls += 1; return inner.all(); },
+      }) as unknown as D1PreparedStatement;
+      const bucket = testEnv.EVIDENCE;
+      const real = vault(testEnv);
+      const rpc = (name: "sealingKey" | "openingKey" | "generations") =>
+        (...args: unknown[]) => { calls += 1; return (real[name] as (...a: unknown[]) => unknown)(...args); };
+      return {
+        calls: () => calls,
+        env: {
+          ...testEnv,
+          CATALOG: { prepare: (sql: string) => statement(testEnv.CATALOG.prepare(sql)) },
+          EVIDENCE: {
+            head: (key: string) => { calls += 1; return bucket.head(key); },
+            get: (key: string) => { calls += 1; return bucket.get(key); },
+            put: (...args: Parameters<R2Bucket["put"]>) => { calls += 1; return bucket.put(...args); },
+          },
+          KEY_VAULT: { getByName: () => ({
+            sealingKey: rpc("sealingKey"), openingKey: rpc("openingKey"), generations: rpc("generations"),
+          }) },
+        } as unknown as Env,
+      };
+    };
+    const batchOf = async (count: number, from: number): Promise<number> => {
+      for (const table of ["messages", "ingress_receipts"]) await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
+      for (let n = from; n < from + count; n++) await receiptWithPreview(n, `preview ${n}`);
+      await vault(testEnv).rotate("content");
+      const meter = counted();
+      const outcome = await resealBatch(meter.env, createSystemCtx(), ORG);
+      expect(outcome.resealed).toBe(count);
+      return meter.calls();
+    };
+    const one = await batchOf(1, 10);
+    const three = await batchOf(3, 20);
+    const perMessage = (three - one) / 2;
+    console.log(`MEASURE reseal  one=${one}  three=${three}  per_message=${perMessage}`);
+    expect(perMessage).toBe(BUDGETS["reseal.subrequests_per_message"]);
+
+    /*
+     * And a full batch inside its measured subrequest budget, with the fixed cost measured rather than listed:
+     * a batch of one less its message (the target generation, the candidate query, the remaining count and the
+     * two run-cached preview keys). The reason the batch is 100 and not 200: 200 would exceed the cap on a full
+     * batch, and that is a limit that only appears under load. Against the **free** ceiling — the 1,000 this
+     * batch size was derived against, and the one that holds whatever plan the Node turns out to be on (#68).
+     */
+    expect(BUDGETS["reseal.batch_size"] * perMessage + (one - perMessage))
+      .toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
   });
 });
 

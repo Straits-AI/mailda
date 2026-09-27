@@ -45,7 +45,7 @@ export function clockOnInbound(
                 --
                 -- No backticks in this string: it is a TypeScript template literal, so one in a comment ends
                 -- it. That is the second time this hazard has bitten in this codebase, the first being the
-                -- CSS in ui.ts, which now says so at the top of its stylesheet.
+                -- CSS now in shell-css.ts, which says so at the top of its stylesheet.
                 SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?, '+' || m.first_response_minutes || ' minutes')
                   FROM mailboxes m
                  WHERE m.id = cases.mailbox_id AND m.first_response_minutes IS NOT NULL

@@ -10,6 +10,8 @@ import { capped } from "../list-cap.ts";
 import { authenticationIsImpossible, authenticationProbe, formatReport, runDoctor, withoutDataFindings } from "../doctor.ts";
 import { formatReconcile, reconcileEvidence } from "../reconcile.ts";
 import { resealBatch } from "../reseal.ts";
+import { requeueFailedPreviews } from "../preview-backfill.ts";
+import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
 import { sessionResponse, unauthenticated, organizationId, armSweeper, claimMessage } from "./support.ts";
 import { page } from "../ui.ts";
 import type { Some } from "../router.ts";
@@ -206,7 +208,7 @@ export const node = {
    * `doctor` there is no state in which an anonymous caller should reach them.
    *
    * Both are **bounded and resumable** rather than long-running: each call does one batch and
-   * reports what remains, because a Worker invocation cannot re-seal ~8.5M messages and an
+   * reports what remains, because a Worker invocation cannot re-seal a shard's millions of messages and an
    * operation that pretends otherwise fails silently at scale (receipt: evidence-lifecycle.md).
    */
   "POST /api/maintenance/reseal": async ({ env, clock, who }) => {
@@ -220,6 +222,22 @@ export const node = {
     // 200 even with failures: the batch itself succeeded, and each failure is a named receipt the
     // caller has to act on rather than a request to retry.
     return Response.json(outcome);
+  },
+
+  /*
+   * The row previews the backfill gave up on (0068), back in its queue: the remedy `doctor`'s
+   * `preview_backlog` names. `org.admin` like the sweeps beside it, because it spends the backfill on the whole
+   * organization's mail, and the decision it needs, whether the vault or storage fault is over, is a person's.
+   */
+  "POST /api/maintenance/requeue-previews": async ({ env, who }) => {
+    await assertAdmin(env, who.orgId, who.userId);
+    const requeued = await requeueFailedPreviews(env, who.orgId);
+    return Response.json({
+      requeued,
+      message: `Queued for the preview backfill, which projects up to ${PREVIEW_BACKFILL_LIMIT} on each scheduled `
+        + "pass that finds the body and authentication backfills idle. Any whose evidence is missing return to "
+        + "failed after one pass.",
+    });
   },
 
   "POST /api/maintenance/reconcile": async ({ env, clock, url, who }) => {

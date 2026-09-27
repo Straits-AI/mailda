@@ -28,7 +28,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,24 +57,33 @@ function runSql(sql) {
   const dir = mkdtempSync(join(tmpdir(), "mailda-measure-"));
   const file = join(dir, "batch.sql");
   writeFileSync(file, sql, "utf8");
-  wrangler(["d1", "execute", SCRATCH, "--remote", "--file", file, "--yes"]);
+  try {
+    wrangler(["d1", "execute", SCRATCH, "--remote", "--file", file, "--yes"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
  * The corpus, at the widths the receipt records.
  *
  * Every width here is load-bearing: 64-character hex digests, RFC Message-IDs of realistic length, a
- * 70-character subject, org-scoped R2 keys, ISO-8601 timestamps, and typed-prefix ULIDs at their true
- * 30-character width (#6). 20 mailboxes, quarterly buckets. Change any of them and the figure stops being
- * comparable to the two before it.
+ * 70-character subject, org-scoped R2 keys, ISO-8601 timestamps, and typed-prefix ULIDs at their true width
+ * (#6). 20 mailboxes, quarterly buckets. Change any of them and the figure stops being comparable to the
+ * rounds before it.
  */
 const ORG = "org_01J0000000000000000000MEAS";
 const SUBJECT = "Invoice 4500219877 — revised delivery schedule for container MSKU4";
 const DIGEST = "9f2c4a7b1e8d63f05a2c9b4e7d1f8a3c6b0e5d2f9a7c4b1e8d6f3a0c5b2e9d7f";
 
+/**
+ * Deterministic, and as wide as `ctx.id(prefix)` mints: the prefix, `_`, and a 26-character ULID body
+ * (`packages/runtime/src/ctx.ts`), so 30 characters for `msg_` and 31 for `rcpt_`. Until 27 September 2026 this
+ * padded the body to `26 - prefix.length` and every id was three or four characters short; the receipt
+ * records what that understated.
+ */
 function ulid(prefix, n) {
-  // Deterministic, and 30 characters wide including the prefix, matching #6's real identifiers.
-  return `${prefix}_${n.toString(36).toUpperCase().padStart(26 - prefix.length, "0")}`;
+  return `${prefix}_${n.toString(36).toUpperCase().padStart(26, "0")}`;
 }
 
 /**
@@ -93,6 +102,23 @@ function chunked(rows, prefix) {
   return out.join("");
 }
 
+/**
+ * A sealed row preview's stored width (0068): base64 of a 12-byte IV, the ciphertext and a 16-byte tag. A
+ * 120-character Latin line is ~120 bytes of UTF-8 and ~200 base64 characters sealed; a CJK line is ~360 bytes
+ * and ~520 characters. Pseudo-random rather than repeated, so the figure is not the width of something a
+ * page-level encoding could have shortened. Deterministic in `i`, for the reason every other field here is.
+ */
+function sealedPreview(i, chars) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let state = (i * 2654435761) >>> 0;
+  let out = "";
+  for (let n = 0; n < chars; n++) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    out += alphabet[state >>> 26];
+  }
+  return out;
+}
+
 function messagesSql(from, count) {
   const rows = [];
   for (let i = from; i < from + count; i++) {
@@ -103,7 +129,7 @@ function messagesSql(from, count) {
       `('${id}','${ORG}','${bucket}','${ORG}/raw/${bucket}/${id}.eml','${DIGEST}',${18_000 + (i % 900)},` +
       `'${rfc}','${ulid("thr", i)}','${SUBJECT}','customer${i % 500}@example-supplier.com',` +
       `'2026-08-0${(i % 9) + 1}T12:00:00.000Z','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
-      `'${ulid("rcp", i)}','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
+      `'${ulid("rcpt", i)}','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `${i % 3 === 0 ? "NULL" : `'${rfc}'`},'${rfc}',NULL,'${ulid("cnv", i)}',` +
       // Authentication (0055), populated the way a real inbound row is: most mail passes all three, most
       // sending domains publish `p=none`, and the From domain is the sender's. Left null on a message the
@@ -111,7 +137,12 @@ function messagesSql(from, count) {
       // Quarantine (0056): NULL on every row of a settled table — the switch is off by default, and a held
       // delivery is released or stays one of a handful. Populating it would measure a Node nobody runs.
       // Attachments (0057): counted on every row a settled Node has looked at, and most mail carries none.
-      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0,0,'pass','pass','pass','none','example-supplier.com',NULL,NULL,${i % 5 === 0 ? 1 : 0},0,NULL)`,
+      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0,0,'pass','pass','pass','none','example-supplier.com',NULL,NULL,${i % 5 === 0 ? 1 : 0},0,NULL,` +
+      // Row projections (0068), as a settled Node holds them: a display name (17 characters) on 70 % of
+      // rows, a sealed preview on every row with body text (Latin, and one in ten CJK), generation 1,
+      // projected, no attempts. The partial index `msg_preview_open` is then empty, which is its settled state.
+      `${i % 10 < 7 ? `'Supplier ${String(i % 1000).padStart(3, "0")} desk'` : "NULL"},` +
+      `'${sealedPreview(i, i % 10 === 9 ? 520 : 200)}',1,'projected',0)`,
     );
   }
   return chunked(rows,
@@ -130,7 +161,8 @@ function messagesSql(from, count) {
     // error and retry columns are left null, which is their state for all but a handful of messages.
     `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
     `body_index_attempts,body_index_attempt_version,auth_spf,auth_dkim,auth_dmarc,auth_dmarc_policy,` +
-    `auth_from_domain,quarantined_at,quarantine_reason,attachments,attachments_dangerous,quarantine_note)`);
+    `auth_from_domain,quarantined_at,quarantine_reason,attachments,attachments_dangerous,quarantine_note,` +
+    `from_name,preview_sealed,preview_generation,preview_state,preview_attempts)`);
 }
 
 /**
@@ -156,16 +188,34 @@ function deliveriesSql(from, count, suffix) {
 }
 
 /**
- * The two measured tables and every index on them, copied from the migrations.
+ * Filed places (0067): one row per person per message they put in Archive or Trash, so it is priced as its own
+ * marginal figure rather than folded into a message's. Twenty people, as there are twenty mailboxes; four in
+ * five filings are Archive. Every column is NOT NULL with no default, so an omitted one fails the INSERT
+ * rather than pricing at zero. `receipt_id` and `accepted_at` are the message's own, as `src/places.ts` copies.
+ */
+function placesSql(from, count) {
+  const rows = [];
+  for (let i = from; i < from + count; i++) {
+    rows.push(
+      `('${ORG}','${ulid("usr", i % 20)}','${ulid("msg", i)}','${ulid("rcpt", i)}',` +
+      `'2026-08-0${(i % 9) + 1}T12:00:04.000Z','${i % 5 === 4 ? "trash" : "archive"}','2026-09-0${(i % 9) + 1}T09:30:00.000Z')`,
+    );
+  }
+  return chunked(rows,
+    "INSERT INTO message_places (org_id,user_id,message_id,receipt_id,accepted_at,place,placed_at)");
+}
+
+/**
+ * The three measured tables and every index on them, copied from the migrations.
  *
- * **A third copy of this schema, and the only one nothing guards.** `test/schema-drift.test.ts` compares its
- * own copy against the migrated database and fails when they diverge — that is what caught
- * `body_indexed_at`. This one is compared against nothing, so when #107 L2 added that column the script went
- * on measuring the old shape and reported an unchanged figure. The number looked like good news and was
- * measuring a table that no longer exists.
+ * **A third copy of this schema.** `test/schema-drift.test.ts` compares its own copy against the migrated
+ * database and fails when they diverge — that is what caught `body_indexed_at`. This one was compared against
+ * nothing, so when #107 L2 added that column the script went on measuring the old shape and reported an
+ * unchanged figure. Since 29 August `test/node/byte-measurement-corpus.test.ts` compares it with the drift
+ * guard's copy, table by table.
  *
  * Left as a copy rather than read from `migrations/`, because the script builds a *scratch* database with only
- * these two tables and applying 41 migrations to get them would measure a different thing. But the hazard is
+ * these three tables and applying 68 migrations to get them would measure a different thing. But the hazard is
  * now written down where the next person editing a migration will find it.
  */
 const SCHEMA = `
@@ -185,7 +235,9 @@ CREATE TABLE messages (
   auth_spf TEXT, auth_dkim TEXT, auth_dmarc TEXT, auth_dmarc_policy TEXT, auth_from_domain TEXT,
   quarantined_at TEXT, quarantine_reason TEXT,
   attachments INTEGER, attachments_dangerous INTEGER,
-  quarantine_note TEXT
+  quarantine_note TEXT,
+  from_name TEXT, preview_sealed TEXT, preview_generation INTEGER,
+  preview_state TEXT NOT NULL DEFAULT 'pending', preview_attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);
@@ -196,6 +248,9 @@ CREATE INDEX msg_by_conversation ON messages (org_id, conversation_id, sent_at);
 -- would price a table nobody has -- which is what the two rounds before this one did with the columns.
 CREATE INDEX msg_body_index_due
   ON messages (body_index_state, body_index_lease_until, body_index_next_attempt_at);
+-- The preview backfill's selector (0068). Partial, so it costs bytes only for rows not yet projected: empty
+-- on the settled table this script builds, and counted here so it is priced rather than forgotten.
+CREATE INDEX msg_preview_open ON messages (preview_state) WHERE preview_state <> 'projected';
 CREATE TABLE mailbox_items (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, mailbox_id TEXT NOT NULL, time_bucket TEXT NOT NULL,
   message_id TEXT NOT NULL, change_number INTEGER NOT NULL, flags INTEGER NOT NULL,
@@ -203,6 +258,12 @@ CREATE TABLE mailbox_items (
 );
 CREATE UNIQUE INDEX mbi_unique ON mailbox_items (mailbox_id, message_id);
 CREATE INDEX mbi_by_mailbox_bucket ON mailbox_items (org_id, mailbox_id, time_bucket, sent_at);
+CREATE TABLE message_places (
+  org_id TEXT NOT NULL, user_id TEXT NOT NULL, message_id TEXT NOT NULL, receipt_id TEXT NOT NULL,
+  accepted_at TEXT NOT NULL, place TEXT NOT NULL CHECK (place IN ('archive', 'trash')), placed_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, message_id)
+);
+CREATE INDEX mpl_by_place ON message_places (user_id, place, accepted_at DESC, receipt_id DESC);
 `;
 
 const stages = [];
@@ -233,18 +294,27 @@ try {
   console.log("\nStage                                            database_size");
   stage("Empty database");
   runSql(SCHEMA);
-  stage("Schema only (2 tables, 9 indexes)");
+  const tables = SCHEMA.match(/CREATE TABLE/g).length;
+  const indexes = SCHEMA.match(/CREATE (?:UNIQUE )?INDEX/g).length;
+  stage(`Schema only (${tables} tables, ${indexes} named indexes)`);
   runSql(messagesSql(0, BATCH) + deliveriesSql(0, BATCH, 0));
   const afterFirst = stage(`+ ${BATCH} messages, 1 delivery each`);
   runSql(messagesSql(BATCH, BATCH) + deliveriesSql(BATCH, BATCH, 0));
   const afterSecond = stage(`+ ${BATCH} more messages`);
   runSql(deliveriesSql(0, BATCH, 1));
   const afterExtra = stage(`+ ${BATCH} extra deliveries only`);
+  runSql(placesSql(0, BATCH));
+  const afterPlaces = stage(`+ ${BATCH} filed places`);
+  runSql(placesSql(BATCH, BATCH));
+  const afterMorePlaces = stage(`+ ${BATCH} more filed places`);
 
   const perMessage = (afterSecond - afterFirst) / BATCH;
   const perDelivery = (afterExtra - afterSecond) / BATCH;
   console.log(`\nMarginal per message (with one delivery): ${perMessage.toFixed(1)} bytes`);
   console.log(`Marginal per extra delivery:              ${perDelivery.toFixed(1)} bytes`);
+  // The second batch, for the per-message figure's reason: the first lands in an empty table.
+  const perPlace = (afterMorePlaces - afterPlaces) / BATCH;
+  console.log(`Marginal per filed place:                 ${perPlace.toFixed(1)} bytes`);
   console.log(`\nFor the receipt (values are integers): message_bytes ${Math.round(perMessage)}`);
 } finally {
   if (KEEP) {
@@ -254,8 +324,9 @@ try {
     try {
       wrangler(["d1", "delete", SCRATCH, "--skip-confirmation"]);
       console.log("  deleted.");
-    } catch {
-      console.log(`  COULD NOT DELETE. Remove it by hand: npx wrangler d1 delete ${SCRATCH}`);
+    } catch (error) {
+      console.log(`  COULD NOT DELETE (${error}). Remove it by hand: npx wrangler d1 delete ${SCRATCH}`);
+      process.exitCode = 1;
     }
   }
 }

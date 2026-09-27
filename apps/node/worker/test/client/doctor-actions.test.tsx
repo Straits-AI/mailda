@@ -62,11 +62,11 @@ describe("which finding gets which remedy", () => {
     mount([
       finding("migrations_applied", true), finding("evidence_key_generation", true), finding("evidence_orphans", true),
       finding("draft_bodies_stranded", true), finding("recovery_key_conflicts", true), finding("body_index_failed", true),
-      finding("evidence_present", true),
+      finding("evidence_present", true), finding("preview_backlog", true),
     ]);
     await screen.findByText("evidence_present");
     const buttons = screen.getAllByRole("button").map((one) => one.textContent);
-    expect(buttons).toEqual(["verify a batch", "save credentials"]);
+    expect(buttons).toEqual(["Verify a batch", "Save credentials"]);
   });
 
   it("puts each remedy on its own failing finding, once", async () => {
@@ -75,15 +75,15 @@ describe("which finding gets which remedy", () => {
       finding("evidence_orphans", false), finding("recovery_key_conflicts", false), finding("body_index_failed", false),
     ].map((one) => (one.check === "evidence_key_generation" ? { ...one, fix: "reseal by hand" } : one)),
     { "GET /api/search/failed": { body: { failed: [] } } });
-    await screen.findByText("apply migrations");
+    await screen.findByText("Apply migrations");
     // The finding's own `fix` text stays beside the button: the CLI verb still works, and it is what an
     // operator has when the bundle cannot load.
     expect(screen.getByText("Fix: reseal by hand").textContent).toBe("Fix: reseal by hand");
     expect(await screen.findByText("The failed list is empty now.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "reseal a batch" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "collect them…" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "record the assessment" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "mint a new set" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reseal a batch" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Collect them…" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Record the assessment" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Mint a new set" })).toBeNull();
   });
 });
 
@@ -92,13 +92,13 @@ describe("recovery codes in the browser", () => {
     mount([finding("recovery_escrow", false)], {
       "POST /api/recovery-codes/rotate": { body: { codes: CODES, escrowed: { content: 2, credential: 1 }, set: "rcs_1", notice: "Store them, then confirm one." } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "mint a new set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Mint a new set" }));
     const list = await screen.findByRole("list", { name: "Recovery codes" });
     expect([...list.querySelectorAll("li")].map((one) => one.textContent)).toEqual(CODES);
     expect(screen.getByText(/Store them, then confirm one\./).textContent).toContain("Write these down now.");
     expect(screen.getByText("rcs_1").closest("p")?.textContent).toContain("content key generation 2");
     // Not prefilled, and a password field: a code that is not spent by confirming is a live key.
-    const field = screen.getByLabelText("confirm one code") as HTMLInputElement;
+    const field = screen.getByLabelText("Confirm one code") as HTMLInputElement;
     expect(field.value).toBe("");
     expect(field.type).toBe("password");
     expect(posts().map((call) => call.path)).toEqual(["/api/recovery-codes/rotate"]);
@@ -108,8 +108,8 @@ describe("recovery codes in the browser", () => {
     mount([finding("recovery_escrow", false)], {
       "POST /api/recovery-codes/confirm": { body: { confirmed: 10, alreadyConfirmed: false, message: "Confirmed. 10 code(s) marked as held; none were spent." } },
     });
-    const field = await screen.findByLabelText("confirm one code") as HTMLInputElement;
-    const confirm = screen.getByRole("button", { name: "confirm" }) as HTMLButtonElement;
+    const field = await screen.findByLabelText("Confirm one code") as HTMLInputElement;
+    const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     fireEvent.change(field, { target: { value: " dddd-eeee-ffff " } });
     expect(confirm.disabled).toBe(false);
@@ -123,7 +123,7 @@ describe("recovery codes in the browser", () => {
     mount([finding("recovery_escrow", false)], {
       "POST /api/recovery-codes/rotate": { body: { codes: CODES, escrowed: { content: 1, credential: 1 }, set: "rcs_1", notice: "n" } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "mint a new set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Mint a new set" }));
     fireEvent.click(await screen.findByRole("button", { name: "I have saved these ten codes" }));
     expect(screen.queryByRole("list", { name: "Recovery codes" })).toBeNull();
     expect(document.body.textContent).not.toContain(CODES[0]);
@@ -135,14 +135,14 @@ describe("the fix buttons", () => {
     mount([finding("migrations_applied", false)], {
       "POST /api/prepare": { body: { applied: ["0070"], raced: [], alreadyCurrent: false, message: "Applied 1 migration(s)." } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "apply migrations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply migrations" }));
     expect((await screen.findByRole("status")).textContent).toBe("Applied 1 migration(s).");
   });
 
   it("shows a refusal of the migration as the refusal, not as an empty result", async () => {
     // §5C: once claimed, `/api/prepare` answers 404 to anybody but an administrator, with no `message`.
     mount([finding("migrations_applied", false)], { "POST /api/prepare": { status: 404, body: { error: "not_found" } } });
-    fireEvent.click(await screen.findByRole("button", { name: "apply migrations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply migrations" }));
     expect((await screen.findByRole("alert")).textContent).toBe("not_found");
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -151,7 +151,7 @@ describe("the fix buttons", () => {
     mount([finding("evidence_key_generation", false)], {
       "POST /api/maintenance/reseal": { body: { resealed: 25, alreadyCurrent: 3, failed: [{}], remaining: 40, targetGeneration: 2 } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "reseal a batch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reseal a batch" }));
     expect((await screen.findByRole("status")).textContent)
       .toBe("25 resealed under generation 2, 3 already current, 1 failed. 40 remaining — run it again until that reaches 0.");
   });
@@ -160,7 +160,7 @@ describe("the fix buttons", () => {
     mount([finding("evidence_key_generation", false)], {
       "POST /api/maintenance/reseal": { status: 503, body: { error: "E_VAULT_UNREACHABLE", message: "E_VAULT_UNREACHABLE  the key vault did not answer\n  why      it is a Durable Object\n  fix      try again" } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "reseal a batch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reseal a batch" }));
     expect((await screen.findByRole("alert")).textContent).toContain("fix      try again");
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -169,9 +169,9 @@ describe("the fix buttons", () => {
     mount([finding("evidence_orphans", false)], {
       "POST /api/maintenance/reconcile?collect=1": { body: { orphans: [], orphansDeleted: 4, draftBodiesDeleted: 1, exportObjectsDeleted: 0 } },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "collect them…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Collect them…" }));
     expect(posts()).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "delete them now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete them now" }));
     expect((await screen.findByRole("status")).textContent).toBe("Deleted 4 orphan(s), 1 draft body/bodies, 0 export object(s).");
     expect(posts().map((call) => call.path)).toEqual(["/api/maintenance/reconcile?collect=1"]);
   });
@@ -183,10 +183,10 @@ describe("the fix buttons", () => {
         body: { error: "E_RESTORE_HAD_NO_CONFLICT", message: "E_RESTORE_HAD_NO_CONFLICT  restore rst_9 reported no key collision\n  why      it went cleanly\n  fix      check the restore id" },
       },
     });
-    fireEvent.change(await screen.findByLabelText("restore id"), { target: { value: " rst_9 " } });
-    fireEvent.change(screen.getByLabelText("what was examined"), { target: { value: "mail of Q3" } });
-    fireEvent.change(screen.getByLabelText("what was concluded"), { target: { value: "nothing of value" } });
-    fireEvent.click(screen.getByRole("button", { name: "record the assessment" }));
+    fireEvent.change(await screen.findByLabelText("Restore id"), { target: { value: " rst_9 " } });
+    fireEvent.change(screen.getByLabelText("What was examined"), { target: { value: "mail of Q3" } });
+    fireEvent.change(screen.getByLabelText("What was concluded"), { target: { value: "nothing of value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record the assessment" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("fix      check the restore id");
     expect(posts().map((call) => [call.path, call.body]))
@@ -203,13 +203,22 @@ describe("the fix buttons", () => {
     });
     expect((await screen.findByText("R2 timed out")).textContent).toBe("R2 timed out");
     expect(screen.getByText("unindexable")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "requeue 0 message(s)" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("repair msg_b"));
-    fireEvent.click(screen.getByLabelText("repair msg_b"));
-    fireEvent.click(screen.getByLabelText("repair msg_a"));
-    fireEvent.click(screen.getByRole("button", { name: "requeue 1 message(s)" }));
+    expect((screen.getByRole("button", { name: "Requeue 0 message(s)" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Repair msg_b"));
+    fireEvent.click(screen.getByLabelText("Repair msg_b"));
+    fireEvent.click(screen.getByLabelText("Repair msg_a"));
+    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message(s)" }));
     expect((await screen.findByRole("status")).textContent).toBe("1 requeued. Queued for the next backfill pass.");
     expect(posts().map((call) => [call.path, call.body])).toEqual([["/api/search/repair", { messageIds: ["msg_a"] }]]);
+  });
+
+  it("puts the failed previews back, with no selection, and shows the Node's own count", async () => {
+    mount([finding("preview_backlog", false)], {
+      "POST /api/maintenance/requeue-previews": { body: { requeued: 2, message: "Queued for the preview backfill." } },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Requeue failed previews" }));
+    expect((await screen.findByRole("status")).textContent).toBe("2 requeued. Queued for the preview backfill.");
+    expect(posts().map((call) => [call.path, call.body])).toEqual([["/api/maintenance/requeue-previews", undefined]]);
   });
 
   it("renders a bare what/why/fix refusal rather than its code alone", async () => {
@@ -217,8 +226,8 @@ describe("the fix buttons", () => {
       "GET /api/search/failed": { body: { failed: [{ messageId: "msg_a", state: "retryable", attempts: 1, error: null }] } },
       "POST /api/search/repair": { status: 422, body: { error: "unprocessable", what: "no message ids to repair", why: "repair is per message", fix: "pass the ids worth retrying" } },
     });
-    fireEvent.click(await screen.findByLabelText("repair msg_a"));
-    fireEvent.click(screen.getByRole("button", { name: "requeue 1 message(s)" }));
+    fireEvent.click(await screen.findByLabelText("Repair msg_a"));
+    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message(s)" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("no message ids to repair");
     expect(alert.textContent).toContain("fix      pass the ids worth retrying");
@@ -228,9 +237,9 @@ describe("the fix buttons", () => {
 describe("every refusal is rendered as the refusal", () => {
   const REFUSAL = { status: 503, body: { error: "E_VAULT_UNREACHABLE", message: "E_VAULT_UNREACHABLE  the key vault did not answer\n  why      it is a Durable Object\n  fix      try again" } };
   it.each([
-    ["recovery_escrow", "POST /api/recovery-codes/rotate", ["mint a new set"]],
-    ["evidence_orphans", "POST /api/maintenance/reconcile?collect=1", ["collect them…", "delete them now"]],
-    ["evidence_present", "POST /api/evidence/verify", ["verify a batch"]],
+    ["recovery_escrow", "POST /api/recovery-codes/rotate", ["Mint a new set"]],
+    ["evidence_orphans", "POST /api/maintenance/reconcile?collect=1", ["Collect them…", "Delete them now"]],
+    ["evidence_present", "POST /api/evidence/verify", ["Verify a batch"]],
   ])("%s: a refused %s", async (check, route, clicks) => {
     mount([finding(check, check === "evidence_present")], { [route]: REFUSAL });
     for (const name of clicks) fireEvent.click(await screen.findByRole("button", { name }));
@@ -264,12 +273,12 @@ describe("verifying evidence", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><Doctor /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "verify a batch" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verify a batch" }));
     const first = await screen.findByRole("status");
     expect(first.textContent).toContain("50 object(s) checked in receipts, 1024 bytes read: 1 fault(s). More remains.");
     expect(first.textContent).toContain("missing receipts.blob_key rcpt_7: no object");
 
-    fireEvent.click(screen.getByRole("button", { name: "continue from where it stopped" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue from where it stopped" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("2 object(s) checked in drafts"));
     expect(screen.getByRole("status").textContent).toContain("intact. That was the last batch.");
     expect(posts().map((call) => call.path)).toEqual(["/api/evidence/verify", "/api/evidence/verify?after=rcpt_50"]);

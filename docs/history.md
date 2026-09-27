@@ -3388,3 +3388,251 @@ run, and the record the sighting exists to write was never written. `provisionNo
 `provisioned` record and skips each step on its own record, printing `recorded <date>`; the upgrade and
 `mailda setup` call it whenever any of the three is missing, and a recorded receiving domain is reused
 rather than asked for again. Measured on `mailda-whymelabs` the same day.
+
+## The interface redesign (26 September 2026)
+
+A design memo asked for a calm, dense three-pane mail client: a grouped sidebar with a Compose button, a
+list with one-line previews and All / Unread / Mine / Waiting tabs, a reader with the headers folded behind a
+*to …* disclosure and a row of suggestions, a status bar reading *Connected* and *Health*, a command palette
+and single-key shortcuts, archive and trash, a dark palette with one sans family, and every existing route
+kept. Most of it was built as asked. What the code forced, and what the user decided, is the part worth
+keeping.
+
+**The memo's palette failed its own contrast check before anything was drawn with it.** Its muted grey, the
+colour of every time, preview and group label, measured 3.10:1 on a selected row, and its red 4.13:1 there; its
+primary text colour on its accent was 2.15:1, so Compose carries dark text in dark mode. Each was adjusted, the
+light theme was designed to the same hierarchy, and the receipt keeps the three failures as inequalities a
+change back would trip (`contrast-tokens.md`).
+
+**A preview needed a decision, not a column.** The memo's one line of each message is body text, and ADR 28
+had said there are no body excerpts in a result list, because D1 holding content is exactly the dump ADR 28
+defends against. A per-row body fetch was fifty R2 reads a page and, for a supervised reader, fifty recorded
+opens nobody made. So the preview is a column of `messages` **sealed** under the content key, opened only for
+a reader with standing content read and never under a supervised grant, re-sealed with its receipt when the
+key rotates, and written by a backfill for older mail that waits for the others to go idle (ADR 45, and ADR 28
+amended by it). The sender's display name came with it, and drops any name that looks like an address or a
+domain, because that is the spoof such a column carries.
+
+**Three things the memo asked for are not here, each for a reason written down.** No *Waiting* tab: cases are
+open, claimed or closed, and deriving *we replied last* would put an unmeasured probe on every row and claim the
+other side owes an answer when our reply is only `handed_over`. No *Agent runtime* row in the Health popover:
+agents are external principals and nothing of the kind runs here, so the row is *Automation*, and *Access and
+recovery* was added because recovery and legal-hold checks can set the verdict. And no *Mailda suggestions*:
+the reader's *Next steps* are deterministic, carry no AI styling, and leave the AI slot empty because no
+`llm.*` node runs.
+
+**Four defects that had already shipped were found on the way.** *Mark unread* on an open message was
+undone at once: the effect that marks a message read keyed on the read flag, so clearing it fired the effect
+again (it now fires once per open, and patches the listing instead of refetching it, which for a supervised
+reader was one more audit entry per open). The reply-collision alert rendered far below the Reply button on a
+full page, and could steal the case of whichever message was selected by the time somebody pressed *Take it
+anyway*; it is bound to the message whose claim was lost now. A hand-over's compare-and-swap compared against
+the Node's own read of the holder, not the holder the giver saw, so a colleague's claim made while the giver
+was looking could be overwritten; the assign route takes the holder the giver saw. And `scripts/axe.mjs` had
+never passed the first-run gate on a harness Node, nor opened the reply state, since the name *reply* matched
+the *reply all* button as well, and it exited 0 either way.
+
+**The user decided three things.** The Inbox, Unread and Mine **look back** through at most
+`messages.max_lookback` of the messages a reader can see per request and say so (*None of the newest N messages
+you can see is in your Inbox*, and *Look further back*), rather than walk every message a person has ever
+filed to fill one page; Archive and Trash page from their own index. The per-message bytes figure was **not
+remeasured**, since that needs a throwaway database in the user's Cloudflare account, so the shard thresholds
+derived from it are withdrawn until it is, rather than left reading as measured. And the theme is a **choice**,
+Dark by default, Light or System in Settings, kept per viewer in the browser, because following the OS alone
+showed Light to everyone whose OS states no preference.
+
+**What was measured when it was assembled, and what was not yet.** On the finished tree, before any commit:
+both TypeScript programs and the linter clean; the workerd suite 1,910 tests in 99 files, the node suite 648 in
+72, the DOM suite 384 in 35, all passing; the generated budgets, SDK and Skill regenerate byte for byte. The
+lookback is 500 messages a request, at 9 rows read per message it looks through (`message-page-size.md`). The
+authenticated bundle is 731,737 bytes raw and 211,745 gzip, 7.5% and 8.4% over the 680,900 and 195,380 it was
+the morning the redesign started, and those were already 28.6% over the receipt's last recorded figure, which
+nobody had remeasured; both steps are recorded now (`react-shell-bundle.md`), and nothing before sign-in loads
+any of it. The byte-per-message drift guard carries the five new columns with a note saying they were added
+without a remeasure, beside the withdrawn shard thresholds. Not done at assembly, and owed rather than assumed:
+the accessibility run over every route and state in both themes, the browser walk-through of claim, reply,
+send, archive and undo against a seeded Node, the screenshots, and whether the sandboxed body frame loads its
+own stylesheet in a real browser. `docs/application-shell.md` says the audit is owed instead of keeping the
+old numbers.
+
+## The redesign reviewed in a real browser, and what that found (27 September 2026)
+
+The assembly above left three things owed: the accessibility run, a browser walk through the mail flow, and
+the screenshots. A review did all three against a seeded local Node, and its findings were fixed in the same
+change. The ones worth keeping are the ones only a browser could have found, and the ones where the words
+had got ahead of the code.
+
+**A modal gave focus back to nothing.** Every dialog returned focus in its cleanup while it was still open
+and modal, so the page behind it was inert and the `focus()` did nothing: after every Escape, focus fell to
+the page. The unit tests had passed over it because happy-dom has no inertness, so the client test setup now
+emulates it; the fix was confirmed in Chromium.
+
+**The words had got ahead of the code in five places.** The type was said to be on six sizes and the sheet
+set others (16 px on a toast's ×, then 13 on the file control's text), so `test/node/type-scale.test.ts` now
+reads the served sheet. The draft-flush paragraph said
+signing out was covered, and a reply typed and signed out of at once came back without its last words, so the
+Drafts section now records that loss as not covered. A comment said Settings reported a shortcut choice the
+browser would not let it read, and it said nothing, so now it does. `ui.ts` said the theme was applied before
+anything rendered, and a module script can run after the first paint. And the accessibility section said its
+run was owed after the run existed.
+
+**The accessibility run** found ten AA violations with one root cause, the sidebar's *Admin* toggle squeezed
+under 24 px, and after the fix measured 68 views in both themes with 0 AA violations, 94 unproven nodes in 10
+rule results (contrast under an overlay, which the token test covers) and 2 advisories (`region` on sign-in).
+Its own harness had three defects of its own: the documented `-- <origin>` crashed on `Invalid URL`, a rule
+count was printed where a node count was meant, and a Node without a paused Butler could not be told from a
+state that failed to open.
+
+**Among the rest**, each with its test: a discarded or sent reply wrote its draft back afterwards; R pressed
+before a message's body arrived addressed the reply from the list row, to From rather than Reply-To; the
+composer docked as a card over the reader and left a clipped strip of the original beside it; a refusal about
+a reply was said under the open composer, where nobody could see it; a held send stayed *held* on screen
+until something else refreshed the outbox; and a display name of a full-width `＠` address, a Cyrillic domain
+or a Hangul filler reached the list as the sender.
+
+**What the lanes left each other.** Four requests between the fixes had no one after them to pick them up,
+and were done at the end. A second draft of the same reply, reached from two tabs, surfaced the unique index
+as a 500; it is now a 409, `E_DRAFT_EXISTS`, naming the draft in progress. `POST
+/api/maintenance/requeue-previews` had no button, so the Doctor screen now offers *Requeue failed previews*
+under the failing `preview_backlog` finding, beside the other remedies. The status bar's connection word is a
+polite live region, so a change from *Connected* to *Offline* is heard. The sign-in rack is a `<header>`, which
+clears the two `region` advisories. Measured after them: 68 views, 0 AA violations and 0 advisories; the
+authenticated bundle at 737,772 bytes raw and 213,501 gzip, 8.4% and 9.3% over the figure before the redesign.
+
+## The convergence review's first round (27 September 2026)
+
+A second pass over the redesign, again in Chromium against a seeded local Node, closed what the first left
+open and three things it had got wrong.
+
+**Two losses that were recorded are now covered.** Signing out lost the words typed in the autosave pause, and
+the Drafts section said so; *Sign out* and *Sign out everywhere* now save the open draft first and keep the
+session, with the Node's reason, when it will not take them. And a seal refused after its dock had gone lost
+the words, because the flag that stops a sent message being written back answered *saved* for them; a write
+asked for mid-seal now waits for the Node's answer, and Close and Discard wait with it. What stays lost is a
+sign-out the Node imposes, which arrives after the session has gone.
+
+**The words had got ahead of the code in three more places.** The list's status region spoke a total
+(*12 messages match these filters.* on page two) and a zero the screen is careful not to print; it now speaks
+the count's own words and the empty screen's sentence. The lookback sentence took its N from the bundle's
+copy of the budget; it now takes the bound the answering Node says it used. And the requeue route and
+`doctor` said the preview backfill ran *25 a minute*, a literal beside a constant and a cadence it does not
+have: it runs only on a scheduled pass that finds the body and authentication backfills idle, and both
+messages are built from `PREVIEW_BACKFILL_LIMIT` now.
+
+**The accessibility run was measuring loading screens.** It audited the moment the shell mounted, so the
+slower routes were audited as their *Reading…* notice, in one theme and not the other, and one Queue state
+clicked a row that opens nothing. It now waits for each view to load or fails the run, and the Queue state
+opens *Hand to…*. Measured after: 68 views, 0 AA violations, 0 advisories, 96 unproven nodes in 10 rule
+results. The authenticated bundle is 739,675 bytes raw and 214,247 gzip.
+
+**Among the rest**, each checked in Chromium (the Safari case by emulating its press, since WebKit would not
+launch there): the message body frame had no focus ring when Tab reached it,
+because a sandboxed frame fires no focus event in the page (it now draws the accent ring from the window's
+`blur`); a toast's *Undo* dropped focus to the page; a popover's own button reopened it on a press that does not
+take focus, as in Safari; on a phone the full-screen composer covered the non-dismissible bands above it; and
+opening from `/drafts` the draft already in the composer replaced it.
+
+## The convergence review's second round (27 September 2026)
+
+A third pass, again in Chromium against a seeded local Node, and again it found the words ahead of the code in
+a few places.
+
+**The accessibility run waits for what it can count.** It waited for Playwright's `networkidle`, which is
+answered at once after its first time, so a view a click had opened was audited with that click's fetches still
+out; and once the reader's sandboxed body frame had attached, it sometimes never fired with nothing in flight,
+which failed three views on a healthy Node. The harness now counts the requests the page and its frames start
+and waits until none has been out for `QUIET_MS`, and a view that does not settle names the requests still out.
+The *Hand to…* state's release looked for its row by the field the release takes away, so it timed out on every
+run and blamed a draft; it finds the row by its merge checkbox now, runs whether or not the state opened, and a
+failed undo names what it could not undo. Measured after: five runs in a row, 68 views each, 0 AA violations,
+0 advisories, 94 unproven nodes in 10 rule results. The authenticated bundle is 739,952 bytes raw and 214,355
+gzip.
+
+**A dock that is sealing is kept.** Opening another composer while a seal was in the air replaced the dock, so
+a refusal landed on a dock nobody saw and a seal that succeeded closed the new one; the dock now stays, and the
+assertive region says why. A sign-out held back for an unsaved draft was offered again as *Sign out anyway*
+even when what it held was *Sign out everywhere*; it now carries the held one's own name.
+
+**Among the rest**: on a phone the full-screen composer started under a screen's own status line (*Matter
+opened.*), which the band rule caught along with the two real bands and stretched edge to edge; only *Setup is
+unfinished* and the *Notifications* band are bands now. Opening a message's details dropped the *to …*
+disclosure a few pixels, from under the pointer that opened it; it stays put now. The label field has a visible hint, *Label,
+then Enter*. And two sentences in the shell's documentation said more than had been run: a popover's press in
+Safari and Firefox, emulated in Chromium with neither browser run, and where a toast's *Undo* gives focus back,
+which by Tab is *Health*, the control before the toasts, not the row; that path is checked in Chromium now
+too, on 27 September 2026, and no test in the repository runs it.
+
+## The convergence review's third round (27 September 2026)
+
+A fourth pass, in Chromium against a seeded local Node, and the accessibility run was again what had said too
+much.
+
+**The accessibility run had read clean over three defects.** It audited every route at one width and only as far
+as the window showed, so a defect below the fold or in a narrow layout was never on screen when axe looked. It
+now audits every route at 1280, 1024 and 390 px wide, grows the window until nothing on the page scrolls
+vertically, fails the run on a view it could not show whole top to bottom, and adds the first-run gate, the
+invitation form and a refused sign-in. With this round's three fixes reverted, where the old sweep had read 0 AA
+violations, it found 8, three defects in four views in each theme. The capability checkboxes on `/agents` stood
+23.3 px apart at 1280 and 1024, under the 24 px target; a row is at least 24 px now. A table on `/limits` at 390 px scrolled sideways inside an unnamed `div` no
+keyboard could reach, one of nineteen such sites, all a named region in the Tab order now (`Scroller` in
+`chrome.tsx`). And the headers dialog's block, once the fixture carried a header block of real size, had the same
+fault; it is a region named *Header block* now. Measured after: 146 views, 0 AA violations, 0 advisories, 92
+unproven nodes in 8 rule results. The authenticated bundle is 740,995 bytes raw and 214,872 gzip.
+
+**A popover opens where it can be read whole.** *More actions* opened leftward from a ••• the action bar had
+wrapped to the reader's left edge, so on a phone its labels were cut off and at 768 px the list pane covered
+them, and Assign ran past a 768 px window. Each popover and the menu now keeps the side it prefers when that
+fits, and takes the other when the window or a pane that scrolls would clip it.
+
+**Among the rest**: R on another message while a seal was in the air claimed that message's case before saying
+the dock was sealing; it claims nothing now. The alert for a sign-out held back by an unsaved draft said the
+draft was not saved *when you signed out*, which the person had not; it says *when you asked to sign out*. The
+*Hand to…* state's release found its row by the merge checkbox's name, which two cases with one subject share,
+so a twin's *Claim* answered its wait before the release had landed; it presses *Release* in the row holding the
+open field and waits for that field to go. The reader's promise that the actions never move under the label line
+is narrowed to where it holds: where the labels and their field fit beside the *to …* line. On a phone, in a
+two-pane window at its narrowest with a label, or with the details open, they take a line of their own and the
+actions sit that line lower while it is there. And three sentences in the documentation said more than had been
+run: that the accessibility run leaves the queue as it found it, which the reply state's claim does not; that
+the second round's five runs were on one Node, where they were on two; and that a toast's focus path was
+asserted, where it was checked in Chromium and no test in the repository runs it.
+
+## The convergence review's fourth round (27 September 2026)
+
+A fifth pass, and again what nobody had looked at from a keyboard.
+
+**The composer hid Tab stops.** Over the reader column, or over a phone's whole screen, the dock left everything
+under it in the Tab order: *Reply*, *Assign* and the message frame took focus nobody could see (WCAG 2.4.11), and
+Escape does not close the dock. What it covers is `visibility: hidden` now, in the rules that place it. The card
+on a screen without a reader column covered the Queue's last *Claim* buttons and an Outbox row's *.eml*; the
+column behind it makes room for it and scrolls a focused control above it. The headers dialog lost its 16 px
+gutter below 792 px, and ran edge to edge at 760 px or narrower, because a rule sizing the reader's children
+outranked its own width; its block wrapped a long header line back to the left edge, where it read as a new
+field. It keeps at least a 16 px gutter (17 px at the shell's 14 px type, where the browser's own modal
+`max-width` binds first) and scrolls sideways.
+R pressed on another message just before a seal began, whose body arrived after it, still claimed that
+message's case; the reply asks again once the body is in. The authenticated bundle is 741,028 bytes raw and
+214,879 gzip.
+
+**The accessibility run** looked for the message list to decide that a Node was ready, so a ready Node with no
+mail failed the run; it looks for the shell. Its *Hand to…* release found the claimed row by the field the state
+opens, so a claim followed by a failure before the field opened was never given back; it finds the row held
+here. And a view's growth was printed above the view's own line, where it read as the previous view's. The
+documentation said the run grows a view until nothing on it scrolls, where it grows it only in height; that the
+sweep had found four defects, where it found three, in four views per theme; and that four popovers were checked
+at four widths, where two were.
+
+## The per-message bytes, remeasured (27 September 2026)
+
+Row projections (0068) and a person's places (0067) landed without the remote measurement, and the three shard
+thresholds were withdrawn rather than carried on a figure known to be low. With the account owner's consent the
+script ran twice against a scratch D1 that it created and deleted
+([receipt](./receipts/message-metadata-bytes.md)). **A message now costs 2,089 bytes, up from 1,788**: 270 of the
+difference is 0068's sealed preview and display name, and 31 is the corpus itself. The script had padded every id
+to three characters short of what `ctx.id` mints since 12 August while its comment said 30, so every figure it
+produced until now was a little low. An extra delivery is 432 bytes, and a filed place, measured for the first
+time, 391. A 10 GB shard holds at most about 5.1 million messages, an upper bound because the rows every message
+also keeps in the ingress receipts, the outbox and the search index are not in the figure, and the thresholds are
+back in the budgets: warn at 3,597,986, stop bulky projections at 4,368,983, route new metadata at 4,625,982. The
+account-wide ceiling's figure in the receipt had not moved since 12 August's divisor; it now reads at most 526
+million.

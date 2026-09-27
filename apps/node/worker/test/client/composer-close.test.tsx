@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerDrafts, calls, reset } from "./session-stub.ts";
+import { answerDrafts, answerWith, calls, reset } from "./session-stub.ts";
+import type { ComposerContext } from "../../src/client/app/screens/composer.tsx";
 
 /**
  * Closing the composer does not lose what was typed (#90).
@@ -95,7 +97,7 @@ describe("closing flushes what the debounce has not written yet", () => {
     await type("the paragraph that used to vanish");
     expect(drafts()).toHaveLength(0);
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
 
     expect(drafts()).toHaveLength(1);
@@ -109,7 +111,7 @@ describe("closing flushes what the debounce has not written yet", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(LAST_MOMENT_MS); });
     expect(drafts(), "the debounce fired early").toHaveLength(0);
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
 
     expect(drafts()).toHaveLength(1);
@@ -129,7 +131,7 @@ describe("closing flushes what the debounce has not written yet", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(drafts()).toHaveLength(1);
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
 
     expect(drafts(), "closing wrote a second time with nothing changed").toHaveLength(1);
@@ -150,7 +152,7 @@ describe("a close that cannot save does not close", () => {
     ));
     await type("refused");
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
 
     expect(onClose, "the dock closed over a failed save").not.toHaveBeenCalled();
@@ -164,7 +166,7 @@ describe("a close that cannot save does not close", () => {
     answerDrafts(() => { throw new Error("network down"); });
     await type("unreachable");
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
 
     expect(onClose).not.toHaveBeenCalled();
@@ -193,7 +195,7 @@ describe("two writes never overlap", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(drafts()).toHaveLength(1);
 
-    await press(/^close$/);
+    await press(/^Close$/);
     await settle();
     expect(drafts(), "close started a second write beside the one in flight").toHaveLength(1);
     expect(onClose, "close resolved before the write it was waiting for").not.toHaveBeenCalled();
@@ -237,7 +239,7 @@ describe("discarding removes the draft the in-flight write just created", () => 
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(drafts(), "no write in flight, so this proves nothing").toHaveLength(1);
 
-    await press(/^discard$/);
+    await press(/^Discard$/);
     await settle();
     await act(async () => { release!(); });
     await settle();
@@ -270,5 +272,202 @@ describe("unmounting without pressing close still saves", () => {
 
     expect(drafts(), "unmount dropped the pending write").toHaveLength(1);
     expect((drafts()[0]!.body as { body: string }).body).toBe("taken away mid-sentence");
+  });
+});
+
+describe("a discarded or sealed composer writes nothing after it closes", () => {
+  /*
+   * The Shell's arrangement, in miniature: `onClose` takes the dock away, so its unmount flush runs. With a
+   * `vi.fn()` for `onClose` (as above) the dock never unmounts and the ghost this block is about cannot appear.
+   */
+  function Shell({ context }: { context: ComposerContext }) {
+    const [open, setOpen] = useState(true);
+    return open ? <Composer context={context} onClose={() => setOpen(false)} /> : null;
+  }
+  function mountShell(context: ComposerContext) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><Shell context={context} /></QueryClientProvider>);
+  }
+  const gone = () => document.querySelector(".composer-dock") === null;
+  const deletes = () => calls.filter((call) => call.method === "DELETE");
+
+  it("puts no draft back after Discard on a prefilled reply that never autosaved", async () => {
+    // A reply-all, prefilled, and never saved: the case where R later resumed the Cc of a discarded reply-all.
+    answerDrafts(() => Response.json({ draft: null }));
+    mountShell({
+      mailboxId: "mbx_test", inReplyToMessageId: "msg_1", caseId: "cas_1",
+      to: "a@outside.example", cc: "b@outside.example", subject: "Re: Pilot", body: "\n\nOn … wrote:\n> six seats",
+    });
+    await settle();
+    await press(/^Discard$/);
+    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+
+    expect(gone(), "Discard did not close the dock").toBe(true);
+    expect(drafts(), "a discarded reply was written back as a new draft").toHaveLength(0);
+  });
+
+  it("puts no draft back after a seal made inside the idle window", async () => {
+    answerWith((call) => {
+      if (call.path === "/api/sends" && call.method === "POST") return Response.json({ id: "snd_1" });
+      if (call.path.startsWith("/api/drafts")) return Response.json({ draft: null });
+      return undefined;
+    });
+    mountShell({ mailboxId: "mbx_test", to: "a@outside.example", subject: "Hello" });
+    await type("sent before the autosave fired");
+    await act(async () => { screen.getByRole("button", { name: "Seal and send" }).click(); });
+    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+
+    expect(calls.filter((call) => call.path === "/api/sends"), "the seal did not happen, so this proves nothing").toHaveLength(1);
+    expect(gone()).toBe(true);
+    expect(drafts(), "a sent message was written back as a draft").toHaveLength(0);
+  });
+
+  it("writes nothing while the DELETE is in the air, even when the autosave timer fires then", async () => {
+    let release!: () => void;
+    answerDrafts(async (call) => {
+      if (call.method === "DELETE") {
+        await new Promise<void>((resolve) => { release = resolve; });
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ draft: { id: "dft_1", to: ["a@outside.example"], cc: [], bcc: [], subject: "Saved", body: "saved", updatedAt: "2026-08-26T00:00:00.000Z" } });
+    });
+    mountShell({ mailboxId: "mbx_test", draftId: "dft_1" });
+    await settle();
+    await type("typed after the last save");
+    await press(/^Discard$/);
+    await settle();
+    // The debounce armed by that keystroke fires while the DELETE is still unanswered.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(drafts(), "the autosave wrote the draft being deleted").toHaveLength(0);
+
+    await act(async () => { release(); });
+    await settle();
+    expect(deletes().map((call) => call.path)).toEqual(["/api/drafts/dft_1"]);
+    expect(gone()).toBe(true);
+    expect(drafts()).toHaveLength(0);
+  });
+
+  it("goes on saving after a refused Discard, because the dock and the draft both stay", async () => {
+    answerDrafts((call) => (call.method === "DELETE"
+      ? Response.json({ error: "E_LEGAL_HOLD", message: "A legal hold covers this mailbox." }, { status: 409 })
+      : Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "kept", updatedAt: "2026-08-26T00:00:00.000Z" } })));
+    mountShell({ mailboxId: "mbx_test", draftId: "dft_1" });
+    await settle();
+    await press(/^Discard$/);
+    await settle();
+    expect(screen.getByText(/A legal hold covers this mailbox\./)).toBeTruthy();
+
+    await type("still writing under the hold");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(drafts(), "a refused discard left the dock unable to save").toHaveLength(1);
+  });
+
+  it("goes on saving after a seal the Node refused, or never received", async () => {
+    let sends = 0;
+    answerWith((call) => {
+      if (call.path === "/api/sends" && call.method === "POST") {
+        sends += 1;
+        if (sends === 1) return Response.json({ message: "E_RECIPIENT_REQUIRED  add a recipient" }, { status: 422 });
+        throw new Error("network down");
+      }
+      if (call.path.startsWith("/api/drafts")) return Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" } });
+      return undefined;
+    });
+    mountShell({ mailboxId: "mbx_test" });
+    for (const [attempt, words] of [[1, "after a refusal"], [2, "after a lost connection"]] as const) {
+      await act(async () => { screen.getByRole("button", { name: "Seal and send" }).click(); });
+      await settle();
+      expect(sends).toBe(attempt);
+      expect(gone()).toBe(false);
+      const before = drafts().length;
+      await type(words);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(drafts().length, `the dock stopped saving ${words}`).toBe(before + 1);
+    }
+  });
+
+  it("says so and stays open when the DELETE never reaches the Node", async () => {
+    answerDrafts((call) => {
+      if (call.method === "DELETE") throw new Error("network down");
+      return Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "kept", updatedAt: "2026-08-26T00:00:00.000Z" } });
+    });
+    mountShell({ mailboxId: "mbx_test", draftId: "dft_1" });
+    await settle();
+    await press(/^Discard$/);
+    await settle();
+    expect(gone()).toBe(false);
+    expect(screen.getByText(/could not be reached \(network down\), so this draft may still be here/)).toBeTruthy();
+  });
+});
+
+describe("a seal in the air keeps the words until the Node has answered it", () => {
+  /*
+   * `retired` stops writes from the moment a seal starts, so the draft cannot come back after the Node retires
+   * it. What it must not do is answer "saved" for words nothing saved: a Close pressed mid-seal used to shut
+   * the dock on that answer, and a seal then refused took the words with it, its refusal set on a component
+   * that no longer existed.
+   */
+  let answerSeal!: (response: Response) => void;
+  function sealAnswersLater() {
+    answerWith((call) => {
+      if (call.path === "/api/sends" && call.method === "POST") return new Promise<Response>((resolve) => { answerSeal = resolve; });
+      if (call.path.startsWith("/api/drafts")) return Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" } });
+      return undefined;
+    });
+  }
+  const REFUSED = () => Response.json({ message: "E_RECIPIENT_REQUIRED  add a recipient" }, { status: 422 });
+
+  it("offers no Close or Discard while sealing, so a refusal finds the dock and the words still there", async () => {
+    sealAnswersLater();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onClose = vi.fn();
+    render(<QueryClientProvider client={client}><Composer context={{ mailboxId: "mbx_test" }} onClose={onClose} /></QueryClientProvider>);
+    await type("words the seal was carrying");
+    await act(async () => { screen.getByRole("button", { name: "Seal and send" }).click(); });
+    await settle();
+    expect(calls.filter((call) => call.path === "/api/sends"), "the seal is not in the air, so this proves nothing").toHaveLength(1);
+
+    expect(screen.getByRole("button", { name: "Close" }).hasAttribute("disabled"), "Close can shut the dock mid-seal").toBe(true);
+    expect(screen.getByRole("button", { name: "Discard" }).hasAttribute("disabled"), "Discard can run mid-seal").toBe(true);
+    await press(/^Close$/);
+
+    await act(async () => { answerSeal(REFUSED()); });
+    await settle();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText(/E_RECIPIENT_REQUIRED/)).toBeTruthy();
+    expect((document.getElementById("composer-body") as HTMLTextAreaElement).value).toBe("words the seal was carrying");
+  });
+
+  it("writes the words as a draft when the dock is taken away mid-seal and the seal is then refused", async () => {
+    sealAnswersLater();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><Composer context={{ mailboxId: "mbx_test" }} onClose={vi.fn()} /></QueryClientProvider>);
+    await type("taken away while sealing");
+    await act(async () => { screen.getByRole("button", { name: "Seal and send" }).click(); });
+    await settle();
+    await act(async () => { view.unmount(); });
+    await settle();
+    expect(drafts(), "a write started beside the seal").toHaveLength(0);
+
+    await act(async () => { answerSeal(REFUSED()); });
+    await settle();
+    expect(drafts(), "the refused seal's words were lost").toHaveLength(1);
+    expect((drafts()[0]!.body as { body: string }).body).toBe("taken away while sealing");
+  });
+
+  it("writes nothing when the dock is taken away mid-seal and the seal then succeeds", async () => {
+    sealAnswersLater();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><Composer context={{ mailboxId: "mbx_test" }} onClose={vi.fn()} /></QueryClientProvider>);
+    await type("sealed while away");
+    await act(async () => { screen.getByRole("button", { name: "Seal and send" }).click(); });
+    await settle();
+    await act(async () => { view.unmount(); });
+    await act(async () => { answerSeal(Response.json({ id: "snd_1" })); });
+    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(drafts(), "a sent message was written back as a draft").toHaveLength(0);
   });
 });

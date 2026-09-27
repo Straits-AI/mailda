@@ -2,7 +2,7 @@
 id: audit-and-log-retention
 kind: measured-tripwire
 measured_on: 2026-08-05
-# Prose-only, like `re_measured_on:` in message-metadata-bytes.md — `packages/receipts/src/parse.ts` reads
+# Prose-only, like `re_measured_on:` in evidence-lifecycle.md — `packages/receipts/src/parse.ts` reads
 # neither, so neither reaches `generated.ts`. It is here because `measured_on` is one date for a whole file,
 # and the two `*_detail_bytes` values were never *derived* on 5 August: they were a round number, which #69
 # found and the `**Sized:**` section below now reasons. Without this the generated metadata attributes those

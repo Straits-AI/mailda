@@ -4,6 +4,7 @@ import type { Ctx } from "@mailda/runtime";
 import { bodyIndexState, unindexedMessages } from "../search.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../reconcile.ts";
 import { type Finding } from "../doctor.ts";
+import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
 /**
  * Is the outbox draining? An unpublished row older than the sweeper's own staleness cutoff means
  * the Durable Object alarm is not firing, and §22's guarantee is that events are *eventually*
@@ -491,5 +492,63 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
       ? undefined
       : "`mailda search repair` lists them with the reason each failed and puts them back in the queue. "
         + "Fix the cause first — a repair that runs into the same failure spends its attempts again",
+  }];
+}
+
+/**
+ * How many messages still owe a row preview and sender name (0068), and how many never will.
+ *
+ * One grouped query over the partial index `msg_preview_open`, which holds only rows not yet `projected`: its
+ * cost is the backlog, like `body_index_backlog`'s, and a caught-up Node reads nothing. The term
+ * `preview_state <> 'projected'` is spelled as the index spells it, because SQLite uses a partial index only
+ * when the query repeats its terms (0068, point 5).
+ *
+ * `report`, and `ok` until something **failed**: a pending message lists with its subject and address, which
+ * is complete and honest, just plainer. A failed one could not be read: its evidence is missing, which
+ * `evidence_present` reports, or every attempt to read it failed, which a vault or storage fault that is over
+ * by now can have caused. So the fix names both the checks that say whether the fault is over and the route
+ * that puts the rows back, since nothing else would.
+ */
+export async function checkPreviews(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+  const counts = await env.CATALOG.prepare(
+    `SELECT preview_state AS state, COUNT(*) AS n FROM messages
+      WHERE preview_state <> 'projected' GROUP BY preview_state`,
+  ).all<{ state: string; n: number }>().then((result) => result.results).catch(() => null);
+  if (counts === null) {
+    return [{
+      check: "preview_backlog",
+      severity: "report",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say how many messages list without a preview.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+  const pending = counts.find((row) => row.state === "pending")?.n ?? 0;
+  const failed = counts.find((row) => row.state === "failed")?.n ?? 0;
+  return [{
+    check: "preview_backlog",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: failed === 0,
+    detail: pending === 0 && failed === 0
+      ? "Every message on this Node has its row preview and sender name."
+      : [
+        pending === 0 ? null
+          : `${pending} message(s) have no row preview or sender name yet; they list with their subject and `
+            + `address. The backfill projects up to ${PREVIEW_BACKFILL_LIMIT} on each scheduled pass that finds the `
+            + "body and authentication backfills idle.",
+        failed === 0 ? null
+          : `${failed} could not be projected: their evidence is missing, or reading it failed on every attempt `
+            + "the backfill makes (a vault or storage fault, which may be over by now). Each message is otherwise "
+            + "untouched.",
+      ].filter((line) => line !== null).join(" "),
+    fix: failed > 0
+      ? "once `evidence_present` and `key_vault` read ok, POST /api/maintenance/requeue-previews puts them "
+        + "back in the backfill's queue; any whose evidence is missing return here after one pass"
+      : pending > 0
+        ? "nothing — this falls on its own; if it stops falling, check the logs for `preview.backfill_failed`"
+        : undefined,
   }];
 }

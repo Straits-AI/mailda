@@ -233,33 +233,45 @@ export async function steal(
  * answer it is work in nobody's queue. Audited as `case.assigned` naming both, because unlike a claim this is
  * one person deciding for another and the trail should say who. The same compare-and-swap as a steal: the
  * holder must still be who it was when the giver looked.
+ *
+ * `holder` is who the giver saw holding it (a user id, or null for unclaimed). Without it the swap compared
+ * against this function's own read a moment earlier, so a colleague's claim between the giver's look and the
+ * click was handed over from under them with no refusal: the sentence above was true of a race inside this
+ * function and false of the one a person has. When given and no longer true, the answer is `held`, naming
+ * who holds it now, and nothing is written. Absent keeps the old behaviour for a caller that saw nothing.
  */
 export async function assign(
-  env: Env, ctx: Ctx, orgId: string, userId: string, caseId: string, toUserId: string,
+  env: Env, ctx: Ctx, orgId: string, userId: string, caseId: string, toUserId: string, holder?: string | null,
 ): Promise<ClaimOutcome | { kind: "not_a_colleague" }> {
   const existing = await caseById(env, orgId, caseId);
   if (existing === null) return { kind: "not_found" };
   if (!(await maySend(env, { orgId, userId }, existing.mailbox_id))) return { kind: "not_found" };
   if (existing.state === "closed") return { kind: "closed" };
   if (!(await maySend(env, { orgId, userId: toUserId }, existing.mailbox_id))) return { kind: "not_a_colleague" };
+  // The swap compares against this, so a holder that has changed since the giver looked matches no row and the
+  // answer below is `held`, read back, with nothing written and no `case.assigned` entry.
+  const expected = holder === undefined ? existing.assignee : holder;
 
   const at = new Date(ctx.now()).toISOString();
   const { results } = await auditedBatch<never>(
     env, ctx, orgId,
     {
       action: "case.assigned", outcome: "ok", actorUserId: userId, subject: caseId,
-      detail: { from: existing.assignee, to: toUserId, mailboxId: existing.mailbox_id },
+      // `expected`, not `existing.assignee`: the gate commits this entry only while the case is held by
+      // `expected`, so it is the one holder the swap can have replaced. They differ when the case changed
+      // hands after the read above and back to what the giver saw before the batch.
+      detail: { from: expected, to: toUserId, mailboxId: existing.mailbox_id },
     },
     (entry) => [
       entry,
       env.CATALOG.prepare(
         `UPDATE cases SET assignee = ?, claimed_at = ?, state = 'claimed', state_at = ?
           WHERE org_id = ? AND id = ? AND assignee IS ?`,
-      ).bind(toUserId, at, at, orgId, caseId, existing.assignee),
+      ).bind(toUserId, at, at, orgId, caseId, expected),
     ],
     {
       sql: "SELECT 1 FROM cases WHERE org_id = ? AND id = ? AND assignee IS ?",
-      params: [orgId, caseId, existing.assignee],
+      params: [orgId, caseId, expected],
     },
   );
   if ((results[1]?.meta.changes ?? 0) === 0) {

@@ -140,7 +140,7 @@ What is blocking, as of 19 September 2026, with everything else on the
 |---|---|
 | **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account, then a real backup, then a same-account restore that took a domain, wrote its own routing, and accepted a message from outside. The catalog imports at about a thousand rows a second. The evidence copy works with any tool that moves the bytes, including one that drops the key label, and has only been timed with wrangler (5.4 s per object); a bucket-to-bucket copy is the tool for a real mailbox and is deliberately not timed here. [Runbook](./docs/disaster-recovery.md). |
 | **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). The canary is reached by a version override on the production hostname, because preview URLs do not exist for a Worker with Durable Objects. Unmeasured on a Free account, where ADR 25 says not to run anyway. [Receipt](./docs/receipts/deploy-drill-live-account.md). |
-| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A ZIP is listed without being opened, and one naming a program is held. A mailbox can bound attachment size and type, in and out. Absent: inbound acts beyond the quarantine switch, RAR and 7z listings, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
+| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored; a DMARC failure is shown on the message and its row in the list, and the full verdict is one click away in the message's details. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A ZIP is listed without being opened, and one naming a program is held. A mailbox can bound attachment size and type, in and out. Absent: inbound acts beyond the quarantine switch, RAR and 7z listings, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
 
 What it is good for now: a design-partner alpha, a non-critical shared mailbox, and exercising the
 governance and deterministic-automation model, which is further along than anything else here.
@@ -153,7 +153,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md): how decisions get made and what counts as done |
 | **Decisions taken** | Recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues?q=is%3Aissue) |
 | **Measurements** | The receipts in [`docs/receipts/`](./docs/receipts/), generating every constant in `packages/budgets`, which is itself generated and never hand-edited |
-| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual and last covered 30 views with 0 AA violations; screens added since have not been through it. |
+| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual. Its last run, on 27 September 2026 after the fourth round of the redesign's review, covered 146 views (per theme, the sign-in page, the invitation form, a refused sign-in, the eighteen routes at 1280, 1024 and 390 px wide, each grown until nothing on it scrolls vertically, fifteen opened states and the first-run gate, each audited only once it had loaded; the Butler resume form had no paused Butler to open) with 0 AA violations. The opened states are audited at one size and not grown, the pages before sign-in at 1280 px wide only; the contrast it could not decide under an overlay is computed from the tokens instead ([`docs/application-shell.md`](./docs/application-shell.md), *Accessibility*). |
 | **Licence** | [Apache-2.0](./LICENSE). Security reports go to [`SECURITY.md`](./SECURITY.md), privately. |
 
 ## What's distinctive about how it's built
@@ -211,7 +211,13 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
   refused. The app goes in your AI instead: the MCP server, the Agent Skill and the SDK are generated from
   the same route contract, and a model you run scores what a policy reads, never decides.
 - **The composer is plain text.** To, Cc, Bcc, files and a quoted reply. No HTML, signatures or templates.
-  No archive, trash or spam folder; labels are the one way to sort mail (ADR 13).
+- **A session that ends by itself loses what was typed in the last second and a half.** A draft saves 1.5 s
+  after the last keystroke. *Sign out* and *Sign out everywhere* save the open draft first, and keep you signed
+  in with the Node's reason when it will not take it. A session the Node ends (a failed renewal, a revocation
+  from another device) is already gone when the page hears of it, so words typed in that pause are lost with
+  nothing to say so ([`docs/application-shell.md`](./docs/application-shell.md), *Drafts*).
+- **Archive and Trash are yours alone and always restorable.** Nothing you place is deleted and there is no
+  purge (ADR 45). No spam folder; Quarantine is an administrator's.
 - **Remote images are blocked until you ask for them.** A tracking pixel tells a third party when your
   colleague opened a message. Mailda will not proxy them either, because that would make your Node fetch
   URLs a stranger chose from inside your own account.
@@ -240,10 +246,21 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
   two backlogs separately. A body that cannot be parsed is never body-searchable; one whose read failed is
   retried with backoff, and `mailda search repair` or the `body_index_failed` finding on the Doctor screen lists
   them with the reason each failed and requeues chosen messages.
+- **A row's preview and sender name appear on older mail once a backfill reaches it**, up to
+  `PREVIEW_BACKFILL_LIMIT` (`src/preview.ts`) on each scheduled pass that finds the body and authentication
+  backfills idle; `doctor` reports the backlog (`preview_backlog`). A row the
+  backfill gave up on (its evidence missing, or three reads failing) waits for an administrator's
+  `POST /api/maintenance/requeue-previews`, the *Requeue failed previews* button under that finding on the Doctor
+  screen. A preview reads only
+  the first 16,384 characters of a body, so a reply under a longer quote has none. A supervised reader sees no
+  preview: opening the message is the recorded act.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts
   in time order until it finds enough: 2,410 rows read to return 3 messages from a mailbox holding the
   oldest 3 of 1,200. Fixing it means driving the listing from a per-mailbox ordering
   ([receipt](./docs/receipts/message-page-size.md)).
+- **The Inbox, Unread and Mine look back through at most `messages.max_lookback` of the messages you can see
+  per request** and offer *Look further back* rather than walking the whole archive
+  ([receipt](./docs/receipts/message-page-size.md)); Archive and Trash cost a page.
 - **Recovery codes minted before 28 August 2026 carry 80 bits, not 128.** A hash is one-way, so they can
   only be replaced. `doctor` reports them degraded and `mailda recovery-codes rotate`, or the same act on the
   Doctor screen's `recovery_escrow` finding, replaces them. A set nobody has confirmed is also reported

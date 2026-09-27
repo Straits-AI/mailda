@@ -1,6 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
 import type { AttachmentSummary } from "./attachments.ts";
+import { previewText } from "./preview.ts";
 import { extractBody } from "./render/body.ts";
 
 /**
@@ -81,8 +82,14 @@ export function wordsFromHtml(html: string): string {
  * backfill settled them identically and a message whose body failed to parse was recorded as benign.
  */
 export type IndexableBody =
-  /** Text to index. */
-  | { readonly kind: "text"; readonly text: string; readonly attachments: AttachmentSummary[] }
+  /**
+   * Text to index, and the row preview (0068) from the same parse, so ingest and the backfill read the body
+   * once for both. `preview` is null when the words are all quoted lines.
+   */
+  | {
+    readonly kind: "text"; readonly text: string; readonly preview: string | null;
+    readonly attachments: AttachmentSummary[];
+  }
   /** Read and parsed, and there is no body text. A headers-only message. Terminal and ordinary. */
   | { readonly kind: "empty"; readonly attachments: AttachmentSummary[] }
   /** The parser could not read it. Terminal and worth an operator knowing, unlike `empty`. */
@@ -129,5 +136,8 @@ export async function indexableText(raw: Uint8Array): Promise<IndexableBody> {
 
   const joined = parts.join(" ").trim();
   if (joined === "") return { kind: "empty", attachments: extracted.attachments };
-  return { kind: "text", text: joined.slice(0, MAX_INDEXED), attachments: extracted.attachments };
+  return {
+    kind: "text", text: joined.slice(0, MAX_INDEXED), preview: previewText(extracted),
+    attachments: extracted.attachments,
+  };
 }

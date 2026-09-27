@@ -162,7 +162,8 @@ describe("expanding and reading back a ceiling", () => {
     const partial = routesFor(["mail.read"]).routes.slice(0, 3);
     const read = heldCapabilities(partial).held.find((one) => one.id === "mail.read");
     expect(read?.held).toBe(3);
-    expect(read?.total).toBe(5);
+    // Six since the header block became its own read (the reader's "View headers").
+    expect(read?.total).toBe(6);
 
     // The control: a whole capability reads as whole.
     const full = heldCapabilities(routesFor(["mail.read"]).routes).held.find((one) => one.id === "mail.read");

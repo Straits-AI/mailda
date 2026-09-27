@@ -1,7 +1,7 @@
 # The typeface this Node serves
 
 One face in four weights, 97 KB, served from this origin at `/app/fonts/*.woff2` and referenced by `@font-face` in
-`src/ui.ts`. **Nothing here is fetched from a third party at runtime**, which is the whole reason they are
+`src/shell-css.ts`. **Nothing here is fetched from a third party at runtime**, which is the whole reason they are
 committed rather than linked: Mailda's premise is custody, and a page that loads a font from someone else's
 CDN hands that party every viewer's IP address on every load. There is no version of that consistent with
 the promise.
@@ -43,24 +43,24 @@ repository is the distribution channel.** ADR 24 requires it byte-identical acro
 redistributed from a public URL to every customer of the product, and subsetting it for size is precisely the
 modification the licence names.
 
-So Satoshi is named **first in the heading stack and never shipped**:
+So Satoshi is **never shipped**. Until 21 September 2026 it was named first in a heading stack, so a designer
+with it installed saw it and everybody else saw Plus Jakarta Sans:
 
 ```css
 --display: Satoshi, "Plus Jakarta Sans", ...
 ```
 
-A designer with Satoshi installed sees the brand exactly. Everybody else sees Plus Jakarta Sans, which is the
-closest OFL face to Satoshi's geometric-humanist character and is the substitution the type community
-generally reaches for. The degradation is visible rather than silent, and no licence is bent to get it.
+That stack left with the move to one family: headings are Inter like everything else, and no stack names
+Satoshi now. No licence is bent either way.
 
-**If Mailda later licenses Satoshi for redistribution**, adding it is a two-line change — the files here and
-the first entry of `--display`, which already names it.
+**If Mailda later licenses Satoshi for redistribution**, adding it is the files here, an `@font-face` block and
+a heading stack that names it.
 
 ## Adding or changing a face
 
 1. It must be OFL or otherwise explicitly redistributable. This repository is a distribution channel; treat
    every font here as being handed to every customer, because it is.
 2. Copy the licence in beside it.
-3. Update the table above, `FONT_FILES` in `src/ui.ts`, and the `@font-face` block.
+3. Update the table above, `FONT_FILES` in `src/ui.ts`, and the `@font-face` block in `src/shell-css.ts`.
 4. Re-measure `docs/receipts/react-shell-bundle.md` — these bytes are served per Node and the receipt's
    `stale_when` names them.

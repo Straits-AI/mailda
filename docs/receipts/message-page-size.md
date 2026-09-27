@@ -1,18 +1,139 @@
 ---
 id: message-page-size
 kind: measured-tripwire
-measured_on: 2026-08-27
+measured_on: 2026-09-26
 stale_when: >
-  the ir_org_accepted index is dropped or reordered; messagePageQuery gains a join, a correlated subquery or
-  a predicate, since the per-row cost below is four index seeks and each one of those adds another;
-  RELATIONS_FOR_METADATA gains or loses a relation, since the tuple sub-select probes one row per relation;
-  a sibling field is added to the supervised.query entry's detail, which lowers how many ids one entry holds;
-  audit.max_detail_bytes moves; or authz.list.max_rows_read moves
+  the ir_org_accepted or mpl_by_place index is dropped or reordered; messagePageQuery gains a join, a
+  correlated subquery or a predicate, since the per-row cost below is a handful of index seeks and each one of
+  those adds another — the derived columns (labels, read, place, standing content, the case join) and the
+  0068 projection columns are part of that cost; the filters place, unread or mine change meaning; the placed
+  plan stops being driven by the filing table; the lookback's shape changes — a per-person predicate moved
+  inside the lookback, or any statement that reads the lookback before the page fills (a window function, a
+  sort, a count), or the edge statement stops re-walking the page's inner statement; RELATIONS_FOR_METADATA or STANDING_CONTENT_RELATIONS gains or loses a relation, since the
+  tuple sub-selects probe one row per relation; a sibling field is added to the supervised.query entry's
+  detail, which lowers how many ids one entry holds; audit.max_detail_bytes moves; or authz.list.max_rows_read
+  moves
 values:
   messages.page_size: 50
+  messages.max_lookback: 500
+  messages.lookback_rows_read_per_message: 9
 ---
 
-**How many messages `GET /api/messages` returns in one page, and what decides it.**
+**How many messages `GET /api/messages` returns in one page, what decides it, and how far one Inbox, Unread
+or Mine request looks back.**
+
+## Remeasured 26 September 2026: the redesign's columns, filters, placed plan and lookback
+
+**The figures below this section are the 27 August measurement, and they were already stale before this
+change**: bytes had moved from 24,226 to 33,202 for a 50-row page with the authentication, attachment, label
+and read columns, none of which re-measured this file, and the `read` and `labels_json` probes had been
+measured against empty tables. This section replaces them, and the older sections stay as the argument for the
+shapes that shipped (the index, the two-predicate cursor, the page size).
+
+**What changed in the corpus.** The same 1,200 deliveries, and now **the readers' own rows seeded**, because a
+correlated probe into an empty table reads nothing: a case for every delivery; for the healthy reader, by
+delivery index `i`, `i % 20 === 0` in Trash, otherwise `i % 2 === 0` in Archive (half stay in the Inbox),
+`i % 5 === 1` unread (every other delivery has a `message_reads` row), `i % 20 === 3` a case they hold; an
+inbox-zero reader who has filed and read everything and holds no case; and three readers who have filed 1 %,
+50 % and 95 %. Every message carries the 0068 projections as a settled Node holds them (a display name on
+70 %, a sealed preview ~200 base64 characters wide, projected).
+
+**What changed in the row.** `place`, `from_name`, `preview` (opened from `preview_sealed` only for
+`standing_content = 1`), `standing_content`, `case_mine` and `case_state`. The case columns come from one
+`LEFT JOIN cases` on the delivery's own mailbox instead of the correlated `case_id` subquery, and that is
+**measured, not assumed**: the same walk with the join removed entirely reads the same 332 rows, so the join
+is no worse than one correlated seek and better than the three a subquery per column would be.
+
+Measured by `apps/node/worker/test/message-page.measure.test.ts`:
+
+```
+MEASURE message_page  size=50  first_rows_read=332  deep_rows_read=333  deep_page=20  filtered_rows_read=383  first_bytes=46513  bytes_per_row=912
+MEASURE message_page_sweep  size=25  first_rows_read=175 / 50: 332 / 100: 647 / 200: 1277
+MEASURE message_page_sparse  deliveries=1200  quiet_mailbox_rows=3  quiet_rows_read=2424
+MEASURE message_page_sparse_lookback  walk=2424  reader=4833(page 2420 + edge 2413)  inbox_zero=4827(page 2415 + edge 2412)
+MEASURE message_page_placed  filed_1pct=83(12 rows)  filed_50pct=316(51 rows)  filed_95pct=316(51 rows)  trash_5pct=367(51 rows)
+MEASURE message_page_lookback_healthy  F=101  rows_read=557  rows=51  max_lookback=500  bytes_per_row=910
+MEASURE message_page_lookback_exhausted  N=500  inbox_zero=4516  at_half=2266  c=9  no_unread=4516  no_mine=4516  first_page=557  bound=5057
+```
+
+| plan | page 1 | deep (page 20) | one mailbox | asserted |
+|:--|--:|--:|--:|:--|
+| the walk (every place: a thread, a mailbox, sender, date, label) | 332 | 333 | 383 | ≤ `authz.list.max_rows_read` |
+| placed: Archive at 1 % / 50 % / 95 % filed | 83 / 316 / 316 | | | ≤ the list budget, each |
+| placed: Trash (5 %) | 367 | | | ≤ the list budget |
+| the lookback: the healthy default Inbox | 557 | | | ≤ the list budget, fills, not exhausted |
+| the lookback: inbox zero, nothing unread, no case held | 4,516 each | | | ≤ c × N + the first page |
+
+**`messages.page_size` stays 50.** A page now reads 332 against the 1,000-row budget, 3.0× inside it (it was
+4.8×); at 100 it reads 647 and at 200 it breaches (1,277), so the cost ceiling is now a little over 150 and
+the audit fill (57 ids an entry) is still the tighter of the two. **Bytes**: 46,513 for a 50-row page, 912 a
+row, with a 120-character preview on every row a content reader sees.
+
+**The placed plan costs a page.** Driven by `mpl_by_place` (the filing table's own copy of the receipt's
+position, 0067), Archive and Trash read what a page reads whether 1 % or 95 % of the corpus is filed. Driven
+from the receipts instead, the mutation that turns its assertion red, a reader who has filed little pays for
+everything they have not.
+
+### Sizing the lookback
+
+Inbox, Unread and Mine filter on the reader's own state, which no ordering index can serve. Before the bound
+they walked until the page filled: for a reader who archives nearly everything, reads everything or holds few
+cases, about four rows read for every message they can see (≈ 400,000 a load at 100 k). The user chose a bound
+over that (§7 Q-A, decided 26 September 2026).
+
+1. **F = 101**: the healthy default Inbox's page 1 looks through 101 messages to fill `page_size + 1` rows,
+   counted from the seeded data (the visible receipts from the newest down to the page's probe row).
+2. **`messages.max_lookback` = 500**: the smallest multiple of 100 ≥ 4 × F (404). Four times, the order of
+   headroom `messages.page_size` keeps under the list budget: a healthy Inbox uses at most a quarter of its
+   lookback. On this corpus Unread (Inbox and unread: 10 % of deliveries) would need about 510 to fill and Mine
+   (5 %) about 1,020, so both stop at the lookback with what they found and a cursor. Those tabs, and an
+   inbox-zero Inbox, are where the lookback is meant to be felt, and `lookback_exhausted` says so.
+3. **`messages.lookback_rows_read_per_message` = 9**: rows read per message looked at, both statements
+   together, as the slope between the inbox-zero reader at N and at N / 2: (4,516 − 2,266) / 250 = 9. The
+   estimate before measuring was about 7; the derived columns over the page and the edge statement's own walk
+   are the difference.
+4. **Related to `authz.list.max_rows_read`, not reused as the bound.** Reused, N would be ⌊(1,000 − 557) / 9⌋
+   = 49, below the healthy F of 101: every healthy Inbox would exhaust its lookback on its first page — a
+   tripwire the healthy widget feels, which AGENTS §2 forbids. So N is sized from the healthy fill, and its
+   cost is written against the budget: an exhausted lookback reads 9 × 500 + 557 = **5,057 rows, about five
+   list budgets, a constant**, where the unbounded walk read about four times every message the reader can see
+   (40,000 at 10 k, 400,000 at 100 k, 4,000,000 at 1 M). The list budget is not raised: it keeps bounding the
+   first, deep and one-mailbox pages, and now also the healthy default Inbox page.
+5. **Assertions**, each seen to fail: (a) the healthy default Inbox reads ≤ the list budget, fills, is not
+   exhausted, and 4 × F ≤ `messages.max_lookback` (a corpus or query change that grows F goes red and asks for
+   this remeasure); (b) inbox zero, nothing unread and no case held each read ≤ c × N + the first page, after
+   asserting `DELIVERIES ≥ 2 × N` (an unbounded walk over twice the lookback breaches it — binding a lookback of
+   a million turns it red); (c) the healthy page reads less than half the exhausted figure, the early stop
+   (numbering the rows with `ROW_NUMBER() OVER (…)` inside the inner statement turns (a), (b) and (c) red,
+   because it sorts the whole lookback before the first row returns).
+
+**What the lookback does not bound**, said as plainly: the walk's pre-existing authorization term (a reader of
+one mailbox among many passes the others' receipts on the way to the ones they can see — the quiet-mailbox
+figure below, now 2,424) and a sparse mailbox, label or sender filter. It bounds the reader's own state and
+nothing else.
+
+**And a lookback page that does not fill pays those terms twice** (corrected 26 September 2026; this paragraph
+first said they were "unchanged, not worsened", which the measurement behind it could not see, because every
+reader in the corpus holds all three mailboxes). The edge statement re-runs the page's inner statement with
+`OFFSET N - 1`, and when the reader sees fewer than N messages that match, SQLite steps through every receipt
+the page statement already passed to prove it. So an Inbox, Unread or Mine page on a quiet mailbox reads the
+walk twice: **4,833** rows for the healthy reader (page 2,420 + edge 2,413, one row returned) and **4,827** for
+the inbox-zero reader (2,415 + 2,412), against **2,424** for the same mailbox with no per-person filter
+(`message_page_sparse_lookback`, above). The ceiling is twice the walk the page already did, never more, and
+`test/message-page.measure.test.ts` asserts it with the edge seen to run and not exhausted. Neither shortcut
+closes it: skipping the edge on an empty page strands an inbox-zero reader who can see N or more behind the
+lookback with no cursor, and starting it from the page's last row is not possible because that row's rank in
+the walk is unknown. The fix that removes both walks' term together is the per-mailbox ordering the quiet
+figure already names.
+
+### The vault, per page and per ingest
+
+A page holding a sealed preview opens it: **one Durable Object request per distinct content-key generation on
+the page**, which is one in practice (rotation is rare, and `reseal.ts` moves previews with their receipts),
+run-cached for the page. Ingest seals the preview in the run that read the evidence: **+1 vault RPC per
+ingest**, the sealing key (the read already asked for its opening key). The backfill asks for **at most 3 vault RPCs a pass** (its run cache holds the
+opening and sealing keys for all 25 messages). None of these is a D1 row, so none is in the figures above.
+
 
 `listMessages` returned `LIMIT 50` from Layer 1 until #91, with no cursor, so the fifty-first message was
 not slow to reach, it was unreachable. The fifty was also unmeasured, which is why this file exists: the

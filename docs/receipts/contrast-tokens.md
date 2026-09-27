@@ -1,28 +1,38 @@
 ---
 id: contrast-tokens
 kind: measured-tripwire
-measured_on: 2026-09-02
+measured_on: 2026-09-26
 stale_when: >
-  any of --text, --dim, --ground, --ground-2, --sky, --accent, --accent-text, --warn, --alarm or --live
-  changes in either theme; a fourth **page** ground is introduced, since the worst case below is the minimum
-  over three — the rail is a fourth surface and is measured separately for exactly that reason; --rail-ground,
-  --rail-text, --rail-dim, --rail-accent, --rail-live or --control-edge changes; a token tuned for a page
-  ground starts being used inside the rail, which is how --live got there; the interface adopts a text size
-  above 24px for --dim-coloured text, which would move it into AA's large-text threshold; --accent starts
-  being used for text rather than for fills, borders and focus rings; or WCAG revises the 4.5:1 normal-text
-  or 3:1 non-text ratio
+  any value in THEMES (apps/node/worker/src/theme.ts) changes in either theme; a ninth ground is added to
+  GROUNDS, since every worst case below is the minimum over eight; a token is used as a text colour outside
+  TEXT_TOKENS; a text size above 24px is set in --text-muted, which would move it into AA's large-text
+  threshold; a theme choice beyond dark, light and system, or a fourth theme block, is added; or WCAG
+  revises the 4.5:1 normal-text or 3:1 non-text ratio
 values:
   contrast.aa_normal_ratio: 450
-  contrast.aa_large_ratio: 300
   contrast.aa_nontext_ratio: 300
-  contrast.dim_dark_worst: 553
-  contrast.dim_light_worst: 544
-  contrast.accent_text_light_worst: 459
-  contrast.accent_text_dark_worst: 477
-  contrast.accent_ui_worst: 387
-  contrast.rail_text_worst: 1533
-  contrast.rail_dim_worst: 615
-  contrast.control_edge_light_worst: 303
+  contrast.text_primary_dark_worst: 1192
+  contrast.text_primary_light_worst: 1433
+  contrast.text_secondary_dark_worst: 586
+  contrast.text_secondary_light_worst: 704
+  contrast.text_muted_dark_worst: 461
+  contrast.text_muted_light_worst: 478
+  contrast.accent_text_dark_worst: 554
+  contrast.accent_text_light_worst: 519
+  contrast.accent_hover_dark_worst: 644
+  contrast.accent_hover_light_worst: 654
+  contrast.success_dark_worst: 616
+  contrast.success_light_worst: 476
+  contrast.warning_dark_worst: 614
+  contrast.warning_light_worst: 457
+  contrast.danger_dark_worst: 464
+  contrast.danger_light_worst: 534
+  contrast.accent_dark_worst: 554
+  contrast.accent_light_worst: 360
+  contrast.control_edge_dark_worst: 315
+  contrast.control_edge_light_worst: 314
+  contrast.on_accent_dark: 806
+  contrast.on_accent_light: 653
 ---
 
 **Every ratio here is stored ×100**, because the receipt pipeline emits integers and a contrast ratio
@@ -32,6 +42,89 @@ thresholds with ×100 for the measurements, which made the test's AA assertion c
 pass vacuously. `contrast.test.ts`'s margin assertion is what caught it, which is the argument for
 asserting the margin rather than only the pass.
 
+
+## Re-measured 26 September 2026: the redesign palette, Dark by default, Light and System by choice
+
+The `stale_when` above fired on every token at once. The interface moved to the redesign memo's palette, and
+four things changed structurally, not only in value.
+
+**The tokens live in a registry, not in the stylesheet's text.** `apps/node/worker/src/theme.ts` holds both
+themes as `Record<TokenName, string>`, so a token missing from either theme is a compile error, and
+`contrast.test.ts` imports it and the served sheet (`SHELL_CSS`) rather than reading `src/ui.ts` as text. The
+old test found each theme by the position of a media query in a source file; it would have read a doc comment
+holding `--x: value;` as a token.
+
+**Eight grounds, not three**, so every worst case below is a minimum over eight surfaces, and every text token
+is checked on every one of them: 8 text tokens × 8 grounds × 2 themes. That matrix is what replaced the rail
+tests. The rail was an Ink island in a light page, with seven tokens of its own, and the tests held that no
+rail rule reached for a page-tuned colour. The sidebar is `--bg-sidebar` in both themes now, one of the eight
+grounds, so a text token that clears every ground clears the sidebar, and the question those tests
+approximated with a selector scan is answered for every surface at once. What a token table cannot see is
+where a token is *used*, so the test also parses the served sheet: no `color:` takes a non-text token or a
+divider, no field is edged with a divider, and every selected state carries the accent.
+
+**Dark is the default, and the theme is the viewer's choice.** Dark is the unqualified `:root`; Light is
+`:root[data-theme="light"]`; System is `:root[data-theme="system"]` inside the one
+`@media (prefers-color-scheme: light)`. Following the OS alone would have shown Light to everyone whose OS
+states no preference, since browsers report `light` then. The light declarations appear twice, once for
+Light and once for System, and the test holds both copies equal to the registry.
+
+**Solid surfaces only.** The gradient, the grain and every translucent `color-mix()` surface are gone, so
+there is nothing to composite: each pair below is two opaque colours, and axe can resolve every background it
+meets on a rendered screen.
+
+### The measured figures (WCAG 2.2 formula, identical to `contrast.test.ts`)
+
+| token | dark | worst ground (dark) | light | worst ground (light) | needs |
+|:--|--:|:--|--:|:--|--:|
+| `--text-primary` | **11.92** | surface-active | **14.33** | surface-active | 4.5 |
+| `--text-secondary` | **5.86** | surface-active | **7.04** | surface-active | 4.5 |
+| `--text-muted` | **4.61** | surface-active | **4.78** | surface-active | 4.5 |
+| `--accent-text` | **5.54** | surface-active | **5.19** | surface-active | 4.5 |
+| `--accent-hover` | **6.44** | surface-active | **6.54** | surface-active | 4.5 |
+| `--success` | **6.16** | surface-active | **4.76** | surface-active | 4.5 |
+| `--warning` | **6.14** | surface-active | **4.57** | surface-active | 4.5 |
+| `--danger` | **4.64** | surface-active | **5.34** | surface-active | 4.5 |
+| `--accent` *(non-text)* | **5.54** | surface-active | **3.60** | surface-active | 3.0 |
+| `--control-edge` *(non-text)* | **3.15** | surface-active | **3.14** | surface-active | 3.0 |
+| `--on-accent` on `--accent-text` / `--accent-hover` | **8.06** / 9.37 | | **6.53** / 8.23 | | 4.5 |
+
+`--border` (1.00 to 1.48) and `--border-soft` (1.00 to 1.27) are dividers only, which WCAG 1.4.11 exempts, and
+are never a control's only edge.
+
+### The adjustments, each forced by a measurement
+
+- `--text-muted` `#6F7D8D` → `#8E9BAA`. The memo's value is 4.51 on `--bg-app` and **3.10 on
+  `--surface-active`**, the selected row, where the row's time and preview sit.
+- `--danger` `#E46B72` → `#E8797F`. The memo's value is **4.13** on `--surface-active`.
+- `--control-edge` is new in dark (`#717E8C`) and kept in light (`#77818D`): the memo's borders are 1.00 to 1.45,
+  so a field outlined in one is a shape somebody has to guess at.
+- `--accent-text` is split from `--accent` in light: brand Flow Blue `#4C77B8` is 3.60 on the light selected row,
+  a fill and an indicator but not text. The previous light `--accent-text` `#436BA8` is **4.27** there, so it
+  darkens to `#2F5E9E`.
+- `--on-accent` is new: light text on the dark theme's `#78A9FF` is **2.15**, so Compose's label is dark in dark
+  mode and white in light.
+
+Each defect is kept in `contrast.test.ts` as an inequality with its reason, so a later "simplification" back to
+a memo value fails with the number that ruled it out.
+
+### Selection is carried by an indicator, not a fill
+
+The selected-row fill is 1.38:1 against the list in dark and 1.19 in light, and the hover fill 1.24 / 1.14. So
+the fill does not carry selection: the 2px `--accent` bar does (5.54 dark, 3.60 light against
+`--surface-active`), with the element's ARIA state. The same holds for the current sidebar row, the selected
+list tab, the current section tab and the active palette option, and the test holds each of them. The focus
+ring is 2px `--accent`, at least 3:1 on every ground in both themes.
+
+### What this receipt does not cover
+
+A token on a surface that is not one of the eight grounds, such as the message body frame's own sheet, which
+uses these tokens on `--bg-reader` (so its pairs are in the table) but whose content is a sender's markup. And
+it reads tokens against grounds, not a rendered page: axe over the rendered screens is the other half.
+
+**`contrast.aa_large_ratio` is withdrawn**, with `dim_*`, `accent_ui_worst`, `rail_text_worst` and
+`rail_dim_worst`: nothing in the interface is measured at the large-text threshold, and the tokens those
+figures described are gone. The sections below are the history of those figures, kept as written.
 
 ## Re-measured 28 August 2026: the Mailda brand palette
 

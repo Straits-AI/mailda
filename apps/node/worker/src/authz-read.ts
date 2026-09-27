@@ -1,13 +1,16 @@
 import { BUDGETS } from "@mailda/budgets";
 import { agentGrantableActions } from "@mailda/contract/agent";
-import { MESSAGE_PAGE_PARAMS, specFor } from "@mailda/contract/routes";
+import { MESSAGE_PAGE_PARAMS, PLACES, specFor } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
-import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
+import {
+  BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, STANDING_CONTENT_RELATIONS, type MailboxRelation,
+} from "./access.ts";
 import { agentFor } from "./agents.ts";
 import { sponsorTerm, type SponsorTerm } from "./delegation.ts";
 import { daysAcross, ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
-import { recordDisclosure } from "./audit.ts";
+import { log, recordDisclosure } from "./audit.ts";
+import type { Place } from "./places.ts";
 import { CallerError, unprocessable } from "./errors.ts";
 import { normaliseLabel } from "./labels.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
@@ -901,6 +904,15 @@ export interface MessagePage {
   /** Mail wearing this label (0061), normalised as `labels.ts` normalises, or null for any. */
   label: string | null;
   /**
+   * Only mail in this place of the reader's (0067), or null for every place. `inbox` means no filing row;
+   * `archive` and `trash` drive the page from `mpl_by_place` (the placed plan), so they cost a page.
+   */
+  place: Place | null;
+  /** Only mail the reader has not opened (0062). */
+  unread: boolean;
+  /** Only mail whose case, in the mailbox it was delivered to, the reader holds. */
+  mine: boolean;
+  /**
    * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
    *
    * **Already rebuilt, never the caller's text.** The raw parameter is turned into a quoted expression at the
@@ -1199,7 +1211,48 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
   const conversationId = url.searchParams.get(MESSAGE_PAGE_PARAMS.conversation) || null;
   const rawLabel = url.searchParams.get(MESSAGE_PAGE_PARAMS.label);
   const label = rawLabel === null || rawLabel.trim() === "" ? null : normaliseLabel(rawLabel);
-  if (raw === null) return { after: null, mailboxId, q, since, until, from, conversationId, label };
+  /*
+   * The reader's own state (0062, 0067, cases): refused when it cannot be read, never dropped — the cursor's
+   * rule. A dropped `place=archived` answers the whole listing to somebody who asked for their Archive, and
+   * that page is indistinguishable from an honest one.
+   */
+  const rawPlace = url.searchParams.get(MESSAGE_PAGE_PARAMS.place);
+  const place = rawPlace === null || rawPlace === "" ? null : rawPlace;
+  if (place !== null && !(PLACES as readonly string[]).includes(place)) {
+    throw unprocessable("E_MESSAGE_PAGE_FILTER", {
+      what: `\`${MESSAGE_PAGE_PARAMS.place}=${place}\` is not a place`,
+      why: "a message is in your Inbox, Archive or Trash, and a filter that is quietly dropped answers a wider "
+        + "page than was asked for",
+      fix: `pass \`${MESSAGE_PAGE_PARAMS.place}=inbox\`, \`archive\` or \`trash\`, or omit it for every place`,
+    });
+  }
+  /*
+   * `1` or absent, and nothing else. `0` and `true` are refused rather than read, because each has two
+   * plausible meanings (`unread=0`: only read mail, or no filter?) and a guess answers a different page than
+   * was asked for.
+   */
+  const flag = (name: string): boolean => {
+    const value = url.searchParams.get(name);
+    if (value === null || value === "") return false;
+    if (value === "1") return true;
+    throw unprocessable("E_MESSAGE_PAGE_FILTER", {
+      what: `\`${name}=${value}\` is not \`${name}=1\``,
+      why: "the filter has one spelling, and any other value would be a guess at what was meant",
+      fix: `pass \`${name}=1\`, or omit it`,
+    });
+  };
+  const unread = flag(MESSAGE_PAGE_PARAMS.unread);
+  const mine = flag(MESSAGE_PAGE_PARAMS.mine);
+  if (q !== null && (place !== null || unread || mine)) {
+    throw unprocessable("E_MESSAGE_PAGE_SEARCH_FILTER", {
+      what: `\`${MESSAGE_PAGE_PARAMS.place}\`, \`${MESSAGE_PAGE_PARAMS.unread}\` and \`${MESSAGE_PAGE_PARAMS.mine}\` `
+        + `cannot be combined with \`${MESSAGE_PAGE_PARAMS.q}\``,
+      why: "a filter inside each ranked arm is a residual predicate whose cost there is unmeasured",
+      fix: "search without it; every result carries its `place`, `read` and `case_mine`",
+    });
+  }
+  const reader = { place: place as Place | null, unread, mine };
+  if (raw === null) return { after: null, mailboxId, q, since, until, from, conversationId, label, ...reader };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -1215,7 +1268,7 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId, q, since, until, from, conversationId, label };
+  return { after: { at: instant, id }, mailboxId, q, since, until, from, conversationId, label, ...reader };
 }
 
 /**
@@ -1277,14 +1330,40 @@ export function messagePageQuery(args: {
   /** How many rows to ask for. `listMessages` asks for the page plus one probe row — see `next_cursor`. */
   limit: number;
   /**
+   * How many messages this reader can see one request looks back through — `messages.max_lookback` — when
+   * the page filters on the reader's own state (`needsLookback`), and null when it does not. Passed rather
+   * than read here so the measurement measures the shipped statement at the shipped bound.
+   */
+  lookback: number | null;
+  /**
    * The caller's clock, for a searched window whose `until` is open (#153).
    *
    * Passed rather than read here, for the reason `@mailda/runtime` exists: a query that called `Date.now()`
    * would build a different token set on two calls a day apart and neither would be testable.
    */
   nowIso: string;
-}): { sql: string; params: unknown[] } {
+}): { sql: string; params: unknown[]; edge: { sql: string; params: unknown[] } | null } {
   const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
+  const perPerson = needsLookback(args.page);
+  // Both refused by `messagePageRequest` with a four-part message; reaching here is a caller's bug, so it throws.
+  if (args.page.q !== null && (perPerson || args.page.place !== null)) {
+    throw new Error("E_MESSAGE_PAGE_SEARCH_FILTER  a searched page reached the builder with a place, unread or mine");
+  }
+  if (perPerson !== (args.lookback !== null)) {
+    throw new Error(
+      "E_MESSAGE_PAGE_LOOKBACK  a lookback is passed exactly when the page filters on the reader's own state\n"
+      + "  why  without one such a page walks every message the reader can see; one passed for any other page "
+      + "is a bound nothing applies, and a caller who thinks it does",
+    );
+  }
+  /*
+   * **The placed plan** (0067): Archive and Trash are driven by `mpl_by_place (user_id, place, accepted_at,
+   * receipt_id)`, the filing table's own copy of the receipt's position, so they cost a page however much of
+   * the corpus is filed. The cursor and the date bounds bind to that copy; everything else is the walk's.
+   */
+  const placed = args.page.place === "archive" || args.page.place === "trash";
+  const at = placed ? "p.accepted_at" : "r.accepted_at";
+  const id = placed ? "p.receipt_id" : "r.id";
   // Never a quarantined delivery (0056): held back from every listing, not only the queue, until an
   // administrator releases it through `GET /api/quarantine`. Both plans carry this; `m` is LEFT-joined in
   // the unsearched one and a receipt with no row yet is NULL here, which is "not quarantined" and right.
@@ -1320,11 +1399,11 @@ export function messagePageQuery(args: {
    */
   const windowInMatch = args.page.q !== null && (args.page.since !== null || args.page.until !== null);
   if (args.page.since !== null && !windowInMatch) {
-    filters.push("AND r.accepted_at >= ?");
+    filters.push(`AND ${at} >= ?`);
     filterParams.push(args.page.since);
   }
   if (args.page.until !== null && !windowInMatch) {
-    filters.push("AND r.accepted_at <= ?");
+    filters.push(`AND ${at} <= ?`);
     filterParams.push(args.page.until);
   }
   /*
@@ -1363,8 +1442,8 @@ export function messagePageQuery(args: {
      * expression on the left is not a constraint, so the scan starts at the newest row every time and page
      * twenty costs twenty pages. See `cursorOf` for the measurement that caught it.
      */
-    filters.push("AND r.accepted_at <= ?");
-    filters.push("AND (r.accepted_at < ? OR r.id < ?)");
+    filters.push(`AND ${at} <= ?`);
+    filters.push(`AND (${at} < ? OR ${id} < ?)`);
     filterParams.push(args.page.after.at, args.page.after.at, args.page.after.id);
   }
 
@@ -1383,19 +1462,77 @@ export function messagePageQuery(args: {
    *
    * `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
    * one join rather than a second question. It is stripped from the response: an undeclared column is a field
-   * somebody starts depending on.
+   * somebody starts depending on. So are the sealed preview and its generation (0068), which `listMessages`
+   * opens into `preview` for the rows that may carry one.
+   *
+   * Split in two because the lookback needs the split. The **plain** columns are read straight off the joined
+   * rows, so the lookback's inner statement selects them and the outer one reads them back by name. The
+   * **derived** ones are probes about the reader — labels, read, place, standing content read, the case — and
+   * are computed once over whatever rows the statement returns, reading the message and mailbox from
+   * wherever the plan has them (`m.id` on the walk, `w.message_id` over the lookback).
    */
-  const columns = `r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
-            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
-            m.conversation_id, m.auth_spf, m.auth_dkim, m.auth_dmarc, m.auth_dmarc_policy, m.auth_from_domain,
-            m.attachments, m.attachments_dangerous,
-            (SELECT json_group_array(l.label) FROM (
-               SELECT label FROM message_labels WHERE message_id = m.id ORDER BY label) l) AS labels_json,
-            EXISTS (SELECT 1 FROM message_reads rd WHERE rd.user_id = ? AND rd.message_id = m.id) AS read,
-            sg.grant_id AS supervised_grant_id,
-            (SELECT c.id FROM cases c
-              WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
-                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id`;
+  const PLAIN = [
+    ["r.id", "id"], ["r.envelope_from", "envelope_from"], ["r.envelope_to", "envelope_to"],
+    ["r.raw_bytes", "raw_bytes"], ["r.accepted_at", "accepted_at"], ["a.mailbox_id", "mailbox_id"],
+    ["m.id", "message_id"], ["m.subject", "subject"], ["m.from_addr", "from_addr"], ["m.parse_error", "parse_error"],
+    ["m.conversation_id", "conversation_id"], ["m.auth_spf", "auth_spf"], ["m.auth_dkim", "auth_dkim"],
+    ["m.auth_dmarc", "auth_dmarc"], ["m.auth_dmarc_policy", "auth_dmarc_policy"],
+    ["m.auth_from_domain", "auth_from_domain"], ["m.attachments", "attachments"],
+    ["m.attachments_dangerous", "attachments_dangerous"], ["m.from_name", "from_name"],
+    ["m.preview_sealed", "preview_sealed"], ["m.preview_generation", "preview_generation"],
+    ["sg.grant_id", "supervised_grant_id"],
+  ] as const;
+  /** The plain columns as the joined rows spell them, or read back by name from a derived table `over`. */
+  const plain = (over: string | null) =>
+    PLAIN.map(([expression, name]) => (over === null ? `${expression} AS ${name}` : `${over}.${name}`)).join(", ");
+  /*
+   * The derived columns, over one message and mailbox expression.
+   *
+   * `case_id`, `case_mine` and `case_state` read one `LEFT JOIN cases c` on the delivery's own mailbox, which
+   * every plan below carries: `cas_unique (conversation_id, mailbox_id)` makes it at most one row, so the join
+   * cannot duplicate a message, and it is one seek where three correlated subqueries would be three.
+   * `case_state` says a case is claimed, never by whom — within the mailbox a metadata reader already shares
+   * (`cases.ts` on queue disclosure). `case_mine` is 0 for an `agt_` caller, because people hold cases.
+   *
+   * `standing_content` is `readableMessage`'s predicate, from the same `STANDING_CONTENT_RELATIONS`, so "may
+   * mark read, label and place this message" and the column that says so cannot disagree. A supervised grant
+   * is never standing, so a supervised row is 0 and its preview is never opened: a preview is content, and
+   * under a grant opening a message is the recorded act.
+   *
+   * `place` is the caller's own: a correlated probe on the filing table's primary key, or the driving row's
+   * own `p.place` on the placed plan, which filters to one place anyway.
+   */
+  const derived = (message: string, mailbox: string, placeColumn: { sql: string; params: unknown[] }) => ({
+    sql: `(SELECT json_group_array(l.label) FROM (
+               SELECT label FROM message_labels WHERE message_id = ${message} ORDER BY label) l) AS labels_json,
+            EXISTS (SELECT 1 FROM message_reads rd WHERE rd.user_id = ? AND rd.message_id = ${message}) AS read,
+            c.id AS case_id,
+            ${placeColumn.sql} AS place,
+            CASE WHEN ${message} IS NOT NULL AND ${mailbox} IN (
+                   SELECT t.object_id FROM relationship_tuples t
+                    WHERE t.org_id = ? AND t.subject_id IN (${subjectPlaceholders})
+                      AND t.object_type = 'mailbox'
+                      AND t.relation IN (${STANDING_CONTENT_RELATIONS.map(() => "?").join(", ")})
+                      ${args.sponsor.sql})
+                 THEN 1 ELSE 0 END AS standing_content,
+            CASE WHEN c.state = 'claimed' AND c.assignee = ? THEN 1 ELSE 0 END AS case_mine,
+            c.state AS case_state`,
+    params: [
+      args.readerId, ...placeColumn.params,
+      args.orgId, ...args.subjects, ...STANDING_CONTENT_RELATIONS, ...args.sponsor.params,
+      args.readerId,
+    ],
+  });
+  const placeOf = (message: string) => ({
+    sql: `COALESCE((SELECT mp.place FROM message_places mp WHERE mp.user_id = ? AND mp.message_id = ${message}),
+                     'inbox')`,
+    params: [args.readerId],
+  });
+  const onTheRows = derived("m.id", "a.mailbox_id", placed ? { sql: "p.place", params: [] } : placeOf("m.id"));
+  /** The delivery's own case, from the joined rows. The lookback joins it outside, over `w`. */
+  const casesOnTheRows = `LEFT JOIN cases c
+         ON c.org_id = r.org_id AND c.conversation_id = m.conversation_id AND c.mailbox_id = a.mailbox_id`;
+  const columns = `${plain(null)}, ${onTheRows.sql}`;
 
   /*
    * The searched page's columns, which differ from the listing's in exactly one place: attribution.
@@ -1416,7 +1553,14 @@ export function messagePageQuery(args: {
    * a `content` grant covers it too. Preferring the content grant keeps this arm's value equal to the body
    * arm's whenever one exists, which is what lets the outer stage collapse a message matching both.
    */
-  const subjectArmColumns = columns.replace(
+  /*
+   * The arms carry the plain columns only, and the organization for the case join outside them. The derived
+   * columns — five probes a row — are computed once over the grouped page instead of in each arm over up to
+   * twice the page: measured with the reader's own rows seeded, computing them inside the arms read 1,003
+   * rows on a common term against the 1,000-row list budget (`message-search-cost.md`).
+   */
+  const armColumns = `${plain(null)}, r.org_id AS org_id`;
+  const subjectArmColumns = armColumns.replace(
     "sg.grant_id AS supervised_grant_id",
     "COALESCE(sgc.grant_id, sgm.grant_id) AS supervised_grant_id",
   );
@@ -1431,7 +1575,7 @@ export function messagePageQuery(args: {
    * trail named an authority that could not have permitted the disclosure it was recording. Nothing leaked;
    * the trail lied, which for this product is the worse of the two.
    */
-  const bodyArmColumns = columns.replace(
+  const bodyArmColumns = armColumns.replace(
     "sg.grant_id AS supervised_grant_id",
     "sgc.grant_id AS supervised_grant_id",
   );
@@ -1460,10 +1604,7 @@ export function messagePageQuery(args: {
    * column is identical and SQLite's choice among identical values cannot be observed.
    */
   const groupedColumns = [
-    "id", "envelope_from", "envelope_to", "raw_bytes", "accepted_at", "mailbox_id", "message_id",
-    "subject", "from_addr", "parse_error", "conversation_id", "case_id",
-    "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
-    "attachments", "attachments_dangerous", "labels_json", "read",
+    ...PLAIN.map(([, name]) => name).filter((name) => name !== "supervised_grant_id"), "org_id",
   ].join(", ");
 
 
@@ -1612,8 +1753,10 @@ export function messagePageQuery(args: {
      */
     const metadataArm = authorizedBy(RELATIONS_FOR_METADATA, "sgm");
     const bodyArm = authorizedBy(BODY_SEARCH_RELATIONS, "sgc");
+    const overTheGroup = derived("g.message_id", "g.mailbox_id", placeOf("g.message_id"));
     return {
-      sql: `SELECT ${groupedColumns}, MAX(supervised_grant_id) AS supervised_grant_id FROM (
+      sql: `SELECT ${plain("g")}, ${overTheGroup.sql}
+       FROM (SELECT ${groupedColumns}, MAX(supervised_grant_id) AS supervised_grant_id FROM (
         SELECT * FROM (
         SELECT ${subjectArmColumns}
          FROM message_search s
@@ -1647,7 +1790,10 @@ export function messagePageQuery(args: {
       ))
       GROUP BY id
       ORDER BY accepted_at DESC, id DESC
-      LIMIT ?`,
+      LIMIT ?) g
+       LEFT JOIN cases c
+         ON c.org_id = g.org_id AND c.conversation_id = g.conversation_id AND c.mailbox_id = g.mailbox_id
+      ORDER BY g.accepted_at DESC, g.id DESC`,
       /*
        * **Textual order, and the FROM clause is not the order.** The supervised subquery is interpolated into
        * a `LEFT JOIN`, which comes before the `WHERE` in the statement text — so its placeholders bind first
@@ -1664,42 +1810,153 @@ export function messagePageQuery(args: {
        * `messages` is what scopes it. `test/node/search-scope-world.test.ts` has a separate rule for that.
        */
       params: [
-        // The reader first in each arm: `read` (0062) is a column, and columns precede every join textually.
-        args.readerId,
+        // The derived columns first (`read`, `place`, `standing_content`, `case_mine`): the outer select
+        // precedes the grouped stage textually. The cases join binds nothing.
+        ...overTheGroup.params,
         // metadata arm: both grant subqueries, then the match, then the two org predicates
         ...args.supervised.metadata.params, ...args.supervised.content.params,
         searchedMatch, args.orgId, args.orgId, ...filterParams,
         ...metadataArm.params, args.limit,
         // body arm: the same two subqueries again, because the same fragments appear twice
-        args.readerId,
         ...args.supervised.metadata.params, ...args.supervised.content.params,
         searchedMatch, args.orgId, ...filterParams,
         ...bodyArm.params, args.limit,
         // the outer page
         args.limit,
       ],
+      edge: null,
     };
   }
 
-  return {
-    sql: `SELECT ${columns}
-       FROM ingress_receipts r
+  /*
+   * The driving shape, spelled once: the walk from `ir_org_accepted`, or the placed plan from `mpl_by_place`.
+   * `CROSS JOIN` on the placed plan because SQLite never reorders its left operand, so the filing table drives
+   * and the page costs a page. The rest — the joins, the filters, the authorization predicate — is the walk's,
+   * so a row the reader can no longer read (after losing access to its mailbox) is filtered like any other.
+   */
+  const driving = placed
+    ? {
+      from: `FROM message_places p
+       CROSS JOIN ingress_receipts r ON r.id = p.receipt_id AND r.org_id = p.org_id`,
+      where: "WHERE p.org_id = ? AND p.user_id = ? AND p.place = ?",
+      whereParams: [args.orgId, args.readerId, args.page.place],
+    }
+    : { from: "FROM ingress_receipts r", where: "WHERE r.org_id = ?", whereParams: [args.orgId] };
+  // `id DESC` beside the timestamp is the tie-break the cursor needs to be total. One delivery to two
+  // addresses of the same mailbox arrives as two receipts sharing a millisecond, and an ordering that left
+  // their relative position to the planner would let a page boundary fall between them differently on the
+  // two queries that span it — dropping one and repeating the other.
+  const statement = (select: string, cases: string, limit: string) => `SELECT ${select}
+       ${driving.from}
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
        LEFT JOIN messages m ON m.ingress_receipt_id = r.id
        LEFT JOIN (${args.supervised.metadata.sql}) sg ON sg.mailbox_id = a.mailbox_id
-      WHERE r.org_id = ?
+       ${cases}
+      ${driving.where}
         ${filters.join("\n        ")}
         ${authorized.sql}
-      ORDER BY r.accepted_at DESC, r.id DESC
+      ORDER BY ${at} DESC, ${id} DESC
+      ${limit}`;
+  const statementParams = [
+    ...args.supervised.metadata.params, ...driving.whereParams, ...filterParams, ...authorized.params,
+  ];
+
+  if (args.lookback === null) {
+    return {
+      sql: statement(columns, casesOnTheRows, "LIMIT ?"),
+      params: [...onTheRows.params, ...statementParams, args.limit],
+      edge: null,
+    };
+  }
+
+  /*
+   * ## The lookback: the reader's own state, bounded (§7 Q-A, decided 26 September 2026)
+   *
+   * `place=inbox`, `unread=1` and `mine=1` are predicates about this reader that no ordering index can serve,
+   * so a page with one of them walked the receipts in time order until it filled — and for a person who
+   * archives nearly everything, reads everything or holds few cases, that grew with all the mail they can see
+   * (about four rows read per message: 400,000 a load at 100 k messages). The user chose a bound over that.
+   *
+   * So the walk's own statement, with no per-person predicate in it, is a subquery bounded to the lookback,
+   * and the per-person predicates apply outside it. Because the inner statement is the walk's, the lookback
+   * counts only messages this reader may see that match every other filter: never a receipt of a mailbox they
+   * cannot read, never a quarantined one.
+   *
+   * **Measured, not assumed** (SQLite 3.51, an examined-row counter): the plan is a co-routine driven by
+   * `ir_org_accepted`, read out in order with no temporary B-tree, and the outer `LIMIT` stops the co-routine
+   * as soon as the page fills — so a healthy Inbox reads what the walk did and only a sparse one reads the
+   * whole lookback. Numbering the rows to find the edge in the same statement (`ROW_NUMBER() OVER (…)`) forced
+   * the sort and read the whole lookback every time, taxing every healthy Inbox with the sparse case's cost;
+   * so the edge is a second statement, run only when the page did not fill. `test/explain.test.ts` prints the
+   * plan and `test/message-page.measure.test.ts` asserts the early stop.
+   *
+   * The inner statement is one string, used by both, so the page and its edge cannot disagree about which rows
+   * count. They are still two reads with no shared snapshot; the edge below says what that costs.
+   */
+  const inner = statement(`${plain(null)}, r.org_id AS org_id`, "", "LIMIT ? OFFSET ?");
+  const overTheLookback = derived("w.message_id", "w.mailbox_id", placeOf("w.message_id"));
+  const personal: { sql: string; params: unknown[] }[] = [
+    ...args.page.place === "inbox"
+      // An unmaterialised receipt has no message id, so NOT EXISTS is true and it lists in the Inbox: nothing
+      // can file it, and hiding it would be accepted-but-absent (§24).
+      ? [{ sql: "NOT EXISTS (SELECT 1 FROM message_places pi WHERE pi.user_id = ? AND pi.message_id = w.message_id)",
+        params: [args.readerId] }]
+      : [],
+    ...args.page.unread
+      ? [{ sql: "NOT EXISTS (SELECT 1 FROM message_reads ru WHERE ru.user_id = ? AND ru.message_id = w.message_id)",
+        params: [args.readerId] }]
+      : [],
+    ...args.page.mine ? [{ sql: "c.state = 'claimed' AND c.assignee = ?", params: [args.readerId] }] : [],
+  ];
+  return {
+    sql: `SELECT ${plain("w")}, ${overTheLookback.sql}
+       FROM (${inner}) w
+       LEFT JOIN cases c
+         ON c.org_id = w.org_id AND c.conversation_id = w.conversation_id AND c.mailbox_id = w.mailbox_id
+      WHERE ${personal.map((one) => one.sql).join("\n        AND ")}
+      ORDER BY w.accepted_at DESC, w.id DESC
       LIMIT ?`,
-    // `id DESC` beside the timestamp is the tie-break the cursor needs to be total. One delivery to two
-    // addresses of the same mailbox arrives as two receipts sharing a millisecond, and an ordering that left
-    // their relative position to the planner would let a page boundary fall between them differently on the
-    // two queries that span it — dropping one and repeating the other.
     params: [
-      args.readerId, ...args.supervised.metadata.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
+      ...overTheLookback.params, ...statementParams, args.lookback, 0,
+      ...personal.flatMap((one) => one.params), args.limit,
     ],
+    /*
+     * **The edge**: where the lookback stopped, asked only after a page that did not fill. Rows N and N+1 of
+     * the same inner statement. Two rows: the lookback stopped with more behind it, and the page resumes after
+     * row N — the second row is a probe, like the page's own, and is never disclosed. One row: the lookback
+     * ended exactly on the last message this reader can see. None: fewer than N remained.
+     *
+     * ponytail: two known ceilings, both measured or reasoned in `docs/receipts/message-page-size.md`.
+     *
+     * - **It walks again.** `OFFSET N - 1` steps through every row the page statement passed, receipts this
+     *   reader cannot see included, so a lookback page that does not fill pays the walk's authorization term
+     *   twice: a reader of a quiet mailbox reads 2x its unfiltered walk. Never more than twice, since both are
+     *   the same bounded walk. Starting the edge from the page's last row cannot work (that row's rank in the
+     *   walk is unknown), and skipping it on an empty page strands an inbox-zero reader behind the lookback. The
+     *   fix that removes both walks' term is the per-mailbox ordering the quiet-mailbox figure already names.
+     * - **It reads later.** A receipt committed between the two reads moves the edge that many rows newer, so
+     *   the next page can repeat them; a counted row leaving the inner set between them (materialised as
+     *   quarantined, or access revoked) moves it one older, so one row is never examined. The same late-commit
+     *   class the time cursor already has. An `accepted_at` bound would not close it (ingress stamps the time
+     *   before its R2 write and commits after), only one `CATALOG.batch` would, which reads the whole lookback on
+     *   every load; the measured plan refused that. Revisit if a repeated or skipped row is ever reported.
+     */
+    edge: {
+      sql: `SELECT w.accepted_at, w.id, w.mailbox_id, w.supervised_grant_id FROM (${inner}) w
+             ORDER BY w.accepted_at DESC, w.id DESC`,
+      params: [...statementParams, 2, args.lookback - 1],
+    },
   };
+}
+
+/**
+ * Whether a page filters on the reader's own state — their Inbox, what they have not opened, the cases they
+ * hold — which no ordering index can serve, so the page looks back through at most `messages.max_lookback`
+ * of the messages they can see (`messagePageQuery`). Archive and Trash alone do not: the filing table drives
+ * them.
+ */
+export function needsLookback(page: MessagePage): boolean {
+  return page.place === "inbox" || page.unread || page.mine;
 }
 
 /**
@@ -1838,6 +2095,8 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // returning counts or snippets for anything the caller cannot see. Re-run in full on every page: the
   // subjects, the grants and the tuple sub-select are all read at this instant, so a revocation between two
   // pages takes effect on the second one. That is what the cursor carrying position only buys.
+  // Inbox, Unread and Mine look back through at most this many of the messages the reader can see (§7 Q-A).
+  const lookback = needsLookback(page) ? BUDGETS["messages.max_lookback"] : null;
   const query = messagePageQuery({
     orgId: who.orgId,
     nowIso: new Date(ctx.now()).toISOString(),
@@ -1854,13 +2113,27 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     // "there is at least one more row you may read" and "this page was full, so there might be" — and the
     // second is the one that renders a control leading to an empty page. Costs one row read.
     limit: size + 1,
+    lookback,
   });
   const rows = await env.CATALOG.prepare(query.sql)
     .bind(...query.params)
-    .all<{ id: string; accepted_at: string; mailbox_id: string; supervised_grant_id: string | null }>();
+    .all<ListedRow>();
 
   const more = rows.results.length > size;
   const listed = more ? rows.results.slice(0, size) : rows.results;
+
+  /*
+   * Where a lookback that did not fill the page stopped (`messagePageQuery`'s edge). Asked only then, so a
+   * page that filled — every healthy Inbox — costs exactly what the walk did. Two rows mean more lies behind
+   * the lookback: the page resumes after the first, and says it was cut short. The second is a probe and is
+   * never disclosed; the first is, as a position, so the record below names it too.
+   */
+  let edge: { accepted_at: string; id: string; mailbox_id: string; supervised_grant_id: string | null } | null = null;
+  if (query.edge !== null && !more) {
+    const probed = await env.CATALOG.prepare(query.edge.sql).bind(...query.edge.params)
+      .all<{ accepted_at: string; id: string; mailbox_id: string; supervised_grant_id: string | null }>();
+    if (probed.results.length === 2) edge = probed.results[0]!;
+  }
 
   /*
    * The record, before the response exists.
@@ -1874,7 +2147,11 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
    * nobody saw, which is the same dishonesty as omitting one, in the other direction.
    */
   const byGrant = new Map<string, { mailboxId: string; ids: string[] }>();
-  for (const row of listed) {
+  /*
+   * The lookback's edge is disclosed as a position — `next_cursor` names its id and acceptance time — so under
+   * a supervised grant it joins that grant's ids in the entry, like any row the page returned.
+   */
+  for (const row of edge === null ? listed : [...listed, edge]) {
     if (row.supervised_grant_id === null) continue;
     const seen = byGrant.get(row.supervised_grant_id)
       ?? { mailboxId: row.mailbox_id, ids: [] };
@@ -1946,8 +2223,11 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     }
   }
 
+  const previews = await openedPreviews(env, ctx, who.orgId, listed);
   return Response.json({
-    messages: listed.map(({ supervised_grant_id: _grant, ...row }) => row),
+    messages: listed.map(({
+      supervised_grant_id: _grant, preview_sealed: _sealed, preview_generation: _generation, ...row
+    }) => ({ ...row, preview: previews.get(row.id) ?? null })),
     /*
      * Null means **nothing older is visible to this reader at this instant**, which is a narrower claim than
      * "this is all the mail". A row this reader may not see is not counted, and a grant expiring a second
@@ -1964,6 +2244,88 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
      * see different mail, not paging. `messagePageQuery` skips the cursor predicate for the same reason: a
      * position in a time ordering means nothing in a ranked one.
      */
-    next_cursor: page.q === null && more ? cursorOf(listed[listed.length - 1]!) : null,
+    next_cursor: page.q === null && more
+      ? cursorOf(listed[listed.length - 1]!)
+      : edge !== null ? cursorOf(edge) : null,
+    /*
+     * The lookback stopped before the page filled (`messages.max_lookback`), so `next_cursor` resumes after the
+     * last message it looked at rather than after the last row returned. Never a reason to stop, and a page it
+     * cut short is never a total (#91): a client prints `n+`, or no figure when it is empty.
+     */
+    lookback_exhausted: edge !== null,
+    // The bound itself, so a caller can say "looked at N, found none" without a second source (AGENTS §3).
+    max_lookback: lookback,
   });
+}
+
+/** A listed row as the statement returns it, before the columns only this function reads are stripped. */
+interface ListedRow {
+  id: string;
+  accepted_at: string;
+  mailbox_id: string;
+  message_id: string | null;
+  supervised_grant_id: string | null;
+  standing_content: 0 | 1;
+  preview_sealed: string | null;
+  preview_generation: number | null;
+}
+
+/**
+ * The page's row previews (0068), opened — and **never a reason to fail the page**.
+ *
+ * Only for rows with `standing_content = 1`: a metadata reader sees no content, and under a supervised grant
+ * a preview would disclose content under a record that says only "listed" (§7) — opening the message is the
+ * recorded act. One key per generation (one in practice), so a page holding a sealed preview costs one
+ * Durable Object request (`message-page-size.md`).
+ *
+ * A vault that throws — cold, overloaded, restored without its storage — degrades its rows to no preview,
+ * as does a seal that will not open; the list is still the list. What failed is written as **one** warning
+ * for the page with the count and the first reason, so it is recorded rather than swallowed and a page of
+ * fifty does not write fifty lines.
+ */
+async function openedPreviews(
+  env: Env, ctx: Ctx, orgId: string, rows: readonly ListedRow[],
+): Promise<Map<string, string>> {
+  const opened = new Map<string, string>();
+  const sealed = rows.flatMap((row) =>
+    row.standing_content === 1 && row.message_id !== null && row.preview_sealed !== null
+      && row.preview_generation !== null
+      ? [{ id: row.id, messageId: row.message_id, sealed: row.preview_sealed, generation: row.preview_generation }]
+      : []);
+  if (sealed.length === 0) return opened;
+  const { contentOpeningKey, runKeyCache } = await import("./evidence-store.ts");
+  const { openPreview } = await import("./preview.ts");
+  const cache = runKeyCache();
+  let failed = 0;
+  let reason: string | null = null;
+  const failure = (error: unknown) => (error as Error).message?.split("\n")[0] ?? String(error);
+  for (const generation of new Set(sealed.map((row) => row.generation))) {
+    const group = sealed.filter((row) => row.generation === generation);
+    let key: CryptoKey;
+    try {
+      key = await contentOpeningKey(env, generation, cache);
+    } catch (error) {
+      failed += group.length;
+      reason ??= failure(error);
+      continue;
+    }
+    for (const row of group) {
+      try {
+        opened.set(row.id, await openPreview(key, row.messageId, row.sealed));
+      } catch (error) {
+        failed += 1;
+        reason ??= failure(error);
+      }
+    }
+  }
+  if (failed > 0) {
+    await log(env, ctx, {
+      level: "warn",
+      event: "preview.unopenable",
+      message: `${failed} row preview(s) on a page could not be opened and listed without one: ${reason ?? "unknown"}`,
+      orgId,
+      detail: { count: failed, reason },
+    });
+  }
+  return opened;
 }

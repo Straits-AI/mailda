@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { messageBodyResponse } from "@mailda/contract/schemas";
 
@@ -37,10 +37,13 @@ import { CONTENT_SECURITY_POLICY } from "../../src/security-headers.ts";
  * description of what this application frames.
  */
 
-// `useNavigate` needs a router around it; nothing here navigates.
+// `useNavigate` needs a router around it; nothing here navigates. Only that: a reader with a message open must
+// render without `Link` or a router hook, and this partial mock is what would throw if it did.
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
 const { Inbox } = await import("../../src/client/app/screens/inbox.tsx");
+const { ShellProvider } = await import("../../src/client/app/shell-context.tsx");
+const { frameHead } = await import("../../src/client/app/screens/reader.tsx");
 
 const MESSAGE = {
   id: "msg_01",
@@ -55,6 +58,9 @@ const MESSAGE = {
   parse_error: null,
   conversation_id: null,
   case_id: "case_01",
+  auth_spf: null, auth_dkim: null, auth_dmarc: null, auth_dmarc_policy: null, auth_from_domain: null,
+  attachments: 1, attachments_dangerous: 0, labels_json: "[]", read: 1,
+  place: "inbox", from_name: null, preview: null, standing_content: 1, case_mine: 0, case_state: "open",
 };
 
 /** What `/api/messages/:id/body` returns for an HTML message: sanitised markup, for a sandboxed frame. */
@@ -76,7 +82,7 @@ function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <Inbox />
+      <ShellProvider><Inbox /></ShellProvider>
     </QueryClientProvider>,
   );
 }
@@ -90,6 +96,26 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  delete document.documentElement.dataset.theme;
+});
+
+/** Opens the one message and returns its frame. */
+async function openFrame(): Promise<HTMLIFrameElement> {
+  mount();
+  // `findBy`, not a hand-rolled microtask drain: the list arrives from a query and the body arrives from
+  // a second one the click starts, so this waits for each in turn rather than guessing how many ticks
+  // React and TanStack Query need between them.
+  const row = await screen.findByRole("button", { name: /An invoice/ });
+  await act(async () => { row.click(); });
+  return await waitFor(() => {
+    const found = document.querySelector("iframe.message-body");
+    expect(found, "the reading pane rendered no frame, so there is nothing for frame-src to permit").not
+      .toBeNull();
+    return found as HTMLIFrameElement;
+  });
+}
+
 /** The CSP as a directive map, so a test reads one directive rather than matching a whole string. */
 function directive(name: string): string[] {
   const found = CONTENT_SECURITY_POLICY.split(";")
@@ -100,20 +126,7 @@ function directive(name: string): string[] {
 
 describe("the reading pane renders mail into a sandboxed frame", () => {
   it("puts the sanitised body in an iframe the policy allows", async () => {
-    mount();
-
-    // `findBy`, not a hand-rolled microtask drain: the list arrives from a query and the body arrives from
-    // a second one the click starts, so this waits for each in turn rather than guessing how many ticks
-    // React and TanStack Query need between them.
-    const row = await screen.findByRole("button", { name: /An invoice/ });
-    await act(async () => { row.click(); });
-
-    const frame = await waitFor(() => {
-      const found = document.querySelector("iframe.message-body");
-      expect(found, "the reading pane rendered no frame, so there is nothing for frame-src to permit").not
-        .toBeNull();
-      return found as HTMLIFrameElement;
-    });
+    const frame = await openFrame();
 
     // `srcdoc`, not `src`: an opaque-origin document rather than a same-origin one that happens to be
     // sandboxed. It is also why `frame-src 'self'` is the right value — there is no third-party origin in
@@ -128,6 +141,33 @@ describe("the reading pane renders mail into a sandboxed frame", () => {
     // Neither allow-scripts nor allow-same-origin. The two omissions are the actual boundary; the CSP is
     // about the document *around* the frame, and asserting this here keeps the two from being confused.
     expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
+
+  /*
+   * The frame is opaque-origin and cannot see the shell's `<html>`, so it is told the viewer's theme on its own
+   * root, by the first bytes of its document — and only ever one of the three words, because what reaches a
+   * `srcdoc` is markup.
+   */
+  it("tells the frame the viewer's theme on its own root, first", async () => {
+    document.documentElement.dataset.theme = "light";
+    const frame = await openFrame();
+    expect(frame.getAttribute("srcdoc")!.startsWith(
+      '<!doctype html><html data-theme="light"><link rel="stylesheet" href="/app/frame.css">',
+    )).toBe(true);
+    expect(frame.getAttribute("srcdoc")!.startsWith(frameHead("light"))).toBe(true);
+  });
+
+  it("tells it dark when the shell wears no theme", async () => {
+    const frame = await openFrame();
+    expect(frame.getAttribute("srcdoc")!.startsWith('<!doctype html><html data-theme="dark">')).toBe(true);
+  });
+
+  it("never carries an unchecked attribute into the frame's markup", async () => {
+    document.documentElement.dataset.theme = 'x" onload="alert(1)';
+    const frame = await openFrame();
+    expect(frame.getAttribute("srcdoc")!.startsWith('<!doctype html><html data-theme="dark">')).toBe(true);
+    expect(frame.getAttribute("srcdoc")).not.toContain("onload");
   });
 
   it("is permitted by frame-src, which is therefore not 'none'", () => {

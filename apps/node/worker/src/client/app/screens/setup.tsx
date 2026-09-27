@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Scroller } from "../chrome.tsx";
 import { OnboardingProgress } from "../onboarding.tsx";
 import {
   forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, registerProviderToken,
@@ -105,7 +105,7 @@ function Connection({ binding, permissions, note, refresh }: {
           </p>
           <Refusal said={problem} />
           <button type="button" className="quiet" onClick={() => void forget()} disabled={busy}>
-            {busy ? "forgetting…" : "forget this token"}
+            {busy ? "Forgetting…" : "Forget this token"}
           </button>
           <p className="dim">Forgetting it here does not delete it in Cloudflare; that is yours to do on the token page.</p>
         </>
@@ -115,7 +115,7 @@ function Connection({ binding, permissions, note, refresh }: {
             Create one API token in Cloudflare with exactly these permissions, restricted to this account, and
             paste it below. This Node holds it wrapped under its credential key and never shows it again.
           </p>
-          <div className="scroller">
+          <Scroller label="Permissions the token needs">
             <table>
               <thead>
                 <tr><th scope="col">Permission</th><th scope="col">Scope</th><th scope="col">What this Node does with it</th></tr>
@@ -130,10 +130,10 @@ function Connection({ binding, permissions, note, refresh }: {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scroller>
           <p className="dim">{note}</p>
           <p>
-            <a className="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">open the token page</a>
+            <a className="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">Open the token page</a>
           </p>
           <Refusal said={problem} />
           <div className="limits-ask">
@@ -154,7 +154,7 @@ function Connection({ binding, permissions, note, refresh }: {
               </label>
             ) : null}
             <button type="button" className="primary" onClick={() => void connect()} disabled={busy || token.trim() === ""}>
-              {busy ? "connecting…" : "connect"}
+              {busy ? "Connecting…" : "Connect"}
             </button>
           </div>
         </>
@@ -231,7 +231,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
       {routing.isPending ? <Nothing kind="loading" /> : null}
       {routing.isError ? <Nothing kind="failed" detail={routing.error.message} /> : null}
       {routing.isSuccess && routing.data.routing.length > 0 ? (
-        <div className="scroller">
+        <Scroller label="Domains this Node already routes">
           <table>
             <caption className="dim table-caption">What Cloudflare says about the domains this Node already routes.</caption>
             <thead>
@@ -257,7 +257,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       ) : null}
 
       <Refusal said={problem} />
@@ -293,7 +293,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
           moving through the page by control rather than by eye.
         */}
         <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
-          see what pointing this here would do
+          See what pointing this here would do
         </button>
       </div>
 
@@ -318,7 +318,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
           {plan.creates.length === 0 ? (
             <p className="dim">No records would be created.</p>
           ) : (
-            <div className="scroller">
+            <Scroller label={`What would happen to ${plan.domain}`}>
               <table>
                 <thead>
                   <tr>
@@ -337,7 +337,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Scroller>
           )}
           {plan.present.length === 0 ? null : (
             <p className="dim">Already there: {plan.present.join(", ")}</p>
@@ -377,7 +377,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
             onClick={() => void apply()}
             disabled={busy || plan.refusal !== null || address.trim() === ""}
           >
-            {busy ? "working…" : "do this"}
+            {busy ? "Working…" : "Do this"}
           </button>
           {address.trim() === "" ? (
             <p className="dim">An address to route here is needed before this can be applied.</p>
@@ -464,7 +464,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
           </label>
         ) : null}
         <button className="quiet" type="button" onClick={() => void list()} disabled={busy || domain.trim() === ""}>
-          list the rules on this zone
+          List the rules on this zone
         </button>
       </div>
       {listing === null ? null : listing.error !== null ? (
@@ -472,7 +472,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
       ) : listing.rules.length === 0 ? (
         <p className="dim">No routing rules on {listing.zone}.</p>
       ) : (
-        <div className="scroller">
+        <Scroller label={`Routing rules on ${listing.zone}`}>
           <table>
             <caption className="dim table-caption">Routing rules on {listing.zone}.</caption>
             <thead>
@@ -490,11 +490,11 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                   <td>
                     {rule.catchAll ? null : arming === rule.id ? (
                       <button type="button" className="primary" disabled={busy} onClick={() => void act(rule.id, rule.ours ? null : rule.digest)}>
-                        {busy ? "working…" : rule.ours ? "yes, put it back" : `yes, point ${rule.to} here`}
+                        {busy ? "Working…" : rule.ours ? "Yes, put it back" : `Yes, point ${rule.to} here`}
                       </button>
                     ) : (
                       <button type="button" className="quiet" disabled={busy} onClick={() => setArming(rule.id)}>
-                        {rule.ours ? "put back" : "point here"}
+                        {rule.ours ? "Put back" : "Point here"}
                       </button>
                     )}
                   </td>
@@ -502,7 +502,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       )}
     </div>
   );
@@ -561,7 +561,7 @@ function Sending() {
           />
         </label>
         <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
-          see what onboarding this would do
+          See what onboarding this would do
         </button>
       </div>
 
@@ -598,7 +598,7 @@ function Sending() {
             onClick={() => void apply()}
             disabled={busy || plan.onboarded || plan.error !== null}
           >
-            {busy ? "working…" : "onboard this domain"}
+            {busy ? "Working…" : "Onboard this domain"}
           </button>
         </div>
       )}
@@ -665,7 +665,7 @@ function Subscription() {
           />
         </label>
         <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
-          see what subscribing this would do
+          See what subscribing this would do
         </button>
       </div>
 
@@ -697,7 +697,7 @@ function Subscription() {
             onClick={() => void apply()}
             disabled={busy || (plan.subscribed !== null && plan.consumerAttached !== false) || plan.error !== null}
           >
-            {busy ? "working…" : "subscribe this domain"}
+            {busy ? "Working…" : "Subscribe this domain"}
           </button>
         </div>
       )}

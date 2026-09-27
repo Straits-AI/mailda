@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { assertWithinBudget, BUDGETS } from "@mailda/budgets";
 import { createSystemCtx } from "@mailda/runtime";
 
-import { messagePageQuery } from "../src/authz-read.ts";
+import { messagePageQuery, needsLookback, type MessagePage } from "../src/authz-read.ts";
 import { buildSupervisedQuery, liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
@@ -57,6 +57,23 @@ const DELIVERIES = 1200;
 
 const AUGUST = Date.parse("2026-08-01T00:00:00.000Z");
 
+/**
+ * Readers whose own state differs, each holding content read on every mailbox (0062, 0067, cases).
+ *
+ * `READER` is the **healthy mixed corpus** `message-page-size.md` sizes the lookback on, seeded by delivery
+ * index `i`: one in twenty in Trash, half the rest in Archive (so half stay in the Inbox), one in five unread,
+ * one in twenty a case the reader holds. `ZERO` has filed everything, read everything and holds nothing: the
+ * inbox-zero reader, whose Inbox, Unread and Mine are where the lookback is meant to be felt. The three
+ * `FILED_*` readers have filed 1 %, 50 % and 95 % of the corpus, for the placed plan's cost.
+ */
+const ZERO = "usr_page_zero";
+const FILED = { "1": "usr_page_filed_1", "50": "usr_page_filed_50", "95": "usr_page_filed_95" } as const;
+/** A sealed preview's width for a Latin line (`message-metadata-bytes.md`), and the line a reader receives. */
+const SEALED = "A".repeat(200);
+const OPENED = "Please find the revised delivery schedule attached; the first consignment ships on the 14th, and the "
+  + "second on the 21st.";
+if (Array.from(OPENED).length !== 120) throw new Error("the fixture preview must be PREVIEW_CHARS (120) wide");
+
 interface Cost {
   rowsRead: number;
   rows: number;
@@ -66,34 +83,58 @@ async function pageCost(options: {
   after: { at: string; id: string } | null;
   mailboxId: string | null;
   limit: number;
-}): Promise<Cost & { keys: Array<{ at: string; id: string }>; bytes: number }> {
+  reader?: string;
+  filter?: Partial<Pick<MessagePage, "place" | "unread" | "mine">>;
+  /** Overrides `messages.max_lookback`, only to measure the lookback's per-message slope. */
+  lookback?: number;
+}): Promise<Cost & { keys: Array<{ at: string; id: string }>; bytes: number; exhausted: boolean; edgeRowsRead: number }> {
+  const reader = options.reader ?? READER;
+  const page: MessagePage = {
+    after: options.after, mailboxId: options.mailboxId, q: null, since: null, until: null, from: null,
+    conversationId: null, label: null, place: null, unread: false, mine: false, ...options.filter,
+  };
   const query = messagePageQuery({
-    readerId: "usr_reader",
+    readerId: reader,
     nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
-    subjects: [READER],
+    subjects: [reader],
     supervised: {
-      metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
-      content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
+      metadata: liveGrantsBySubject(ORG, reader, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
+      content: liveGrantsBySubject(ORG, reader, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
     // `q: null` — this file prices the plain listing. Search has its own receipt and its own measurement,
     // because a searched page is a different plan and averaging the two would describe neither.
-    page: { after: options.after, mailboxId: options.mailboxId, q: null, since: null, until: null, from: null, conversationId: null, label: null },
+    page,
     limit: options.limit,
+    lookback: needsLookback(page) ? options.lookback ?? BUDGETS["messages.max_lookback"] : null,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)
-    .all<{ id: string; accepted_at: string; supervised_grant_id: string | null }>();
+    .all<{ id: string; accepted_at: string; supervised_grant_id: string | null; standing_content: number }>();
 
   const rows = result.results;
+  /*
+   * Both statements, as `listMessages` runs them: the edge only after a lookback page that did not fill. The
+   * receipt's lookback figures are the two together, because that is what one request costs.
+   */
+  let edgeRowsRead = 0;
+  let exhausted = false;
+  if (query.edge !== null && rows.length < options.limit) {
+    const edge = await testEnv.CATALOG.prepare(query.edge.sql).bind(...query.edge.params).all();
+    edgeRowsRead = edge.meta.rows_read ?? 0;
+    exhausted = edge.results.length === 2;
+  }
   return {
-    rowsRead: result.meta.rows_read ?? 0,
+    rowsRead: (result.meta.rows_read ?? 0) + edgeRowsRead,
+    edgeRowsRead,
     rows: rows.length,
     keys: rows.map((row) => ({ at: row.accepted_at, id: row.id })),
-    // What the page weighs on the wire, with the column the response strips removed — so the figure is the
-    // body a reader actually receives rather than the row the query returned.
+    exhausted,
+    // What the page weighs on the wire: the columns the response strips removed and the preview a content
+    // reader receives in their place, so the figure is the body a reader actually gets.
     bytes: new TextEncoder().encode(JSON.stringify(
-      rows.map(({ supervised_grant_id: _grant, ...row }) => row),
+      rows.map(({ supervised_grant_id: _grant, preview_sealed: _sealed, preview_generation: _generation, ...row }:
+        Record<string, unknown>) => ({ ...row, preview: row.standing_content === 1 ? OPENED : null })),
     )).length,
   };
 }
@@ -136,10 +177,10 @@ beforeAll(async () => {
     testEnv.CATALOG.prepare(
       "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
     ).bind(ctx.id("addr"), ORG, address, mailboxId, at),
-    testEnv.CATALOG.prepare(
+    ...[READER, ZERO, ...Object.values(FILED)].map((reader) => testEnv.CATALOG.prepare(
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,?,?,?,?)`,
-    ).bind(ctx.id("rt"), ORG, READER, "mailbox.content.read", "mailbox", mailboxId, at),
+    ).bind(ctx.id("rt"), ORG, reader, "mailbox.content.read", "mailbox", mailboxId, at)),
   ]));
 
   /*
@@ -150,7 +191,7 @@ beforeAll(async () => {
    * column exists for. One inbound message to two addresses of one mailbox lands as two receipts with one
    * timestamp, so a corpus with distinct timestamps everywhere would test a total order the real one is not.
    */
-  const statements = [];
+  const statements: D1PreparedStatement[] = [];
   for (let n = 0; n < DELIVERIES; n++) {
     /*
      * **A deterministic id, not `ctx.id("rcpt")`.** The keyset order is `(accepted_at, id)` and every fourth
@@ -178,15 +219,48 @@ beforeAll(async () => {
          blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
     ).bind(receiptId, ORG, `evt_page_${n}`, `sender-${n}@supplier.example.net`, address, 24_576,
       `${ORG}/raw/${receiptId}`, "0".repeat(64), acceptedAt));
+    /*
+     * The row projections (0068) as a settled Node holds them: 70 % with a display name about sixteen
+     * characters wide, every one a sealed preview of a Latin line's width, projected.
+     */
+    const messageId = `msg_${String(n).padStart(26, "0")}`;
+    const conversationId = `cnv_${String(n).padStart(26, "0")}`;
     statements.push(testEnv.CATALOG.prepare(
       `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id,
          thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
-         conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(ctx.id("msg"), ORG, "2026-08", `${ORG}/raw/${receiptId}`, "0".repeat(64), 24_576,
+         conversation_id, from_name, preview_sealed, preview_generation, preview_state)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'projected')`,
+    ).bind(messageId, ORG, "2026-08", `${ORG}/raw/${receiptId}`, "0".repeat(64), 24_576,
       `<CAJ${n}.xxxxxxxxxxxxxxxxxxxx@mail.example-supplier.com>`, ctx.id("thr"),
       `Re: Purchase order 4501${n} — revised delivery schedule attached`,
       `accounts-payable-${n}@example-supplier.com`, acceptedAt, acceptedAt, receiptId, acceptedAt,
-      ctx.id("cnv")));
+      conversationId, n % 10 < 7 ? `Accounts ${String(n).padStart(4, "0")} desk` : null, SEALED));
+    /*
+     * **The readers' own rows, seeded** — a correlated probe into an empty table reads nothing, which is how
+     * the `read` column (0062) went unmeasured. A case for every delivery, one in twenty held by `READER`.
+     */
+    const mailboxId = address === ADDRESS_QUIET ? MAILBOX_QUIET : address === ADDRESS_B ? MAILBOX_B : MAILBOX_A;
+    const held = n % 20 === 3;
+    statements.push(testEnv.CATALOG.prepare(
+      `INSERT INTO cases (id, org_id, conversation_id, mailbox_id, state, state_at, assignee, claimed_at, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(`cas_${String(n).padStart(26, "0")}`, ORG, conversationId, mailboxId, held ? "claimed" : "open",
+      acceptedAt, held ? READER : null, held ? acceptedAt : null, acceptedAt));
+    const read = (reader: string) => statements.push(testEnv.CATALOG.prepare(
+      "INSERT INTO message_reads (org_id, user_id, message_id, read_at) VALUES (?,?,?,?)",
+    ).bind(ORG, reader, messageId, acceptedAt));
+    const file = (reader: string, place: "archive" | "trash") => statements.push(testEnv.CATALOG.prepare(
+      `INSERT INTO message_places (org_id, user_id, message_id, receipt_id, accepted_at, place, placed_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ORG, reader, messageId, receiptId, acceptedAt, place, acceptedAt));
+    if (n % 5 !== 1) read(READER);
+    if (n % 20 === 0) file(READER, "trash");
+    else if (n % 2 === 0) file(READER, "archive");
+    read(ZERO);
+    file(ZERO, "archive");
+    if (n % 100 === 0) file(FILED["1"], "archive");
+    if (n % 2 === 0) file(FILED["50"], "archive");
+    if (n % 20 !== 0) file(FILED["95"], "archive");
   }
   // Chunked because a batch is one transaction and 2,400 statements in one is slower than the suite's
   // timeout allows, not because of the parameter limit — that one is per statement.
@@ -330,6 +404,121 @@ describe("what one page of the inbox costs", () => {
     // The page is still correct, which is the part that is asserted: every row the quiet mailbox has, and no
     // row of anybody else's.
     expect(quiet.rows).toBe(QUIET_DELIVERIES);
+  });
+
+  it("prints what a lookback on a quiet mailbox costs: the walk twice, once for the page and once for its edge", async () => {
+    /*
+     * The quiet mailbox again, now with the Inbox filter. The reader sees fewer than `messages.max_lookback`
+     * messages there, so the page never fills and the edge runs, and its `OFFSET N - 1` passes every receipt
+     * the page statement already passed, the other mailboxes' included. The authorization term (here the
+     * mailbox term, a predicate in the same inner statement) is paid twice. Printed rather than held to the
+     * list budget for the reason the quiet figure above gives; the ceiling, twice the walk, is asserted.
+     */
+    const size = BUDGETS["messages.page_size"];
+    const walk = await pageCost({ after: null, mailboxId: MAILBOX_QUIET, limit: size + 1 });
+    const figures: string[] = [];
+    for (const [who, reader, rows] of [["reader", READER, 1], ["inbox_zero", ZERO, 0]] as const) {
+      const looked = await pageCost({
+        after: null, mailboxId: MAILBOX_QUIET, limit: size + 1, reader, filter: { place: "inbox" },
+      });
+      figures.push(`${who}=${looked.rowsRead}(page ${looked.rowsRead - looked.edgeRowsRead} + edge ${looked.edgeRowsRead})`);
+      // Anti-vacuity: the page did not fill, so the edge ran, and it found fewer than N (not exhausted).
+      expect([looked.rows, looked.exhausted], who).toEqual([rows, false]);
+      expect(looked.edgeRowsRead, `${who}: the edge did not run`).toBeGreaterThan(0);
+      expect(looked.rowsRead, `${who}: the lookback read more than the walk twice`).toBeLessThanOrEqual(2 * walk.rowsRead);
+    }
+    console.log(`MEASURE message_page_sparse_lookback  walk=${walk.rowsRead}  ${figures.join("  ")}`);
+  });
+
+  it("pages Archive and Trash from the filing table, a page's cost however much is filed", async () => {
+    /*
+     * The placed plan (0067), asserted against the list budget at three fractions of the corpus filed. Its
+     * cost is a page because `mpl_by_place` drives it; driven from the walk instead, a reader who has filed 1 %
+     * would pay for the other 99 % on every Archive load — the mutation that turns this red.
+     */
+    const size = BUDGETS["messages.page_size"];
+    const figures: string[] = [];
+    for (const [fraction, reader] of Object.entries(FILED)) {
+      const archive = await pageCost({
+        after: null, mailboxId: null, limit: size + 1, reader, filter: { place: "archive" },
+      });
+      figures.push(`filed_${fraction}pct=${archive.rowsRead}(${archive.rows} rows)`);
+      assertWithinBudget("authz.list.max_rows_read", archive.rowsRead, { scenario: `Archive, ${fraction} % filed` });
+      expect(archive.rows, `${fraction} % filed`).toBe(Math.min(size + 1, Math.ceil(DELIVERIES * Number(fraction) / 100)));
+    }
+    const trash = await pageCost({ after: null, mailboxId: null, limit: size + 1, filter: { place: "trash" } });
+    figures.push(`trash_5pct=${trash.rowsRead}(${trash.rows} rows)`);
+    assertWithinBudget("authz.list.max_rows_read", trash.rowsRead, { scenario: "Trash" });
+    console.log(`MEASURE message_page_placed  ${figures.join("  ")}`);
+  });
+
+  /*
+   * ## Sizing the lookback (§7 Q-A), and the three assertions that hold it (a)–(c)
+   *
+   * `docs/receipts/message-page-size.md` carries the arithmetic with these figures. F is how many messages the
+   * healthy reader's default Inbox looks through to fill its page, counted from the seeded data rather than
+   * estimated; `messages.max_lookback` is sized at four times it. c is the per-message cost of both statements,
+   * measured as a slope between two lookbacks on the inbox-zero reader, so the fixed cost falls out.
+   */
+  function inboxFill(): number {
+    // Newest first is `n` descending here (acceptance time grows with `n`, ties broken by the zero-padded id).
+    // The healthy reader's Inbox is every odd `n` (even ones are filed); the page is full at `size + 1` rows.
+    const size = BUDGETS["messages.page_size"];
+    let seen = 0;
+    let looked = 0;
+    for (let n = DELIVERIES - 1; n >= 0 && seen < size + 1; n--) {
+      looked += 1;
+      if (!(n % 20 === 0 || n % 2 === 0)) seen += 1;
+    }
+    return looked;
+  }
+
+  it("(a) fills the healthy Inbox inside the list budget, never exhausted, with 4 x F <= messages.max_lookback", async () => {
+    const size = BUDGETS["messages.page_size"];
+    const F = inboxFill();
+    const healthy = await pageCost({ after: null, mailboxId: null, limit: size + 1, filter: { place: "inbox" } });
+    console.log(`MEASURE message_page_lookback_healthy  F=${F}  rows_read=${healthy.rowsRead}  rows=${healthy.rows}  `
+      + `max_lookback=${BUDGETS["messages.max_lookback"]}  bytes_per_row=${Math.round(healthy.bytes / healthy.rows)}`);
+    assertWithinBudget("authz.list.max_rows_read", healthy.rowsRead, { scenario: "the healthy default Inbox" });
+    expect(healthy.rows, "the healthy Inbox did not fill its page").toBe(size + 1);
+    expect(healthy.exhausted).toBe(false);
+    // A corpus or query change that grows F goes red here and asks for a remeasure of the lookback.
+    expect(4 * F).toBeLessThanOrEqual(BUDGETS["messages.max_lookback"]);
+  });
+
+  it("(b) bounds an inbox-zero Inbox, Unread and Mine at c x N + the first page, however much mail there is", async () => {
+    const size = BUDGETS["messages.page_size"];
+    const N = BUDGETS["messages.max_lookback"];
+    // Anti-vacuity: an unbounded walk over twice the lookback would breach the bound below.
+    expect(DELIVERIES).toBeGreaterThanOrEqual(2 * N);
+    const zero = (filter: Partial<Pick<MessagePage, "place" | "unread" | "mine">>, lookback?: number) =>
+      pageCost({ after: null, mailboxId: null, limit: size + 1, reader: ZERO, filter, ...(lookback === undefined ? {} : { lookback }) });
+    const atN = await zero({ place: "inbox" });
+    const atHalf = await zero({ place: "inbox" }, N / 2);
+    const c = Math.ceil((atN.rowsRead - atHalf.rowsRead) / (N / 2));
+    const firstPage = (await pageCost({ after: null, mailboxId: null, limit: size + 1, filter: { place: "inbox" } })).rowsRead;
+    const unread = await zero({ place: "inbox", unread: true });
+    const mine = await zero({ place: "inbox", mine: true });
+    console.log(`MEASURE message_page_lookback_exhausted  N=${N}  inbox_zero=${atN.rowsRead}  at_half=${atHalf.rowsRead}  `
+      + `c=${c}  no_unread=${unread.rowsRead}  no_mine=${mine.rowsRead}  first_page=${firstPage}  `
+      + `bound=${c * N + firstPage}  lookback_rows_read_per_message=${BUDGETS["messages.lookback_rows_read_per_message"]}`);
+    expect(c, "the per-message cost moved: remeasure messages.lookback_rows_read_per_message")
+      .toBeLessThanOrEqual(BUDGETS["messages.lookback_rows_read_per_message"]);
+    for (const [what, cost] of [["inbox zero", atN], ["nothing unread", unread], ["no case held", mine]] as const) {
+      expect(cost.rows, what).toBe(0);
+      expect(cost.exhausted, what).toBe(true);
+      expect(cost.rowsRead, `${what} read past the lookback`)
+        .toBeLessThanOrEqual(BUDGETS["messages.lookback_rows_read_per_message"] * N + firstPage);
+    }
+  });
+
+  it("(c) stops a healthy page early: less than half of what an exhausted lookback reads", async () => {
+    const size = BUDGETS["messages.page_size"];
+    const healthy = await pageCost({ after: null, mailboxId: null, limit: size + 1, filter: { place: "inbox" } });
+    const exhausted = await pageCost({
+      after: null, mailboxId: null, limit: size + 1, reader: ZERO, filter: { place: "inbox" },
+    });
+    expect(healthy.rowsRead * 2).toBeLessThan(exhausted.rowsRead);
   });
 
   it("prints how many ids of one page fit in one supervised.query entry", async () => {

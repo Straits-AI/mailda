@@ -57,7 +57,10 @@ export async function checkVault(env: Env): Promise<Finding[]> {
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `${behind} receipt(s) reference evidence sealed under an older key generation. ` +
+      // "Together with each one's row preview": `reseal.ts` re-seals a receipt's preview (0068) before it marks
+      // the receipt current, so this count of receipts is also the count of previews behind.
+      detail: `${behind} receipt(s) reference evidence sealed under an older key generation, together with ` +
+        `each one's row preview. ` +
         `Generation 0 is a constant published in the Mailda repository, so that mail is not protected.`,
       fix: "POST /api/maintenance/reseal repeatedly until `remaining` reaches 0; it is resumable and " +
         "verifies each message against its recorded plaintext SHA-256",

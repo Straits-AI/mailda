@@ -9,11 +9,8 @@ import { answerWith, calls, reset } from "./session-stub.ts";
  * an address renders what became of its rule in the same words adding does, and `not_removed` arrives whole.
  */
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  useRouterState: () => ({ location: { pathname: "/people" } }),
-  Link: ({ children }: { children?: unknown }) => children,
-}));
+const route = vi.hoisted(() => ({ pathname: "/people" }));
+vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { People } = await import("../../src/client/app/screens/people.tsx");
 
@@ -48,7 +45,7 @@ describe("a mailbox's addresses on People", () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
     expect(Array.from(list.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
-      "support@example.test remove", "help@example.test remove",
+      "support@example.test Remove", "help@example.test Remove",
     ]);
   });
 

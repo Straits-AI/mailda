@@ -475,8 +475,9 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
         metadata: liveGrantsBySubject(who.orgId, who.userId, at, SCOPES_FOR_METADATA),
         content: liveGrantsBySubject(who.orgId, who.userId, at, SCOPES_FOR_CONTENT),
       },
-      page: { after: null, mailboxId: null, q , since: null, until: null, from: null, conversationId: null, label: null },
+      page: { after: null, mailboxId: null, q , since: null, until: null, from: null, conversationId: null, label: null, place: null, unread: false, mine: false },
       limit: 51,
+      lookback: null,
     });
     const rows = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
     return rows.results.map((r) => r.id);

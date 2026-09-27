@@ -21,9 +21,11 @@ are separate because a grant of scope `metadata` must reach the subject index an
 person permitted to see who wrote and what about is not thereby permitted the text.
 
 `message_body_search` is `content = ''`, so it stores no body text. That is deliberate and it has a
-consequence worth knowing: there are no body excerpts in a result list, and `snippet()` returns null rather
-than failing. Showing the matching line means fetching the message from R2 and decrypting it, which is a
-`mailbox.content.read` operation and is authorized as one.
+consequence worth knowing: the index yields no excerpt (`snippet()` returns null on a contentless table rather
+than failing), so showing the matching line would mean fetching the message from R2 and decrypting it, which
+is a `mailbox.content.read` operation and is authorized as one. A result row may carry the message's stored
+preview (ADR 45), which is the start of the body rather than the matching line, sealed under the content key and
+opened only for readers with standing content read, exactly as every listing row does.
 
 ## A searched page is ranked and capped, and has no cursor
 

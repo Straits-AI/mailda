@@ -2,12 +2,14 @@
 id: evidence-lifecycle
 kind: measured-tripwire
 measured_on: 2026-08-04
+re_measured_on: 2026-09-26  # reseal.subrequests_per_message only; the reconcile values are the 4 August figures
 stale_when: >
-  R2 list() changes its per-call object limit, the 1,000-subrequest per-invocation cap changes, or a
-  measured re-seal of one message moves materially from 6 subrequests
+  R2 list() changes its per-call object limit, the 1,000-subrequest per-invocation cap changes, a
+  measured re-seal of one message moves materially from 8 subrequests, or resealBatch gains or loses a
+  per-message statement or key request (the row preview's step, 0068, is two of the eight)
 values:
   reseal.batch_size: 100
-  reseal.subrequests_per_message: 6
+  reseal.subrequests_per_message: 8
   reconcile.list_limit: 150
   reconcile.orphan_grace_seconds: 3600
 ---
@@ -32,19 +34,47 @@ to generation 1:
 
 Plus 2 fixed (candidate query, remaining count). At 100 per batch that is **602 subrequests**.
 
+**Remeasured 26 September 2026: 8 per message, because the row preview moves with its receipt (0068).** A
+message's row preview is sealed under the same content key as its evidence, so `resealBatch` re-seals it in
+the same step, before the receipt is marked current: one D1 `SELECT` for the preview and one D1 `UPDATE` for
+its new seal. The two keys it needs (the preview's old generation to open, the current one to seal) are asked
+once per run and cached, so they are fixed cost, not per message.
+
+| | |
+|---:|:---|
+| 6 | as above |
+| 1 | D1 select: the message's preview, if it is sealed under an older generation |
+| 1 | D1 update: the preview re-sealed under the current generation |
+| **8** | **subrequests per message** |
+
+Measured, not listed: `apps/node/worker/test/evidence-lifecycle.test.ts` ("costs
+reseal.subrequests_per_message per message") counts every D1 execution, R2 call and vault RPC `resealBatch`
+makes, as the marginal cost between a batch of one and a batch of three, in the Workers runtime:
+
+```
+MEASURE reseal  one=13  three=29  per_message=8
+```
+
+The same instrument, run with the preview step removed, reads 6: the table above and this counter agree on
+what the step before it cost. Fixed cost is now 5 (the target generation, the candidate query, the remaining
+count, and the two run-cached preview keys), so 100 per batch is **805 subrequests**, inside the Free ceiling
+the batch was derived against (`test/evidence-lifecycle.test.ts` asserts `batch × per message + (one − per
+message)` under it, the fixed cost taken from the same measurement rather than restated).
+`reseal.batch_size` stays 100: the measurement did not move it.
+
 **Corrected 13 August 2026.** This originally read "inside the 1,000 cap", and 1,000 has not been the
 per-invocation ceiling since **11 February 2026**. The Paid default is now **10,000**, configurable to 10
 million. See the correction in `doctor-check-cost.md`, which carried the same withdrawn figure as a value.
 
-So the subrequest ceiling **no longer binds this choice**: 602 sits at 6% of it, and even 200 per batch
-(1,202) would fit ten times over. `reseal.batch_size` stays **100** anyway, and the reason is now explicit
-rather than inherited. The original derivation's *other* half still holds, which is that a failing message
+So the subrequest ceiling **no longer binds this choice**: 602 sat at 6% of it (805 at 8% since the 26
+September remeasure), and even 200 per batch (1,605 at today's figures) would fit six times over.
+`reseal.batch_size` stays **100** anyway, and the reason is now explicit rather than inherited. The original derivation's *other* half still holds, which is that a failing message
 costs a retry, and nothing has measured the CPU or wall-clock cost of a 200-message batch against the
 5-minute CPU limit. **A bound that has become generous is not thereby wrong.** Raising it is a fresh
 measurement, not an arithmetic consequence of somebody else's cap changing.
 
-A shard holds ~8.5M messages (`message-metadata-bytes.md`), so a full re-seal is **~85,000
-invocations**. That is why the operation is resumable rather than a script, and why progress lives in
+A shard holds millions of messages (`message-metadata-bytes.md`), so a full re-seal is **tens of thousands
+of invocations**. That is why the operation is resumable rather than a script, and why progress lives in
 an indexed column instead of in memory.
 
 ## Reconcile list limit: 200
@@ -53,7 +83,7 @@ an indexed column instead of in memory.
 decide whether it is an orphan, and each sampled receipt costs an R2 `head`. So the real bound is
 subrequests, not the list API: 200 objects + 200 receipts ≈ 400 subrequests plus fixed overhead.
 
-`truncated` is reported in the output. A pass that examined 200 of 8.5M objects and said "no orphans"
+`truncated` is reported in the output. A pass that examined 200 of millions of objects and said "no orphans"
 would be a lie, and the same rule applies here as to `doctor`'s evidence sample.
 
 ## Orphan grace: 3,600 seconds

@@ -385,6 +385,10 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     exempt: "A person's own bookmark: whether they opened a message. Not an act on the mail, and one entry " +
       "per open would drown the trail. The row is the record, and it is theirs.",
   },
+  message_places: {
+    exempt: "A person's own filing of a message they may already read; nobody else's view changes and nothing " +
+      "is destroyed. The row is the record, and it is theirs.",
+  },
 
   /* ---- Layer 4: the Butler object (#49) ---- */
   butlers: {

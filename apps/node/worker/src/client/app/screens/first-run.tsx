@@ -13,7 +13,9 @@ import { ProgressList, useReadiness, type Step } from "../onboarding.tsx";
  * mail is routed to it, this is the whole app for an administrator: the steps, and the next one with its
  * two ways, the terminal first because it needs no credential a browser cannot hold.
  *
- * `/setup` and `/doctor` still render as themselves, because the second way happens on `/setup`.
+ * `/setup`, `/doctor` and `/settings` still render as themselves: the second way happens on `/setup`,
+ * Doctor is the diagnostic an administrator needs most when the Node is not working, and signing out lives
+ * on `/settings`, so a gated administrator can always leave.
  */
 
 const UPDATE = "curl -fsSL https://mailda.site/update.sh | bash";
@@ -58,7 +60,7 @@ export function FirstRun({ steps, next, onOpenAnyway }: { steps: Step[]; next: S
         </section>
       )}
       <p className="dim first-run-anyway">
-        <button type="button" className="linkish" onClick={onOpenAnyway}>open the app anyway</button>
+        <button type="button" className="linkish" onClick={onOpenAnyway}>Open the app anyway</button>
         {" "}(this tab only; sending will refuse until an address is routed)
       </p>
     </section>
@@ -76,7 +78,10 @@ export function Gate({ children }: { children: React.ReactNode }) {
   const path = useRouterState({ select: (state) => state.location.pathname });
   const readiness = useReadiness();
   const [opened, setOpened] = useState(overridden);
-  if (path === "/setup" || path === "/doctor" || opened || readiness.state === "unknown" || readiness.state === "ready") {
+  if (
+    path === "/setup" || path === "/doctor" || path === "/settings"
+    || opened || readiness.state === "unknown" || readiness.state === "ready"
+  ) {
     return <>{children}</>;
   }
   if (readiness.state === "loading") return <div className="first-run"><Nothing kind="loading" /></div>;

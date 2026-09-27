@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Scroller } from "../chrome.tsx";
 import {
   createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
@@ -202,7 +202,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
     <section className="butler-detail" aria-label={`Butler ${butler.name}`}>
       <header className="ledger-head">
         <h2>{butler.name}</h2>
-        <button type="button" className="linkish" onClick={onDone}>close</button>
+        <button type="button" className="linkish" onClick={onDone}>Close</button>
       </header>
 
       {problem === null ? null : (
@@ -221,7 +221,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         it. That is the axe best-practice advisory this screen would otherwise carry.
       */}
       <fieldset className="field-row butler-format">
-        <legend>format</legend>
+        <legend>Format</legend>
         {(["yaml", "json"] as const).map((option) => (
           <label key={option} htmlFor={`butler-format-${option}`}>
             <input
@@ -249,7 +249,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
       </fieldset>
 
       <label className="field-row" htmlFor="butler-source">
-        <span>source</span>
+        <span>Source</span>
         <textarea
           id="butler-source"
           className="butler-source mono"
@@ -260,7 +260,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         />
       </label>
       <p className="butler-actions">
-        <button className="quiet" type="button" onClick={() => void save()} disabled={busy}>save draft</button>
+        <button className="quiet" type="button" onClick={() => void save()} disabled={busy}>Save draft</button>
         {" "}
         <button
           type="button"
@@ -268,7 +268,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
           onClick={() => void publish()}
           disabled={busy || draft === null}
         >
-          publish
+          Publish
         </button>
         {/*
           Which program is in the box, said rather than left to be inferred. "Nothing unpublished to publish"
@@ -318,7 +318,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
                 {ranButler.slice(0, 5).map((row) => (
                   <li key={row.id}>
                     <button className="quiet" type="button" onClick={() => void dryRun(row.id)} disabled={busy}>
-                      dry run over {when(row.started_at)}
+                      Dry run over {when(row.started_at)}
                     </button>
                     {" "}
                     <span className="dim">{row.trigger_event} · {row.state}</span>
@@ -449,7 +449,7 @@ function Paused({ butler }: { butler: ButlerRow }) {
       <p>{butler.pause.detail}</p>
       <p className="dim mono">placed by {butler.pause.trippedBy} · {when(butler.pause.placedAt)}</p>
       <label className="field-row" htmlFor={`resume-${butler.id}`}>
-        <span>why is it safe to resume?</span>
+        <span>Why is it safe to resume?</span>
         <input
           id={`resume-${butler.id}`}
           value={reason}
@@ -457,7 +457,7 @@ function Paused({ butler }: { butler: ButlerRow }) {
         />
       </label>
       <button className="quiet" type="button" onClick={() => void resume()} disabled={reason.trim() === ""}>
-        resume
+        Resume
       </button>
       {problem === null ? null : <p role="alert">{problem}</p>}
     </div>
@@ -469,7 +469,7 @@ function Runs({ runs, onRunAgain }: { runs: ButlerRunRow[]; onRunAgain: (runId: 
     return <Nothing kind="empty" detail="No Butler has run yet. A run comes from a delivery." />;
   }
   return (
-    <div className="scroller">
+    <Scroller label="Runs">
       {/*
         Said plainly, because "replay" invites the reading that nothing happens. A re-run is a new run whose
         writes are real; what makes it safe to offer is the gate, not the word — a Butler's send waits in the
@@ -509,14 +509,14 @@ function Runs({ runs, onRunAgain }: { runs: ButlerRunRow[]; onRunAgain: (runId: 
                 {/* Offered on every finished run: whether it *can* be re-run (input recorded, version still
                     published, Butler not paused) is the Node's answer, and its refusal names which. */}
                 {run.finished_at === null ? <span className="dim">—</span> : (
-                  <button type="button" className="linkish" onClick={() => onRunAgain(run.id)}>run again</button>
+                  <button type="button" className="linkish" onClick={() => onRunAgain(run.id)}>Run again</button>
                 )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </Scroller>
   );
 }
 
@@ -549,7 +549,7 @@ export function Butlers() {
     <header className="ledger-head">
       <h1>Butlers</h1>
       <p className="new-message">
-        <button type="button" className="primary" onClick={() => void create()}>new butler</button>
+        <button type="button" className="primary" onClick={() => void create()}>New butler</button>
       </p>
     </header>
   );
@@ -583,7 +583,7 @@ export function Butlers() {
       {rows.length === 0 ? (
         <Nothing kind="empty" detail="Nothing is automated on this Node yet." />
       ) : (
-        <div className="scroller">
+        <Scroller label="Butlers">
           <table>
             <thead>
               {/*
@@ -608,14 +608,14 @@ export function Butlers() {
                   <td className="dim">{row.draft_version_id === null ? "—" : "unpublished changes"}</td>
                   <td>
                     <button type="button" className="linkish" onClick={() => setEditing(row.id)}>
-                      open
+                      Open
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       )}
 
       {rows.filter((row) => row.pause !== null).map((row) => (

@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { apiFetch } from "/app/session.js";
 import { CONFIG } from "/app/config.js";
 
-import { useMailboxes } from "../api.ts";
+import { claimCase, stealCase, useMailboxes } from "../api.ts";
 import { splitAddresses } from "./split-addresses.ts";
 
 /**
@@ -12,9 +12,11 @@ import { splitAddresses } from "./split-addresses.ts";
  *
  * ## Why it is docked rather than a route
  *
- * Variant A's compose-as-route was rejected on a product ground, not a taste one: replying moves the
- * original off screen, and for invoice and shipment mail a reply exists precisely to quote a PO number or
- * a container reference. So the composer collapses into a dock and the message stays readable behind it.
+ * Variant A's compose-as-route was rejected on a product ground, not a taste one: a route unmounts with
+ * navigation, and a reply is often written while checking something elsewhere. So the composer is one dock in
+ * the shell. Over a mail screen it takes the whole reader column (never the list), and its head names the
+ * message it answers, because the reader it covers is where that was said; the quote in the body carries the
+ * PO number or container reference a reply to invoice or shipment mail exists to repeat.
  *
  * ## The three draft phases, and why the middle one exists now
  *
@@ -83,6 +85,18 @@ export interface ComposerContext {
   forwardOfMessageId?: string;
   /** A draft to resume by id — a new-message draft from the drafts list, which no reply keys. */
   draftId?: string;
+  /**
+   * The case this reply answers, claimed by `reply()` before the composer opened. When present the send claims
+   * it again immediately before sealing (a claim is idempotent for its holder), so a case released or taken
+   * while this was being written stops the send and names the holder (#42).
+   */
+  caseId?: string;
+  /**
+   * The subject of the message this answers or forwards, as the reader showed it. The dock covers the reader
+   * column, so its head says what the reply is about; absent (a new message, a draft resumed from its list),
+   * the head says nothing it does not know.
+   */
+  originalSubject?: string;
   to?: string;
   cc?: string;
   subject?: string;
@@ -102,6 +116,23 @@ interface DraftResponse {
     bodyUnavailable?: "missing" | "unreadable" | null;
     updatedAt: string;
   } | null;
+}
+
+/**
+ * What the shell may ask of the open composer (`shell-context.tsx`): which draft it is writing, so reopening that
+ * draft from `/drafts` keeps the dock rather than reloading it, and to save now, so signing out does not end the
+ * session under words typed in the autosave pause.
+ */
+export interface ComposerHandle {
+  /** The draft's id once the Node has one; a new message has none until its first save. */
+  draftId(): string | null;
+  /** Everything on screen onto the Node. Null once it is there, or the Node's words for why it is not. */
+  save(): Promise<string | null>;
+  /**
+   * Whether Seal and send is running, from the claim before it to the Node's answer. The shell keeps this dock while
+   * it is: replaced, its refusal would land on a component nobody can see.
+   */
+  sealing(): boolean;
 }
 
 /** Where the bytes are. Three states, and none of them claims more than happened. */
@@ -129,7 +160,11 @@ function phaseText(phase: Phase): string {
   }
 }
 
-export function Composer({ context, onClose }: { context: ComposerContext; onClose: () => void }) {
+export function Composer({ context, onClose, ref }: {
+  context: ComposerContext;
+  onClose: () => void;
+  ref?: React.Ref<ComposerHandle>;
+}) {
   const [to, setTo] = useState(context.to ?? "");
   // Cc and Bcc: the seal and the draft have taken both for months (the 17 September coverage audit); the
   // interface offered one To. Shown folded unless something is in them, so a plain reply stays a plain form.
@@ -151,6 +186,12 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   const [sealing, setSealing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /**
+   * The Node's words when the claim at send found the case held by somebody else (#42). Separate from
+   * `problem` because it carries a way through — take the case, audited, and send — which a refusal of the
+   * seal itself does not.
+   */
+  const [held, setHeld] = useState<string | null>(null);
+  /**
    * Which address this goes out as. Empty means "not chosen", which is only a problem when there is a choice
    * to make — the Node decides that, and its refusal names the addresses.
    */
@@ -168,6 +209,29 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
     .map((address) => address.trim())
     .filter((address) => address !== "");
   const navigate = useNavigate();
+  const fromField = useRef<HTMLSelectElement>(null);
+  const toField = useRef<HTMLInputElement>(null);
+  const bodyField = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * Focus goes into the dock when it opens, and that is a keyboard-safety rule as much as a convenience.
+   *
+   * The Inbox answers single keys (R, A, E, J…) anywhere outside a field. A composer opened by R and left
+   * unfocused would hand the next letter typed to the list: an "a" meant for the reply would claim and open a
+   * reply-all instead. So a reply lands in its body with the caret **before** the quote, where the answer goes;
+   * a forward or a new message lands on the first field it needs, the From choice when there is one.
+   *
+   * Once, on mount: the Shell keys the composer by context, so a different message is a new mount.
+   */
+  useEffect(() => {
+    if (context.inReplyToMessageId !== undefined) {
+      bodyField.current?.focus();
+      bodyField.current?.setSelectionRange(0, 0);
+      return;
+    }
+    (fromField.current ?? toField.current)?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // `latest` exists so the debounced save reads the values at the moment it fires rather than the ones
   // captured when the timer was set — otherwise the last keystroke before a pause is the one that is lost,
@@ -247,6 +311,26 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * neither can wait for React to tell it what it already needs to know.
    */
   const inFlight = useRef<Promise<boolean> | null>(null);
+  /**
+   * Set once this draft is being thrown away or sealed: from then on nothing may write it again.
+   *
+   * Discard and a successful seal both end in `onClose()`, which unmounts this dock, and the unmount flush
+   * below then saw a reply that had never autosaved (or text typed inside the idle window) as unsaved and PUT a
+   * **new** draft after the person had discarded or sent it. The next Reply on that message resumed it: a
+   * discarded reply-all's Cc came back under R. Checked in `flush`, the one place every write passes through,
+   * so the debounce timer and the unmount are both covered by one line. Close and Discard are disabled while a
+   * seal is in the air, and anything else that asks for a write then waits for the seal's answer (`sealRun`).
+   */
+  const retired = useRef(false);
+  /**
+   * The seal in the air, resolving once the Node has answered it. A write asked for meanwhile (the dock taken
+   * away, a sign-out) waits for it: sealed, `retired` stays set and there is nothing to write; refused, the words
+   * are a draft again and are written like any others. Without the wait, `retired` answered "saved" for words
+   * nothing had saved, and a refused seal lost them.
+   */
+  const sealRun = useRef<Promise<boolean> | null>(null);
+  /** The Node's words for the last write that failed, which the phase label shows and `save` hands the shell. */
+  const failure = useRef<string | null>(null);
   /** True while `close` is waiting for the Node, so the buttons cannot be pressed twice. */
   const [closing, setClosing] = useState(false);
 
@@ -287,12 +371,11 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
         }),
       });
       if (!response.ok) {
-        const failure = (await response.json().catch(() => null)) as { message?: string } | null;
-        setPhase({ kind: "failed", why: failure?.message ?? `this Node answered ${response.status}` });
-        return false;
+        const refusal = (await response.json().catch(() => null)) as { message?: string } | null;
+        return failed(refusal?.message ?? `this Node answered ${response.status}`);
       }
       const { draft } = (await response.json()) as DraftResponse;
-      if (draft === null) return false;
+      if (draft === null) return failed("this Node answered without a draft");
       setDraftId(draft.id);
       /*
        * Into the ref as well as into state, and this is load-bearing rather than belt-and-braces.
@@ -307,12 +390,18 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
       // request was in flight, and recording the newer text as saved would skip the save that would have
       // stored it. `flush` reads this back and writes again when it differs.
       saved.current = { to: current.to, cc: current.cc, bcc: current.bcc, subject: current.subject, body: current.body };
+      failure.current = null;
       setPhase({ kind: "saved", at: draft.updatedAt });
       return true;
     } catch (error) {
-      setPhase({ kind: "failed", why: (error as Error).message });
-      return false;
+      return failed((error as Error).message);
     }
+  }
+
+  function failed(why: string): false {
+    failure.current = why;
+    setPhase({ kind: "failed", why });
+    return false;
   }
 
   /**
@@ -324,13 +413,16 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * and then writes again only if the text moved on while it waited.
    */
   async function flush(): Promise<boolean> {
+    const seal = sealRun.current;
+    if (seal !== null) await seal;
     const already = inFlight.current;
     if (already !== null) {
       const ok = await already;
       // Nothing typed while that was in the air, so its result is this call's answer.
       if (!unsaved()) return ok;
     }
-    if (!unsaved()) return true;
+    // After the wait as well as before it: a discard or a seal can begin while this one waits.
+    if (retired.current || !unsaved()) return true;
     const run = writeDraft();
     inFlight.current = run;
     try {
@@ -375,10 +467,19 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * Nobody awaits it. By the time a cleanup runs there is no component left to report to, and the request
    * is already with the browser, which finishes it without us. `setPhase` inside lands on an unmounted
    * component and is ignored — correct, since there is no longer a screen to update.
+   *
+   * Discard and a successful seal unmount the dock too, and must write nothing: `flush` refuses once
+   * `retired` is set, which they set before they close.
    */
   useEffect(() => () => { if (unsaved()) void flush(); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []);
+
+  useImperativeHandle(ref, () => ({
+    draftId: () => latest.current.draftId,
+    save: async () => (await flush() ? null : failure.current ?? "this draft could not be saved"),
+    sealing: () => sealing,
+  }));
 
   /**
    * Closes the dock, and does not lose what was typed doing it.
@@ -417,8 +518,63 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
 
   async function seal(event: React.FormEvent) {
     event.preventDefault();
+    await send("claim");
+  }
+
+  /**
+   * The seal, behind the claim at send (#42).
+   *
+   * `reply()` claimed the case before this composer opened, and this dock outlives navigation and can be
+   * resumed from the drafts list days later. In between, the case can be released, or taken by a colleague who
+   * is answering the same person. So a reply carrying a `caseId` claims again immediately before sealing —
+   * idempotent for whoever already holds it — and a `held` answer stops the send and names the holder rather
+   * than putting two answers in one correspondent's inbox. "Take it anyway" sends with `"steal"`: the audited
+   * steal is the claim, and a steal that is itself refused seals nothing. Cost: one POST per reply sent.
+   */
+  async function send(take: "claim" | "steal") {
     setProblem(null);
     setSealing(true);
+    let sealed = false;
+    try {
+      if (context.caseId !== undefined) {
+        const claimed = take === "steal" ? await stealCase(context.caseId) : await claimCase(context.caseId);
+        if (!claimed.ok) {
+          setHeld(claimed.kind === "held" ? claimed.message : null);
+          if (claimed.kind !== "held") setProblem(claimed.message);
+          return;
+        }
+        setHeld(null);
+      }
+      // Assigned before `sealDraft` first yields, so no `flush` can run between the seal beginning and this.
+      const run = sealDraft();
+      sealRun.current = run;
+      try {
+        sealed = await run;
+      } finally {
+        sealRun.current = null;
+      }
+      if (!sealed) return;
+      await queryClient.invalidateQueries({ queryKey: ["sends"] });
+      await queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      onClose();
+      await navigate({ to: "/outbox" });
+    } catch (error) {
+      // The claim before the seal, or the refresh after it: `sealDraft` answers the seal's own failures.
+      setProblem(`This Node could not be reached (${(error as Error).message}).${sealed ? "" : " Nothing was sealed, so nothing will be sent."}`);
+    } finally {
+      setSealing(false);
+    }
+  }
+
+  /**
+   * The seal itself: the draft is retired for as long as the Node is deciding, and given back if it refuses.
+   * Resolves whether it sealed; never rejects, because a seal that never reached the Node is a refusal with
+   * its own words, shown here.
+   */
+  async function sealDraft(): Promise<boolean> {
+    // No write starts from here on: the seal retires the draft, and one landing after it would bring it
+    // back. Undone below if the seal does not happen, so a dock that stays open keeps saving.
+    retired.current = true;
     try {
       // A write already in the air would otherwise land after the Node retires the draft below and
       // resurrect it — the same race `close` and `discard` wait out, in the one path that also has a
@@ -453,22 +609,20 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
       });
       const result = (await response.json()) as { id?: string; message?: string };
       if (!response.ok) {
+        retired.current = false;
         // The Node's four-part message, verbatim. It names the remedy, and paraphrasing it would drop
         // the half that tells somebody what to do.
         setProblem(result.message ?? "This message could not be sealed.");
-        return;
+        return false;
       }
-      await queryClient.invalidateQueries({ queryKey: ["sends"] });
-      await queryClient.invalidateQueries({ queryKey: ["drafts"] });
-      onClose();
-      await navigate({ to: "/outbox" });
+      return true;
     } catch (error) {
+      retired.current = false;
       setProblem(
         `This Node could not be reached (${(error as Error).message}). Nothing was sealed, so nothing ` +
         `will be sent.`,
       );
-    } finally {
-      setSealing(false);
+      return false;
     }
   }
 
@@ -487,30 +641,42 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    */
   async function discard() {
     setProblem(null);
-    // Same race as `seal`: a PUT still in the air would land after the DELETE and put the draft back.
-    const pending = inFlight.current;
-    if (pending !== null) await pending;
-    // From the ref, not the closure: that write may be the one that created the draft being discarded.
-    const discarding = latest.current.draftId;
-    if (discarding !== null) {
-      const response = await apiFetch(`/api/drafts/${encodeURIComponent(discarding)}`, { method: "DELETE" });
-      await queryClient.invalidateQueries({ queryKey: ["drafts"] });
-      if (!response.ok && response.status !== 404) {
-        const result = (await response.json().catch(() => null)) as { message?: string } | null;
-        setProblem(
-          result?.message
-          ?? `This Node answered ${response.status} and gave no reason, so this draft may still be here.`,
-        );
-        return;
+    // Before any wait: an autosave timer firing during the wait or the DELETE would write the draft back.
+    retired.current = true;
+    try {
+      // Same race as `seal`: a PUT still in the air would land after the DELETE and put the draft back.
+      const pending = inFlight.current;
+      if (pending !== null) await pending;
+      // From the ref, not the closure: that write may be the one that created the draft being discarded.
+      const discarding = latest.current.draftId;
+      if (discarding !== null) {
+        const response = await apiFetch(`/api/drafts/${encodeURIComponent(discarding)}`, { method: "DELETE" });
+        await queryClient.invalidateQueries({ queryKey: ["drafts"] });
+        if (!response.ok && response.status !== 404) {
+          // Refused, so the draft and the dock both stay, and the dock goes on saving what is typed into it.
+          retired.current = false;
+          const result = (await response.json().catch(() => null)) as { message?: string } | null;
+          setProblem(
+            result?.message
+            ?? `This Node answered ${response.status} and gave no reason, so this draft may still be here.`,
+          );
+          return;
+        }
       }
+    } catch (error) {
+      // Never reached the Node: the same outcome as a refusal, said, rather than a rejection nobody hears.
+      retired.current = false;
+      setProblem(`This Node could not be reached (${(error as Error).message}), so this draft may still be here.`);
+      return;
     }
     onClose();
   }
 
+  const title = context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message";
   return (
-    <section className="composer-dock" aria-label={context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message"}>
+    <section className="composer-dock" aria-label={title}>
       <header className="dock-head">
-        <h2>{context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message"}</h2>
+        <h2>{title}</h2>
         <span
           className={phase.kind === "failed" ? "draft-phase mono failed" : "draft-phase mono"}
           // Announced, unlike the session countdown: this one changes on a human action and says whether
@@ -523,13 +689,20 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           {/* Closing keeps the draft — it flushes first and stays open if that fails (#90). Discarding is
               a separate, named act: a single "close" that silently threw away somebody's writing would be
               the worst possible reading of this dock, and for a while it was what this one did. */}
-          <button type="button" className="linkish" onClick={() => void discard()} disabled={closing}>
-            discard
+          {/* Neither while a seal is in the air: the Node is deciding whether this is still a draft, and its
+              refusal has to find the dock, and the words, still here. */}
+          <button type="button" className="linkish" onClick={() => void discard()} disabled={closing || sealing}>
+            Discard
           </button>
-          <button type="button" className="linkish" onClick={() => void close()} disabled={closing}>
-            {closing ? "saving…" : "close"}
+          <button type="button" className="linkish" onClick={() => void close()} disabled={closing || sealing}>
+            {closing ? "Saving…" : "Close"}
           </button>
         </span>
+        {context.originalSubject === undefined ? null : (
+          <p className="dock-context">
+            {context.forwardOfMessageId === undefined ? "Replying to" : "Forwarding"}: <span>{context.originalSubject}</span>
+          </p>
+        )}
       </header>
 
       <form onSubmit={(event) => void seal(event)} noValidate>
@@ -551,12 +724,13 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
             <span>From</span>
             <select
               id="composer-from"
+              ref={fromField}
               className="mono"
               value={senderAddress}
               onChange={(event) => setSenderAddress(event.target.value)}
               required
             >
-              <option value="">choose an address…</option>
+              <option value="">Choose an address…</option>
               {senderOptions.map((option) => (
                 <option key={option} value={option}>{option}</option>
               ))}
@@ -568,13 +742,14 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           <span>To</span>
           <input
             id="composer-to"
+            ref={toField}
             className="mono"
             value={to}
             onChange={(event) => setTo(event.target.value)}
             required
           />
           {showCopies ? null : (
-            <button type="button" className="linkish composer-copies" onClick={() => setShowCopies(true)}>cc / bcc</button>
+            <button type="button" className="linkish composer-copies" onClick={() => setShowCopies(true)}>Cc / Bcc</button>
           )}
         </label>
         {showCopies ? (
@@ -602,6 +777,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           <span>Message</span>
           <textarea
             id="composer-body"
+            ref={bodyField}
             rows={8}
             value={body}
             onChange={(event) => setBody(event.target.value)}
@@ -628,7 +804,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
                 <span className="mono">{file.name}</span>{" "}
                 <span className="dim">{Math.max(1, Math.round(file.size / 1024))} KB</span>{" "}
                 <button type="button" className="linkish" onClick={() => setFiles(files.filter((_, i) => i !== index))}>
-                  remove
+                  Remove
                 </button>
               </li>
             ))}
@@ -655,22 +831,43 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           </p>
         )}
 
-        <p className="hint">
-          This will be sent from the mailbox, not from you. Who wrote it is recorded here and does not
-          travel with the message. Sealing records exactly what will be sent before anything leaves, then
-          waits {holdWindowSeconds()} seconds so you can still stop it — nothing is recalled, because a
-          recall would not be honest.
-        </p>
-
         {problem === null ? null : (
           <div className="errors" role="alert">
             <p className="notice bad">{problem}</p>
           </div>
         )}
+        {held === null ? null : (
+          <p className="composer-held" role="alert">
+            {held}{" "}
+            {/* Available to any colleague and audited, the escape hatch the absent claim timeout depends on. */}
+            <button type="button" className="linkish" onClick={() => void send("steal")} disabled={sealing}>
+              Take it anyway
+            </button>
+          </p>
+        )}
 
-        <button type="submit" className="primary" disabled={sealing || resuming}>
-          {sealing ? "Sealing…" : "Seal and send"}
-        </button>
+        <div className="dock-send">
+          <button type="submit" className="primary" disabled={sealing || resuming}>
+            {sealing ? "Sealing…" : "Seal and send"}
+          </button>
+          {/*
+            Every fact of the send, at the weight of a footnote beside the act: it goes out as the mailbox (ADR
+            36), the author is recorded, the hold, and no recall. The why is one click down, not gone.
+          */}
+          <span className="send-note">
+            Sent as the mailbox; who wrote it is recorded here. Held {holdWindowSeconds()} s so you can stop it;
+            no recall.
+          </span>
+        </div>
+        <details className="send-how">
+          <summary>How sending works</summary>
+          <p>
+            This will be sent from the mailbox, not from you. Who wrote it is recorded here and does not
+            travel with the message. Sealing records exactly what will be sent before anything leaves, then
+            waits {holdWindowSeconds()} seconds so you can still stop it — nothing is recalled, because a
+            recall would not be honest.
+          </p>
+        </details>
       </form>
     </section>
   );

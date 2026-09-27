@@ -478,7 +478,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible
+   * Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible. With place=inbox, unread or mine, one request looks back through at most messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks further back.
    *
    * @param query.cursor The previous page's next_cursor, verbatim. Omit for the newest page.
    *
@@ -496,9 +496,15 @@ export class GeneratedClient extends Transport {
    *
    * @param query.conversation Only this conversation's mail — the `conversation_id` on any listed message — which is how a thread is read. Same authorization as the listing: a message you may not see is not in the thread. Pages like any other listing.
    *
+   * @param query.place Only mail in this place of yours: inbox, archive or trash. Omit for every place. Places are per person — another reader's Inbox is unaffected — and every listed message carries its own in `place`. Not combinable with `q`. With place=inbox, unread or mine, one request looks back through at most messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks further back.
+   *
+   * @param query.unread `1` for only mail you have not opened (per person, 0062). Omit for both. Not combinable with `q`. With place=inbox, unread or mine, one request looks back through at most messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks further back.
+   *
+   * @param query.mine `1` for only mail whose case, in the mailbox it was delivered to, you hold — the same `mine` as a mailbox's count. Not combinable with `q`. With place=inbox, unread or mine, one request looks back through at most messages.max_lookback of the messages you can see, newest first, and the response's max_lookback says how many; when it stops there before filling the page, lookback_exhausted is true and next_cursor looks further back.
+   *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string; label?: string; conversation?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string; label?: string; conversation?: string; place?: string; unread?: string; mine?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 
@@ -518,6 +524,15 @@ export class GeneratedClient extends Transport {
    */
   async getMessagesByReceiptIdAttachmentsByOrdinal(params: { receiptId: string; ordinal: string }): Promise<Response> {
     return await this.raw("GET", "/api/messages/:receiptId/attachments/:ordinal", params, undefined);
+  }
+
+  /**
+   * One message's header block as it arrived, as text to read (not the original as a file, which is /raw and an export). Content, so the body's authority and record: recorded as an open under a supervised grant. Takes the receipt id
+   *
+   * `GET /api/messages/:receiptId/headers`
+   */
+  async getMessagesByReceiptIdHeaders(params: { receiptId: string }): Promise<z.infer<typeof S.messageHeadersResponse>> {
+    return await this.json("GET", "/api/messages/:receiptId/headers", params, undefined) as z.infer<typeof S.messageHeadersResponse>;
   }
 
   /**
@@ -590,6 +605,15 @@ export class GeneratedClient extends Transport {
    */
   async putMessagesByMessageIdLabels(params: { messageId: string }, body: z.infer<typeof S.setLabelsRequest>): Promise<z.infer<typeof S.labelsSetResponse>> {
     return await this.json("PUT", "/api/messages/:messageId/labels", params, body) as z.infer<typeof S.labelsSetResponse>;
+  }
+
+  /**
+   * Put a message in your Inbox, Archive or Trash (0067). Yours alone; destroys nothing; Trash is restorable. Takes the msg_ id
+   *
+   * `PUT /api/messages/:messageId/place`
+   */
+  async putMessagesByMessageIdPlace(params: { messageId: string }, body: z.infer<typeof S.setPlaceRequest>): Promise<z.infer<typeof S.placeSetResponse>> {
+    return await this.json("PUT", "/api/messages/:messageId/place", params, body) as z.infer<typeof S.placeSetResponse>;
   }
 
   /**
@@ -1340,6 +1364,15 @@ export class GeneratedClient extends Transport {
    */
   async postMaintenanceReseal(body?: unknown): Promise<z.infer<typeof S.resealResponse>> {
     return await this.json("POST", "/api/maintenance/reseal", {}, body) as z.infer<typeof S.resealResponse>;
+  }
+
+  /**
+   * Put every row preview the backfill gave up on back in its queue
+   *
+   * `POST /api/maintenance/requeue-previews`
+   */
+  async postMaintenanceRequeuePreviews(body?: unknown): Promise<z.infer<typeof S.previewsRequeuedResponse>> {
+    return await this.json("POST", "/api/maintenance/requeue-previews", {}, body) as z.infer<typeof S.previewsRequeuedResponse>;
   }
 
   /**

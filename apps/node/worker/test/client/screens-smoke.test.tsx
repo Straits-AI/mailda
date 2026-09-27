@@ -4,11 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { answerWith, reset } from "./session-stub.ts";
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  useRouterState: () => ({ location: { pathname: "/" } }),
-  Link: ({ children }: { children?: unknown }) => children,
-}));
+const route = vi.hoisted(() => ({ pathname: "/" }));
+vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 /**
  * Every screen, mounted twice: against a Node that answers each list empty, and against one that refuses
@@ -24,6 +21,9 @@ const { Butlers } = await import("../../src/client/app/screens/butlers.tsx");
 const { Limits } = await import("../../src/client/app/screens/limits.tsx");
 const { Matters } = await import("../../src/client/app/screens/matters.tsx");
 const { Outbox, Audit, Log, Doctor } = await import("../../src/client/app/screens/ledgers.tsx");
+const { Drafts } = await import("../../src/client/app/screens/drafts.tsx");
+const { Settings } = await import("../../src/client/app/screens/settings.tsx");
+const { ShellProvider } = await import("../../src/client/app/shell-context.tsx");
 
 const EMPTY: Record<string, unknown> = {
   "/api/mailboxes": { mailboxes: [{ id: "mbx_test", name: "Support", unclaimed: 1, claimed: 0, mine: 0, first_response_minutes: null, quarantine_dmarc_fail: 0, quarantine_dangerous_attachments: 0, quarantined: 0, breached: 0, addresses: "support@example.test" }] },
@@ -55,7 +55,8 @@ const EMPTY: Record<string, unknown> = {
 
 function mount(node: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  // Inside the shell's provider, as every screen is in the app: Drafts opens the shell's one composer.
+  render(<QueryClientProvider client={client}><ShellProvider>{node}</ShellProvider></QueryClientProvider>);
 }
 
 beforeEach(() => {
@@ -71,7 +72,7 @@ beforeEach(() => {
 });
 
 const CASES: Array<[string, () => React.ReactElement, RegExp, RegExp | null]> = [
-  ["Queue", () => <screens.Queue />, /^Queue$/, /^claim$/],
+  ["Queue", () => <screens.Queue />, /^Queue$/, /^Claim$/],
   ["Approvals", () => <Approvals />, /Approvals/, null],
   ["Policies", () => <Policies />, /Rules/, null],
   ["People", () => <People />, /People/, null],
@@ -82,6 +83,8 @@ const CASES: Array<[string, () => React.ReactElement, RegExp, RegExp | null]> = 
   ["Audit", () => <Audit />, /Audit/, null],
   ["Log", () => <Log />, /Log/, null],
   ["Doctor", () => <Doctor />, /Doctor/, null],
+  ["Drafts", () => <Drafts />, /^Drafts$/, null],
+  ["Settings", () => <Settings />, /^Settings$/, null],
 ];
 
 describe("every screen mounts against an empty Node and renders a refusal as text", () => {
@@ -95,4 +98,23 @@ describe("every screen mounts against an empty Node and renders a refusal as tex
       await waitFor(() => { expect(screen.queryByText(/Refused, for the test/)).not.toBeNull(); });
     });
   }
+});
+
+describe("the Queue's state word", () => {
+  it("names a case you hold 'mine', the word the list's chip and the rail use for it", async () => {
+    // AGENTS.md §4, names do not overclaim: one word for "the case is held by you". The class carries the same word, and the sheet's
+    // .case-mine is what colours it (the browser flow checks the colour).
+    answerWith((call) => {
+      const url = new URL(call.path, "https://node.example");
+      if (url.pathname === "/api/mailboxes/mbx_test/cases") {
+        const [row] = (EMPTY[url.pathname] as { cases: Array<Record<string, unknown>> }).cases;
+        return Response.json({ cases: [{ ...row, assignee: "usr_me", claimed_at: "2026-08-21T09:05:00.000Z" }] });
+      }
+      const body = EMPTY[url.pathname];
+      return body === undefined ? undefined : Response.json(body);
+    });
+    mount(<screens.Queue />);
+    const chip = await screen.findByText("mine", { selector: ".state" });
+    expect(chip.className).toBe("state case-mine");
+  });
 });

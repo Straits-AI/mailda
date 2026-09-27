@@ -25,12 +25,23 @@ Three spellings, three states, and the distinction is the design:
 | `NULL` | this message was materialised before the Node evaluated authentication. The cron evaluates those a few a minute (`authentication-backfill.ts`), one evidence read each, until none is left |
 
 A `none` for DMARC is most of the internet, since most From domains publish no policy, and the screen says
-so plainly. The one red thing on the screen is a `fail` against a domain that asked receivers to `reject`.
+so plainly. **A DMARC `fail` is shown without expanding anything**: an alert above the message's actions, and
+a *DMARC fail* chip on its row in the list, so a forgery is visible where triage happens and not only after
+opening it (which also marks it read). The code marks any `fail`, not only a `fail` against a domain that
+asked receivers to `reject`.
 
-Where it shows: the message's **sender** line in the reading pane; `auth_*` on every listed message in the
-API; `dmarc`, `spf`, `dkim` as facts a Butler guard reads (`docs/butler-engine.md`); and the doctor's
-`inbound_authentication`, which counts the week. None of the three chooses a recipient. The taint decision
-(#52) stands.
+Where it shows: the reading pane's details disclosure (the *to …* line, opened), where the SPF, DKIM and DMARC
+results and their sentence sit one level away (Blueprint §4B.9); a `fail` on the message and on its row;
+`auth_*` on every listed message in the API; `dmarc`, `spf`, `dkim` as facts a Butler guard reads
+(`docs/butler-engine.md`); and the doctor's `inbound_authentication`, which counts the week. None of the three
+chooses a recipient. The taint decision (#52) stands.
+
+**The sender's display name is shown beside the address, never instead of it** (0068, 26 September 2026).
+The list shows the From header's display name where there is one, and the reader always shows the address
+next to it, because the name is whatever the sender typed. A name that looks like an address (it contains
+`@`) or like a bare domain is dropped before it is stored, since `"ceo@your-company.example"
+<x@elsewhere.example>` is exactly the spoof a name column would otherwise carry into the list; that row shows
+the address instead.
 
 ### Quarantine on DMARC failure (0056, 17 September 2026)
 
@@ -111,6 +122,22 @@ reading pane lists the flagged ones above the body with where each really goes. 
 The own-domain comparison has no public-suffix list behind it. The registrable domain is the last two labels,
 three under `co.uk`-shaped suffixes, and the edit distance is one, so `rn` for `m` is a link the reader
 judges. Render-time only: no count is stored, so no Butler guard or quarantine reads it yet.
+
+### The body frame loads one stylesheet, and nothing in it can fetch (26 September 2026)
+
+The message body still renders in a `sandbox=""` `srcdoc` frame (ADR 37), and since the redesign that frame
+loads one same-origin stylesheet, `/app/frame.css`, so mail reads in the viewer's theme rather than as a white
+page in a dark reader. The sanitiser strips every colour-bearing attribute and all `style`, so the sheet is the
+only styling a body gets. It carries no `url()`, no `@import` and no `@font-face`, so it cannot make the frame
+fetch anything, and the frame is told the theme on its own `<html>` by an attribute that is always one of three
+words. The sheet loads under the `style-src 'self'` the frame inherits from the shell's policy. It breaks a
+word only when it is longer than its line (`overflow-wrap: break-word` on the body), and anywhere inside a link,
+`pre` or `code`: `anywhere` on the whole body let a table cell shrink to one character, so a 320 px reader split
+*Amount* in an invoice table, while a tracking URL in a cell must break or it widens the table past the frame.
+A long bare token outside those (an ID, an unlinked URL) in a table cell can still widen it, and the frame then
+scrolls sideways. **That was
+measured in Chromium only.** Another engine that refused the sheet would show the unstyled body, black on the
+frame's white, which is ugly and readable and safe, and is recorded as unverified rather than assumed.
 
 ### Suppression, derived from the provider's own word (0058, 17 September 2026)
 

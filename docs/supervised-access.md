@@ -244,7 +244,7 @@ everything done under one access is one filter:
 |---|---|---|
 | `supervised.query` | `listMessages`, `queueFor` | a listing, **with the ids it returned** |
 | `supervised.query_empty` | `listMessages` | a **search** that matched nothing, with a keyed digest of the term and never the term (#158) |
-| `supervised.opened` | `GET /api/messages/:id/body` | one result's content |
+| `supervised.opened` | `GET /api/messages/:id/body`, `GET /api/messages/:id/headers` | one result's content; the header block is content (subjects, recipients, routing), so viewing it is an open like the body |
 | `supervised.attachment` | `GET /api/messages/:id/raw`, `GET /api/sends/:id/submitted` | raw evidence, the `.eml`, which carries every attachment |
 
 **Per act, not per row.** A search matching 5,000 messages is **one** entry, which is what keeps
@@ -392,6 +392,33 @@ id lists, and a `page` field would spend bytes from the cap the id list is compe
 say. The fill of 57 is also what the page size is sized under: `docs/receipts/message-page-size.md` takes the
 tighter of the list budget and this number, so one act stays one row.
 
+### What the redesigned interface does under a grant (26 September 2026)
+
+The interface redesign added views, counts and a line of each message to the list, and every one of them is a
+listing or an open, so each was decided against this record rather than against cost alone:
+
+- **A supervised reader sees no row preview.** A preview is message content, a supervised disclosure of content
+  is an open recorded per message, and a listing records one `supervised.query` naming ids. Fifty previews
+  would disclose fifty messages under a record that says only that they were listed, so the Node opens a
+  preview only for a reader with standing `mailbox.content.read` (ADR 45), and opening the message stays the
+  recorded act it always was.
+- **Viewing a message's headers is recorded as an open**, exactly like its body (the table above).
+- **Each tab, filter and page is one listing request, and one `supervised.query`.** Nothing is fetched ahead:
+  no other tab, no next page, no neighbour's body on J or K, and the search submits rather than running per
+  keystroke, as it always has. The sidebar's Inbox count shares the default Inbox view's request (one entry
+  on `/`, not two) and elsewhere is refreshed at most once a minute, or when an act of the reader's changes it.
+- **Opening a message refetches no page listing.** Marking it read patches the rows already on screen; before
+  the redesign every open refetched every listing on screen, one more entry each time. A message in a
+  conversation does list that conversation, for the thread under the reader, once per conversation while the
+  answer is fresh: one `supervised.query` per conversation opened, not per message, so J and K along one
+  conversation add none. A supervised reader cannot mark read or file a message in any case (both need
+  standing content read), so the reader does not offer either, and opening one sends no read request at all.
+- **A lookback page records its position.** When the Inbox, Unread or Mine stops at `messages.max_lookback`
+  (ADR 45), its cursor names a message's id and acceptance time that the page itself did not list, and that
+  position is a disclosure: the id joins that page's `supervised.query` entry, like the listed rows. The probe
+  row read to decide whether anything lies further back is never recorded, for the reason the page's own probe
+  row is not.
+
 ---
 
 ## The notice, and the collision it had to resolve first
@@ -482,7 +509,9 @@ The deciding property: **`doctor` can count rows and cannot see inside a sleepin
 
 `transport.ts` already has to catch Cloudflare's *destination address is not a verified address*, so a
 legal obligation carried by outbound mail is one defeated by a mail-routing setting. `GET
-/api/notifications` has no such dependency, and the shell renders it as a band above every screen.
+/api/notifications` has no such dependency, and the shell renders it as a band above every screen: never
+dismissible, height-bounded so fifty of them cannot squeeze the mail off the screen, and focusable so a keyboard
+can scroll it.
 
 *"Cannot be switched off by the investigator"* holds **structurally**. A §7 notice is addressed to the
 **mailbox** (`user_id` NULL) and its audience is resolved live from `relationship_tuples`; a supervised

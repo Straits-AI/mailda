@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing, Truncated } from "../chrome.tsx";
+import { Nothing, Scroller, Truncated } from "../chrome.tsx";
 import {
   liftDomainPause, liftSuppression, requestDomainPause, useBreakers, useDomainPauses, useSuppressions,
   type BreakerReading,
@@ -51,7 +51,7 @@ function Breakers() {
   if (breakers.isError) return <Nothing kind="failed" detail={breakers.error.message} />;
 
   return (
-    <div className="scroller">
+    <Scroller label="Breakers">
       <table>
         <caption className="dim">
           Rates this Node applies to itself. Every limit is a measured budget, not a setting — changing one
@@ -89,7 +89,7 @@ function Breakers() {
           ))}
         </tbody>
       </table>
-    </div>
+    </Scroller>
   );
 }
 
@@ -165,12 +165,12 @@ function Pauses() {
           onClick={() => void ask()}
           disabled={domain.trim() === "" || reason.trim() === ""}
         >
-          ask to stop this domain
+          Ask to stop this domain
         </button>
       </div>
 
       {pauses.isSuccess && pauses.data.pauses.length > 0 ? (
-        <div className="scroller">
+        <Scroller label="Stopped domains">
           <table>
             <thead>
               <tr>
@@ -186,14 +186,14 @@ function Pauses() {
                   <td className="mono">{new Date(pause.placedAt).toLocaleString()}</td>
                   <td>
                     <button type="button" className="linkish" onClick={() => void lift(pause.id)}>
-                      let it send again
+                      Let it send again
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       ) : (
         <Nothing kind="empty" detail="No domain is stopped." />
       )}
@@ -233,7 +233,7 @@ function Suppressions() {
         ? <Truncated when={suppressed.data.truncated} shown={suppressed.data.suppressed.length} noun="addresses" />
         : null}
       {suppressed.isSuccess && suppressed.data.suppressed.length > 0 ? (
-        <div className="scroller">
+        <Scroller label="Recipients this Node will not send to">
           <table>
             <thead>
               <tr>
@@ -249,7 +249,7 @@ function Suppressions() {
                   <td className="mono dim">{row.observedAt.slice(0, 16).replace("T", " ")}</td>
                   <td>
                     <label className="target-edit">
-                      <span className="dim mono">why</span>
+                      <span className="dim mono">Why</span>
                       <input
                         value={reasons[row.address] ?? ""}
                         aria-label={`Why ${row.address} is good again`}
@@ -257,14 +257,14 @@ function Suppressions() {
                       />
                     </label>{" "}
                     <button type="button" className="linkish" disabled={(reasons[row.address] ?? "").trim() === ""} onClick={() => void lift(row.address)}>
-                      vouch
+                      Vouch
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Scroller>
       ) : suppressed.isSuccess ? <Nothing kind="empty" detail="No address is suppressed on this Node." /> : null}
     </section>
   );
