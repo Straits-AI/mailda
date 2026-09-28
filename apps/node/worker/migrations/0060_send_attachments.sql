@@ -5,7 +5,9 @@
 -- the plaintext hash the effect envelope binds and the evidence verifier checks (the same shape as
 -- `body_typed_key`/`body_typed_sha256`, in a table because a send has many). `verdict` is what
 -- `src/attachments.ts` said of the part — the same judge that reads inbound mail — and the seal refuses a
--- dangerous one, so every row here is `plain` or `archive`: recorded so the rule can be seen to have run.
+-- dangerous one unless its author sends it anyway (`allowDangerousAttachments`, 28 September 2026), so a row
+-- may carry any verdict: recorded so the rule can be seen to have run. `send.sealed` lists the dangerous ones
+-- it let through by ordinal.
 -- `reconcile.ts` needs no change: the referent of any object under a manifest's prefix is the manifest row.
 CREATE TABLE send_attachments (
   id            TEXT PRIMARY KEY,   -- sat_<ulid>

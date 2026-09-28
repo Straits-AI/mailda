@@ -42,6 +42,16 @@ export const DANGEROUS: ReadonlySet<AttachmentVerdict> = new Set([
   "executable", "script", "disguised", "archive_dangerous",
 ]);
 
+/**
+ * A file's size once base64-encoded, which is the size a send's attachment budget is counted in
+ * (`src/outbound/attachment-budget.ts`). Here rather than there so the composer can count the same way while the
+ * budget itself reaches it only through `/app/config.js`, the one channel for its figures (see `composer.tsx`):
+ * importing the seal's module would bake the budget into the bundle as a second one.
+ */
+export function encodedBytes(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
 /** A mailbox's declared limits (0065). `null` on either is unbounded. */
 export interface AttachmentLimits {
   maxBytes: number | null;

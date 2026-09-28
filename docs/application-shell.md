@@ -772,6 +772,39 @@ is recorded here. Held N s so you can stop it; no recall.*, with N the hold wind
 the long form one click down behind *How sending works*. It was a three-line paragraph in the dock; the facts
 stay visible and only the explanation folds.
 
+**What a send may attach is on screen before anything is** (28 September 2026). Under *Attach*: *Up to N MB in
+total, M files.*, with M `maxAttachments` and N `attachmentBudgetBytes` from `/app/config.js` taken to its raw
+equivalent (three quarters) and rounded down to a tenth, MB meaning 1,048,576 bytes as the KB beside each file
+means 1,024. Both figures are provisional: the file count, and the 90 per cent share of the provider's outbound
+ceiling (`email.outbound.max_bytes`) behind N, have no receipt. Once files are attached the line says how much of
+that they use, as the sum of the files' own sizes: in KB (to the nearest, never 0) under a tenth of a megabyte,
+and in MB above that, rounded down while it fits and up once it does not, so the figure never reads as fitting
+beside *Over the limit*. Whether they fit is counted as the seal counts it, from the module it refuses with
+(`src/outbound/attachment-budget.ts`), each file at its base64 size, so N is the raw equivalent of the seal's
+encoded budget rather than the provider's ceiling. Base64's padding can put a set over while its sizes sum to
+the limit or a few bytes under, so an over figure is taken as at least one byte past the limit. Over the limit,
+the line says so, in the danger tone, and *Seal and send* is disabled.
+
+The line is a live region and the description of both buttons it disables (*Seal and send*, and *Take it anyway*
+on a case somebody else holds), so a screen reader hears each reason a send became impossible and how many
+attached files are judged dangerous. A file is listed the moment it is chosen and reads *Checking…* until it is
+judged, and the line says *Checking files…* until every file is (in the ordinary tone, since it is a wait and not
+a fault); the send waits for that, since a dangerous file sent unjudged would be refused, or, beside another
+flagged file, leave without its own warning. The line does not count the checks down or count dangerous files
+until judging ends, because a live region is read again whole on every change: counted per file, twenty files
+were twenty-one readings. Each file's own warning appears as soon as it is judged. Files are judged one at a time, so a large selection holds one file in memory, not all of
+them. A file the browser cannot read blocks the send until it is removed, because the send reads the same bytes.
+While a seal runs, the list and the file picker are locked, and dimmed as any disabled button is, so what is on
+screen is what is sealed. Before this
+the limit was nowhere on screen and surfaced only as the seal's `E_ATTACHMENTS_TOO_LARGE`.
+
+**A file this Node judges dangerous is sent when its author says so.** Each file is judged as it is attached (one
+larger than the whole budget is not read, since it cannot be sent anyway), by
+the same `classifyAttachment` the seal runs (the module is pure, so the browser imports it rather than keeping a
+second copy of the rule). A dangerous one gets a warning under it naming what it is, in the reader's own words for
+the verdict, and that a receiving server may refuse it. The seal then carries `allowDangerousAttachments: true`,
+only while that warning is on screen. `docs/mail-security.md` has the reasoning and what the trail records.
+
 **The send-state words live in `delivery.client.js`, not in the React screen**, and that placement earns its
 keep. They were a literal map in `ledgers.tsx` keyed on `state` alone, which made `outcome_unknown` read *"We
 do not know whether it left"* even in the one case where the Node can prove otherwise: on the authored path
@@ -1006,6 +1039,11 @@ the refresh margin, and making that asynchronous means the token lifecycle eithe
 with the wrong margin, in the file whose whole job is that a signed-in person never sees a 401. A same-origin
 module *is* a same-origin endpoint, and `script-src 'self'` covers it.
 
+Since 28 September the module also carries the seal's attachment limits (`attachmentBudgetBytes`,
+`maxAttachments`) from `src/outbound/attachment-budget.ts`, the module the seal refuses with. Neither is
+receipt-derived as a whole: one is a receipt's ceiling times a provisional margin, the other a provisional count
+(see *What a send may attach* above).
+
 The composer reads its hold window from that module too, and the alternative is worth recording because it was
 built first and looked better: the composer *is* bundled by esbuild here, so it can `import { BUDGETS }`
 directly. That ships the whole 218-entry table to a browser to deliver one integer (**+7,960 bytes raw,
@@ -1015,7 +1053,7 @@ somebody waiting for it) and gives the interface two sources for numbers that mu
 **The inbox does import the table, and until 26 September this section did not say so.**
 `screens/inbox.tsx` imports `BUDGETS` for `messages.page_size`, to tell a full page from a short one. (For a
 day during the redesign it also read `messages.max_lookback` there, the N in its lookback sentence; that N now
-comes from the Node's answer, *Places, tabs and previews*.) So the table is in the bundle whichever way the composer reads its one integer, and the bytes above are spent. The
+comes from the Node's answer, *Places, tabs and previews*.) So the table is in the bundle whichever way the composer reads its figures, and the bytes above are spent. The
 composer still reads `/app/config.js`; what changed is that keeping the table out of the bundle is no longer a
 reason anybody can give for it.
 

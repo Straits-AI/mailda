@@ -1,5 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
+import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "../../src/outbound/attachment-budget.ts";
+
 /**
  * Stands in for `/app/config.js` when a component is rendered in a test.
  *
@@ -23,4 +25,6 @@ export const CONFIG = {
   refreshMarginSeconds: BUDGETS["auth.access_token_refresh_margin_seconds"],
   expiryCookie: "mailda_at_exp",
   holdWindowSeconds: BUDGETS["send.hold_window_default_seconds"],
+  attachmentBudgetBytes: ATTACHMENT_BUDGET,
+  maxAttachments: MAX_ATTACHMENTS,
 } as const;

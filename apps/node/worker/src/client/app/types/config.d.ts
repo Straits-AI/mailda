@@ -21,6 +21,13 @@ export interface MaildaConfig {
   readonly expiryCookie: string;
   /** How long a sealed send waits before dispatch — what the composer promises a person they can stop. */
   readonly holdWindowSeconds: number;
+  /**
+   * The attachments' base64 size a send may carry: the provider's receipted outbound ceiling times a provisional
+   * 0.9 with no receipt (`src/outbound/attachment-budget.ts`).
+   */
+  readonly attachmentBudgetBytes: number;
+  /** How many files a send may carry: provisional, with no receipt (`src/outbound/attachment-budget.ts`). */
+  readonly maxAttachments: number;
 }
 
 export const CONFIG: MaildaConfig;

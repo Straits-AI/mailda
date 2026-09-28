@@ -82,15 +82,45 @@ mailbox's second switch, `quarantineDangerousAttachments`, holds back a delivery
 the same mechanism as the DMARC switch, reason `attachment_dangerous`, released the same way. The sender's
 domain speaks first: a disowned message carrying an executable is held for the DMARC reason.
 
-The same judge reads outbound mail (0060). An attachment on an authored send is classified at the seal and a
-dangerous one refuses the whole send, by name. A Node that would hold back a disguised program arriving does
-not sign one leaving.
+The same judge reads outbound mail (0060). An attachment on an authored send is classified at the seal, and a
+dangerous one refuses the whole send, by name, **unless its author says to send it anyway** (28 September
+2026). The refusal was absolute until then, and it made sharing code by mail impossible: a zip of a project's
+source lists `.js` or `.py` files, so it is `archive_dangerous` exactly as a zip holding malware is. The judge
+has no way to tell a person's own code from a program somebody wants run, and the person does.
+
+So the seal takes `allowDangerousAttachments: true` on `POST /api/sends`, and only a literal `true`. Without it
+the refusal stands, and its fix now names the field, so an agent reading `E_ATTACHMENT_DANGEROUS` can see what
+changes the answer. It is the last attachment refusal the seal makes, after the mailbox's own limits and the
+size budget, so the flag is offered only when it is the one thing between the author and a send. The composer
+judges each file with the same `classifyAttachment` as it is attached, puts a warning under any dangerous one
+naming what it is, and sends the flag only while that warning is on screen.
+`send.sealed` records which parts the seal let through (`dangerousAttachments` in its detail: their ordinals,
+counted from 0), and the `send_attachments` rows those ordinals key hold each name and verdict, so a program the
+seal let through is on record with whoever sealed it. Since the flag, `send_attachments.verdict` can be any
+verdict, not only `plain` or `archive`. Ordinals rather than names because the entry is bounded by
+`audit.max_detail_bytes`: twenty flagged files under long names passed it, and an oversized detail is replaced
+whole, which would have dropped the seal's policy decision with it. Butlers never set the flag, and it does not
+reach a forwarded original: `E_FORWARD_CARRIES_DANGEROUS` still refuses a forward whose original carries one,
+because the person forwarding did not attach it.
+
+The entry alone does not name the files. Its subject is the send's manifest, so the names and verdicts are
+`SELECT ordinal, filename, verdict FROM send_attachments WHERE manifest_id = '<subject>'`, run with
+`wrangler d1 execute`. Once the send is dispatched, the same files are also the attachment parts of
+`GET /api/sends/:sendId/submitted`, in the same order, which gives the names but not the verdicts. No API, CLI or
+interface screen shows the verdict of a sent file yet.
+
+Whatever this Node sends, receiving servers judge again. Gmail refuses `.js`, `.jar`, `.exe`, `.bat`, `.ps1` and
+more, even inside a zip or a `.tgz`, and tells the sender the message "was blocked because its content presents
+a potential security issue". Its list is not this Node's: `.py`, `.sh` and `.rb` are scripts here and pass
+there. So the warning and the refusal say *some* receiving servers refuse such files and name only extensions
+Gmail does list. The refusal offers a link among its fixes, and the warning adds that a link may be the only way
+such a file arrives.
 
 **Archives are listed, never extracted** (#267, 19 September 2026). A ZIP's central directory names every
 entry, and `zipEntries` reads it from the end record back, so `invoice.zip` holding `Invoice.EXE` or
-`run.ps1` is `archive_dangerous`, the sixth verdict, held and refused like the other three. Nothing is
-inflated: a nested archive is a name in that list and stays closed, since what it holds is compressed data
-and reading it would mean extracting. Names in a password-protected ZIP are still in the clear, so the
+`run.ps1` is `archive_dangerous`, the sixth verdict, held inbound and refused at the seal unless its author
+sends it anyway, like the other three. Nothing is inflated: a nested archive is a name in that list and stays
+closed, since what it holds is compressed data and reading it would mean extracting. Names in a password-protected ZIP are still in the clear, so the
 password hides nothing from this. What cannot be read whole (no end record in the last 64 KiB, a ZIP64
 offset, a directory that runs off the end) is `archive`, the verdict that says nothing was looked at, rather
 than a guess. RAR and 7z are still `archive` by name and signature only.

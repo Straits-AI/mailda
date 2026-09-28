@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { BUDGETS } from "@mailda/budgets";
 
 import { EXPIRY_COOKIE } from "../src/auth/session.ts";
+import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "../src/outbound/attachment-budget.ts";
 import { sanitizeHtml } from "../src/render/body.ts";
 import { clientAsset, page } from "../src/ui.ts";
 import worker from "../src/index.ts";
@@ -303,6 +304,10 @@ describe("the policy is honest, because the document it governs contains no inli
     // person `undefined seconds` beside the button that stops a send.
     expect(source).toContain(`"refreshMarginSeconds":${BUDGETS["auth.access_token_refresh_margin_seconds"]}`);
     expect(source).toContain(`"holdWindowSeconds":${BUDGETS["send.hold_window_default_seconds"]}`);
+    // The attachment limit too, from the module the seal refuses with. Dropped, the composer would read
+    // "Up to NaN MB" and, comparing against undefined, never disable Seal and send.
+    expect(source).toContain(`"attachmentBudgetBytes":${ATTACHMENT_BUDGET}`);
+    expect(source).toContain(`"maxAttachments":${MAX_ATTACHMENTS}`);
     expect(source, "the cookie name the client watches for expiry").toContain(`"${EXPIRY_COOKIE}"`);
   });
 
