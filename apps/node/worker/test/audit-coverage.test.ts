@@ -238,6 +238,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.domain_purchase_attempted",
       // DNS written on a customer's zone, against the credential that authorized it.
       "provider.receiving_onboarded",
+      // What that onboard's first address ended up routed to, recorded after the act (28 September 2026).
+      "provider.receiving_routed",
       "provider.routing_rule_taken_over",
       "provider.routing_rule_put_back",
       "provider.catch_all_taken_over",

@@ -7,7 +7,7 @@ import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, 
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, verifiedDestinationsStep, wranglerToken, wranglerTokenIfAny } from "./provision.mjs";
+import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenIfAny } from "./provision.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -139,7 +139,17 @@ export async function upgrade(argv) {
 
   const go = yes ? "y" : await ask("\n   upgrade now? [y/N]: ");
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed; the backup stays.\n\n"); return; }
-  const deployed = await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])]);
+  /*
+   * The read of verified destinations runs after promotion and before the deploy's closing report (28 September
+   * 2026), because it changes what that report says: it used to come after, and every upgrade that refreshed it
+   * ended on a report the read had already outdated. The route exists only in the promoted version, hence after.
+   * Only the read moved: it writes nothing to Cloudflare and never ends the run, so it costs nothing when the
+   * report then says `refuse`. The setup's writes still wait for that verdict.
+   */
+  let session = { cookie: null, state: null, token: null };
+  const deployed = await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])], {
+    beforeReport: async () => { session = await readVerifiedDestinations({ url, accountId }); },
+  });
   if (hostname !== null) rememberUrl(accountId, name, `https://${hostname}`);
   if (deployed === 2) {
     // `refuse` after promotion is the one fault the canary cannot see (a Durable Object runs the promoted
@@ -148,7 +158,40 @@ export async function upgrade(argv) {
     process.stdout.write("\n   the Node reports refuse, so the setup did not run. Fix that first, then re-run the update.\n\n");
     process.exit(2);
   }
+  const setUp = await setUpNode({ url, accountId, yes, ...session });
+  process.stdout.write(
+    `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
+    + `   receiving   ${setUp.receiving === null
+      ? setUp.routing === null ? "not set up" : `${setUp.address ?? "?"} is not routed here (below)`
+      : `${setUp.address ?? "?"} on ${setUp.receiving}`}\n`
+    + `   sending     ${setUp.sending ?? "not set up"}\n`
+    + `   outcomes    ${setUp.deliveryEvents === null ? "not subscribed" : `subscribed for ${setUp.deliveryEvents}`}\n`,
+  );
+  printNext(url, setUp);
+}
 
+/**
+ * Which recipients are verified destinations, read with the operator's credential on every upgrade: it changes
+ * with every send, so a Node set up long ago still needs it read. Handed to the deploy as `beforeReport`. It never
+ * exits and never throws on its own account (a missing login is one line, a refused read is printed), and it
+ * hands on the session and the Node's record so the setup after the verdict does not ask again.
+ */
+async function readVerifiedDestinations({ url, accountId }) {
+  const cookie = await sessionCookie(url);
+  if (cookie === null) return { cookie, state: null, token: null };
+  const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (state?.provisioned === undefined) return { cookie, state, token: null };
+  const token = await wranglerTokenIfAny();
+  if (token === null) process.stdout.write("\n   verified destinations  not read: no wrangler login found (mailda setup reads them later)\n");
+  else await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
+  return { cookie, state, token };
+}
+
+/**
+ * Receiving, sending and outcomes for a Node that lacks them, with the operator's credential, once the deploy's
+ * verdict is known and is not `refuse`.
+ */
+async function setUpNode({ url, accountId, yes, cookie, state, token }) {
   /*
    * A Node deployed before the install did the account work has never been set up to receive: no routing,
    * no grant, and nothing on it looks wrong. The audit trail says so (`provisioned.receiving` is null), and
@@ -156,44 +199,26 @@ export async function upgrade(argv) {
    * steps is judged on its own record: a Node with receiving recorded and sending not (onboarded from the
    * dashboard before the Node existed, 26 September 2026) gets the sending and outcomes steps only.
    */
-  const cookie = await sessionCookie(url);
-  const setUp = { receiving: null, sending: null, deliveryEvents: null, address: null };
-  let token = null;
-  if (cookie !== null) {
-    const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const missing = state === null || state.provisioned === undefined ? [] : ["receiving", "sending", "deliveryEvents"].filter((step) => state.provisioned[step] === null);
-    if (missing.length > 0) {
-      process.stdout.write(missing.includes("receiving")
-        ? "\n== this Node has never been set up to receive\n"
-        : `\n== this Node has no record of ${missing.join(" or ")}\n`);
-      process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
-      token = await wranglerToken();
-      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned }));
-    } else if (state !== null) {
-      setUp.receiving = state.provisioned?.receiving?.domain ?? null;
-      setUp.address = state.provisioned?.receiving?.address ?? null;
-      // A record of a sighting is a record: a domain onboarded before this Node counts, and says so.
-      const seen = (act) => (act === null || act === undefined ? null : act.observed ? `${act.domain} (in place before this Node, observed)` : act.domain);
-      setUp.sending = seen(state.provisioned?.sending);
-      setUp.deliveryEvents = seen(state.provisioned?.deliveryEvents);
-    }
-    /*
-     * Which recipients are verified destinations, on both branches: it changes with every send, so a Node set
-     * up long ago still needs it read. The deploy is done by now, so a missing login is one line, not an exit.
-     */
-    if (state?.provisioned !== undefined) {
-      token ??= await wranglerTokenIfAny();
-      if (token === null) process.stdout.write("\n   verified destinations  not read: no wrangler login found (mailda setup reads them later)\n");
-      else await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
-    }
+  const setUp = { receiving: null, sending: null, deliveryEvents: null, address: null, routing: null };
+  if (cookie === null || state === null || state.provisioned === undefined) return setUp;
+  const missing = ["receiving", "sending", "deliveryEvents"].filter((step) => state.provisioned[step] === null);
+  if (missing.length > 0) {
+    process.stdout.write(missing.includes("receiving")
+      ? "\n== this Node has never been set up to receive\n"
+      : `\n== this Node has no record of ${missing.join(" or ")}\n`);
+    process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
+    Object.assign(setUp, await provisionNode({
+      origin: url, cookie, accountId, token: token ?? await wranglerToken(), yes, ask, provisioned: state.provisioned,
+    }));
+    return setUp;
   }
-  process.stdout.write(
-    `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
-    + `   receiving   ${setUp.receiving === null ? "not set up" : `${setUp.address ?? "?"} on ${setUp.receiving}`}\n`
-    + `   sending     ${setUp.sending ?? "not set up"}\n`
-    + `   outcomes    ${setUp.deliveryEvents === null ? "not subscribed" : `subscribed for ${setUp.deliveryEvents}`}\n`,
-  );
-  printNext(url, setUp);
+  // A receiving record counts only when its address was routed here (`receivingOf`, 28 September 2026).
+  Object.assign(setUp, receivingOf(state.provisioned.receiving));
+  // A record of a sighting is a record: a domain onboarded before this Node counts, and says so.
+  const seen = (act) => (act === null || act === undefined ? null : act.observed ? `${act.domain} (in place before this Node, observed)` : act.domain);
+  setUp.sending = seen(state.provisioned.sending);
+  setUp.deliveryEvents = seen(state.provisioned.deliveryEvents);
+  return setUp;
 }
 
 function git(args) {

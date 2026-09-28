@@ -223,8 +223,8 @@ export function Composer({ context, onClose, ref }: {
    * already loaded and already bounded by the relation that decides whether this composer should exist.
    */
   const mailboxes = useMailboxes();
-  const senderOptions = (mailboxes.data?.mailboxes
-    .find((box) => box.id === context.mailboxId)?.addresses ?? "")
+  const sendingBox = mailboxes.data?.mailboxes.find((box) => box.id === context.mailboxId);
+  const senderOptions = (sendingBox?.addresses ?? "")
     .split(",")
     .map((address) => address.trim())
     .filter((address) => address !== "");
@@ -730,19 +730,32 @@ export function Composer({ context, onClose, ref }: {
 
       <form onSubmit={(event) => void seal(event)} noValidate>
         {/*
-          From, offered rather than assumed.
+          From, offered rather than assumed, and always on screen (Blueprint §4B.3).
 
           A mailbox may have several addresses, and the Node used to pick the oldest by `created_at` — so
           adding `billing@` to a support mailbox sent billing replies as `support@`, silently. The Node now
-          refuses an unnamed sender when there is a choice, and this is how somebody complies. Rendered only
-          when there *is* a choice: a select with one option is furniture, and the overwhelming majority of
-          mailboxes have exactly one address.
+          refuses an unnamed sender when there is a choice, and this is how somebody complies: a select only
+          when there *is* a choice, starting from none chosen (#94). With one address it is a line, not a
+          select with one option: it used to be nothing at all, and somebody who claimed the Node as `admin@`
+          replied as the mailbox's `hello@` without the screen ever saying so (28 September 2026). With none,
+          the line says so, since the send will be refused (`E_MAILBOX_HAS_NO_ADDRESS`). Nothing while the
+          mailboxes load, rather than a wrong answer for a moment; a list that failed, or that lacks this mailbox,
+          is said, because the Node still sends as the mailbox's address and the screen would not have shown it.
 
           **First, before To.** It was appended after the message body in the first version, so somebody
           wrote the whole reply and only then met a required field — and From is identity, which belongs at
           the top of a letter rather than under it.
         */}
-        {senderOptions.length > 1 ? (
+        {mailboxes.isPending ? null : sendingBox === undefined ? (
+          <div className="field-row">
+            <span>From</span>
+            <div className="dim">
+              {mailboxes.isError
+                ? `This Node could not read this mailbox's addresses (${mailboxes.error.message}), so the address this goes out from is not shown.`
+                : "This mailbox is not among the ones this Node listed, so the address this goes out from is not shown."}
+            </div>
+          </div>
+        ) : senderOptions.length > 1 ? (
           <label className="field-row" htmlFor="composer-from">
             <span>From</span>
             <select
@@ -759,7 +772,17 @@ export function Composer({ context, onClose, ref }: {
               ))}
             </select>
           </label>
-        ) : null}
+        ) : (
+          <div className="field-row">
+            <span>From</span>
+            {senderOptions.length === 1
+              ? <div><span className="mono">{senderOptions[0]}</span> <span className="dim">· the {sendingBox.name} mailbox</span></div>
+              : <div className="dim">No address yet: a send from {sendingBox.name} is refused until an administrator adds one on People.</div>}
+          </div>
+        )}
+        {senderOptions.length === 0 ? null : (
+          <p className="hint">More addresses for this mailbox are added on People, by an administrator.</p>
+        )}
 
         <label className="field-row" htmlFor="composer-to">
           <span>To</span>

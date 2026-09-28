@@ -1,6 +1,7 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
-import type { ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+import type { AddressRemoval, AddressRouting, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+export type { AddressRemoval, AddressRouting };
 import {
   EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
   type HttpMethod, type PathFor,
@@ -725,25 +726,17 @@ export async function setResponseTarget(
  * An address on a mailbox, and whether mail for it reaches this Node (`POST /api/addresses`).
  *
  * `routing` is the half a screen must not drop: an address the Node knows and Cloudflare does not route is
- * silent, and `not_written` carries the reason and the command that finishes it.
+ * silent, and `not_written` carries the reason and the command that finishes it. Its type is the contract's.
  */
-export interface AddressRouting {
-  state: "catch_all" | "rule_written" | "not_written";
-  detail: string;
-}
 export const addAddress = (address: string, mailboxId?: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRouting }>(
     at("POST", "/api/addresses"), "POST", { address, ...(mailboxId === undefined ? {} : { mailboxId }) },
   );
 
 /**
- * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still named this
- * Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
+ * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still delivered to
+ * this Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
  */
-export interface AddressRemoval {
-  state: "catch_all" | "rule_removed" | "not_removed";
-  detail: string;
-}
 export const removeAddress = (address: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }>(
     at("DELETE", "/api/addresses"), "DELETE", { address },
@@ -2024,6 +2017,8 @@ export interface ProvisionedAct {
   address: string | null;
   /** A sighting, not an act: Cloudflare had it in place before this Node asked, and the entry says so. */
   observed: boolean;
+  /** Receiving only: how its address was routed when the act ended; null before 28 September 2026 and for the others. */
+  routing: AddressRouting | null;
 }
 export interface Provisioned {
   receiving: ProvisionedAct | null;
@@ -2147,8 +2142,13 @@ export interface ReceivingOutcome {
   written: string[];
   /** Read back from Cloudflare. A write that answered 200 is not yet a record in DNS. */
   confirmed: string[];
-  /** The rule's name, or "catch-all" when the zone's catch-all was taken over. */
+  /**
+   * What the act wrote or kept: "catch-all" when it took the zone's catch-all over, the literal rule's name when
+   * one routing the address here was written or kept, null when neither.
+   */
   rule: string | null;
+  /** Whether the address itself reaches this Node: a rule of its own outranks the catch-all. */
+  routing: AddressRouting;
   note: string | null;
   /** What the catch-all was and is now, when it was taken over; null otherwise. */
   catchAll: { before: CatchAllRule; after: CatchAllRule } | null;

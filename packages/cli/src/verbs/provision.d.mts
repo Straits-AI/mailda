@@ -31,16 +31,30 @@ export function domainChoices(zones: ReadonlyArray<{ name: string }>): Array<{ l
 /** The zones an account holds, as wrangler's token sees them; an unreachable API reads as none. */
 export function zonesOf(accountId: string, token: string): Promise<Array<{ name: string }>>;
 
+/** How an address is routed, in the contract's words. */
+export type AddressRouting = import("@mailda/contract/schemas").AddressRouting;
+
 export interface ProvisionOutcome {
   receiving: string | null;
   sending: string | null;
   deliveryEvents: string | null;
   address: string | null;
   catchAll: boolean;
+  /** Set when receiving ran, or was recorded, and its address does not reach this Node: what stops it. */
+  routing: AddressRouting | null;
 }
 
-/** One act the Node has on record, as `GET /api/provider` reports it under `provisioned`. */
-export interface ProvisionedAct { domain: string; at: string; address: string | null; observed: boolean }
+/**
+ * One act the Node has on record, as `GET /api/provider` reports it under `provisioned`. `routing` is receiving's
+ * recorded outcome; absent or null on a record from before 28 September 2026.
+ */
+export interface ProvisionedAct { domain: string; at: string; address: string | null; observed: boolean; routing?: AddressRouting | null }
+
+/** Whether a receiving outcome's address reaches this Node: its `routing`, or its `rule` from a Node older than that. */
+export function outcomeRoutesHere(outcome: { rule: string | null; routing?: AddressRouting | null }): boolean;
+
+/** What a receiving record says for a summary: set up only when its address was routed here, or when it predates that record. */
+export function receivingOf(act: ProvisionedAct | null | undefined): { receiving: string | null; address: string | null; routing: AddressRouting | null };
 
 /**
  * Receiving, sending and the delivery-events subscription, through the Node's routes with the operator's

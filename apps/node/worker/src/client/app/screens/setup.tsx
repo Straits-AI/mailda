@@ -205,17 +205,20 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
      * deliberately left no routing rule — a rule pointing at records that are not there is a rule that says
      * a domain receives mail when nothing reaches Cloudflare at all.
      */
+    // Whether the address itself reaches this Node is `routing`, whichever path was taken: a rule of its own
+    // outranks the catch-all, and a check that could not be made is said, never read as fine (28 September 2026).
+    const here = done.routing.state === "catch_all" || done.routing.state === "rule_written";
     setOutcome(
       done.catchAll !== null
         ? `The catch-all on ${done.domain} now routes to this Node (before: ${done.catchAll.before.action}`
           + `${done.catchAll.before.destinations.length === 0 ? "" : ` → ${done.catchAll.before.destinations.join(", ")}`}`
-          + `${done.catchAll.before.enabled ? "" : ", disabled"}). Addresses are managed on this Node from here; `
-          + "put it back from Routing rules."
+          + `${done.catchAll.before.enabled ? "" : ", disabled"}). Addresses without a rule of their own are managed on this `
+          + `Node from here; put it back from Routing rules.${here ? "" : ` ${done.routing.detail}`}`
         : done.confirmed.length === 0
           ? `Nothing was confirmed in DNS for ${done.domain}, so no routing rule was made.`
             + `${done.note === null ? "" : ` ${done.note}`}`
           : `${done.domain} now has ${done.confirmed.length} confirmed record(s)`
-            + `${done.rule === null ? " and no rule" : ` and mail is routed to ${done.rule}`}.`,
+            + `${here ? ` and mail is routed to ${done.rule ?? "?"}.` : ` and no rule routes the address here. ${done.routing.detail}`}`,
     );
     await refresh();
   }

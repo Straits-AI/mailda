@@ -144,6 +144,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
         outcome: {
           domain: "mail.example.com", written: ["MX mail.example.com"],
           confirmed: ["MX mail.example.com"], rule: "inbox@mail.example.com", note: null, catchAll: null,
+          routing: { state: "rule_written", detail: "a rule now routes inbox@mail.example.com to this Node" },
         },
       },
     });
@@ -195,6 +196,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
           domain: "mail.example.com", written: ["MX mail.example.com"],
           // The write answered 200 and the read-back found nothing, so the Node made no rule.
           confirmed: [], rule: null, note: "The records were not visible when read back.", catchAll: null,
+          routing: { state: "not_written", detail: "The records were not visible when read back." },
         },
       },
     });
@@ -367,6 +369,7 @@ describe("the apex catch-all", () => {
   const takenOver = {
     outcome: {
       domain: "example.com", written: [], confirmed: ["route1.mx.cloudflare.net"], rule: "catch-all", note: null,
+      routing: { state: "catch_all", detail: "the catch-all on example.com routes hello@example.com here" },
       catchAll: { before: { action: "worker", destinations: ["butler"], enabled: true }, after: { action: "worker", destinations: ["mailda"], enabled: true } },
     },
   };
@@ -385,6 +388,27 @@ describe("the apex catch-all", () => {
     });
     // The outcome names what was replaced, so the operator can put it back knowingly.
     expect(await screen.findByText(/The catch-all on example.com now routes to this Node \(before: worker → butler\)/)).toBeTruthy();
+  });
+
+  it("says why no rule routes the address when its own rule sends it elsewhere", async () => {
+    // Records confirmed and the address routed elsewhere: `routing` is what says where it goes instead.
+    const detail = "hello@example.com has an Email Routing rule of its own, named \"to gmail\": forward to somebody@gmail.test.";
+    mount({ receiving: apex, outcome: { outcome: { ...takenOver.outcome, rule: null, catchAll: null, routing: { state: "routed_elsewhere", detail }, note: detail } } });
+    await propose("example.com", "hello@example.com");
+    await screen.findByLabelText("Route every address at example.com to this Node (catch-all)");
+    fireEvent.click(screen.getByText("Do this"));
+    expect(await screen.findByText((text) => text.includes("no rule routes the address here") && text.includes(detail))).toBeTruthy();
+  });
+
+  it("says the catch-all was taken but the address's own rules could not be checked, never that all is well", async () => {
+    // The catch-all path with the rules unreadable after the take-over: `rule` is the catch-all, `routing` is not.
+    const detail = "not confirmed: the catch-all routes an address here only when it has no rule of its own, and this Node "
+      + "could not check whether hello@example.com has an Email Routing rule of its own: 10000 Authentication error";
+    mount({ receiving: apex, outcome: { outcome: { ...takenOver.outcome, routing: { state: "unconfirmed", detail } } } });
+    await propose("example.com", "hello@example.com");
+    fireEvent.click(await screen.findByLabelText("Route every address at example.com to this Node (catch-all)"));
+    fireEvent.click(screen.getByText("Do this"));
+    expect(await screen.findByText((text) => text.includes("The catch-all on example.com now routes to this Node") && text.includes(detail))).toBeTruthy();
   });
 
   it("sends no catchAll key when the box is left alone", async () => {

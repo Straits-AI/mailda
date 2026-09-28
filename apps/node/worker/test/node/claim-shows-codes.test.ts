@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withoutComments } from "../without-comments.ts";
 
@@ -56,5 +56,36 @@ describe("the claim handler", () => {
      */
     expect(handler).toContain("Array.isArray(claimed.recoveryCodes)");
     expect(handler).toContain("claimed.recoveryCodes.length > 0");
+  });
+});
+
+/**
+ * `mailda install` claims in the terminal by default, and says there what the web claim form says under its
+ * email field (28 September 2026): the email signs you in, and mail goes out from a mailbox's address. A founder
+ * claimed as `admin@` and found replies going out as `hello@`, and the terminal is where most claims happen.
+ */
+describe("mailda install's claim", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it("says the email signs you in and mail goes out from a mailbox's address, before it claims", async () => {
+    // By computed path, typed here, as `closing-report.test.ts` imports `deploy.mjs`: `install.mjs` has no declaration.
+    const { claim } = await import(join(import.meta.dirname, "../../../../../packages/cli/src/verbs/install.mjs")) as {
+      claim: (origin: string, secret: string, yes: boolean) => Promise<{ email: string }>;
+    };
+    const order: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { order.push(String(chunk)); return true; });
+    vi.stubGlobal("fetch", async (url: string) => {
+      order.push(`fetch ${new URL(url).pathname}`);
+      return Response.json({ recoveryCodes: [] });
+    });
+    vi.stubEnv("MAILDA_EMAIL", "admin@whymelabs.com");
+    vi.stubEnv("MAILDA_PASSWORD", "a long enough password");
+
+    const claimed = await claim("https://node.test", "secret", true);
+
+    expect(claimed.email).toBe("admin@whymelabs.com");
+    const said = order.findIndex((line) => line.includes("You sign in with this email. Mail goes out from a mailbox's address, which setup chooses."));
+    expect(said, "the claim never said what its email is for").toBeGreaterThan(-1);
+    expect(said).toBeLessThan(order.indexOf("fetch /api/claim"));
   });
 });

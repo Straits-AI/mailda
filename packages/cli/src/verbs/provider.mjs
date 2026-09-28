@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
-import { catchAllLine } from "./provision.mjs";
+import { catchAllLine, outcomeRoutesHere } from "./provision.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -286,8 +286,16 @@ export async function provider(argv) {
       process.stdout.write("\n");
       for (const line of wrapAt(outcome.note, 72)) process.stdout.write(`   ${line}\n`);
     }
-    process.stdout.write("\n   DNS takes a little while to propagate. Send a message from OUTSIDE this\n"
-      + "   Cloudflare account — a same-account send is accepted and never delivered.\n\n");
+    /*
+     * The test message only when the address reaches this Node (28 September 2026): it used to be printed after
+     * every onboard, including one whose address a rule of its own sends to another Worker, which is the
+     * instruction `mailda setup` had just stopped giving for the same outcome.
+     */
+    process.stdout.write(outcomeRoutesHere(outcome)
+      ? "\n   DNS takes a little while to propagate. Send a message from OUTSIDE this\n"
+        + "   Cloudflare account — a same-account send is accepted and never delivered.\n\n"
+      : `\n   ${address} is not routed here, or could not be confirmed, for the reason above: a test message\n`
+        + "   to it would not show this Node receiving.\n\n");
     return;
   }
 

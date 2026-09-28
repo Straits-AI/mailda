@@ -754,13 +754,23 @@ screens already knew: `matters.tsx` writes *"No matters, or you do not hold org.
 contradicted it two words later on the same line. The reassurance is now opt-in via `unfiltered`, and a
 caller may only assert it where the query is not narrowed by a relation.
 
-## The composer's From selector, and why the words live outside React
+## The composer's From, and why the words live outside React
 
 A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1`, the
 oldest, so adding `billing@` to a support mailbox sent billing replies as `support@` with nothing saying so.
 The Node now refuses a send from a multi-address mailbox that does not name which address, listing them, and
-the composer renders a **From selector when and only when there is a choice**: a select with one option is
-furniture, and almost every mailbox has one address.
+the composer renders a **From selector when there is a choice**, starting from *Choose an address…* so the
+choice is never made for anybody (#94).
+
+**With one address From is a line, not nothing** (28 September 2026, Blueprint §4B.3: sender identity stays
+visible). It used to render no From at all, since a select with one option is furniture, and a founder who
+claimed the Node as `admin@` replied for days as the mailbox's `hello@` without the screen saying so. The line
+is the address and the mailbox's name, and under it a hint that an administrator adds more addresses on
+People. With no address the line says so, because the send will be refused with `E_MAILBOX_HAS_NO_ADDRESS`;
+while the mailboxes load it renders nothing rather than a wrong answer for a moment, and a list that failed, or
+that lacks this mailbox, is said on the line, because the Node still sends as the mailbox's address. The claim
+screen and `mailda install`'s claim say the same from the other end: the email signs you in, and mail goes out
+from a mailbox's address, which setup chooses.
 
 Two things about it were wrong on first render and were found by opening the composer rather than by the
 suite. It sat **below the message body**, so somebody wrote the whole reply and only then met a required
@@ -1181,9 +1191,13 @@ zone somebody has edited since is a different act from the one that was read.
 
 **Apex or subdomain** (25 September 2026). When the domain typed is a zone's own name the proposal says so and
 offers the catch-all: one rule pointing the whole domain here, the zone's current catch-all shown beside it
-(where it goes today, and that a put-back restores it), and every address thereafter managed on People with
-no further act in Cloudflare. On a subdomain Cloudflare allows literal rules only, and the screen says that
-each address gets its own rule, written when the address is added.
+(where it goes today, and that a put-back restores it), and every address thereafter managed on People. A
+literal rule outranks the catch-all, so an address with an Email Routing rule of its own keeps going where
+that rule sends it; the outcome and People both say so, from the zone's rules read live. On a subdomain
+Cloudflare allows literal rules only, and the screen says that each address gets its own rule, written when
+the address is added. The outcome's `routing` says whether the address itself reaches this Node, in People's
+words, and when it does not (a rule of its own elsewhere or disabled, nothing written, or its rules unreadable
+after the catch-all was taken) its detail is shown whole, on either path.
 
 Three things the screen must not round off, each with a test:
 
@@ -1320,12 +1334,28 @@ the outcome beside the address: routed, already routed by the catch-all, or `not
 that writes it. The last is said in those words: an address that files and nothing routes is the state the
 receiving step exists to prevent, and a green row over it would be the lie.
 
+**Which of those it is comes from the zone's rules, read live** (28 September 2026). It used to come from this
+Node's own record of taking the catch-all over, which cannot see a rule somebody else wrote: `admin@` had a
+literal rule to another Worker, which outranks the catch-all, and adding it said *routed by the domain's
+catch-all*. A rule on the address counts as routing here only when it is enabled and its action is a Worker
+action naming this Worker; a forward, another Worker or a drop is `routed_elsewhere`, rendered whole with where
+it goes and the two commands that would change it (`mailda provider --routing-rules`, which prints the digest,
+then `--take-over <id> --confirm <digest>`), and never rewritten. A disabled rule is `rule_disabled`: Cloudflare
+does not say whether the catch-all then applies, so the detail claims neither and names enabling or deleting it
+in the dashboard, since a take-over keeps a rule disabled. When
+the rules cannot be read nothing is written, since one may already route the address; on a domain whose
+catch-all this Node took over that answer is `unconfirmed` and says what it could not check, never the
+catch-all's *nothing to do in Cloudflare*. The catch-all itself is the listed row with no literal matcher,
+which never reads as an address's own rule.
+
 **Each mailbox lists its addresses, with a remove beside each** (26 September 2026, `DELETE /api/addresses`).
 The list is the `addresses` column `GET /api/mailboxes` has always carried for the composer's From choice.
 Removing is adding's mirror and answers in the same three words: `catch_all` (no rule of its own existed),
 `rule_removed` (the literal rule naming this Worker was deleted), or `not_removed` with the reason and where
-the rule still is, because a rule routing a recipient this Node no longer knows is mail arriving to bounce. A
-rule somebody has since pointed elsewhere is theirs and is left alone.
+the rule still is, because a rule routing a recipient this Node no longer knows is mail arriving to bounce. It
+reads the rules the way adding does, so a rule somebody has since pointed elsewhere, or disabled, is theirs
+and is left alone; and a rule this Node took over is the customer's too, so it is left and the answer names
+`mailda provider --put-back`, which restores where it went before.
 
 **An address that has received mail is refused** (`E_ADDRESS_HAS_MAIL`), and the refusal is the feature. The
 `addresses` row is the join every read makes from a receipt's `envelope_to` to its mailbox, so deleting it

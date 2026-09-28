@@ -1244,7 +1244,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Write the MX records a subdomain needs and route an address at this Node, refusing unless the digest matches and confirming the records landed before writing the rule. On an apex, catchAll takes over the zone's catch-all instead, recording what it pointed at before
+   * Write the MX records a subdomain needs and route an address at this Node, refusing unless the digest matches and confirming the records landed before writing the rule. On an apex, catchAll takes over the zone's catch-all instead, recording what it pointed at before. Answers how the address is routed in the words adding an address uses, and records that after the act
    *
    * `POST /api/provider/receiving`
    */
@@ -1253,7 +1253,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Add an address to a mailbox and, in the same act, route it here: nothing to write when the domain's catch-all already points at this Node, a literal rule otherwise, and a named reason when no credential could write one
+   * Add an address to a mailbox and, in the same act, route it here, from the zone's rules read live: nothing to write when the apex's catch-all points at this Node and the address has no rule of its own, a rule of its own that goes elsewhere or is disabled named and left, a literal rule otherwise, and a named reason when the rules could not be read or written
    *
    * `POST /api/addresses`
    */
@@ -1262,7 +1262,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Remove an address from its mailbox and, in the same act, the literal rule that routed it here: nothing to remove under a catch-all, the rule deleted when it still names this Worker, and a named reason when it was left
+   * Remove an address from its mailbox and, in the same act, the literal rule that routed it here: nothing to remove under a catch-all, the rule deleted when it is enabled, names this Worker and was not taken over, and a named reason when it was left
    *
    * `DELETE /api/addresses`
    */

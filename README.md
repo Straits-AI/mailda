@@ -51,11 +51,14 @@ you once and not mailed, you hand it over however you already trust, and the per
 a password. They hold nothing until you grant them a relation on a mailbox, on the same screen, where each
 relation is written as what it lets them do. To receive at an address of their own, say
 `user1@example.com`, add that address to a mailbox they hold (*People* → *Add an address*); on a domain
-whose catch-all points at the Node nothing else is needed, and on a subdomain the Node writes the routing
-rule in the same act, or says exactly what to run if it could not. Each mailbox lists its addresses there,
-with *remove* beside each: the rule goes with it when this Node wrote it, and an address that has received
-mail stays, by name, because every message under it is filed through that address. Mailboxes and teams are
-renamed on the same screen.
+whose catch-all points at the Node nothing else is needed, unless the address has an Email Routing rule of
+its own sending it elsewhere or disabled, which the screen names; on a subdomain the Node writes the routing
+rule in the same act, or says exactly what to run if it could not. The composer shows the address a message
+goes out from, the mailbox's and never the email you sign in with, and says so when it cannot read it. Each
+mailbox lists its addresses there, with *remove* beside each: the rule goes with it when this Node wrote it
+(one it took over is left, and the screen names the put-back), and an address that has received mail stays,
+by name, because every message under it is filed through that address. Mailboxes and teams are renamed on
+the same screen.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every

@@ -3827,3 +3827,54 @@ fails is recorded as could not read, never as none verified, and an operator cre
 account from the Node's token, or with no token held from the account the last read named, is refused rather than
 read. Voided evidence stops a silence counting as explained and leaves what a covering read found alone: a
 recipient that read did not list is still said to be not listed, so the fix leads with the subscription.
+
+## Who you sign in as, what you send as, and what routes an address (28 September 2026)
+
+**The question.** A founder claimed a Node as `admin@whymelabs.com` and found replies going out as
+`hello@whymelabs.com`, and asked how to change it. Nothing was wrong with the sending: ADR 36 sends as the
+mailbox, and `hello@` was the address the install chose for it. What was wrong was that nothing on screen said
+so. The composer rendered no From line for a mailbox with one address, because a select with one option is
+furniture, so Blueprint §4B.3's "sender identity remains visible" held only for mailboxes with several. The
+composer now always shows From: the address and the mailbox's name, a select at several (still starting from
+none chosen, #94), a line saying a mailbox with no address sends from nothing, a line saying so when the
+mailboxes could not be read, and a hint that more addresses are added on People. The claim screen says, under
+its email field, that the email is what you sign in with and that mail goes out from a mailbox's address, which
+setup chooses, and `mailda install`'s terminal claim, where most claims happen, prints the same sentence.
+
+**What the answer uncovered.** Adding `admin@` on People, the obvious next step, would have said *routed by the
+domain's catch-all*, and it was not: `admin@` had a literal Email Routing rule to another Worker, and a literal
+rule outranks the catch-all. `addAddress` decided `catch_all` from this Node's own audit record of taking the
+catch-all over, which cannot see somebody else's rule. Two more defects sat beside it: a rule on the address was
+kept as "already routed here" whatever it did, so a forward read as this Node's; and when the rules could not be
+read, the rule was written blind, which is Cloudflare's `2014 Duplicated Zone rule` or a second rule.
+
+The decision is now one pure function, `classifyAddress` in `apps/node/worker/src/provider/routing-classify.ts`,
+over the zone's rules as Cloudflare lists them, used by adding, removing and the receiving onboard. Its own rule
+counts as routing here only when enabled with a Worker action naming this Worker; an enabled rule anywhere else
+is `routed_elsewhere`, named with where it goes and the two commands that would change it (the listing prints
+the digest a take-over must confirm); a disabled one is `rule_disabled`, because Cloudflare does not say whether
+the catch-all then applies and the Node claims neither; the catch-all, the listed row with no literal matcher,
+covers only the apex; and nothing is written when the rules cannot be read, which on a domain this Node took the
+catch-all of is `unconfirmed`, never `catch_all`. Removing deletes only a rule that delivers here and that this
+Node wrote: a rule it took over is the customer's, so it is left and the answer names the put-back, where the
+removal used to delete it and with it the only record of where it went.
+
+The receiving onboard answers with the same `routing`, and records it after the act as
+`provider.receiving_routed`, beside the intent entry rather than on it. The intent alone had made every re-run
+of `mailda setup` and `mailda upgrade`, and the Setup progress, read an onboarding as set up whose first address
+went to another Worker, and told the operator to prove it by mailing that address. Receiving now counts as set
+up only when the recorded outcome routes here; a record from before this has none and reads as it did, and says
+so on the CLI. `mailda provider --onboard-receiving`, which the CLI names for routing another address, asks for a
+test message only when the address reaches this Node, and whether this Node holds a domain's catch-all is read
+from the catch-all's own take-over and put-back entries, so a later onboard of one address does not read as
+giving it back.
+
+**And the upgrade's last word.** `mailda upgrade` printed the live Node's report and then read verified
+destinations, so every upgrade ended on a report its own read had outdated (observed that day: "2 of 5 …
+observed", no snapshot yet, and the read after it). The deploy now takes a step to run after promotion and
+before its closing report, and the upgrade hands it that read and nothing else: the read writes nothing to
+Cloudflare and never ends the run, while the setup's writes still wait for the verdict and are skipped on
+`refuse`, as before. A step that throws is printed, and the report and the rollback line still follow before the
+error is raised again. `mailda setup` prints no report, so it had no such inversion. The order, the hand-off
+from `deploy` to its report, and the writes staying after the refuse exit are held by
+`apps/node/worker/test/node/closing-report.test.ts`.

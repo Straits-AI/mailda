@@ -7,7 +7,7 @@ import { answerWith, calls, reset } from "./session-stub.ts";
 /**
  * Adding an address on People writes its routing in the same act (25 September 2026), and the screen must
  * render the half a person cannot see: whether Cloudflare routes it. `not_written` arrives whole, because
- * its detail names the command that finishes the job.
+ * its detail names the command that finishes the job, and so do `routed_elsewhere` and `unconfirmed`.
  */
 
 const route = vi.hoisted(() => ({ pathname: "/people" }));
@@ -70,6 +70,37 @@ describe("adding an address on People", () => {
     mount({ state: "not_written", detail });
     await add("ops@example.test");
     expect(await status()).toContain(detail);
+  });
+
+  it("renders routed_elsewhere's detail whole, because it names where the address's own rule sends it", async () => {
+    const detail = "admin@example.test has an Email Routing rule of its own, named \"info\": worker to info-worker. "
+      + "To route the address here, list the rules with `mailda provider --routing-rules example.test`, then "
+      + "`mailda provider --take-over rule_admin --domain example.test --confirm <digest>`.";
+    mount({ state: "routed_elsewhere", detail });
+    await add("admin@example.test");
+    const said = await status();
+    expect(said).toContain(detail);
+    expect(said).not.toContain("catch-all; nothing to do");
+  });
+
+  it("renders rule_disabled's detail whole, because it names the disabled rule and what would enable it", async () => {
+    const detail = "ops@example.test has an Email Routing rule of its own, named \"ops\", which is disabled (enabled, it "
+      + "would be worker to mailda). It names this Node: enable it in the Cloudflare dashboard (Email, Email Routing, Routing rules).";
+    mount({ state: "rule_disabled", detail });
+    await add("ops@example.test");
+    const said = await status();
+    expect(said).toContain(detail);
+    expect(said).not.toContain("routing rule written");
+  });
+
+  it("renders unconfirmed as the Node's own words, never as the catch-all's all-clear", async () => {
+    const detail = "not confirmed: this Node took over the catch-all on example.test, which routes an address here only when "
+      + "it has no rule of its own, and could not check whether ops@example.test has an Email Routing rule of its own: no token";
+    mount({ state: "unconfirmed", detail });
+    await add("ops@example.test");
+    const said = await status();
+    expect(said).toContain(detail);
+    expect(said).not.toContain("nothing to do in Cloudflare");
   });
 
   it("asks which mailbox when there are several, and sends the chosen one", async () => {

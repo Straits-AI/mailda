@@ -116,10 +116,16 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
  * An address on a mailbox, in one act (25 September 2026). The Node writes the routing rule in the same
  * request when it can, and says so; when it cannot, the address still exists and the notice names the
  * command that finishes it. Nothing here claims mail arrives: `rule_written` means a rule was read back.
+ * A state with no words of its own renders the Node's detail whole: `routed_elsewhere` names the rule that
+ * sends the address somewhere else, `rule_disabled` the disabled rule this Node left alone, and `unconfirmed`
+ * says what could not be checked, never that all is well.
  */
 const ROUTING_WORDS: Record<AddressRouting["state"], string | null> = {
   catch_all: "routed by the domain's catch-all; nothing to do in Cloudflare",
   rule_written: "routing rule written",
+  routed_elsewhere: null,
+  rule_disabled: null,
+  unconfirmed: null,
   not_written: null,
 };
 

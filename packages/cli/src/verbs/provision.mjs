@@ -142,8 +142,33 @@ export async function zonesOf(accountId, token) {
   return zones.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name }));
 }
 
+/** The two routing states that deliver an address here; every other one is named, never counted as set up. */
+const ROUTED_HERE = new Set(["catch_all", "rule_written"]);
+
+/**
+ * What a receiving record (`GET /api/provider`'s `provisioned.receiving`) says for a summary (28 September 2026):
+ * set up only when its address was routed here. A record from before the outcome was recorded carries none and
+ * reads as it always did; `routing` is then null, as it is when the address does route here.
+ */
+export function receivingOf(act) {
+  if (act === null || act === undefined) return { receiving: null, address: null, routing: null };
+  const routing = act.routing ?? null;
+  const here = routing === null || ROUTED_HERE.has(routing.state);
+  return { receiving: here ? act.domain : null, address: act.address ?? null, routing: here ? null : routing };
+}
+
+/**
+ * Whether a receiving outcome's address reaches this Node: its `routing`, since a rule of its own outranks the
+ * catch-all and a check that could not be made is not a yes. An answer from a Node older than `routing` has only
+ * `rule`, which stands in as it always did.
+ */
+export function outcomeRoutesHere(outcome) {
+  const routing = outcome.routing ?? null;
+  return routing === null ? outcome.rule !== null : ROUTED_HERE.has(routing.state);
+}
+
 export async function provisionNode({ origin, cookie, accountId, token, yes, ask, provisioned = null }) {
-  const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false };
+  const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false, routing: null };
   /*
    * What the Node already has on record (`GET /api/provider`'s `provisioned`) is not asked or done again.
    * A Node whose receiving was set up at install but whose sending was onboarded from the dashboard before
@@ -204,15 +229,25 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     return null;
   };
   const firstSentence = (text) => text.split(/(?<=[.!?])\s/)[0].trim();
-  let receivingRefusal = null;
+  /** Why receiving is not set up, in a sentence the summary quotes: a refusal, or what the outcome's note said. */
+  let receivingWhy = null;
 
   // 1. Receiving: the subdomain's records and the rule to this Worker.
   process.stdout.write(`\n   receiving at ${address}\n`);
   const receiving = recorded !== null ? null : await call("GET", "/api/provider/receiving", undefined, { domain });
   if (recorded !== null) {
-    process.stdout.write(`     recorded  ${recorded.at.slice(0, 10)}\n`);
-    done.receiving = domain;
-    done.address = address;
+    /*
+     * The record and its outcome (28 September 2026): an onboarding whose address went elsewhere, or could not
+     * be checked, is said again on every re-run rather than read as set up because the intent was recorded.
+     */
+    const was = receivingOf(recorded);
+    process.stdout.write(`     recorded  ${recorded.at.slice(0, 10)}`
+      + `${(recorded.routing ?? null) === null ? "; how the address is routed was not recorded (an onboarding from before 28 September 2026)" : ""}\n`);
+    Object.assign(done, was, { address });
+    if (was.routing !== null) {
+      receivingWhy = firstSentence(was.routing.detail);
+      for (const line of wrapAt(was.routing.detail, 70)) process.stdout.write(`     ${line}\n`);
+    }
   } else if (!receiving.ok) refused(receiving.text);
   else {
     const { proposal } = receiving.value;
@@ -221,7 +256,7 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     for (const one of proposal.present) process.stdout.write(`     has       MX ${one}\n`);
     for (const one of proposal.creates) process.stdout.write(`     writes    MX ${one.name} -> ${one.content} (priority ${one.priority})\n`);
     if (proposal.refusal !== null) {
-      receivingRefusal = proposal.refusal;
+      receivingWhy = `refused: ${firstSentence(proposal.refusal)}`;
       process.stdout.write("     will not set it up:\n");
       for (const line of wrapAt(proposal.refusal, 70)) process.stdout.write(`       ${line}\n`);
       const fix = fixFor(proposal.refusal);
@@ -252,7 +287,9 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
        * with). Asked before the catch-all, it read as a second routing act, and the founder asked why.
        */
       process.stdout.write(catchAll
-        ? `     every address at ${domain} will reach this Node; the mailbox files the ones it holds. This is its first;\n     more are added on People, with nothing to do in Cloudflare.\n`
+        ? `     every address at ${domain} without an Email Routing rule of its own will reach this Node; the mailbox\n`
+          + "     files the ones it holds. This is its first; more are added on People, which reads each one's rules\n"
+          + "     and says when a rule of its own sends it elsewhere.\n"
         : `     one rule routes one address to this Node; each further address needs its own\n     (\`mailda provider --onboard-receiving ${domain} --address <a>\`), or take the catch-all later.\n`);
       address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`     the mailbox's first address [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
       done.address = address;
@@ -270,8 +307,19 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
           done.catchAll = true;
         } else if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
         if (outcome.note !== null) for (const line of wrapAt(outcome.note, 70)) process.stdout.write(`     ${line}\n`);
-        // Set up, not verified: the read-back proves the records, and delivery is proven by a message.
-        if (outcome.confirmed.length > 0 || done.catchAll) done.receiving = domain;
+        /*
+         * Set up, not verified: the read-back proves the records, and delivery is proven by a message. Whether
+         * the address itself reaches this Node is `routing` (28 September 2026): a rule of its own outranks the
+         * catch-all, and a check that could not be made is not a yes. The note above carries its detail; the
+         * summary quotes its first sentence. An answer without `routing` is a Node from before it.
+         */
+        const routing = outcome.routing ?? null;
+        const here = outcomeRoutesHere(outcome);
+        if (here && (outcome.confirmed.length > 0 || done.catchAll)) done.receiving = domain;
+        else if (routing !== null && !here) {
+          done.routing = routing;
+          receivingWhy = firstSentence(routing.detail);
+        }
       }
     }
   }
@@ -335,8 +383,10 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
   process.stdout.write(
     "\n   set up\n"
     + `     receiving   ${done.receiving === null
-      ? (receivingRefusal === null ? "not set up" : `not set up (refused: ${firstSentence(receivingRefusal)})`)
-      : `${address} on ${done.receiving}${done.catchAll ? " (catch-all: every address)" : ""}`}\n`
+      ? done.catchAll
+        ? `catch-all on ${domain}, but ${address} is not routed here (${receivingWhy ?? "see above"})`
+        : (receivingWhy === null ? "not set up" : `not set up (${receivingWhy})`)
+      : `${address} on ${done.receiving}${done.catchAll ? " (catch-all: every address without a rule of its own)" : ""}`}\n`
     + `     sending     ${done.sending ?? "not set up"}\n`
     + `     outcomes    ${done.deliveryEvents === null ? "not subscribed" : `subscribed for ${done.deliveryEvents}`}\n`,
   );
@@ -357,6 +407,16 @@ export function printNext(origin, setUp) {
       + "               it appears in the Node's inbox. DNS takes a little while to propagate; a same-account\n"
       + "               send is accepted and never delivered\n",
     );
+  } else if (setUp.routing !== null && setUp.routing !== undefined) {
+    /*
+     * The step ran and recorded that its address does not reach this Node, so a re-run reads the same record and
+     * says the same; "the app shows the next setup step" would send the operator to a step already done. What
+     * stops it is named, and so is routing another address instead (28 September 2026).
+     */
+    const domain = setUp.address?.split("@")[1] ?? "<domain>";
+    const lines = wrapAt(`${setUp.address} is not routed here: ${setUp.routing.detail}`, 72);
+    process.stdout.write(lines.map((line, i) => `   ${i === 0 ? "then       " : "           "} ${line}\n`).join("")
+      + `               or route another address: mailda provider --onboard-receiving ${domain} --address <another> --url ${origin}\n`);
   } else {
     process.stdout.write(
       "   then        the app shows the next setup step instead of an inbox until this Node has a routed\n"
@@ -364,7 +424,8 @@ export function printNext(origin, setUp) {
     );
   }
   if (setUp.catchAll === true) {
-    process.stdout.write("   addresses   add more on People; no Cloudflare step is needed for this domain\n");
+    process.stdout.write("   addresses   add more on People; the catch-all routes each one here unless a rule of its own\n"
+      + "               sends it elsewhere, and People says when one does\n");
   }
   if (setUp.receiving !== null && setUp.deliveryEvents === null) {
     process.stdout.write("   outcomes    not subscribed: replies hand over but their delivery stays unobserved; `mailda setup` retries\n");

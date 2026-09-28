@@ -134,6 +134,12 @@ A Node routing **no** domains answers with an empty list and never touches the g
 on* rather than *no domains have a problem*, and a Node that has not connected still answers the route
 instead of erroring.
 
+The routing **rules** follow the same rule (28 September 2026). Adding or removing an address reads the zone's
+rules first, and a listing that could not be read writes and deletes nothing: an unread list is not a list
+without a rule for the address, and a rule written over one that exists is Cloudflare's `2014 Duplicated
+Zone rule`, or a second rule. On a domain whose catch-all this Node took over, the answer is then
+`unconfirmed`, naming what could not be checked, rather than the `catch_all` its own history would suggest.
+
 ### What the write side has to reckon with here
 
 Cloudflare reports the records for **`whymelabs.com`**, the zone, which carries live mail. So on this
@@ -329,6 +335,10 @@ reports success. Three routes cover that case, all administrator-only and withhe
   rule and `PUT`s its previous action back. A rule this Node never took, or one somebody changed since the
   take-over, is refused rather than overwritten. The address row stays; an address that files and nothing
   routes is harmless.
+- Removing an address on People whose rule this Node took over, and has not put back, deletes nothing
+  (28 September 2026). The rule reads as this Node's, enabled with a Worker action naming it, but it is the
+  customer's rule with its action replaced; deleting it would lose the action a put-back restores. So the
+  answer is `not_removed`, naming `mailda provider --put-back <id> --domain <domain>`.
 
 Not built, on purpose: editing forward destinations or deleting rules. Either would make this Node a
 routing-rule editor.
@@ -353,7 +363,13 @@ grant's `email-routing-rule.write` ([`wrangler-login-reach.md`](./receipts/wrang
 Cloudflare decides what "route this domain here" can mean, by the domain's shape: *"Catch-all entries
 support apex domains only. To route mail sent to an Email Routing subdomain, list each literal recipient
 address."* So a Node receiving at a zone's own name can take the catch-all and manage every address inside
-the Node, on the People screen, with no further act in Cloudflare. A Node receiving at a subdomain needs one
+the Node, on the People screen, with no further act in Cloudflare for an address that has no rule of its
+own. A literal rule outranks the catch-all, so an address that already has one keeps going where it sends
+it: adding it reads the zone's rules live and answers `routing: routed_elsewhere`, naming the rule, rather
+than claiming the catch-all routes it (found 28 September 2026 on a zone where `admin@` had a rule to
+another Worker). A disabled rule of its own is `rule_disabled`, named and left: Cloudflare says a disabled
+rule "will not forward emails to a destination address or Worker", and does not say whether the catch-all
+then applies, so the Node claims neither. A Node receiving at a subdomain needs one
 literal rule per address, and adding an address on People writes that rule in the same act when the Node
 holds a credential (the grant, or the operator's token on a CLI request); when it holds none the response
 says `routing: not_written` and names the command that writes it, rather than an address that files and
@@ -363,9 +379,23 @@ the Node does behind it and says about it.
 And the half-done case is resumable at every step: MX already on the name that is entirely Cloudflare's
 own routing hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody
 else's mail host to refuse, which is what the proposal said about its own records after the scope refusal
-above; the address row is `INSERT OR IGNORE`; and a rule already routing the exact address is kept rather
-than asked for again, which Cloudflare refuses as `2014 Duplicated Zone rule`. Each of the three was met on
-the drill, one run apart.
+above; the address row is `INSERT OR IGNORE`; and a rule already routing the exact address here is kept
+rather than asked for again, which Cloudflare refuses as `2014 Duplicated Zone rule`. Each of the three was
+met on the drill, one run apart. "Here" means enabled, with a Worker action naming this Worker: a rule on the
+address that forwards, names another Worker, drops or is disabled is somebody's routing, named in the answer
+and never rewritten, and when the rules cannot be read no rule is written, because a blind write is the
+duplicate. The decision is one pure function, `classifyAddress` in `apps/node/worker/src/provider/routing-classify.ts`,
+shared by adding, removing and the receiving onboard.
+
+How the onboard's first address ended up routed is its own audit entry, `provider.receiving_routed`, written
+after the act (28 September 2026); `provider.receiving_onboarded` is the intent and is written before
+Cloudflare is asked anything, so on its own it read as set up for an address a rule of its own sent to
+another Worker, on every re-run of `mailda setup` and `mailda upgrade` and in the Setup progress. `GET
+/api/provider` carries the outcome as `provisioned.receiving.routing`, and receiving counts as set up only
+when it is `catch_all` or `rule_written`. An onboard from before that date has no outcome and reads as the
+record it was; one that promised an outcome and has none stopped part-way and reads as `unconfirmed`. Whether
+this Node holds a domain's catch-all, which decides `unconfirmed` against `not_written` when the rules cannot be
+read, comes from the latest `provider.catch_all_taken_over` or `provider.catch_all_put_back` for it.
 
 ## Onboarding a domain for sending (#163 L2, write side)
 

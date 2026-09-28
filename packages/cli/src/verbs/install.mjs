@@ -154,7 +154,13 @@ export async function install(argv) {
  * email and a password typed twice with echo off; a password the Node calls weak is explained in the Node's
  * words and asked again, because the claim is the irreversible step and a wrong answer must not spend it.
  */
-async function claim(origin, secret, yes) {
+export async function claim(origin, secret, yes) {
+  /*
+   * The claim form's sentence, before the email is asked (28 September 2026): the founder claimed as `admin@`
+   * and only later found replies went out as the mailbox's `hello@`. The two are different identities, and the
+   * terminal is where most claims happen.
+   */
+  process.stdout.write("   You sign in with this email. Mail goes out from a mailbox's address, which setup chooses.\n");
   const email = yes ? process.env.MAILDA_EMAIL : (await ask("   administrator email: ")).trim();
   const organization = yes ? (process.env.MAILDA_ORGANIZATION ?? "Mailda")
     : ((await ask("   organization name [Mailda]: ")).trim() || "Mailda");

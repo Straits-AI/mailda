@@ -793,23 +793,25 @@ export const ROUTES = [
     method: "POST", path: "/api/provider/receiving",
     summary: "Write the MX records a subdomain needs and route an address at this Node, refusing unless the "
       + "digest matches and confirming the records landed before writing the rule. On an apex, catchAll "
-      + "takes over the zone's catch-all instead, recording what it pointed at before",
+      + "takes over the zone's catch-all instead, recording what it pointed at before. Answers how the address "
+      + "is routed in the words adding an address uses, and records that after the act",
     request: S.providerReceivingRequest, response: S.providerReceivingOutcomeResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/addresses",
-    summary: "Add an address to a mailbox and, in the same act, route it here: nothing to write when the "
-      + "domain's catch-all already points at this Node, a literal rule otherwise, and a named reason when "
-      + "no credential could write one",
+    summary: "Add an address to a mailbox and, in the same act, route it here, from the zone's rules read live: "
+      + "nothing to write when the apex's catch-all points at this Node and the address has no rule of its own, "
+      + "a rule of its own that goes elsewhere or is disabled named and left, a literal rule otherwise, and a named reason when "
+      + "the rules could not be read or written",
     request: S.addressCreateRequest, response: S.addressCreatedResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "DELETE", path: "/api/addresses",
     summary: "Remove an address from its mailbox and, in the same act, the literal rule that routed it here: "
-      + "nothing to remove under a catch-all, the rule deleted when it still names this Worker, and a named "
-      + "reason when it was left",
+      + "nothing to remove under a catch-all, the rule deleted when it is enabled, names this Worker and was not "
+      + "taken over, and a named reason when it was left",
     request: S.addressRemoveRequest, response: S.addressRemovedResponse,
   },
   {

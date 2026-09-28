@@ -80,6 +80,19 @@ const recorded = (act: ProvisionedAct | null, absent: string): Pick<Step, "state
       + `${new Date(act.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} (a record, not a live read)`,
   };
 
+/**
+ * The receiving record, with its outcome (28 September 2026): an onboard whose address a rule of its own sends
+ * elsewhere, or that could not be written, is not mail routed here however the intent reads; one that could not be
+ * checked is unknown. An onboard from before outcomes were recorded has none and reads as the record it is.
+ */
+const recordedReceiving = (act: ProvisionedAct | null): Pick<Step, "state" | "detail"> => {
+  const routing = act?.routing ?? null;
+  if (act === null || routing === null || routing.state === "catch_all" || routing.state === "rule_written") {
+    return recorded(act, "not set up; the installer or the Setup screen does it");
+  }
+  return { state: routing.state === "unconfirmed" ? "unknown" : "todo", detail: `${act.domain}: ${routing.detail}` };
+};
+
 export function onboardingSteps(sources: Sources): Step[] {
   const { provider, doctor, routing, delivery } = sources;
   const provisioned = sources.provisioned ?? null;
@@ -103,7 +116,7 @@ export function onboardingSteps(sources: Sources): Step[] {
         : { state: "todo" as const, detail: "no address is configured; add one on People" };
 
   const routed = record
-    ? recorded(provisioned.receiving, "not set up; the installer or the Setup screen does it")
+    ? recordedReceiving(provisioned.receiving)
     : routing === undefined
     ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
     : routing === null
