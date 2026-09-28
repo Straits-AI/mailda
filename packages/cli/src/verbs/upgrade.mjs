@@ -7,7 +7,7 @@ import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, 
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, verifiedDestinationsStep, wranglerToken, wranglerTokenIfAny } from "./provision.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -158,6 +158,7 @@ export async function upgrade(argv) {
    */
   const cookie = await sessionCookie(url);
   const setUp = { receiving: null, sending: null, deliveryEvents: null, address: null };
+  let token = null;
   if (cookie !== null) {
     const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const missing = state === null || state.provisioned === undefined ? [] : ["receiving", "sending", "deliveryEvents"].filter((step) => state.provisioned[step] === null);
@@ -166,7 +167,8 @@ export async function upgrade(argv) {
         ? "\n== this Node has never been set up to receive\n"
         : `\n== this Node has no record of ${missing.join(" or ")}\n`);
       process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
-      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask, provisioned: state.provisioned }));
+      token = await wranglerToken();
+      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned }));
     } else if (state !== null) {
       setUp.receiving = state.provisioned?.receiving?.domain ?? null;
       setUp.address = state.provisioned?.receiving?.address ?? null;
@@ -174,6 +176,15 @@ export async function upgrade(argv) {
       const seen = (act) => (act === null || act === undefined ? null : act.observed ? `${act.domain} (in place before this Node, observed)` : act.domain);
       setUp.sending = seen(state.provisioned?.sending);
       setUp.deliveryEvents = seen(state.provisioned?.deliveryEvents);
+    }
+    /*
+     * Which recipients are verified destinations, on both branches: it changes with every send, so a Node set
+     * up long ago still needs it read. The deploy is done by now, so a missing login is one line, not an exit.
+     */
+    if (state?.provisioned !== undefined) {
+      token ??= await wranglerTokenIfAny();
+      if (token === null) process.stdout.write("\n   verified destinations  not read: no wrangler login found (mailda setup reads them later)\n");
+      else await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
     }
   }
   process.stdout.write(

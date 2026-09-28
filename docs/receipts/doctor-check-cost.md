@@ -16,6 +16,63 @@ values:
   doctor.stalled_outbox_seconds: 600
 ---
 
+## Correction, 28 September 2026: `delivery_visibility` reads the verified-destination record in the statement it already issued
+
+`delivery_visibility` now tells apart silence a read of the account's verified destinations explains from
+silence nothing explains (`email-sending-events.md`, the addition of this date). Its one statement was rewritten
+rather than joined by a second: the awaiting population is scanned once with conditional sums, a `LEFT JOIN` per
+row to each of the two tables the read writes, and five scalar sub-selects added beside the three it had (the
+`sending_event.unusable` log count and four columns of the one-row read table). No import was added to
+`src/doctor/`, so `doctor-meter-honesty`'s path is unchanged.
+
+Measured before and after in the same session, on the fixture the last correction used
+(`apps/node/worker/test/outbound-recheck.test.ts`, "reports the withheld sends"); before is the tree before this
+statement was rewritten, after is the tree with it. Other work landed between the two runs, so the delta is the
+only figure this correction claims, and it is the statement's:
+
+```
+before    subrequests=33  d1=28  r2=5  findings=31
+after     subrequests=33  d1=28  r2=5  findings=31
+```
+
+**+0 subrequests, +0 D1 queries, +0 findings.** `values:` is untouched. The rows-read effect is argued, not
+measured: the awaiting population was scanned twice (two `COUNT(*)` sub-selects over the same join) and is now
+scanned once; each of its rows adds a primary-key lookup into `verified_destination_recipients` and one into the
+one-row `verified_destination_read`; and the `unusable` count reads the error-level rows of `log_entries`
+(`log_by_level` indexes `level`; the query plan was not read), which the log's own retention
+(`log.retained_entries`) bounds.
+
+One more scalar sub-select was added the same day, in the same statement: the unattributed events whose recipient a
+read listed at the event's arrival (`delivery_visibility`'s `contradicting_unattributed`). Measured again on the
+same fixture, before it was added and after (the same edit also reworded the check's sentences and added a
+finding that the fixture does not reach, neither of which issues a query):
+
+```
+before    subrequests=33  d1=28  r2=5  findings=31
+after     subrequests=33  d1=28  r2=5  findings=31
+```
+
+**+0 subrequests, +0 D1 queries, +0 findings.** Its query plan was read, in a local `sqlite3` 3.53.4 with
+every migration applied, empty tables and no `ANALYZE`, not on D1: the unattributed rows through
+`sre_by_manifest` (`org_id`, `manifest_id` IS NULL), a primary-key lookup into
+`verified_destination_recipients` for each, and the one-row read table by its key.
+
+A third change the same day, in the same statement: `contradicting` counts a recipient a read listed at hand-over
+when any event was attributed to it, not only when an event set its delivery state, because a complained event
+(or a type this Node does not know) is stored attributed and sets none. That is a correlated `EXISTS` per silent
+awaiting row (a `CASE` keeps it off rows that have a delivery state). Measured again on the same fixture, before it
+and after:
+
+```
+before    subrequests=33  d1=28  r2=5  findings=31
+after     subrequests=33  d1=28  r2=5  findings=31
+```
+
+**+0 subrequests, +0 D1 queries, +0 findings.** Its plan, read the same way (local `sqlite3` 3.53.4, not D1):
+`CORRELATED SCALAR SUBQUERY` searching `send_recipient_events` through `sre_by_manifest` (`org_id`,
+`manifest_id`), then the recipient compared within that send's events. So a silent row costs one more indexed
+lookup; the rows-read effect is argued, not measured.
+
 ## Correction, 26 September 2026: `preview_backlog`, one grouped query and one subrequest
 
 `preview_backlog` (0068) counts the messages that still owe a row preview and sender name, and the ones that

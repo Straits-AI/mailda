@@ -23,7 +23,7 @@ const MANIFEST = "snd_events_1";
 const TRANSPORT_ID = "<pIlEAeNiwq8Yqda1hdkDyqtTdfdzfrhVHHKb@mailda-test.whymelabs.com>";
 
 beforeEach(async () => {
-  for (const table of ["send_recipient_events", "send_recipients", "send_manifests"]) {
+  for (const table of ["send_recipient_events", "send_recipients", "send_manifests", "log_entries"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const at = "2026-08-07T00:00:00.000Z";
@@ -202,6 +202,129 @@ describe("the properties a queue forces on us", () => {
       "SELECT COUNT(*) AS n FROM send_recipient_events WHERE event_type LIKE '%complained'",
     ).first<{ n: number }>();
     expect(stored?.n).toBe(1);
+  });
+});
+
+/**
+ * The one event that cannot be stored is logged, and a malformed field is never thrown on (28 September 2026).
+ *
+ * Before, an event with no `eventId` or no `recipient` was acked with no trace, so an outcome Cloudflare did
+ * publish read exactly like one it never sent; and a null body, or a non-string field reaching `bind`, threw,
+ * which the consumer logs and retries, though no retry can change the body.
+ */
+describe("an event this Node cannot use is logged, never dropped silently and never thrown on", () => {
+  /** Every `sending_event.unusable` line, with its detail parsed. */
+  async function unusableLines() {
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT org_id, level, detail FROM log_entries WHERE event = 'sending_event.unusable'",
+    ).all<{ org_id: string | null; level: string; detail: string }>();
+    return rows.results.map((row) => ({
+      orgId: row.org_id, level: row.level, raw: row.detail,
+      detail: JSON.parse(row.detail) as { type: string; messageId: string | null; missing: string[] },
+    }));
+  }
+
+  async function storedEvents(): Promise<number> {
+    const count = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_recipient_events")
+      .first<{ n: number }>();
+    return count?.n ?? -1;
+  }
+
+  it("logs an event with no eventId, says which field, and stores nothing", async () => {
+    const outcome = await applySendingEvent(testEnv, createSystemCtx(), ORG, event("bounced", { eventId: undefined }));
+
+    expect(outcome.applied).toBe(false);
+    expect(outcome.unusable).toEqual(["payload.eventId"]);
+    const lines = await unusableLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.orgId).toBe(ORG);
+    expect(lines[0]!.level).toBe("error");
+    expect(lines[0]!.detail.missing).toEqual(["payload.eventId"]);
+    expect(lines[0]!.detail.type).toBe("cf.email.sending.message.bounced");
+    // The recipient was there, and is not copied into a log administrators read without a mail grant.
+    expect(lines[0]!.raw).not.toContain("one@example.net");
+    expect(await storedEvents()).toBe(0);
+  });
+
+  it("names the recipient when that is what is missing, and both, in order, when both are", async () => {
+    const ctx = createSystemCtx();
+    const noRecipient = await applySendingEvent(testEnv, ctx, ORG, event("delivered", { recipient: undefined }));
+    expect(noRecipient.unusable).toEqual(["payload.recipient"]);
+
+    const neither = await applySendingEvent(testEnv, ctx, ORG,
+      event("delivered", { eventId: undefined, recipient: undefined }));
+    expect(neither.unusable).toEqual(["payload.eventId", "payload.recipient"]);
+    const lines = (await unusableLines()).map((line) => line.detail.missing);
+    expect(lines).toHaveLength(2);
+    expect(lines).toEqual(expect.arrayContaining([["payload.recipient"], ["payload.eventId", "payload.recipient"]]));
+    expect(await storedEvents()).toBe(0);
+  });
+
+  it("treats an empty eventId as missing, rather than as a primary key every later one collides with", async () => {
+    const outcome = await applySendingEvent(testEnv, createSystemCtx(), ORG, event("delivered", { eventId: "" }));
+
+    expect(outcome.applied).toBe(false);
+    expect(outcome.unusable).toEqual(["payload.eventId"]);
+    expect(await storedEvents()).toBe(0);
+    expect((await stateOf("one@example.net"))?.delivery_state).toBeNull();
+  });
+
+  it("logs a null body instead of throwing on it", async () => {
+    const outcome = await applySendingEvent(testEnv, createSystemCtx(), ORG, null as unknown as SendingEvent);
+
+    expect(outcome.unusable).toEqual(["payload.eventId", "payload.recipient"]);
+    const lines = await unusableLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.detail.type).toBe("(none)");
+  });
+
+  it("does not log a redelivery, which is the other applied: false", async () => {
+    const ctx = createSystemCtx();
+    await applySendingEvent(testEnv, ctx, ORG, event("delivered"));
+    const again = await applySendingEvent(testEnv, ctx, ORG, event("delivered"));
+
+    expect(again.applied).toBe(false);
+    expect(again.unusable).toBeNull();
+    expect(await unusableLines()).toEqual([]);
+  });
+
+  it("stores an event whose messageId or type is not a string, instead of throwing in bind", async () => {
+    const ctx = createSystemCtx();
+    const oddId = await applySendingEvent(testEnv, ctx, ORG,
+      event("bounced", { eventId: "ev_odd_id", messageId: {} }));
+    expect(oddId.applied).toBe(true);
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT manifest_id, transport_message_id FROM send_recipient_events WHERE event_id = 'ev_odd_id'",
+    ).first<{ manifest_id: string | null; transport_message_id: string | null }>();
+    expect(row).toEqual({ manifest_id: null, transport_message_id: null });
+
+    const oddType = await applySendingEvent(testEnv, ctx, ORG,
+      { ...event("delivered", { eventId: "ev_odd_type" }), type: {} } as unknown as SendingEvent);
+    expect(oddType.applied).toBe(true);
+    expect(oddType.manifestId).toBe(MANIFEST);
+    expect(oddType.deliveryState).toBeNull();
+    expect((await stateOf("one@example.net"))?.delivery_state).toBeNull();
+  });
+
+  it("reads a type named like an Object method as no delivery state", async () => {
+    const outcome = await applySendingEvent(testEnv, createSystemCtx(), ORG,
+      { ...event("delivered", { eventId: "ev_to_string" }), type: "toString" } as SendingEvent);
+
+    expect(outcome.applied).toBe(true);
+    expect(outcome.deliveryState).toBeNull();
+    expect((await stateOf("one@example.net"))?.delivery_state).toBeNull();
+  });
+
+  it("keeps the provider's words only when they are words", async () => {
+    await applySendingEvent(testEnv, createSystemCtx(), ORG, event("bounced", {
+      delivery: { status: "bounced", smtpResponse: "550 5.1.1 from the SMTP answer" },
+      bounce: { type: {}, reason: 550 },
+    }));
+
+    const row = await stateOf("one@example.net");
+    expect(row?.delivery_state).toBe("bounced");
+    expect(row?.bounce_type).toBeNull();
+    expect(row?.last_error).toBe("550 5.1.1 from the SMTP answer");
   });
 });
 

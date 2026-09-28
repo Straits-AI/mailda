@@ -78,6 +78,13 @@ subscription is created from the Node's own Setup screen once the Node holds an 
 `unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as
 "nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
 
+One case no subscription fixes: in the one case measured, mail to a verified destination address of your own
+account (one verified for Email Routing forwarding) produced no delivery event at all
+([receipt](./docs/receipts/email-sending-events.md), which also records the send that told it apart from
+delivery outside Cloudflare, and that it rests on one verified address). The Node reads which of its recipients those are (`mailda setup` and `mailda upgrade` with wrangler's
+login, or the Setup screen with a token carrying the optional Email Routing Addresses: Read), the Outbox marks them `verified destination`, and
+`mailda doctor` does not call that silence blind.
+
 **A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
 point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
 previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
@@ -104,7 +111,9 @@ git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
 refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as
 `mailda deploy`. A Node that was never set up to receive is offered the install's setup step afterwards,
-with the same sign-in. It never creates a Node; `mailda install` with an existing name still upgrades too, but
+with the same sign-in. Whenever it can sign in to the Node, it then reads, with the same login, which of the
+Node's recipients are verified destinations of the account, and prints how many; with no wrangler login found it
+says so in one line and goes on. It never creates a Node; `mailda install` with an existing name still upgrades too, but
 with whatever code the clone has, which is why the verb exists.
 
 The button clones without history and without a remote. The upgrade handles that on its first run: it adds

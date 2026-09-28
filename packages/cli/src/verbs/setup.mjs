@@ -1,6 +1,6 @@
 import { api, choose, fail, flag, readSecret, sessionCookie } from "../support.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
 
 /**
  * `mailda setup`: receiving, sending and delivery outcomes for a Node that is already deployed and claimed,
@@ -60,6 +60,10 @@ export async function setup(argv) {
   );
 
   process.stdout.write("\n== setting up\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
-  const setUp = await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask, provisioned: state.provisioned });
+  const token = await wranglerToken();
+  const setUp = await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned });
+  // After the three steps, always: which recipients are verified destinations changes with every send, so a
+  // setup that found everything in place still reads it.
+  await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
   printNext(url, setUp);
 }

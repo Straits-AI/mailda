@@ -209,7 +209,8 @@ beforeEach(async () => {
                        "domain_pauses", "approvals", "approval_stages", "approval_decisions",
                        "notifications", "policies", "policy_versions", "relationship_tuples", "mailboxes",
                        "addresses", "users", "audit_entries", "node_claim", "ingress_receipts",
-                       "messages", "conversations", "cases", "outbox"]) {
+                       "messages", "conversations", "cases", "outbox",
+                       "verified_destination_recipients", "verified_destination_read"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -666,6 +667,36 @@ describe("a rate gate never overwrites a policy gate, because the two clear diff
 /* ---------------------------------------------------- doctor ---------------------------------------- */
 
 describe("doctor refuses to arm a breaker with no observations", () => {
+  const LONG_AGO = AUGUST_20 - 7 * 24 * 3600_000;
+
+  /** One recipient, `r0@example.net`, handed over a week before the report, and its manifest. */
+  async function anOldUnansweredHandOver(): Promise<void> {
+    await handedOver(1, LONG_AGO);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests
+         (id, org_id, mailbox_id, author_user_id, in_reply_to_message_id, envelope_from, envelope_to,
+          envelope_cc, envelope_bcc, subject, rfc_message_id, references_header, fidelity,
+          body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+          submitted_key, submitted_sha256, sealed_at, release_at, state, state_at,
+          transport_message_id, last_error, attempts, policy_outcome, policy_versions, state_reason)
+       VALUES (?,?,?,?,NULL,?,?,NULL,NULL,?,?,NULL,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,NULL,0,NULL,NULL,NULL)`,
+    ).bind(
+      (await testEnv.CATALOG.prepare(
+        "SELECT manifest_id FROM send_recipients WHERE org_id = ? LIMIT 1",
+      ).bind(ORG).first<{ manifest_id: string }>())!.manifest_id,
+      ORG, MAILBOX, AUTHOR, ADDRESS, JSON.stringify(["r0@example.net"]), "Old", "old@acme.example",
+      "authored", "k", "h", "k2", "h2",
+      new Date(LONG_AGO).toISOString(), new Date(LONG_AGO).toISOString(), "handed_over",
+      new Date(LONG_AGO).toISOString(),
+    ).run();
+  }
+
+  async function claimed(): Promise<void> {
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(createSystemCtx().id("clm"), "x", new Date(AUGUST_20).toISOString(), ORG).run();
+  }
+
   it("says armed=false with the reason rather than a reassuring 0%", async () => {
     const ctx = createSystemCtx();
     await testEnv.CATALOG.prepare(
@@ -684,32 +715,11 @@ describe("doctor refuses to arm a breaker with no observations", () => {
   });
 
   it("degrades when the Node is sending and hearing nothing, which is when it cannot fire", async () => {
-    const ctx = createSystemCtx();
-    await testEnv.CATALOG.prepare(
-      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
-    ).bind(ctx.id("clm"), "x", new Date(AUGUST_20).toISOString(), ORG).run();
+    await claimed();
 
     // A hand-over old enough to have been answered, and no attributed event at all — `delivery_visibility`'s
     // own blindness predicate, which this check reads rather than recomputing.
-    const long_ago = AUGUST_20 - 7 * 24 * 3600_000;
-    await handedOver(1, long_ago);
-    await testEnv.CATALOG.prepare(
-      `INSERT INTO send_manifests
-         (id, org_id, mailbox_id, author_user_id, in_reply_to_message_id, envelope_from, envelope_to,
-          envelope_cc, envelope_bcc, subject, rfc_message_id, references_header, fidelity,
-          body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
-          submitted_key, submitted_sha256, sealed_at, release_at, state, state_at,
-          transport_message_id, last_error, attempts, policy_outcome, policy_versions, state_reason)
-       VALUES (?,?,?,?,NULL,?,?,NULL,NULL,?,?,NULL,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,NULL,0,NULL,NULL,NULL)`,
-    ).bind(
-      (await testEnv.CATALOG.prepare(
-        "SELECT manifest_id FROM send_recipients WHERE org_id = ? LIMIT 1",
-      ).bind(ORG).first<{ manifest_id: string }>())!.manifest_id,
-      ORG, MAILBOX, AUTHOR, ADDRESS, JSON.stringify(["r0@example.net"]), "Old", "old@acme.example",
-      "authored", "k", "h", "k2", "h2",
-      new Date(long_ago).toISOString(), new Date(long_ago).toISOString(), "handed_over",
-      new Date(long_ago).toISOString(),
-    ).run();
+    await anOldUnansweredHandOver();
 
     const report = await runDoctor(testEnv, atTime(AUGUST_20));
     expect(report.findings.find((f) => f.check === "delivery_visibility")!.ok).toBe(false);
@@ -717,6 +727,42 @@ describe("doctor refuses to arm a breaker with no observations", () => {
     expect(finding.ok).toBe(false);
     expect(finding.severity).toBe("degraded");
     expect(finding.fix).toContain("no denominator");
+    /*
+     * It points at delivery_visibility and claims no cause of its own (review 28 September 2026). `blind` is
+     * read from that finding's `ok`, which is also false when doctor could not read the delivery tables at
+     * all, so "received no delivery outcome" and "fix the event subscription" were each a claim this check
+     * cannot know. Only delivery_visibility says why.
+     */
+    expect(finding.fix).toContain("delivery_visibility");
+    expect(finding.fix).not.toContain("received no delivery outcome");
+    expect(finding.fix).not.toContain("Fix the event subscription");
+  });
+
+  /*
+   * No outcome is reported for verified destinations (28 September 2026), so a Node whose every recipient is
+   * one hears nothing and is not blind. `runDoctor` hands `delivery_visibility`'s `ok` to this check, and this
+   * pins that coupling: a blindness predicate that forgot the explained silence would degrade here too.
+   */
+  it("reads as a quiet Node when every silent recipient is a verified destination", async () => {
+    await claimed();
+    await anOldUnansweredHandOver();
+    const read = new Date(LONG_AGO + 24 * 3600_000).toISOString();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        `INSERT INTO verified_destination_recipients (org_id, address, verified_from, verified_until)
+         VALUES (?,?,?,?)`,
+      ).bind(ORG, "r0@example.net", new Date(LONG_AGO - 30 * 24 * 3600_000).toISOString(), read),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO verified_destination_read (id, account_id, authority, read_at, attempted_at, error)
+         VALUES (1, 'acct_fixture', 'token', ?, ?, NULL)`,
+      ).bind(read, read),
+    ]);
+
+    const report = await runDoctor(testEnv, atTime(AUGUST_20));
+    expect(report.findings.find((f) => f.check === "delivery_visibility")!.ok).toBe(true);
+    const finding = report.findings.find((f) => f.check === "send_breakers")!;
+    expect(finding.ok).toBe(true);
+    expect(finding.severity).toBe("report");
   });
 });
 

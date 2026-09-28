@@ -78,7 +78,7 @@ beforeEach(async () => {
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
     "mailbox_items", "messages", "message_labels", "message_reads", "message_places", "cases", "conversations", "ingress_receipts", "send_recipient_events",
-    "suppression_lifts",
+    "suppression_lifts", "verified_destination_recipients", "verified_destination_read",
     "relationship_tuples", "users", "node_claim",
   ]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
@@ -312,6 +312,31 @@ describe("every schema-bearing route answers what the contract says it does", ()
       delivery: unknown[];
     };
     expect(delivery.delivery).toEqual([]);
+
+    /*
+     * The verified-destinations read (28 September 2026), with the operator headers as `mailda setup` sends
+     * them, since the token was forgotten above. Its answer is counts only, because which recipients were
+     * verified destinations is content and this answers any administrator: `.strict()` is what keeps an
+     * address from arriving here undescribed. The stubbed account lists one verified address this Node has
+     * never sent to, so it is counted nowhere.
+     */
+    const listingFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) =>
+      String(url).includes("/email/routing/addresses")
+        ? Response.json({ success: true, result: [{ email: "friend@example.test", verified: "2024-11-21T10:00:00Z" }] })
+        : listingFetch(url, init));
+    try {
+      const recorded = await answers("POST", "/api/provider/verified-destinations", {
+        cookie: held,
+        headers: { "x-cloudflare-token": "wrangler-token", "x-cloudflare-account": "1e0170aaabc90ecf5f466128d1f0466a" },
+      }) as { destinations: Record<string, unknown> };
+      expect(recorded.destinations).toMatchObject({
+        accountId: "1e0170aaabc90ecf5f466128d1f0466a", error: null, recipients: 0, verified: 0,
+      });
+      expect(JSON.stringify(recorded)).not.toContain("friend@example.test");
+    } finally {
+      vi.stubGlobal("fetch", listingFetch);
+    }
 
     /*
      * An operator's own credential for one request (25 September 2026). With the two headers, the
@@ -2508,8 +2533,12 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * previews the backfill gave up on. `doctor`'s `preview_backlog` stayed failing with nothing behind its fix
      * once a vault or storage fault had spent their attempts, which is the permanent alarm the acknowledge route
      * above was added to end, one layer down.
+     *
+     * The 141st is `POST /api/provider/verified-destinations` (28 September 2026): the read that records which
+     * of this Node's recipients were verified Email Routing destinations of the account, for which no outcome
+     * is reported. Its answer is counts, and `.strict()` is what keeps an address out of it.
      */
-    expect(coverage.total).toBe(140);
+    expect(coverage.total).toBe(141);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

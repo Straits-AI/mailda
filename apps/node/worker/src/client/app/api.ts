@@ -1,5 +1,6 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
+import type { ProviderVerifiedDestinations } from "@mailda/contract/schemas";
 import {
   EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
   type HttpMethod, type PathFor,
@@ -188,6 +189,8 @@ export interface RecipientRow {
   address: string;
   submission_state: string;
   delivery_state: string | null;
+  /** Why no outcome is expected (`verified_destination`), or null; always null while `delivery_state` is set. */
+  delivery_reason: string | null;
   bounce_type: string | null;
   last_error: string | null;
 }
@@ -2265,3 +2268,14 @@ export const subscriptionProposal = (domain: string) =>
 
 export const subscribeDeliveryEvents = (domain: string, digest: string) =>
   act<{ proposal: SubscriptionProposal }>(at("POST", "/api/provider/subscription"), "POST", { domain, digest });
+
+/**
+ * What the latest read of the account's verified destinations found, typed from the contract's schema rather
+ * than restated. Counts only, never an address. `readAt` null with `error` set means could not read, not none
+ * verified.
+ */
+export type VerifiedDestinationsState = ProviderVerifiedDestinations;
+
+/** Reads the account's list with this Node's token and records which of its recipients are on it. */
+export const recordVerifiedDestinations = () =>
+  act<{ destinations: VerifiedDestinationsState }>(at("POST", "/api/provider/verified-destinations"), "POST");

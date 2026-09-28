@@ -8,10 +8,12 @@ to and [#162][162] for this layer.
 
 **At install and upgrade: wrangler's login, carried on one request.** Every provisioning route
 (`GET`/`POST /api/provider/receiving`, `/sending`, `/subscription`, the email-routing and delivery-events
-reads, the routing-rule routes) accepts two request headers, `x-cloudflare-token` and
+reads, the routing-rule routes, `POST /api/provider/verified-destinations`) accepts two request headers, `x-cloudflare-token` and
 `x-cloudflare-account`. When they are present the Node reads and writes the account with that token,
-inside that account, for that request, and never stores either. `mailda install` and `mailda upgrade` send
-wrangler's login token this way, which the operator consented to before anything was deployed and which
+inside that account, for that request. It never stores the token. It does not store the account id either,
+except that `POST /api/provider/verified-destinations` records the account it read in `verified_destination_read`
+and in its `provider.verified_destinations_read` audit entry. `mailda install`, `mailda setup` and `mailda
+upgrade` send wrangler's login token this way, which the operator consented to before anything was deployed and which
 reaches every endpoint the Node needs but the registrar ([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)).
 After the claim the install asks which domain the Node receives at and sets up receiving, sending and the
 delivery-events subscription; a Node is receiving when the install ends, with no dashboard visit. This is
@@ -43,6 +45,7 @@ Cloudflare's token form names them; the Setup screen prints the same list with w
 | Queues Edit | the `email.sending` subscription that makes a send's outcome reach this Node |
 | the Email Sending group | onboarding a domain for sending; the form's exact name is not published |
 | Registrar Domains Read | only for buying a domain from the Node; leave it off otherwise |
+| Email Routing Addresses Read (optional) | which of the addresses this Node has sent to are verified destinations; no delivery outcome was reported for one in the case measured |
 
 Restrict the token to the account the Node runs in, and give it a TTL if one is wanted; a token Cloudflare
 no longer accepts is reported at the act that tried it, in Cloudflare's own words (`10000 Authentication
@@ -221,6 +224,62 @@ on)`. The dot is a label boundary, without which `notexample.test` would count a
 `GET /accounts/{id}/queues` pages at 100 and this account holds 66. Matching against page one would be right
 until the hundred-and-first queue. A subscription names its `queue_id`, so there is a targeted read and no
 list to be wrong about, the mistake `deploy --plan` already made once, on R2's page of twenty.
+
+## Recipients for which no outcome is reported (28 September 2026)
+
+In the one case measured, Cloudflare published no `email.sending` event for mail to a **verified
+destination** of the account, an address verified for Email Routing forwarding: three sends to one such
+address stayed silent, while on the same subscription a send to an ordinary address on the same Node got
+`message.delivered` (`accepted`) in 18 seconds, and a send to a second `gmail.com` address that is not a
+verified destination, with the same receiving provider and MX as the silent three, got `message.delivered` in
+27 seconds ([`email-sending-events.md`](./receipts/email-sending-events.md), 28 September 2026 addition, the
+discriminating send). So the silence follows verified status, not delivery outside Cloudflare. The sample is
+still one verified address and only the `send_email` binding (the REST adapter was not sampled), and
+Cloudflare does not document the behaviour, so the product treats it as an observation: doctor stops calling
+the silence expected as soon as any event contradicts it.
+
+Such a recipient stays `unobserved`, which reads like an answer still coming or a subscription that is
+missing. So the Node records which of its recipients are verified destinations:
+
+- **The read.** `POST /api/provider/verified-destinations` lists the account's destination addresses
+  (`GET /accounts/{account_id}/email/routing/addresses`, every page) with the operator headers or the
+  stored token. `mailda setup` calls it after provisioning with the token it already fetched from
+  wrangler's login; `mailda upgrade` calls it when a login is found; the Setup screen's *Delivery outcomes*
+  section calls it with the stored token. Nothing else does: not install (no recipients yet), not doctor
+  (no live call), not a cron, not dispatch.
+- **What is stored.** Only the intersection: a row in `verified_destination_recipients` exists only for an
+  address `send_recipients` already holds as handed over, so the account's list, which can hold anybody's
+  address, enters SQL only as a filter. Each row keeps the interval a read proved, Cloudflare's own
+  `verified` timestamp to the latest read that listed it, and is never removed; a hand-over inside an
+  interval, or after the latest read for an address that read still listed, is explained. The read itself
+  is one row in `verified_destination_read`: the account, which credential, when it last succeeded, when it
+  was last attempted, and the failure as reported (Cloudflare's words when it gave any).
+- **The account check.** A Node lives in one account, and the rows a read writes are never removed. An
+  operator credential naming a different account is refused before anything is asked
+  (`E_PROVIDER_ACCOUNT_MISMATCH`, 409, naming both): different from the stored token's when one is held, else
+  from the account the last successful read named, which is the ordinary path's case. A Node that really moved
+  says so by registering a token for the new account (`mailda provider --token`), which is then what is
+  compared; rows an earlier account's read proved stay true for the hand-overs made while it lived there. A
+  failed read of the stored token is a 500, never "no token held", since that would skip the comparison. With
+  no credential at all it is `E_PROVIDER_NO_TOKEN`, naming `mailda setup` first.
+- **The audit entry.** Every read that reaches Cloudflare writes `provider.verified_destinations_read`, `ok`
+  with the actor, the account, the credential (`token` or `operator`) and two counts, or `failed` with the
+  same names and the failure as reported in place of the counts. The two
+  refusals before that (`E_PROVIDER_NO_TOKEN`, `E_PROVIDER_ACCOUNT_MISMATCH`) ask Cloudflare nothing and write
+  no entry. Never an address: the trail is permanent and widely read, and which recipients were verified
+  destinations is content.
+- **Counts, not addresses.** The route, the Setup screen and the CLI say how many. Which recipients they
+  are is shown only by the Outbox, as the reason `verified destination` beside `unobserved`, on
+  `GET /api/sends`, which is bounded by `mailbox.content.read`.
+- **The non-success states.** A refused or unreachable read answers 200 with `error` set and changes no
+  address row: that is could not read, never none verified, and an earlier read still stands. Never read
+  and read-and-found-none are different answers because the read row exists.
+
+Wrangler's login reaches the list: 200, measured on 28 September 2026 with the `email_routing:write`
+scope ([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)). What Cloudflare answers a stored
+token that lacks Email Routing Addresses Read was **not measured**. A token made from the list before 28
+September 2026 does not carry it; add it in the dashboard, or make a new token and register it (if the
+dashboard shows a new value after the edit, register that).
 
 ## Onboarding a subdomain for receiving (#209, #210), and what the restore drill found in it
 

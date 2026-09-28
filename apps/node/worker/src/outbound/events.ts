@@ -1,5 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
+import { log } from "../audit.ts";
+
 /**
  * Provider events become per-recipient delivery state (Layer 2's proof line).
  *
@@ -33,6 +35,24 @@ import type { Ctx } from "@mailda/runtime";
  * A bounce nobody can attribute is still a bounce, and dropping it turns a fact into silence — which is
  * the failure this whole layer exists to remove. `sre_unattributed` indexes exactly those, because they
  * are the ones a person has to go and look at.
+ *
+ * One case cannot be stored: an event with no usable `eventId` (no idempotency key) or no usable
+ * `recipient` (it names nobody). It is logged as `sending_event.unusable`, at level `error`, with its type,
+ * its message id and which field was missing (28 September 2026). Before, it was acked with no trace at
+ * all, so an outcome Cloudflare did publish read exactly like one it never sent. So every event this
+ * function returns from is now applied, stored unattributed, or logged as unusable, and doctor's
+ * `delivery_visibility` counts those log lines: any one of them stops it calling a silence explained.
+ *
+ * One that throws, which now means D1 failed, is not any of the three. The consumer logs it as
+ * `sending_event.failed` and retries it, up to the consumer's `max_retries` (3, with no dead-letter queue:
+ * `docs/receipts/queue-provisioning.md`), and then Queues drops it. So "no row" reads as "Cloudflare published
+ * nothing" except for an event whose every retry failed, which doctor does not see; its header says why it does
+ * not count the `sending_event.failed` line instead.
+ *
+ * A field that is empty or not a string counts as missing. Everything here arrives from the queue as
+ * untyped JSON: an empty `eventId` would have become a primary key every later empty one collided with, and
+ * a non-string value reaching `bind` threw, which the consumer logs and retries, though no retry can change
+ * the body.
  */
 
 /** What Cloudflare publishes. Only the fields this Node reads are named; the rest is kept verbatim. */
@@ -97,6 +117,12 @@ export interface EventOutcome {
   /** Null when no manifest matched. Stored anyway; see the header. */
   manifestId: string | null;
   deliveryState: string | null;
+  /**
+   * The fields that made this event unusable (`payload.eventId`, `payload.recipient`), when they did: it was
+   * logged as `sending_event.unusable` and not stored. Null on every other outcome, so an unusable event is
+   * never mistaken for a duplicate, which is the other `applied: false`.
+   */
+  unusable: string[] | null;
 }
 
 /**
@@ -112,19 +138,37 @@ export async function applySendingEvent(
   orgId: string,
   event: SendingEvent,
 ): Promise<EventOutcome> {
-  const payload = event.payload ?? {};
+  // `event?.`: the queue hands over whatever JSON was published, and a null body must be logged below
+  // rather than thrown on here. See the header on missing and non-string fields.
+  const payload = event?.payload ?? {};
+  const text = (value: unknown): string | null => typeof value === "string" && value !== "" ? value : null;
   // No eventId means no idempotency key, so a redelivery would apply twice. Synthesising one from the
   // content would be worse: two genuinely different events could collide and one would vanish.
-  const eventId = payload.eventId ?? null;
-  const recipient = payload.recipient ?? null;
-  const transportMessageId = payload.messageId ?? null;
+  const eventId = text(payload.eventId);
+  const recipient = text(payload.recipient);
+  const transportMessageId = text(payload.messageId);
+  // `(none)` has no delivery state, so an event of no usable type is stored and changes nothing.
+  const type = text(event?.type) ?? "(none)";
 
   if (eventId === null || recipient === null) {
-    return { eventId: eventId ?? "(none)", applied: false, manifestId: null, deliveryState: null };
+    const missing = [eventId === null ? "payload.eventId" : null, recipient === null ? "payload.recipient" : null]
+      .filter((one): one is string => one !== null);
+    // Acked by the consumer after this, not retried: a retry cannot make the fields appear. This line is
+    // the trace. No recipient in the detail: `GET /api/logs` is for administrators, and administering a Node
+    // is not a grant to read its mail.
+    await log(env, ctx, {
+      level: "error", event: "sending_event.unusable", orgId,
+      message: `a ${type} event arrived without `
+        + `${missing.join(" or ")}, so no delivery state was changed and it was not stored: with no event id it has no `
+        + "idempotency key, and with no recipient it names nobody",
+      detail: { type, messageId: transportMessageId, missing },
+    });
+    return { eventId: eventId ?? "(none)", applied: false, manifestId: null, deliveryState: null, unusable: missing };
   }
 
   const at = new Date(ctx.now()).toISOString();
-  const deliveryState = event.type in DELIVERY_STATE ? DELIVERY_STATE[event.type]! : null;
+  // `Object.hasOwn`, not `in`: `"toString" in DELIVERY_STATE` is true, and would bind a function below.
+  const deliveryState = Object.hasOwn(DELIVERY_STATE, type) ? DELIVERY_STATE[type]! : null;
 
   // The join, and it goes to the **recipient row** first.
   //
@@ -168,12 +212,12 @@ export async function applySendingEvent(
        (event_id, org_id, manifest_id, recipient, event_type, transport_message_id, terminal, payload, received_at)
      VALUES (?,?,?,?,?,?,?,?,?)`,
   )
-    .bind(eventId, orgId, manifestId, recipient, event.type, transportMessageId,
+    .bind(eventId, orgId, manifestId, recipient, type, transportMessageId,
       payload.terminal === true ? 1 : 0, JSON.stringify(event), at)
     .run();
 
   if ((inserted.meta.changes ?? 0) === 0) {
-    return { eventId, applied: false, manifestId, deliveryState };
+    return { eventId, applied: false, manifestId, deliveryState, unusable: null };
   }
 
   if (manifestId !== null && deliveryState !== null) {
@@ -193,10 +237,10 @@ export async function applySendingEvent(
     )
       .bind(
         deliveryState, at,
-        payload.bounce?.type ?? null,
+        text(payload.bounce?.type),
         // The provider's own words, not a paraphrase: a paraphrase of "550 5.1.1 User unknown" is a guess
-        // about somebody else's mail server.
-        payload.bounce?.reason ?? payload.delivery?.smtpResponse ?? null,
+        // about somebody else's mail server. Through `text()` like the fields above, for the same reason.
+        text(payload.bounce?.reason) ?? text(payload.delivery?.smtpResponse),
         eventId,
         ...(byId ? [recipientRow!.id] : [orgId, manifestId, recipient]),
         ...overwritable,
@@ -204,7 +248,7 @@ export async function applySendingEvent(
       .run();
   }
 
-  return { eventId, applied: true, manifestId, deliveryState };
+  return { eventId, applied: true, manifestId, deliveryState, unusable: null };
 }
 
 /** The org this Node belongs to. A Node has exactly one; events carry no organisation of their own. */

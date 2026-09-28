@@ -1371,6 +1371,9 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .delivery-deferred    { border-color: var(--warning); color: var(--warning); }
 /* Unobserved is deliberately the quietest thing on the row: the absence of news is not a finding. */
 .delivery-unobserved  { color: var(--text-secondary); }
+/* A verified destination's summary chip: as quiet as unobserved, since it says nothing is coming, not that
+   anything went wrong. */
+.delivery-verified_destination { color: var(--text-secondary); }
 .delivery-chip        { margin-left: 6px; }
 
 /* Doctor's three verdicts and its severities. */

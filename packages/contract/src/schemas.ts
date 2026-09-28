@@ -259,7 +259,8 @@ export const providerResponse = z.object({
   }).strict(),
   /**
    * The permissions to tick in Cloudflare's token form, in the dashboard's own names, each with why this
-   * Node asks for it. `optional` marks the one only a domain purchase needs. The list is here rather than in
+   * Node asks for it. `optional` marks a permission this Node works without: the domain purchase, and reading
+   * which recipients are verified destinations. The list is here rather than in
    * prose so every surface prints the same words and a permission added to the Node reaches them all.
    */
   permissions: z.array(z.object({
@@ -342,6 +343,29 @@ export const providerDeliveryEventsResponse = z.object({
     error: z.string().nullable(),
   }).strict()),
 }).strict();
+
+/**
+ * What `POST /api/provider/verified-destinations` recorded (28 September 2026). **Counts only, never an
+ * address**: which recipients were verified destinations is content, shown only by the Outbox, which is
+ * bounded by `mailbox.content.read`, while this answers any administrator.
+ *
+ * `error` is the latest attempt's failure as reported: Cloudflare's words when it gave any, otherwise
+ * `http_<status>` or that the API could not be reached. `readAt` null with `error` set means
+ * could not read, not none verified; `readAt` set with `error` set means a later attempt failed and the
+ * earlier read still stands. `verified` is null until a read has succeeded.
+ */
+export const providerVerifiedDestinationsResponse = z.object({
+  destinations: z.object({
+    accountId: z.string().nullable(),
+    readAt: isoDate.nullable(),
+    attemptedAt: isoDate,
+    error: z.string().nullable(),
+    recipients: z.number().int().nonnegative(),
+    verified: z.number().int().nonnegative().nullable(),
+  }).strict(),
+}).strict();
+/** The `destinations` object, for the consumers that print it (the client and the CLI's declaration). */
+export type ProviderVerifiedDestinations = z.infer<typeof providerVerifiedDestinationsResponse>["destinations"];
 
 /**
  * What onboarding a domain for sending would do, and the digest that binds an apply to it.
@@ -807,7 +831,7 @@ export const healthResponse = z.object({
 export const DOCTOR_CHECKS = [
   "agent_withdrawn_capabilities", "body_index_backlog", "body_index_failed", "butler_execution",
   "butler_loop_detection", "butler_paused", "butler_run_silence", "catalog_reachable", "credential_key",
-  "delivery_attribution", "delivery_visibility", "doctor_cost", "domain_paused", "draft_bodies_stranded",
+  "delivery_attribution", "delivery_explanation_void", "delivery_visibility", "doctor_cost", "domain_paused", "draft_bodies_stranded",
   "evidence_bucket_reachable", "evidence_key_generation", "evidence_orphans", "evidence_present",
   "inbound_authentication", "inbound_routing", "key_vault", "legal_hold_lift_pending", "legal_hold_mailbox_missing",
   "legal_holds_active", "legal_hold_unliftable", "migrations_applied", "outbox_draining", "preview_backlog",
@@ -2091,6 +2115,16 @@ export const dispatchResponse = z.object({ dispatched: z.array(z.unknown()) }).l
 
 /* ------------------------------------------------------------------ sending (#61, ADR 33, ADR 40) -- */
 
+/**
+ * Every reason a recipient's silence can be explained by (28 September 2026). A reason explains silence and is
+ * never a delivery state: states are set by events only. It is present only while `delivery_state` is null and
+ * the recipient was handed over. The wire (`recipientRow.delivery_reason`) stays `z.string()`, so a newer
+ * Node's unknown reason reaches an older client as a string instead of breaking it (`DOCTOR_CHECKS`'
+ * precedent). The Outbox's words for each live in `delivery.client.js`, held equal to this list.
+ */
+export const DELIVERY_REASONS = ["verified_destination"] as const;
+export type DeliveryReason = (typeof DELIVERY_REASONS)[number];
+
 /** One recipient's own state, because migration 0013 makes the **delivery** the unit rather than the send. */
 export const recipientRow = z.object({
   manifest_id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
@@ -2098,6 +2132,19 @@ export const recipientRow = z.object({
   address: z.string().min(1),
   submission_state: z.string().min(1),
   delivery_state: z.string().nullable(),
+  /**
+   * Why no outcome is expected, when the Node knows. `verified_destination`: a read of the account's Email
+   * Routing destination list showed the address verified at hand-over (or verified before it and still
+   * listed at the latest read), and no outcome is reported for verified destinations. Null whenever
+   * delivery_state is set, and whenever an event was attributed to the recipient, including one that sets no
+   * state (a complaint): an observed event always wins.
+   *
+   * It tells whoever may read a send that its recipient was a verified destination of the account when
+   * handed over. That is bounded to rows the reader already sees, because it rides on `GET /api/sends`,
+   * which is bounded by `mailbox.content.read`, and it is accepted because the alternative is telling that
+   * reader to wait for an answer that cannot come.
+   */
+  delivery_reason: z.string().nullable(),
   bounce_type: z.string().nullable(),
   last_error: z.string().nullable(),
 }).strict();

@@ -93,13 +93,45 @@ export function orderRecipients(recipients) {
 }
 
 /**
+ * Why no outcome is expected for a recipient, keyed on `delivery_reason` (28 September 2026). A reason explains
+ * silence and is never a delivery state: `delivery_state` is set only by events, and an event wins. The closed
+ * world is `DELIVERY_REASONS` in the contract: every token has words here, and every entry here is a token.
+ */
+export const DELIVERY_REASONS = {
+  verified_destination: {
+    label: "verified destination",
+    note: "No outcome is reported for verified destinations. A read of this Node's Cloudflare account showed this " +
+      "address as a verified Email Routing destination, verified before this message was handed over, and Cloudflare " +
+      "published no delivery event for mail to a verified destination in the one case measured. So nothing is " +
+      "expected here. The silence is not a fault in this Node, and it says nothing about whether this message " +
+      "arrived. An address removed from the account's list after the latest read still shows this until the " +
+      "list is read again.",
+  },
+};
+
+/** One recipient's words: the state, and the reason beside it when there is one. An observed outcome wins. */
+export function describeRecipient(recipient) {
+  const state = recipient?.delivery_state;
+  if (state !== null && state !== undefined) {
+    return { state: DELIVERY_STATES[state] ?? { label: String(state), note: "" }, reason: null };
+  }
+  const token = recipient?.delivery_reason;
+  const reason = token === null || token === undefined || token === ""
+    ? null : (DELIVERY_REASONS[token] ?? { label: String(token), note: "" });
+  return { state: UNOBSERVED, reason };
+}
+
+/**
  * Worst first, because the outcome a reader's eye lands on first should be the one that needs them.
  *
  * A state absent from this list sorts ahead of everything. An outcome this client does not recognise is
  * exactly what a person should look at, and filing it under "probably fine" would be the same mistake
  * this ordering exists to correct.
+ *
+ * `verified_destination` is a reason, not a state, and ranks below `unobserved` because nothing waits on it:
+ * no answer is coming and no action follows.
  */
-export const DELIVERY_SEVERITY = ["bounced", "failed", "rejected", "deferred", "unobserved", "accepted"];
+export const DELIVERY_SEVERITY = ["bounced", "failed", "rejected", "deferred", "unobserved", "verified_destination", "accepted"];
 
 export function severityRank(state) {
   const rank = DELIVERY_SEVERITY.indexOf(state);
@@ -107,11 +139,13 @@ export function severityRank(state) {
 }
 
 /**
- * The observed delivery outcomes of one send, worst first, as `{ state, count, label, note }`.
+ * The observed delivery outcomes of one send, worst first, as `{ state, count, label, note }`. `state` is a
+ * delivery state, or a reason token (`DELIVERY_REASONS`) for a recipient that has none.
  *
- * Returns an empty array in exactly one case: **nothing has been observed about any recipient.** Then the
- * submission state is the whole of what this Node knows and an "unobserved" chip beside it would add no
- * fact — the detail row says it in words instead.
+ * Returns an empty array in exactly one case: **nothing has been observed about any recipient, and none
+ * carries a reason.** Then the submission state is the whole of what this Node knows and an "unobserved"
+ * chip beside it would add no fact — the detail row says it in words instead. A send whose every recipient
+ * is a verified destination does get its chip, because that adds one: nothing is coming, so do not wait.
  *
  * It does *not* return empty for a unanimous outcome. Unanimity is collapsed to one entry, never
  * suppressed, because "they all agree" and "they all bounced" are the same shape.
@@ -121,7 +155,7 @@ export function summariseDelivery(recipients) {
 
   const counts = new Map();
   for (const recipient of recipients) {
-    const state = recipient.delivery_state ?? "unobserved";
+    const state = recipient.delivery_state ?? (recipient.delivery_reason || "unobserved");
     counts.set(state, (counts.get(state) ?? 0) + 1);
   }
 
@@ -130,7 +164,8 @@ export function summariseDelivery(recipients) {
   return [...counts.entries()]
     .sort((a, b) => severityRank(a[0]) - severityRank(b[0]))
     .map(([state, count]) => {
-      const meta = state === "unobserved" ? UNOBSERVED : (DELIVERY_STATES[state] ?? { label: state, note: "" });
+      const meta = DELIVERY_STATES[state] ?? DELIVERY_REASONS[state]
+        ?? (state === "unobserved" ? UNOBSERVED : { label: state, note: "" });
       return { state, count, label: meta.label, note: meta.note };
     });
 }

@@ -143,6 +143,15 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
     scope: "Queues: Edit",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
+  /*
+   * The account's verified Email Routing destinations (28 September 2026), read to record which of this
+   * Node's recipients were verified destinations, for which no outcome is reported. Optional: `mailda setup`
+   * reads it with wrangler's login, measured 200 (`docs/receipts/wrangler-login-reach.md`).
+   */
+  "/accounts/{}/email/routing/addresses": {
+    scope: "Email Routing Addresses: Read",
+    reference: "Email Routing Addresses Write | Email Routing Addresses Read",
+  },
   "/zones": { scope: "Zone: Read", reference: "Zone Zone Read" },
   /*
    * Read to get the verdict; `POST /enable` is what turns a zone into a mail zone. The `PATCH` this Node
@@ -174,7 +183,8 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope).filter((one): one is string => one !== null));
     expect([...spent].sort()).toEqual([
-      "Account Settings: Read", "Email Routing Rules: Edit", "Email Sending: Edit", "Queues: Edit",
+      "Account Settings: Read", "Email Routing Addresses: Read", "Email Routing Rules: Edit", "Email Sending: Edit",
+      "Queues: Edit",
       "Registrar Domains: Read", "Zone Settings: Edit", "Zone: Read",
     ]);
 
@@ -183,7 +193,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(idle).toEqual([]);
     // And the other direction: a path whose permission nobody asks for would fail at runtime, not here.
     expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
-    expect(asked).toHaveLength(7);
+    expect(asked).toHaveLength(8);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -195,7 +205,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
     expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(7);
+    expect(scopesAskedFor(grant).length).toBe(8);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);

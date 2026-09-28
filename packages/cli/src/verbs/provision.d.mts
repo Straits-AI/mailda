@@ -6,6 +6,22 @@
 /** wrangler's login token, from the environment or its config file; fails naming the paths looked at. */
 export function wranglerToken(): Promise<string>;
 
+/** wrangler's login token as `wranglerToken` finds it, or null where that one fails for want of a login. */
+export function wranglerTokenIfAny(): Promise<string | null>;
+
+/**
+ * `POST /api/provider/verified-destinations`'s `destinations`: counts only, never an address. Taken from the
+ * contract rather than restated. The implementation is not type-checked against it (`checkJs: false`), so a
+ * rename in the contract turns red where a typed caller passes one, `verified-destination-step.test.ts`'s fixture.
+ */
+export type VerifiedDestinations = import("@mailda/contract/schemas").ProviderVerifiedDestinations;
+
+/** What a read of verified destinations found, as lines to print (unindented). Pure. */
+export function verifiedDestinationLines(d: VerifiedDestinations): string[];
+
+/** Posts the read with the operator's credential and prints what the Node recorded or why it refused. Never exits or throws. */
+export function verifiedDestinationsStep(input: { origin: string; cookie: string; accountId: string; token: string }): Promise<void>;
+
 /** A zone's catch-all in one line: `worker -> butler (enabled)`, or `nothing`. */
 export function catchAllLine(catchAll: { action: string; destinations: string[]; enabled: boolean } | null): string;
 

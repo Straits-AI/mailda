@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
+import { providerVerifiedDestinationsResponse } from "@mailda/contract/schemas";
+
 import { api, capture, choose, fail, wrapAt } from "../support.mjs";
 import { tokenFromWranglerConfig, wranglerConfigPaths } from "../wrangler-config.mjs";
 
@@ -21,21 +23,92 @@ import { tokenFromWranglerConfig, wranglerConfigPaths } from "../wrangler-config
  * with one thing left to do, and the Setup screen and `mailda provider` do that thing later.
  */
 export async function wranglerToken() {
+  return (await wranglerTokenIfAny())
+    ?? fail("wrangler's login token could not be found, so the account cannot be set up from here.\n\n"
+      + "  why      the install reuses the consent `wrangler login` gave rather than asking for another; the\n"
+      + "           token is read from the file wrangler writes, and none of these hold one:\n"
+      + wranglerConfigPaths(process.env, process.platform, homedir()).map((one) => `             ${one}\n`).join("")
+      + "  fix      run `npx wrangler login`, then re-run; or set CLOUDFLARE_API_TOKEN to a token that may\n"
+      + "           write Email Routing, Email Sending and Queues in this account");
+}
+
+/**
+ * wrangler's login token, or null when there is none. For a step that is worth doing and not worth ending a
+ * run over: `mailda upgrade` has already deployed by the time it reads verified destinations.
+ */
+export async function wranglerTokenIfAny() {
   if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
   // `whoami` refreshes an expired token and rewrites the file; the read below then sees a live one.
   capture("npx", ["wrangler", "whoami"], { quiet: true });
-  const paths = wranglerConfigPaths(process.env, process.platform, homedir());
-  for (const path of paths) {
+  for (const path of wranglerConfigPaths(process.env, process.platform, homedir())) {
     if (!existsSync(path)) continue;
     const found = tokenFromWranglerConfig(readFileSync(path, "utf8"));
     if (found !== null) return found.token;
   }
-  fail("wrangler's login token could not be found, so the account cannot be set up from here.\n\n"
-    + "  why      the install reuses the consent `wrangler login` gave rather than asking for another; the\n"
-    + "           token is read from the file wrangler writes, and none of these hold one:\n"
-    + paths.map((one) => `             ${one}\n`).join("")
-    + "  fix      run `npx wrangler login`, then re-run; or set CLOUDFLARE_API_TOKEN to a token that may\n"
-    + "           write Email Routing, Email Sending and Queues in this account");
+  return null;
+}
+
+/** The operator's own credential, for one request and no longer; the Node never stores it. */
+const operatorHeaders = (cookie, token, accountId) =>
+  ({ cookie, "content-type": "application/json", "x-cloudflare-token": token, "x-cloudflare-account": accountId });
+
+/** A refusal, printed whole under the step it belongs to. */
+const refused = (text) => { for (const line of text.split("\n")) process.stdout.write(`     ${line}\n`); process.stdout.write("\n"); };
+
+/**
+ * What a read of the account's verified destinations found, in lines to print under a step (28 September 2026).
+ * Counts only, never an address. `error` is tested first: a failed read still counts the recipients, and
+ * "0 of 3" there would turn could not read into none verified.
+ */
+export function verifiedDestinationLines(d) {
+  const said = d.error !== null
+    ? `could not read: ${d.error}; ${d.readAt === null ? "until a read succeeds, those recipients show as unobserved" : `the read of ${d.readAt} stands`}`
+    : d.recipients === 0
+      ? `nothing to compare: this Node has handed mail to nobody yet (read ${d.readAt}, account ${d.accountId})`
+      : `${d.verified} of ${d.recipients} address(es) this Node has handed mail to (read ${d.readAt}, account ${d.accountId}); `
+        + "no outcome is reported for verified destinations, in the one case measured "
+        + "(docs/receipts/email-sending-events.md)";
+  return wrapAt(said, 70).map((line, i) => `${i === 0 ? "verified destinations " : "                      "} ${line}`);
+}
+
+/**
+ * Asks the Node to read which of its recipients are verified destinations of the account, with the operator's
+ * credential, and prints what it recorded. Cloudflare published no delivery event for mail to one in the case
+ * measured (`docs/receipts/email-sending-events.md`), so without this read the Outbox and doctor wait for an
+ * answer that is not coming. A refusal (a Node older than the route answers 404), an answer that broke off, or
+ * one not in the route's shape is printed and the run goes on: it never exits, and never throws.
+ */
+export async function verifiedDestinationsStep({ origin, cookie, accountId, token }) {
+  const path = api("POST", "/api/provider/verified-destinations");
+  process.stdout.write("\n");
+  const response = await fetch(`${origin}${path}`, { method: "POST", headers: operatorHeaders(cookie, token, accountId) })
+    .catch((error) => error);
+  if (response instanceof Error) {
+    process.stdout.write("   verified destinations  not read:\n");
+    refused(`POST ${path} could not reach ${origin}: ${response.message}`);
+    return;
+  }
+  // The headers arrived; the body can still break off, and that is a refusal printed, not a throw after a deploy.
+  const text = await response.text().catch((error) => error);
+  if (text instanceof Error) {
+    process.stdout.write("   verified destinations  not read:\n");
+    refused(`POST ${path} answered ${response.status} and the answer broke off: ${text.message}`);
+    return;
+  }
+  // The route's shape, from the contract, or the answer is printed as it came: a line built from anything
+  // else would throw, or say "could not read: undefined".
+  const answer = response.ok ? providerVerifiedDestinationsResponse.safeParse(parsed(text)) : null;
+  if (!answer?.success) {
+    process.stdout.write("   verified destinations  not read:\n");
+    refused(`POST ${path} answered ${response.status}:\n${text}`);
+    return;
+  }
+  for (const line of verifiedDestinationLines(answer.data.destinations)) process.stdout.write(`   ${line}\n`);
+}
+
+/** JSON, or null for a body that is not: an answer that is not the route's is printed, not thrown. */
+function parsed(text) {
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 /** The zone's catch-all as Cloudflare holds it, in one line: `worker -> butler (enabled)`, or `nothing`. */
@@ -109,15 +182,13 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     const path = api(method, template, query);
     const response = await fetch(`${origin}${path}`, {
       method,
-      // The operator's own credential, for this request and no longer; the Node never stores it.
-      headers: { cookie, "content-type": "application/json", "x-cloudflare-token": token, "x-cloudflare-account": accountId },
+      headers: operatorHeaders(cookie, token, accountId),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const text = await response.text();
     if (!response.ok) return { ok: false, text: `${method} ${path} answered ${response.status}:\n${text}` };
     return { ok: true, value: JSON.parse(text) };
   };
-  const refused = (text) => { for (const line of text.split("\n")) process.stdout.write(`     ${line}\n`); process.stdout.write("\n"); };
   /*
    * A `fix` line only when the refusal does not already carry one, and derived from what it says. The first
    * real run (25 September 2026) printed "the domain must be a subdomain of a zone in this account" under a

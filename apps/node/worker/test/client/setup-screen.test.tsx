@@ -78,11 +78,16 @@ function mount(
     refuse?: { status: number; body: unknown };
     /** What `PUT /api/provider/token` answers, per call, in order; a 4xx body carries `message`. */
     tokenAnswers?: Array<{ status: number; body: unknown }>;
+    /** What `POST /api/provider/verified-destinations` answers. */
+    verified?: { status: number; body: unknown };
   } = {},
 ) {
   let tokenCall = 0;
   answerWith((call) => {
     if (call.path.startsWith("/api/provider/email-routing")) return Response.json(NO_RECORDS);
+    if (call.path === "/api/provider/verified-destinations" && call.method === "POST" && parts.verified !== undefined) {
+      return Response.json(parts.verified.body, { status: parts.verified.status });
+    }
     if (call.path.startsWith("/api/provider/receiving") && call.method === "GET") {
       return Response.json(parts.receiving);
     }
@@ -402,5 +407,75 @@ describe("the apex catch-all", () => {
     await propose("mail.example.com", "hello@mail.example.com");
     expect(await screen.findByText(/mail.example.com is a subdomain, so each address gets its own rule/)).toBeTruthy();
     expect(screen.queryByLabelText(/catch-all/)).toBeNull();
+  });
+});
+
+/**
+ * Which recipients are verified destinations (28 September 2026). Cloudflare published no delivery event for mail
+ * to one in the case measured, so this read is what lets the Outbox and doctor stop waiting. What would render
+ * plausibly and be wrong: a button that posts somewhere else, or twice; a failed read rendered as a count, which
+ * turns could not read into none verified; a refusal summarised; an empty Node told "0 of 0".
+ */
+describe("reading which recipients are verified destinations", () => {
+  beforeEach(reset);
+  const read = (overrides: Record<string, unknown> = {}) => ({
+    destinations: {
+      accountId: "acc_one", readAt: "2026-09-28T05:00:00.000Z", attemptedAt: "2026-09-28T05:00:00.000Z",
+      error: null, recipients: 2, verified: 1, ...overrides,
+    },
+  });
+  const press = async () => fireEvent.click(await screen.findByText("Read verified destinations"));
+
+  it("posts once to the route the contract names, and says how many", async () => {
+    mount({ verified: { status: 200, body: read() } });
+    await press();
+    const said = (await screen.findByText(/address\(es\) this Node has handed mail to/)).textContent;
+    expect(said).toContain("1 of the 2 address(es) this Node has handed mail to is a verified destination");
+    // Not "marks those recipients": a hand-over made before an address was verified carries no mark, and the
+    // count above includes that address.
+    expect(said).toContain("the Outbox marks their hand-overs made while they were verified.");
+    expect(calls.filter((call) => call.path === "/api/provider/verified-destinations" && call.method === "POST"))
+      .toHaveLength(1);
+  });
+
+  it("says are for more than one", async () => {
+    mount({ verified: { status: 200, body: read({ recipients: 3, verified: 2 }) } });
+    await press();
+    expect((await screen.findByRole("status")).textContent)
+      .toContain("2 of the 3 address(es) this Node has handed mail to are verified destinations");
+  });
+
+  it("says a failed read could not read, and never counts it", async () => {
+    mount({ verified: { status: 200, body: read({ error: "fixture: refused for the test", readAt: null, accountId: null, verified: null }) } });
+    await press();
+    const said = await screen.findByText(/The read did not succeed/);
+    expect(said.textContent).toContain("fixture: refused for the test");
+    expect(said.textContent).toContain("Until a read succeeds, these recipients show as unobserved.");
+    expect(said.textContent).not.toContain("nothing to compare");
+    expect(said.textContent).not.toContain(" of the ");
+  });
+
+  it("says a later failure leaves the earlier read standing, even on a Node that has sent nothing", async () => {
+    mount({ verified: { status: 200, body: read({ error: "fixture: refused for the test", recipients: 0, verified: 0 }) } });
+    await press();
+    const said = await screen.findByText(/The read did not succeed/);
+    expect(said.textContent).toContain("The read of 2026-09-28T05:00:00.000Z still stands.");
+    expect(said.textContent).not.toContain("nothing to compare");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("renders a refusal whole", async () => {
+    const message = "E_PROVIDER_ACCOUNT_MISMATCH  the operator credential names account b, and this Node's token is bound to a\n"
+      + "  why      a Node lives in one account\n"
+      + "  fix      set CLOUDFLARE_ACCOUNT_ID=a and run the command again";
+    mount({ verified: { status: 409, body: { error: "E_PROVIDER_ACCOUNT_MISMATCH", message } } });
+    await press();
+    expect((await screen.findByText(/E_PROVIDER_ACCOUNT_MISMATCH/)).textContent).toBe(message);
+  });
+
+  it("tells a Node that has sent nothing that there was nothing to compare", async () => {
+    mount({ verified: { status: 200, body: read({ recipients: 0, verified: 0 }) } });
+    await press();
+    expect((await screen.findByRole("status")).textContent).toContain("has handed mail to nobody yet");
   });
 });

@@ -109,6 +109,19 @@ export const provider = {
     return Response.json({ delivery: await deliveryEventsState(env, operatorCtx(request, clock), who.orgId) });
   },
 
+  "POST /api/provider/verified-destinations": async ({ request, env, clock, who }) => {
+    // isAdmin before anything that can answer 409: a member meets 404, an admin with no credential 409, and
+    // route-authority-parity relies on that order.
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // A POST because it spends the credential and records what it read; a GET changes nothing (agent.ts).
+    const { recordVerifiedDestinations } = await import("../provider/cloudflare-grant.ts");
+    return Response.json({
+      destinations: await recordVerifiedDestinations(env, operatorCtx(request, clock), who.orgId, who.userId),
+    });
+  },
+
   "GET /api/provider/domains/purchase": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
