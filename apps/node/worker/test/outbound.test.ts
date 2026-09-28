@@ -11,9 +11,11 @@ import {
 } from "../src/outbound/dispatch.ts";
 import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
 import { HeaderBlock, normalizeAddress, safeFilename } from "../src/outbound/headers.ts";
+import { MAX_ATTACHMENTS } from "../src/outbound/attachment-budget.ts";
 import { CallerError } from "../src/errors.ts";
 import { classifyError, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
+import { zipOf } from "./support/zip.ts";
 
 const testEnv = env as unknown as Env;
 const ORG = "org_outbound";
@@ -252,6 +254,10 @@ describe("forwarding (0059): the original goes out whole, as the bytes this Node
     await testEnv.CATALOG.prepare("UPDATE messages SET attachments = 1, attachments_dangerous = 1 WHERE id = ?").bind(original.messageId).run();
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, forwardOfMessageId: original.messageId }))
       .rejects.toThrow(/E_FORWARD_CARRIES_DANGEROUS/);
+    // The author's flag covers files the author attached, and the person forwarding attached none of these.
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, forwardOfMessageId: original.messageId, allowDangerousAttachments: true,
+    })).rejects.toThrow(/E_FORWARD_CARRIES_DANGEROUS/);
   });
 });
 
@@ -290,6 +296,64 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     expect(count?.n).toBe(0);
   });
 
+  it("sends a zip of source code when its author says so, and the seal's entry says which part it was", async () => {
+    const code = zipOf([["verifylab/index.js", "export {}"], ["verifylab/README.md", "hi"]]);
+    // Between two plain parts, so the entry has to pick the flagged one out rather than list every part.
+    const attachments = [
+      { filename: "invoice.pdf", contentType: "application/pdf", content: PDF },
+      { filename: "verifylab-1.0.0.zip", contentType: "application/zip", content: code },
+      { filename: "notes.pdf", contentType: "application/pdf", content: PDF },
+    ];
+
+    // Unasked, it is refused, and the refusal names the field that sends it anyway: an agent reads this.
+    const refused = await sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, attachments })
+      .then(() => null, (error: Error) => error.message);
+    expect(refused).toMatch(/E_ATTACHMENT_DANGEROUS/);
+    expect(refused).toContain("allowDangerousAttachments: true");
+
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments, allowDangerousAttachments: true,
+    });
+    const audited = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE subject = ? AND action = 'send.sealed'")
+      .bind(sealed.id).first<{ detail: string }>();
+    expect(JSON.parse(audited!.detail).dangerousAttachments).toEqual([1]);
+    // The join an auditor makes: the entry's subject and ordinal key the row that holds the name and verdict.
+    const row = await testEnv.CATALOG.prepare("SELECT filename, verdict FROM send_attachments WHERE manifest_id = ? AND ordinal = ?")
+      .bind(sealed.id, 1).first<{ filename: string; verdict: string }>();
+    expect(row).toEqual({ filename: "verifylab-1.0.0.zip", verdict: "archive_dangerous" });
+  });
+
+  it("keeps the seal's whole entry when every part it may carry is flagged under the longest name a part may have", async () => {
+    // `safeFilename` keeps 120 characters before the extension. Named in the entry, twenty of these came to
+    // 3,713 bytes, past `audit.max_detail_bytes`, and the entry became a truncation record without its policy.
+    const attachments = Array.from({ length: MAX_ATTACHMENTS }, (_, i) => ({
+      filename: `${String(i).padStart(2, "0")}${"x".repeat(118)}.py`, contentType: "text/x-python", content: utf8("print(1)"),
+    }));
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments, allowDangerousAttachments: true,
+    });
+    const audited = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE subject = ? AND action = 'send.sealed'")
+      .bind(sealed.id).first<{ detail: string }>();
+    const detail = JSON.parse(audited!.detail);
+    expect(detail).not.toHaveProperty("truncated");
+    expect(detail).toHaveProperty("policyOutcome");
+    expect(detail).toHaveProperty("breakers");
+    expect(detail.dangerousAttachments).toEqual(Array.from({ length: MAX_ATTACHMENTS }, (_, i) => i));
+    const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_attachments WHERE manifest_id = ? AND verdict = 'script'")
+      .bind(sealed.id).first<{ n: number }>();
+    expect(rows?.n).toBe(MAX_ATTACHMENTS);
+  });
+
+  it("records no dangerous files on a seal that carried none", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
+      allowDangerousAttachments: true,
+    });
+    const audited = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE subject = ? AND action = 'send.sealed'")
+      .bind(sealed.id).first<{ detail: string }>();
+    expect(JSON.parse(audited!.detail)).not.toHaveProperty("dangerousAttachments");
+  });
+
   it("refuses a send that breaks the mailbox's own attachment limits, by the same judge filing uses (0065)", async () => {
     await testEnv.CATALOG.prepare(
       "UPDATE mailboxes SET attachment_max_bytes = ?, attachment_allowed_types = ? WHERE id = ?",
@@ -300,6 +364,17 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
       })).rejects.toThrow(/E_ATTACHMENT_OVER_MAILBOX_LIMIT/);
       await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
         ...composition, attachments: [{ filename: "notes.txt", contentType: "text/plain", content: utf8("hi") }],
+      })).rejects.toThrow(/E_ATTACHMENT_TYPE_REFUSED/);
+      // A script the mailbox would not send anyway: its refusal is the mailbox's, and it does not offer the flag,
+      // which would only meet this same refusal. `run.ps1` is PDF.length bytes, so only its type is at fault.
+      const script = [{ filename: "run.ps1", contentType: "application/octet-stream", content: PDF }];
+      const refused = await sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, attachments: script })
+        .then(() => null, (error: Error) => error.message);
+      expect(refused).toMatch(/E_ATTACHMENT_TYPE_REFUSED/);
+      expect(refused).not.toContain("allowDangerousAttachments");
+      // And the flag does not override the mailbox's limits.
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: script, allowDangerousAttachments: true,
       })).rejects.toThrow(/E_ATTACHMENT_TYPE_REFUSED/);
       const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
         ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
@@ -340,6 +415,10 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     const big = new Uint8Array(BUDGETS["email.outbound.max_bytes"]);
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
       ...composition, attachments: [{ filename: "big.bin.txt", contentType: "text/plain", content: big }],
+    })).rejects.toThrow(/E_ATTACHMENTS_TOO_LARGE/);
+    // A program too large as well is refused for its size, the refusal the flag could not lift.
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "big.exe", contentType: "application/octet-stream", content: big }],
     })).rejects.toThrow(/E_ATTACHMENTS_TOO_LARGE/);
   });
 });

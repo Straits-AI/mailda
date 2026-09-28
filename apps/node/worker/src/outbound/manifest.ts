@@ -7,7 +7,8 @@ import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
 import { STANDING_CONTENT_RELATIONS } from "../access.ts";
-import { allowedTypesOf, classifyAttachment, DANGEROUS, overLimits } from "../attachments.ts";
+import { allowedTypesOf, classifyAttachment, DANGEROUS, encodedBytes, overLimits } from "../attachments.ts";
+import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS, MAX_OUTBOUND_BYTES } from "./attachment-budget.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { recipientsSuppressed } from "../suppression.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
@@ -88,17 +89,6 @@ export interface SendAttachment {
   content: Bytes;
 }
 
-/**
- * The most a rendered message may be, base64 and boundaries included: Cloudflare's published outbound
- * ceiling for arbitrary recipients (`cloudflare-email-service-limits.md`), which `send()` answers with
- * `E_CONTENT_TOO_LARGE` past. Checked at the seal on the attachment bytes at their base64 size, so an
- * author is refused before a manifest exists rather than after a dispatch fails.
- */
-const MAX_OUTBOUND_BYTES = BUDGETS["email.outbound.max_bytes"];
-/** Room left for headers, the text and the forwarded original: a sized margin, not a measurement. */
-const ATTACHMENT_BUDGET = Math.floor(MAX_OUTBOUND_BYTES * 0.9);
-/** Parts per send. Sized: nobody attaches more by hand, and a count bound is what the byte bound lacks. */
-const MAX_ATTACHMENTS = 20;
 const MEDIA_TYPE = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/;
 function extensionOf(filename: string): string {
   const match = /\.([A-Za-z0-9]{1,10})$/.exec(filename.replace(/[^\x20-\x7e]/g, ""));
@@ -138,10 +128,18 @@ export interface Composition {
    */
   forwardOfMessageId?: string;
   /**
-   * Files the author attached (0060). Judged by the same rule as inbound mail (`src/attachments.ts`) and
-   * refused when dangerous; stored as evidence beside the bodies; bound by the effect envelope.
+   * Files the author attached (0060). Judged by the same rule as inbound mail (`src/attachments.ts`), refused
+   * when dangerous unless `allowDangerousAttachments` says the author saw that and sends anyway; stored as
+   * evidence beside the bodies; bound by the effect envelope.
    */
   attachments?: SendAttachment[];
+  /**
+   * The author's own decision to send attachments this Node judges dangerous: a zip of source code is one,
+   * because it lists scripts. Explicit rather than a default, so an agent, a script or a Butler never sends a
+   * program under this Node's name without having asked to; the composer sets it only while the warning is on
+   * screen. `send.sealed` records which parts it covered, by ordinal; their `send_attachments` rows name them.
+   */
+  allowDangerousAttachments?: boolean;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -632,7 +630,8 @@ export async function sealManifest(
     if ((original.attachments_dangerous ?? 0) > 0) {
       throw unprocessable("E_FORWARD_CARRIES_DANGEROUS", {
         what: `${composition.forwardOfMessageId} carries ${original.attachments_dangerous} attachment(s) this Node judged dangerous`,
-        why: "a forward sends the original whole, and a program this Node flagged would leave under this Node's name",
+        why: "a forward sends the original whole, and the person forwarding did not attach its flagged files, so "
+          + "there is no author to say send them anyway",
         fix: "download the original .eml and hand it over some other way, or forward with the text alone",
       });
     }
@@ -752,10 +751,10 @@ export async function sealManifest(
   }
 
   /*
-   * Attachments (0060): judged before anything is stored, by the rule that judges inbound mail. A send is
-   * refused whole for a dangerous part — no stripping, for the reason the suppression refusal gives: a send
-   * with a part quietly removed is a different message from the one the author sealed. Archives pass, as
-   * they do inbound, and are recorded as such.
+   * Attachments (0060): judged before anything is stored, by the rule that judges inbound mail. A send with a
+   * dangerous part is refused whole unless its author set `allowDangerousAttachments`; a part is never
+   * stripped, for the reason the suppression refusal gives: a send with a part quietly removed is a different
+   * message from the one the author sealed. Archives pass, as they do inbound, and are recorded as such.
    */
   const attachments = composition.attachments ?? [];
   if (attachments.length > MAX_ATTACHMENTS) {
@@ -777,15 +776,6 @@ export async function sealManifest(
     verdict: classifyAttachment(one.filename, one.content),
   }));
   const dangerous = judged.filter((one) => DANGEROUS.has(one.verdict));
-  if (dangerous.length > 0) {
-    throw unprocessable("E_ATTACHMENT_DANGEROUS", {
-      what: `${dangerous.map((one) => `${one.filename} (${one.verdict})`).join(", ")} would not be accepted from a stranger, and is not sent to one`,
-      why: "this Node judges every attachment by its name and its first bytes, inbound and outbound alike; a "
-        + "program, a script, or a program under a document's name leaves under this Node's name only by "
-        + "some other route",
-      fix: "remove it, or send a link to where the file is kept",
-    });
-  }
   // The mailbox's own limits (0065), the same judge filing uses. A mailbox that will not accept a 20 MB
   // file or a .zip does not send one under its name either.
   // Read only when there is something to judge: a send with no attachment costs no extra query.
@@ -807,14 +797,27 @@ export async function sealManifest(
       fix: "attach something the mailbox accepts, or an administrator changes the mailbox's limits",
     });
   }
-  const encodedBytes = judged.reduce((n, one) => n + Math.ceil(one.content.byteLength / 3) * 4, 0);
-  if (encodedBytes > ATTACHMENT_BUDGET) {
+  const encoded = judged.reduce((n, one) => n + encodedBytes(one.content.byteLength), 0);
+  if (encoded > ATTACHMENT_BUDGET) {
     throw unprocessable("E_ATTACHMENTS_TOO_LARGE", {
-      what: `the attachments come to ${encodedBytes} bytes once encoded, over the ${ATTACHMENT_BUDGET} this Node allows`,
+      what: `the attachments come to ${encoded} bytes once encoded, over the ${ATTACHMENT_BUDGET} this Node allows`,
       why: `Cloudflare refuses an outbound message over ${MAX_OUTBOUND_BYTES} bytes to an arbitrary recipient `
         + "(receipt: cloudflare-email-service-limits.md), and the text, the headers and any forwarded original "
         + "share that",
       fix: "attach less, or send a link to where the file is kept",
+    });
+  }
+  // Last of the attachment refusals, because its fix offers the flag: offered before the mailbox's limits or
+  // the budget had spoken, it named a remedy the next refusal would take back.
+  if (dangerous.length > 0 && composition.allowDangerousAttachments !== true) {
+    throw unprocessable("E_ATTACHMENT_DANGEROUS", {
+      what: `${dangerous.map((one) => `${one.filename} (${one.verdict})`).join(", ")}: judged dangerous by this Node, `
+        + "from its name, its first bytes or an archive's listing",
+      why: "this Node judges every attachment that way, inbound and outbound alike, and sends a program, a script, "
+        + "a program under a document's name, or an archive listing one only when its author says so; receiving "
+        + "servers judge again, and some refuse such files whatever this Node does (Gmail refuses .exe, .js, .jar "
+        + "and others, even inside a zip)",
+      fix: "remove it, send a link to where the file is kept, or send it anyway with allowDangerousAttachments: true",
     });
   }
 
@@ -938,6 +941,11 @@ export async function sealManifest(
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
       forwardOf: composition.forwardOfMessageId ?? null,
+      // Files the seal let through although this Node judged them dangerous, because the author said to: their
+      // ordinals, which key the `send_attachments` rows (manifest_id, ordinal) that hold each name and verdict.
+      // Not the names: twenty long ones pass `audit.max_detail_bytes`, and `boundedDetail` would then replace
+      // this whole detail, the policy decision below included. Absent when there were none.
+      ...(dangerous.length === 0 ? {} : { dangerousAttachments: dangerous.map((one) => one.ordinal) }),
       // Which rule applied, in the entry for the act that applied it. §18 requires the audit trail to say
       // this, and it rides in `send.sealed`'s detail rather than as a second entry because sealing is **one**
       // act: a denial is not a separate event that happened afterwards, it is what this seal produced.

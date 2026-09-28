@@ -3705,3 +3705,51 @@ guard and expects exit 1 with a reported line, and the canary's own test passing
 of going blind was tried and each turned it red: `verbose: false`, the guard's pattern reworded so it no longer
 matched workerd's wording, the report's `line` entries renamed, the exit code ignoring what was seen, and the
 canary test failing while the lines still printed.
+
+## Code by mail, and a limit you can see (28 September 2026)
+
+**A zip of source code could not be sent at all.** The seal refused any attachment the inbound judge calls
+dangerous, and a project's source lists `.js` or `.py` files, so `verifylab-1.0.0.zip` met
+`E_ATTACHMENT_DANGEROUS` exactly as a zip of malware would. The judge cannot tell somebody's own code from a
+program meant to be run; its author can. The seal now takes `allowDangerousAttachments: true` on
+`POST /api/sends`, and only the literal `true` (a truthy string or a number is still refused, tested through the
+route). The refusal's fix names the field. `send.sealed` carries `dangerousAttachments`, the ordinals of the
+parts the flag covered, whose `send_attachments` rows hold the names and verdicts. Butlers never set it, and it
+never reaches a forwarded original: `E_FORWARD_CARRIES_DANGEROUS` still refuses one that carries a flagged file.
+The composer judges each file as it is attached, with the
+same `classifyAttachment`, shows a warning under a dangerous one, and sends the flag only while that warning is
+on screen. The warning says what receiving servers do: Gmail refuses `.js`, `.jar`, `.exe` and more even inside
+a zip, so a link can still be the only way such a file arrives.
+
+**The attachment limit was on no screen.** A send may carry 20 files and 4,718,592 bytes of attachments at
+base64 size (4.5 MiB): a provisional 90 per cent of Cloudflare's receipted 5 MiB outbound ceiling, or 3,538,944
+bytes of files (3.375 MiB). Neither the 0.9 nor the 20 is measured or has a receipt. The only place the number appeared was the seal's refusal. It is under *Attach* now, counted as the
+seal counts it, from `src/outbound/attachment-budget.ts` by way of `/app/config.js`, and *Seal and send* is
+disabled past it. The label rounds **down**, to *Up to 3.3 MB* (the composer's MB is 1,048,576 bytes): rounded to
+nearest it said 3.4, a promise of room for a file the seal would refuse. Asked whether there was a limit at all,
+the first answer here was 4.7 MB, the encoded figure in decimal megabytes read as a file size, which is the
+confusion a limit shown nowhere but in encoded bytes invites.
+
+**What review found before it merged.** The usage line rounded both figures down, so a send just over read
+*3.3 MB of 3.3 MB used … Over the limit*, and a small file read *0.0 MB*; usage now rounds up once it is over
+and reads in KB under a tenth of a megabyte. A file was missing from the list until it had been read, with the
+send still enabled, so a send pressed in that window left without it; it is listed at once, reads *Checking…*,
+and blocks the send until judged. The over-limit line kept `.hint`'s grey, because `.hint` came later than
+`.bad` at equal specificity, which only a real browser showed. The refusal offered the flag before the
+mailbox's own limits had spoken, a remedy the next refusal took back; it is now the last attachment refusal.
+And both the refusal and the warning said Gmail refuses every file this Node flags, which is false for `.py`,
+half of the zip that started this.
+
+A second round found four more. The seal's entry first named each flagged file, and twenty flagged files under
+long names came to 3,713 bytes, past `audit.max_detail_bytes`, where the whole detail is replaced by a
+truncation record and the seal's policy decision goes with it; it lists ordinals now, and a test seals twenty
+such files and finds the entry whole. The usage figure was worked back from the base64 size, padding included,
+so a 4 MiB file read *4.1 MB* beside its own *4096 KB*; it sums the files' own sizes. A send held only because a
+file was still being checked gave a screen reader no reason, since *Checking…* sat in the file's row and not in
+the live line; the line now says so. And the file picker, locked while sealing, still looked live, because
+its button's own colours override the browser's greying.
+
+A third round found that the line had first counted the checks down (*Checking 2 files…*, then *1 file*), and
+added to its dangerous count as each verdict landed. A live region is read again whole on every change, so
+twenty files meant twenty-one readings. It now reads *Checking files…* until every file is judged and only then
+counts the dangerous ones; each file's own warning still appears as soon as it is judged.

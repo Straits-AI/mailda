@@ -152,7 +152,8 @@ function Links({ links }: { links: RenderedBody["links"] }) {
   );
 }
 
-const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
+/** What each verdict means, in words. Also shown by the composer, so a file is described the same way both ways. */
+export const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
   plain: null,
   archive: "an archive; what is inside has not been opened",
   archive_dangerous: "an archive listing a program or a script",

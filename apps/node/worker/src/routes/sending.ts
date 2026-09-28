@@ -142,6 +142,9 @@ export const sending = {
           content: decodeBase64(String(one.contentBase64 ?? "")),
         }))
         : undefined,
+      // Only a literal `true` sends a file this Node judged dangerous. A truthy string or a number is not the
+      // author saying so, and an agent that sent one by accident is refused with the words that name the field.
+      allowDangerousAttachments: body.allowDangerousAttachments === true,
       // Absent is a real answer: it means "this mailbox has one address, use it". Only a multi-address
       // mailbox refuses when it is absent, which is what makes adding this field non-breaking.
       senderAddress: body.senderAddress === undefined ? undefined : String(body.senderAddress),

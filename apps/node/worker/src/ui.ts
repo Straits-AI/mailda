@@ -13,6 +13,7 @@ import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import themeScript from "./client/theme.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
+import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "./outbound/attachment-budget.ts";
 import { MARK_IS_AUTHORED, faviconDataUri, markSvg } from "./brand.ts";
 import { SHELL_CSS } from "./shell-css.ts";
 import { frameStylesheet } from "./theme.ts";
@@ -63,7 +64,9 @@ import { frameStylesheet } from "./theme.ts";
  *
  * ## What is in it, and what left
  *
- * Every receipt-derived figure the browser reads, and nothing else. `accessTtlSeconds` left because nothing
+ * Every receipt-derived figure the browser reads, and nothing else, plus the seal's attachment limits from
+ * `src/outbound/attachment-budget.ts`: a receipt's ceiling times a provisional margin, and a provisional count,
+ * served here so the composer shows what the seal enforces. `accessTtlSeconds` left because nothing
  * read it — a config field with no reader is a claim that something is configurable when it is not.
  *
  * `holdWindowSeconds` stayed, and it is the interesting one, because the composer *is* bundled by esbuild
@@ -87,6 +90,10 @@ function configModule(): string {
     // `pnpm receipts` exists to prevent, and the prototype already showed it happening: its mock said 18
     // seconds against a measured 15.
     holdWindowSeconds: BUDGETS["send.hold_window_default_seconds"],
+    // What a send may attach, shown by the composer as files are added rather than discovered at the seal.
+    // From the module the seal itself reads (`src/outbound/attachment-budget.ts`), so the two cannot disagree.
+    attachmentBudgetBytes: ATTACHMENT_BUDGET,
+    maxAttachments: MAX_ATTACHMENTS,
   };
   // `<` escaped as \\u003c: valid JSON, valid JavaScript, and inert if this string is ever interpolated
   // into markup by something that does not know it was not meant to be. Nothing in here is

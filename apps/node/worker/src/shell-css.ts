@@ -164,7 +164,10 @@ input[type="file"]::file-selector-button {
   border-radius: var(--r-button);
   cursor: pointer;
 }
-input[type="file"]::file-selector-button:hover { background: var(--surface-hover); }
+input[type="file"]:not(:disabled)::file-selector-button:hover { background: var(--surface-hover); }
+/* And .btn's disabled look, since the colours above override the browser's own greying of a disabled control. */
+input[type="file"]:disabled { cursor: not-allowed; }
+input[type="file"]:disabled::file-selector-button { opacity: .55; cursor: not-allowed; }
 
 /* The primary act. Its label is --on-accent: light text on the dark theme's #78A9FF is 2.15:1, so the dark
    theme puts dark text on it and the light theme white (contrast.test.ts pins both pairs). a.primary too: a
@@ -366,6 +369,8 @@ form { display: grid; gap: 1rem; }
 .field-row > button { justify-self: start; }
 
 .hint { font-size: 12px; line-height: 1.5; color: var(--text-secondary); margin: 6px 0 0; }
+/* A hint that reports a limit already crossed: two classes, so the danger tone beats .hint's own colour. */
+.hint.bad { color: var(--danger); }
 /* Pulled up to hug the field it explains, inside a form only. Outside a form the same negative margin
    dragged the sign-in page's "I have an invitation" up over the Sign in button. */
 form > .hint { margin: -.6rem 0 0; }
@@ -456,6 +461,8 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
 .notices:focus-visible { outline-offset: -2px; }
 .notices > .notice { margin: 0; padding: 2px 0 2px 10px; }
 .notice.told { border-left: 2px solid var(--warning); color: var(--text-primary); }
+/* A warning the author may act past: a file the Node will send because they said so. The warning hue as an edge only. */
+.notice.warn { border-left-color: var(--warning); color: var(--text-primary); }
 .notice .told-meta { color: var(--text-secondary); }
 
 /* ---- the sidebar ------------------------------------------------------------------------- */

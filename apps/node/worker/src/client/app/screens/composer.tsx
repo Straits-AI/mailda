@@ -6,6 +6,9 @@ import { CONFIG } from "/app/config.js";
 
 import { claimCase, stealCase, useMailboxes } from "../api.ts";
 import { splitAddresses } from "./split-addresses.ts";
+import { classifyAttachment, DANGEROUS, encodedBytes } from "../../../attachments.ts";
+import type { AttachmentVerdict } from "@mailda/contract/schemas";
+import { VERDICT_WORDS } from "./reader.tsx";
 
 /**
  * The docked composer — the reason ADR 30 put React at this layer.
@@ -179,7 +182,24 @@ export function Composer({ context, onClose, ref }: {
    * is not writing. The list says so beside the control.
    * ponytail: attachments are lost with the tab; carry them on the draft if that turns out to matter.
    */
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<Attached[]>([]);
+  /** Files the author will send although this Node judges them dangerous: what the warning names. */
+  const flagged = files.filter(({ verdict }) => verdict !== null && DANGEROUS.has(verdict));
+  /**
+   * The budget in the sizes a person sees, and what the attached files use of it: their own sizes, the figure
+   * beside each file. Whether they fit is counted as the seal counts it, at base64 size, padding and all.
+   */
+  const rawBudget = Math.floor(CONFIG.attachmentBudgetBytes * 3 / 4);
+  const usedRaw = files.reduce((n, { file }) => n + file.size, 0);
+  const usedEncoded = files.reduce((n, { file }) => n + encodedBytes(file.size), 0);
+  const overBudget = usedEncoded > CONFIG.attachmentBudgetBytes;
+  const overCount = files.length > CONFIG.maxAttachments;
+  /** How many are still being read to be judged: sent now, a dangerous one would leave without its warning or flag. */
+  const checking = files.filter((one) => one.judging).length;
+  /** Could not be read here, so the send, which reads the same bytes, cannot carry it either. */
+  const unreadable = files.filter(({ unread }) => unread !== null).length;
+  /** Every reason the attachments stop a send. Both send buttons obey it, and the limit line names each one. */
+  const blocked = overBudget || overCount || checking > 0 || unreadable > 0;
   const [bodyUnavailable, setBodyUnavailable] = useState(context.bodyUnavailable ?? null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "empty" });
@@ -588,7 +608,7 @@ export function Composer({ context, onClose, ref }: {
           mailboxId: context.mailboxId,
           inReplyToMessageId: context.inReplyToMessageId,
           forwardOfMessageId: context.forwardOfMessageId,
-          attachments: await Promise.all(files.map(async (file) => ({
+          attachments: await Promise.all(files.map(async ({ file }) => ({
             filename: file.name,
             contentType: file.type === "" ? "application/octet-stream" : file.type,
             contentBase64: await base64Of(file),
@@ -598,6 +618,9 @@ export function Composer({ context, onClose, ref }: {
           bcc: splitAddresses(bcc),
           subject,
           body,
+          // Only while the warning under a flagged file is on screen, which is the author saying so. The Node
+          // refuses such a file without it, and records the ones it covered on the seal's audit entry.
+          ...(flagged.length === 0 ? {} : { allowDangerousAttachments: true }),
           // Omitted rather than sent empty when there is nothing to choose: absent means "this mailbox has
           // one address, use it", and an empty string would be a sender that matches nothing.
           ...(senderAddress === "" ? {} : { senderAddress }),
@@ -791,26 +814,84 @@ export function Composer({ context, onClose, ref }: {
             id="composer-files"
             type="file"
             multiple
+            aria-describedby="composer-files-limit"
+            // Neither the list nor what it is judged to hold changes under a seal already reading it.
+            disabled={sealing}
             onChange={(event) => {
-              setFiles([...files, ...Array.from(event.target.files ?? [])]);
+              const chosen = Array.from(event.target.files ?? []);
               event.target.value = "";
+              // Listed at once, so a send cannot leave without a file still being read (`blocked` waits for
+              // it). Judged one at a time, so a large selection holds one file in memory rather than all.
+              setFiles((was) => [...was, ...chosen.map((file) => ({ file, verdict: null, unread: null, judging: true }))]);
+              void (async () => {
+                for (const file of chosen) {
+                  const judged = await judge(file);
+                  // By identity, not position: a Remove while this read was in the air shifts the indexes.
+                  setFiles((was) => was.map((one) => (one.file === file ? judged : one)));
+                }
+              })();
             }}
           />
         </label>
+        {/*
+          * The limit, before anything is attached (AGENTS.md §3: a limit somebody can hit is one they must
+          * see). It used to surface only as the seal's refusal. Counted as the Node counts it, at base64 size,
+          * and shown in the file sizes a person has: the budget's raw equivalent. A live region, and what the
+          * send button points to, so a screen reader hears why a send just became impossible and what was
+          * flagged, rather than meeting a dead button.
+          */}
+        <p
+          id="composer-files-limit"
+          className={`hint${overBudget || overCount || unreadable > 0 ? " bad" : ""}`}
+          role="status"
+        >
+          {files.length === 0
+            ? `Up to ${megabytes(rawBudget)} in total, ${CONFIG.maxAttachments} files.`
+            // Padding can put a set over the budget while its sizes sum to the limit or a few bytes under it, so
+            // an over figure is at least one byte past the limit and never rounds to read as fitting.
+            : `${used(overBudget ? Math.max(usedRaw, rawBudget + 1) : usedRaw, overBudget)} of ${megabytes(rawBudget)} used, ${files.length} of ${CONFIG.maxAttachments} files.`}
+          {overBudget ? " Over the limit: remove a file or send a link." : ""}
+          {overCount ? " Too many files." : ""}
+          {/*
+            * A wait, not a fault, so not in the danger tone; but it holds the send, so it is named here. Uncounted,
+            * and the flagged count held back until every file is judged: this region is read whole on each change,
+            * so a count per judged file would read the line again for every file attached.
+            */}
+          {checking === 0 ? "" : " Checking files…"}
+          {unreadable === 0 ? "" : ` ${count(unreadable)} could not be read: remove and attach again.`}
+          {checking > 0 || flagged.length === 0 ? "" : ` ${count(flagged.length)} judged dangerous: see the warning below.`}
+        </p>
         {files.length === 0 ? null : (
           <ul className="attachments" aria-label="Attached files">
-            {files.map((file, index) => (
+            {files.map(({ file, verdict, unread, judging: reading }, index) => (
               <li key={`${file.name}-${index}`}>
                 <span className="mono">{file.name}</span>{" "}
-                <span className="dim">{Math.max(1, Math.round(file.size / 1024))} KB</span>{" "}
-                <button type="button" className="linkish" onClick={() => setFiles(files.filter((_, i) => i !== index))}>
+                <span className="dim">{kilobytes(file.size)}</span>{" "}
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => setFiles((was) => was.filter((one) => one.file !== file))}
+                  disabled={sealing}
+                >
                   Remove
                 </button>
+                {reading ? <span className="dim"> Checking…</span> : null}
+                {verdict !== null && DANGEROUS.has(verdict) ? (
+                  <p className="notice warn">
+                    {file.name} is {VERDICT_WORDS[verdict]}. It will be sent because you attached it, and the seal
+                    records that you did. Some receiving servers refuse programs and scripts (Gmail refuses .exe,
+                    .js, .jar and others, even inside a zip), so a link may be the only way it arrives.
+                  </p>
+                ) : null}
+                {unread === null ? null : (
+                  <span className="bad">
+                    {" "}This browser could not read it ({unread}), so it cannot be sent: remove it and attach it again.
+                  </span>
+                )}
               </li>
             ))}
             <li className="dim">
-              Files travel with the send, not with the draft: close this and they are not kept. A program, a
-              script, or a program under a document's name is refused at the seal, by name.
+              Files travel with the send, not with the draft: close this and they are not kept.
             </li>
           </ul>
         )}
@@ -840,14 +921,26 @@ export function Composer({ context, onClose, ref }: {
           <p className="composer-held" role="alert">
             {held}{" "}
             {/* Available to any colleague and audited, the escape hatch the absent claim timeout depends on. */}
-            <button type="button" className="linkish" onClick={() => void send("steal")} disabled={sealing}>
+            <button
+              type="button"
+              className="linkish"
+              onClick={() => void send("steal")}
+              disabled={sealing || blocked}
+              aria-describedby={blocked ? "composer-files-limit" : undefined}
+            >
               Take it anyway
             </button>
           </p>
         )}
 
         <div className="dock-send">
-          <button type="submit" className="primary" disabled={sealing || resuming}>
+          <button
+            type="submit"
+            className="primary"
+            disabled={sealing || resuming || blocked}
+            // The reason, where a browse-mode reader meets the disabled button.
+            aria-describedby={blocked ? "composer-files-limit" : undefined}
+          >
             {sealing ? "Sealing…" : "Seal and send"}
           </button>
           {/*
@@ -871,6 +964,63 @@ export function Composer({ context, onClose, ref }: {
       </form>
     </section>
   );
+}
+
+/** A file as attached: the file, and this Node's verdict on it, or null when it was not judged here. */
+interface Attached {
+  file: File;
+  verdict: AttachmentVerdict | null;
+  /** Why this browser could not read it. Shown under the file, and it blocks the send, which reads the same bytes. */
+  unread: string | null;
+  /** Listed but not yet read to be judged. */
+  judging: boolean;
+}
+
+/**
+ * Judges a file once it is attached, by the rule the seal applies (`src/attachments.ts`), so the warning is on
+ * screen before anybody presses send rather than arriving as a refusal. A file over the whole budget is not read
+ * into memory to be judged: it cannot be sent however it is judged, and the limit line says so. A file the browser
+ * cannot read is left unjudged and blocks the send until it is removed.
+ */
+async function judge(file: File): Promise<Attached> {
+  if (encodedBytes(file.size) > CONFIG.attachmentBudgetBytes) return { file, verdict: null, unread: null, judging: false };
+  try {
+    const verdict = classifyAttachment(file.name, new Uint8Array(await file.arrayBuffer()));
+    return { file, verdict, unread: null, judging: false };
+  } catch (error) {
+    // Shown under the file and on the limit line rather than dropped, and the send waits for it to be removed.
+    return { file, verdict: null, unread: (error as Error).message, judging: false };
+  }
+}
+
+/** "1 file", "2 files": the count the limit line leads a clause with. */
+function count(n: number): string {
+  return `${n} ${n === 1 ? "file" : "files"}`;
+}
+
+/** A file's size in KB (1,024 bytes), never "0 KB" for a file that is there. */
+function kilobytes(bytes: number): string {
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/**
+ * Bytes as a person reads a file size, in tenths of a megabyte. MB here is 1,048,576 bytes, the binary unit the
+ * KB beside each file already uses; read as decimal, the stated limit only looks smaller. Rounded **down** by
+ * default, because a limit rounded to nearest overclaims whenever its raw figure sits in the upper half of a
+ * tenth: at 3.375 MB, the budget when this was written, it read "Up to 3.4 MB", room the seal refuses.
+ */
+function megabytes(bytes: number, round: (n: number) => number = Math.floor): string {
+  return `${(round(bytes / 104_857.6) / 10).toFixed(1)} MB`;
+}
+
+/**
+ * What the attached files use, beside the limit. In KB (to the nearest, never 0) below a tenth of a megabyte, so a
+ * small file does not read as nothing attached. In MB above that, rounded down while it fits and **up** once it does
+ * not, so the figure never contradicts the verdict beside it: rounded down both ways, a send just over the limit read
+ * "3.3 MB of 3.3 MB used … Over".
+ */
+function used(bytes: number, over: boolean): string {
+  return bytes < 104_857.6 ? kilobytes(bytes) : megabytes(bytes, over ? Math.ceil : Math.floor);
 }
 
 /** A file's bytes as standard base64, the way the seal decodes it. */
