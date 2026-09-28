@@ -814,6 +814,25 @@ where a test can import it. `ledgers.tsx` touches `document`, which is why the o
 defect (a unanimous all-bounced send rendering as "handed over") lived there uncovered until somebody looked
 at the page.
 
+**A reason beside `unobserved`: `verified destination`** (28 September 2026). Cloudflare published no delivery
+event for mail to a verified destination address of the Node's own account (one verified for Email Routing
+forwarding) in the one case measured (`docs/receipts/email-sending-events.md`), so such a recipient's silence is
+not an answer still on its way. `GET /api/sends` carries `delivery_reason` on each recipient, derived at read time
+from the Node's record of which addresses a read of the account's list showed verified at hand-over, and the
+Outbox renders it as an unpainted chip **beside** the state chip `unobserved`, the same state-plus-reason
+convention the send row follows (#62). It is not a state, because states are set by events alone: an event wins
+the moment it lands, and `describeRecipient` in `delivery.client.js` drops the reason whenever `delivery_state` is
+set. An event that sets no state (a complaint) wins too: the route names no reason for a recipient any event was
+attributed to, because the chip's note would be false for that very row. The send's summary chip counts it under its own name, ranked below `unobserved` because nothing waits on it,
+and a send whose every recipient is a verified destination gets that one chip rather than none, because it adds a
+fact: do not wait. The words say what was measured and no more: nothing is expected, the silence is not a fault
+in this Node, and it says nothing about whether the message arrived. The contract's `DELIVERY_REASONS` is the
+closed list, and `test/node/delivery-summary.test.ts` fails when a token has no words here or words exist for a
+token the contract does not name. **Who sees it:** whoever may read the send, because the reason rides on
+`GET /api/sends`, which is bounded by `mailbox.content.read`; it tells that reader the recipient was a verified
+destination of the account when handed over. That disclosure is accepted, because the alternative is telling
+the reader to wait for an answer that cannot come.
+
 ## Policy, and the two states it added to the outbox (#60)
 
 A policy decision now runs inside `sealManifest`, so a send's state is a policy outcome and not only a
@@ -1188,6 +1207,20 @@ section used to carry were removed that day (ADR 42); the three steps the screen
 credential fall back to `provisioned` from `GET /api/provider` when there is none: the latest receiving,
 sending and subscription act from the audit trail, with its date and which credential did it. That is a
 record of an act, not a live read, and the row says so in those words.
+
+**Which recipients are verified destinations** (28 September 2026). Section 5 ends with one button, *Read
+verified destinations*, which posts `POST /api/provider/verified-destinations` with the Node's token (the
+section renders only when the Node holds one; `mailda setup` and `mailda upgrade` make the same read with
+wrangler's login). It needs the optional permission Email Routing Addresses: Read, and the section says so.
+The answer is counts, never an address: which recipients they are is the Outbox's to show, bounded by who may
+read the send. Three answers, checked in this order (`test/client/setup-screen.test.tsx`):
+a failed read (`error` set) renders as a refusal naming the failure as reported and the permission, and says that
+the previous successful read still stands or, when there is none, that these recipients show as unobserved
+until one succeeds; it never shows a count, because a failed read is could not read, not none verified. A read
+with nobody handed mail to says there was nothing to compare. Otherwise it says how many of the addresses this
+Node has handed mail to are verified destinations, and that the Outbox marks their hand-overs made while they
+were verified (the count includes an address verified only after every hand-over to it). A refusal from the route
+is rendered whole.
 
 **Progress, derived and never stored** (24 September 2026). The screen is five numbered sections and each
 knew its own state, but nothing said *two of five, next is receiving*, and nothing outside Setup said setup

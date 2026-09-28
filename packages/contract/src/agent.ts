@@ -446,6 +446,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "GET /api/provider/delivery-events",
     /*
+     * The read that records which of this Node's recipients were verified destinations. `operator` because it
+     * spends the credential and what it records changes what doctor and the Outbox say. The per-recipient
+     * result is served on GET /api/sends to whoever may read the send; it is not kept from agents that may.
+     */
+    "POST /api/provider/verified-destinations",
+    /*
      * The proposal read, `operator` for the same reason as the two above — it spends the grant — and for one
      * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
      * the digest is the only thing standing between a `POST` and a change to the customer's DNS.

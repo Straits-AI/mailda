@@ -3753,3 +3753,77 @@ A third round found that the line had first counted the checks down (*Checking 2
 added to its dangerous count as each verdict landed. A live region is read again whole on every change, so
 twenty files meant twenty-one readings. It now reads *Checking files…* until every file is judged and only then
 counts the dangerous ones; each file's own warning still appears as soon as it is judged.
+
+## An event with nothing to key on, and a fix that named a cause it could not know (28 September 2026)
+
+**A delivery event with no `eventId` or no `recipient` was acked and left no trace.** `applySendingEvent`
+returned `applied: false` and the consumer acked it, so an outcome Cloudflare did publish read exactly like one it
+never sent. It is now logged as `sending_event.unusable` at level `error`, with its type, its message id and which
+field was missing, and never the recipient (`GET /api/logs` is for administrators, and administering a Node is not
+a grant to read its mail). `EventOutcome.unusable` names the fields, so an unusable event is no longer the same
+answer as a redelivery. It is still acked: a retry cannot make the fields appear. A field that is empty or not a
+string now counts as missing. Before, an empty `eventId` became a primary key, and a null body, or a non-string
+message id, type or bounce field reaching `bind`, threw, which the consumer logs as `sending_event.failed` and
+retries, though no retry can change the body. A type spelled like an `Object` method (`toString`) matched the delivery-state map through the
+prototype, and now does not.
+
+**`send_breakers` said why the breakers cannot fire, and it could not know.** Its fix read *"received no
+delivery outcome it could attribute … Fix the event subscription"*. The predicate is `delivery_visibility`'s `ok`,
+which is also false when doctor could not read the delivery tables at all, so the fix now sends the reader to
+that finding and claims no cause of its own. And `delivery_visibility`'s header, which still said *no tool in this
+repository* creates the event subscription and that §5A forbids the credential needed to read it, now names
+`POST /api/provider/subscription` and `GET /api/provider/delivery-events`, which have done both since ADR 42.
+
+## No outcome is reported for verified destinations (28 September 2026)
+
+**The observation.** `mailda-whymelabs` replied four times. The reply to an address on `whymelabs.com` produced
+a `message.delivered` 18 seconds after hand-over. The three to the operator's own `gmail.com` address produced
+nothing, and that address is the one verified Email Routing destination of the account among them; the first of the three
+was confirmed in the inbox. So the Outbox showed those recipients as `unobserved`, exactly like a recipient
+whose answer is still coming, and `mailda doctor` would have called a Node that sent only to them blind and
+sent its operator to rebuild a subscription that works.
+
+**The confound, found before building on it.** Every event either Node in the account had ever received was for
+a recipient on a Cloudflare MX, or for `example.invalid`, which never left Cloudflare. The only external mailbox
+sent to until then was also one of the account's six verified destinations. So "no event for a verified destination" and "no event for
+mail delivered outside Cloudflare" fit the same four sends. One send to a second `gmail.com` address that is not
+a verified destination told them apart: it was answered with `message.delivered` in 27 seconds, on the same
+subscription and the same receiving provider as the three silent sends. So the silence is about verified
+destinations, sampled on one address ([`docs/receipts/email-sending-events.md`](receipts/email-sending-events.md),
+the addition of this date, which also records the MX lookups, every event on both Nodes by recipient domain, and
+every send with its message id and timing; recipients are described there rather than named).
+
+**What is recorded, and why an interval.** `POST /api/provider/verified-destinations` reads the account's
+destination list, with the Node's token or with wrangler's login carried by `mailda setup` and `mailda upgrade`,
+and stores only the intersection with the addresses this Node has already handed mail to: the list can hold
+anybody's address, and the Node keeps one more fact about addresses it already had and nothing about anyone
+else. Each row keeps an interval, from Cloudflare's own `verified` timestamp to the latest read that listed the
+address, and rows are never deleted. Replacing the set on every read was the first design, and it was wrong
+both ways: an address verified after a send explained that send's silence, which hid real blindness, and an
+address removed later turned an explained send into an unexplained one, which raised a false alarm. A hand-over
+after the latest read is extrapolated for an address that read still listed, and every sentence that relies on
+that says so.
+
+**doctor tells three silences apart,** in the one statement it already issued: explained by a read, covered by
+a read and not explained (the subscription is the suspect, and the fix leads with it), and not covered by any
+read yet (the fix asks for the read first). "Covered" compares the manifest's `state_at`, stamped after every
+recipient write, and not the recipient's hand-over time, which is the dispatch pass's start and would have
+counted a send still dispatching during the read as checked. Three kinds of evidence void every explanation:
+an event published for a recipient a read explained, of any type (a complaint sets no delivery state and still
+counts), and an event this Node could not attribute for an address a read
+listed, both of which contradict the receipt, and an event that arrived unusable, which may have been somebody's
+outcome. That last one exists because of the silent drop in the section above: before it was logged, "no row"
+could not be read as "Cloudflare published nothing". On a blind Node the voiding is in `delivery_visibility`'s
+own words. On a Node that is hearing outcomes it is a separate degraded finding, `delivery_explanation_void`,
+because turning `delivery_visibility` red there would tell the breakers they cannot fire, which is false; the
+first draft put the evidence inside a passing finding, so the receipt's tripwire could fire under an OK
+verdict.
+
+**Counts, not addresses.** The route, the Setup screen, the CLI and doctor say how many; which recipients they
+are is shown only by the Outbox, which is bounded by who may read the send. The read is audited as
+`provider.verified_destinations_read`, naming the actor, the credential and the account, with two counts on a read
+that succeeded or the failure on one that did not. A read that
+fails is recorded as could not read, never as none verified, and an operator credential naming a different
+account from the Node's token, or with no token held from the account the last read named, is refused rather than
+read. Voided evidence stops a silence counting as explained and leaves what a covering read found alone: a
+recipient that read did not list is still said to be not listed, so the fix leads with the subscription.

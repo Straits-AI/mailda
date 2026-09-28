@@ -1,4 +1,5 @@
 import type { Bytes } from "@mailda/evidence";
+import type { DeliveryReason } from "@mailda/contract/schemas";
 
 import { CallerError, unprocessable } from "../errors.ts";
 import { auditedBatch } from "../audit.ts";
@@ -21,6 +22,9 @@ import type { Some } from "../router.ts";
 
 /** The outbox shows this many sends, newest first, and says when older ones exist. */
 const SEND_LIST_CAP = 50;
+
+/** The contract's token, typed so renaming it in `DELIVERY_REASONS` is a compile error here. */
+const VERIFIED_DESTINATION: DeliveryReason = "verified_destination";
 
 export const sending = {
   /**
@@ -495,12 +499,31 @@ export const sending = {
           // Ordered the way a person writes an envelope, not the way SQLite sorts strings. `ORDER BY
           // kind` is alphabetical, which put **bcc first and to last** — so a reader met the blind-copy
           // before the actual addressee, and the summary chips inherited that order too.
-          `SELECT manifest_id, kind, address, submission_state, delivery_state, bounce_type, last_error
-             FROM send_recipients
-            WHERE org_id = ? AND manifest_id IN (${sends.map(() => "?").join(", ")})
-            ORDER BY manifest_id,
-                     CASE kind WHEN 'to' THEN 0 WHEN 'cc' THEN 1 WHEN 'bcc' THEN 2 ELSE 3 END,
-                     address`,
+          //
+          // `delivery_reason` (28 September 2026): why no outcome is expected, from what
+          // `POST /api/provider/verified-destinations` recorded. Derived at read time, so an event wins the
+          // moment it lands: one that sets a delivery state through the first clause, and one that sets none (a
+          // complaint, or a type this Node does not know) through the NOT EXISTS, which is doctor's heard. A
+          // hand-over is explained only inside the interval a read proved, or after the latest read for an
+          // address that read still listed; an address removed from the account since then keeps that until the
+          // next read. No subrequest is added: two primary-key lookups per row, and one sre_by_manifest lookup
+          // for a row the other clauses would label.
+          `SELECT r.manifest_id, r.kind, r.address, r.submission_state, r.delivery_state,
+                  CASE WHEN r.delivery_state IS NULL AND r.submission_state = 'handed_over'
+                        AND v.verified_from <= r.submission_state_at
+                        AND (r.submission_state_at <= v.verified_until OR v.verified_until = rd.read_at)
+                        AND NOT EXISTS (SELECT 1 FROM send_recipient_events e
+                                         WHERE e.org_id = r.org_id AND e.manifest_id = r.manifest_id
+                                           AND lower(e.recipient) = lower(r.address))
+                       THEN '${VERIFIED_DESTINATION}' END AS delivery_reason,
+                  r.bounce_type, r.last_error
+             FROM send_recipients r
+             LEFT JOIN verified_destination_recipients v ON v.org_id = r.org_id AND v.address = lower(r.address)
+             LEFT JOIN verified_destination_read rd ON rd.id = 1
+            WHERE r.org_id = ? AND r.manifest_id IN (${sends.map(() => "?").join(", ")})
+            ORDER BY r.manifest_id,
+                     CASE r.kind WHEN 'to' THEN 0 WHEN 'cc' THEN 1 WHEN 'bcc' THEN 2 ELSE 3 END,
+                     r.address`,
         ).bind(who.orgId, ...sends.map((r) => r.id)).all<Record<string, unknown>>();
 
     const byManifest = new Map<string, Array<Record<string, unknown>>>();

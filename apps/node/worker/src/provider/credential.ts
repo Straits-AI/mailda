@@ -71,6 +71,15 @@ export const REQUIRED_PERMISSIONS = [
     optional: false,
   },
   {
+    name: "Email Routing Addresses: Read",
+    scope: "account",
+    why: "which of the addresses this Node has handed mail to are verified destinations of the account, for which "
+      + "Cloudflare reported no delivery outcome in the one case measured. It lets the token read the account's "
+      + "whole destination list; this Node keeps only the addresses it has sent to. Leave it out and `mailda setup` "
+      + "still reads the list with wrangler's login",
+    optional: true,
+  },
+  {
     name: "Queues: Edit",
     scope: "account",
     why: "the `email.sending` event subscription that makes a send's outcome reach this Node, and the queue "

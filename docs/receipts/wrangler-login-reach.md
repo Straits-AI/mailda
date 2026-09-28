@@ -6,7 +6,8 @@ stale_when: >
   wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record);
   Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or
   the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar
-  or raw DNS endpoints start answering an `email_routing:write`-shaped token
+  or raw DNS endpoints start answering an `email_routing:write`-shaped token; or GET
+  /accounts/{account_id}/email/routing/addresses stops answering a token scoped email_routing:write
 values:
   wrangler.login_creates_subdomain_routing_records: 1
   wrangler.login_deletes_subdomain_routing_records: 0
@@ -120,3 +121,22 @@ plan and the read-back, so raw DNS is not needed for receiving at all.
 So a subdomain's plan is the `missing` list, its read-back is `errors: null` with `records`, and an apex's
 records come with enabling routing on the zone. The receiving code is being rewritten onto these
 endpoints; the raw-DNS boundary above then bounds nothing the install does.
+
+## Email Routing destination addresses (28 September 2026)
+
+Read for the verified-destinations read that `mailda setup` and `mailda upgrade` make with wrangler's login
+([`email-sending-events.md`](./email-sending-events.md), the addition of this date). Account `1e0170…`,
+wrangler 4.118.0's login, about 05:00 UTC:
+
+| endpoint | method | answer |
+|:--|:--|:--|
+| `/accounts/{account}/email/routing/addresses?page=1&per_page=50` | GET | 200, wrangler 4.118.0's login (`email_routing:write`): 7 listed, 6 `status: "verified"` with an ISO `verified` timestamp, 1 `unverified` with `verified: null`; fields `created, email, id, modified, status, tag, verified`. `?verified=true` also 200 |
+
+Counts were read; addresses were not printed. So the ordinary path reads the list with the consent the
+operator already gave wrangler, and the Node's token does not need the permission for it.
+
+**Not measured:** what a token without `Email Routing Addresses: Read` gets from the same endpoint. If it were
+200 with an empty list rather than a refusal, a read that could not see the list would be recorded as one that
+found none verified; the Node's first read with its own token settles it. Also not recorded yet: the exact shape
+of one `verified` string (format only), which the Node normalizes through `Date.parse` because it was never
+printed.

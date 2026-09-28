@@ -4,12 +4,12 @@ import { useState } from "react";
 import { Nothing, Scroller } from "../chrome.tsx";
 import { OnboardingProgress } from "../onboarding.tsx";
 import {
-  forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, registerProviderToken,
-  routingRulesOn, takeOverRule,
+  forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, recordVerifiedDestinations,
+  registerProviderToken, routingRulesOn, takeOverRule,
   sendingProposal, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
   type Permission, type ProviderBinding, type ReceivingProposal, type RoutingRules, type SendingProposal,
-  type SubscriptionProposal,
+  type SubscriptionProposal, type VerifiedDestinationsState,
 } from "../api.ts";
 
 /**
@@ -701,7 +701,83 @@ function Subscription() {
           </button>
         </div>
       )}
+
+      <VerifiedDestinations />
     </section>
+  );
+}
+
+/**
+ * The one kind of silence no subscription fixes (28 September 2026): Cloudflare published no delivery event for
+ * mail to a verified destination address of the account, in the one case measured. The read records which of
+ * this Node's recipients those are, so the Outbox and doctor say so instead of waiting. The answer is counts,
+ * never an address: which recipients they are is the Outbox's to show, bounded by who may read the send.
+ */
+function VerifiedDestinations() {
+  const [read, setRead] = useState<VerifiedDestinationsState | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function readList() {
+    setProblem(null);
+    setRead(null);
+    setBusy(true);
+    const answer = await recordVerifiedDestinations();
+    setBusy(false);
+    if (!answer.ok) { setProblem(answer.message); return; }
+    setRead(answer.value.destinations);
+  }
+
+  return (
+    <>
+      <h3>Verified destinations</h3>
+      <p className="dim">
+        Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in
+        the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox
+        and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Read on
+        this Node's token; <span className="mono">mailda setup</span> reads it with wrangler's login instead.
+      </p>
+      <Refusal said={problem} />
+      {read === null ? null : <VerifiedDestinationsRead read={read} />}
+      <button className="quiet" type="button" onClick={() => void readList()} disabled={busy}>
+        {busy ? "Working…" : "Read verified destinations"}
+      </button>
+    </>
+  );
+}
+
+/**
+ * A read's three answers. `error` is tested first: a failed read leaves `recipients` counted and `verified`
+ * null, and saying "0 of 3" there would turn could not read into none verified.
+ */
+function VerifiedDestinationsRead({ read }: { read: VerifiedDestinationsState }) {
+  if (read.error !== null) {
+    return (
+      <Refusal
+        said={`The read did not succeed: ${read.error}. When Cloudflare refuses it for lack of permission, the token `
+          + "needs Email Routing Addresses: Read: add it in Cloudflare's dashboard, or make a new token and register "
+          + "it above (if the dashboard shows a new value after the edit, register that). "
+          + (read.readAt === null
+            ? "Until a read succeeds, these recipients show as unobserved."
+            : `The read of ${read.readAt} still stands.`)}
+      />
+    );
+  }
+  if (read.recipients === 0) {
+    return (
+      <p className="notice" role="status">
+        Read {read.readAt} from account {read.accountId}. This Node has handed mail to nobody yet, so there was
+        nothing to compare.
+      </p>
+    );
+  }
+  return (
+    <p className="notice" role="status">
+      Read {read.readAt} from account {read.accountId}. {read.verified} of the {read.recipients} address(es) this
+      Node has handed mail to {read.verified === 1 ? "is a verified destination" : "are verified destinations"}.
+      No outcome is reported for verified destinations; the Outbox marks their hand-overs made while they were
+      verified.
+    </p>
   );
 }
 

@@ -458,7 +458,10 @@ be declared either (a consumers block is refused without a queue name, and the d
 knowable in committed config), so it is attached out of band by
 `pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from the deployed
 binding rather than deriving its name. **Until that runs, a Node observes no delivery outcomes at all**;
-`doctor`'s `sending_events_consumer` says so and `delivery_visibility` fails on the evidence.
+`doctor`'s `sending_events_consumer` says so, and `delivery_visibility` fails on the evidence unless a read of
+the account's verified destinations explains every silent recipient. Then it calls the silence expected and
+says it shows nothing about the event subscription either way, so `sending_events_consumer` is the finding
+that still names the missing consumer (amended 28 September 2026).
 
 What ships instead is the structural part: **every topic must be registered.**
 

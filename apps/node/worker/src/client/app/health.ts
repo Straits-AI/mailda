@@ -46,6 +46,7 @@ export const HEALTH_AREA: Record<DoctorCheck, HealthArea | null> = {
   sending_events_consumer: "outbound",
   delivery_visibility: "outbound",
   delivery_attribution: "outbound",
+  delivery_explanation_void: "outbound",
   domain_paused: "outbound",
   send_evidence_changed: "outbound",
 

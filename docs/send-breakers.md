@@ -260,8 +260,13 @@ question rather than a number that ends one.
 rather than recomputing it:**
 
 - unarmed, and the Node has handed mail over long enough ago to have been answered with **zero** attributed
-  events, so the breakers *cannot fire*. `degraded`, with a fix pointing at the same event subscription that
-  finding names.
+  events, and at least one of those recipients' silence no read explains, so the breakers *cannot fire*. (The
+  explained silence is a recipient a read of the account showed as a verified destination at hand-over: no
+  outcome is reported for verified destinations in the one case measured, so a Node that sends only to those is
+  quiet, not blind; amended 28 September 2026.) `degraded`, with a fix that sends the reader to `delivery_visibility`
+  and names no cause of its own: the predicate is read from that finding's `ok`, which is also false when doctor
+  could not read the delivery tables at all, so only that finding knows why (amended 28 September 2026; it used
+  to say the Node had received no outcome and to fix the event subscription).
 - unarmed, and the Node simply has not sent much, and nothing is wrong. `report`, `ok: true`. Failing here would
   put a permanent WARN on every freshly deployed Node, and `DELIVERY_SILENCE_MS` names the consequence in the
   same file: a finding that fails on every Node forever is one somebody mutes, and a muted check is worse than

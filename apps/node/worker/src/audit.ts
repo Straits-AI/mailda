@@ -880,6 +880,18 @@ export const AUDIT_ACTIONS = {
       + "reached this Node's queue, with this Worker consuming it. This Node changed nothing; it recorded "
       + "what it saw.",
   },
+  /**
+   * A read of the account's Email Routing destination list (28 September 2026), `ok` or `failed`. Audited
+   * because it spends the credential and changes what doctor and the Outbox say, so who ran it, with which
+   * credential, against which account, is answerable. The detail carries counts on `ok` and the failure on
+   * `failed`, never an address: the trail is permanent and widely read, and which recipients were verified
+   * destinations is content.
+   */
+  "provider.verified_destinations_read": {
+    says: "An administrator had this Node read which of the addresses it has handed mail to are verified Email "
+      + "Routing destinations of the account. The entry names the account and the credential, with two counts when "
+      + "the read succeeded or the failure as reported when it did not; never an address.",
+  },
 
   /**
    * A domain purchase **attempted** (#164 L3), and the verb is the whole point.

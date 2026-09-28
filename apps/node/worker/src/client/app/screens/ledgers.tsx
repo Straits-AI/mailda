@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { apiFetch } from "/app/session.js";
-import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
+import { describeReason, describeRecipient, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 
 import { Nothing, Truncated } from "../chrome.tsx";
 import {
@@ -64,20 +64,22 @@ function Recipients({ send }: { send: SendRow }) {
       <dd>
         <div className="recipients">
           {orderRecipients(send.recipients).map((recipient) => {
-            const observed =
-              recipient.delivery_state == null
-                ? UNOBSERVED
-                : (DELIVERY_STATES[recipient.delivery_state] ?? { label: recipient.delivery_state, note: "" });
+            const { state, reason } = describeRecipient(recipient);
             return (
               <div className="recipient" key={`${recipient.kind}:${recipient.address}`}>
                 <span className="label">{recipient.kind}</span>
                 <span className="mono">{recipient.address}</span>
                 <span
                   className={`state delivery-${recipient.delivery_state ?? "unobserved"}`}
-                  title={observed.note + (recipient.bounce_type ? ` (${recipient.bounce_type})` : "")}
+                  title={state.note + (recipient.bounce_type ? ` (${recipient.bounce_type})` : "")}
                 >
-                  {observed.label}
+                  {state.label}
                 </span>
+                {reason === null ? null : (
+                  // Beside `unobserved`, not instead of it, as the send row's reason sits beside its state (#62):
+                  // the state is what was heard, which is nothing; the reason is why nothing is coming.
+                  <span className="state state-reason delivery-chip" title={reason.note}>{reason.label}</span>
+                )}
                 {recipient.last_error ? (
                   // The provider's own words. A paraphrase of somebody else's mail server is a guess.
                   <span className="dim mono recipient-error">{recipient.last_error}</span>

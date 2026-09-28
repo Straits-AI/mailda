@@ -7,7 +7,12 @@ stale_when: >
   event types change; payload.messageId's relationship to the value send() returns changes; or the
   cf-bounce subdomain becomes unlockable, which would make inbound DSNs a second and conflicting source
   of the same truth; or the create-subscription endpoint stops accepting an email.sending source, or
-  wrangler starts offering one
+  wrangler starts offering one; or a send to a verified Email Routing destination produces an
+  email.sending event
+  (doctor counts those, attributed or not, as contradicting: it stops calling any silence explained, and on
+  a Node that is hearing outcomes its delivery_explanation_void finding degrades),
+  or Cloudflare documents what it publishes for one; or a send through the REST
+  adapter to a verified destination is measured, since only the send_email binding was
 values:
   events.schema_version: 1
   events.types_published: 6
@@ -163,6 +168,9 @@ guards nothing. Being wrong long means a blind Node goes unreported for a quarte
 which costs an operator fifteen minutes of not knowing something they were not looking at anyway.
 
 One measurement is thin evidence for a distribution, and this number should tighten once there are more.
+Two more arrivals were measured on 28 September 2026, `message.delivered` 18 seconds after hand-over and,
+to a mailbox on Google's MX, 27 seconds after (both in the addition at the end of this file), and 15 minutes
+stands.
 A `deferred` event in particular can precede a terminal one by much longer than a minute, since Cloudflare
 retries temporary failures, so the window bounds *"heard nothing at all"* rather than *"reached a final
 answer"*, which is why the check tests for zero events rather than for unresolved ones.
@@ -258,3 +266,82 @@ the sending endpoints turned out to, is one probe with a re-consent in front of 
 The subscription created for the second row was kept: `mailda.site` is onboarded for sending now, and a
 sending domain with no subscription is exactly the blind state `delivery_visibility` exists to name.
 
+## Addition, 28 September 2026: no event observed for a verified destination, and the send that told it apart
+
+**Setup.** Node `mailda-whymelabs`, account `1e0170aaabc90ecf5f466128d1f0466a`, sending domain
+`whymelabs.com`. Event subscription `8b37b81a56ac4f5bb85e022509bf80a5` publishing to queue
+`4217b97eb89241b1b94093d6e108171c`, consumed by the Worker `mailda-whymelabs`. Every send went through the
+`EMAIL` `send_email` binding, which is unrestricted on this Node. The REST adapter was not sampled.
+
+**The observation.** Four sends, all replies from the Outbox. Recipients are described rather than named: this is a
+public repository, and the addresses are people's.
+
+| recipient | MX | verified destination? | handed over | message id | event | arrived? |
+|:--|:--|:--|:--|:--|:--|:--|
+| an operator's address on `whymelabs.com` | `route1/2/3.mx.cloudflare.net` | no | 2026-09-28T04:31:26.639Z | `<lFwXGf4gXm305vc0uCtFqePs4dIhTo8XF2Cn@whymelabs.com>` | `message.delivered` at 04:31:44.830Z, 18 s | the event says the receiving server accepted it |
+| the operator's `gmail.com` address | Google's | yes, since 2024-11-21 | 2026-09-27T07:25:10.228Z | `<jjZ8VlWN1WYBJd4mLgbusVTjcvbFRkm5YfCA@whymelabs.com>` | none | yes, confirmed in the inbox by the user |
+| the same address | Google's | yes | 2026-09-27T16:34:18.200Z | `<zkDSxehCWnv7VvBte7DUUQLn6VT54KQzb5dR@whymelabs.com>` | none | not checked |
+| the same address | Google's | yes | 2026-09-28T04:36:51.379Z | `<JNiw0cksdUfw4OxsT9h57VYnwtlFFdRhi4gp@whymelabs.com>` | none after 6+ minutes | not checked |
+
+Queue analytics showed zero writes for the first two gmail sends. The verified status and its date are as
+reported with the observation. The account's destination list was also read with wrangler's login the same
+day, and only counts were printed from it ([`wrangler-login-reach.md`](./wrangler-login-reach.md), the section
+of this date).
+
+**Every event either Node in the account had received before the discriminating send below,** by recipient
+domain, read from D1 the same day (read-only; only domains and counts were printed):
+
+| Node (D1) | events | recipient domain | its MX | attributed |
+|:--|:--|:--|:--|:--|
+| `mailda` (`mailda-catalog`) | `bounced` ×3 | `example.invalid` | none: the mail never left Cloudflare (*unknown public suffix*, above) | 3 |
+| `mailda` | `bounced` ×4 | `mailda-test.whymelabs.com` | `route1/2/3.mx.cloudflare.net` | 2 |
+| `mailda` | `delivered` ×3 | `mailda-test.whymelabs.com` | `route1/2/3.mx.cloudflare.net` | 3 |
+| `mailda` | `delivered` ×3 | `whymelabs.com` | `route1/2/3.mx.cloudflare.net` | 2 |
+| `mailda-whymelabs` (`mailda-whymelabs-catalog`) | `delivered` ×1 | `whymelabs.com` | `route1/2/3.mx.cloudflare.net` | 1 |
+
+At that read, `mailda`'s `send_recipients` held only those three domains. `mailda-whymelabs`'s held three
+`gmail.com` recipients handed over with no delivery state and one `whymelabs.com` recipient accepted, and its
+`log_entries` held no `sending_event.*` line.
+
+**Two explanations fit these four sends, and this is how thin the evidence was.** Before the discriminating send, every
+event observed was for a recipient on a Cloudflare MX, or for mail that never left Cloudflare, and the only
+external mailbox either Node had sent to was also one of the account's six verified destinations (of seven
+listed, [`wrangler-login-reach.md`](./wrangler-login-reach.md)). So the silence fit both:
+
+- (a) Cloudflare publishes no event for mail to a **verified destination**, or
+- (b) Cloudflare publishes no event for mail **delivered outside Cloudflare**, to any external MX.
+
+A likely mechanism for (a), and it is an inference: [`free-plan-node-capability.md`](./free-plan-node-capability.md)
+measured a free-plan Node's `send_email` binding delivering to a verified destination while refusing an
+arbitrary recipient, and quotes the pricing page: sends to verified destination addresses are always free, on
+any plan. So mail to a verified destination plausibly leaves by Email Routing's own path rather than Email
+Sending's, and this file already records that Email Routing events are not published on this source. That
+supports (a). On its own it does not refute (b); the discriminating send below does.
+
+**The discriminating send (Step 0).** One send from `mailda-whymelabs` to a second `gmail.com` address that
+is **not** a verified destination of the account: same MX and same receiving provider as the three silent
+sends, so verified status is the only variable. Watched for `events.delivery_silence_minutes`.
+
+| recipient | MX | verified destination? | handed over | message id | event |
+|:--|:--|:--|:--|:--|:--|
+| the operator's second `gmail.com` address | Google's | no | 2026-09-28T09:44:55.294Z | `<9YWRtwnnvNN7EsO0bE39DR17UrNzdVACLXE2@whymelabs.com>` | `message.delivered` at 09:45:22.402Z, 27 s, attributed |
+
+**(b) is refuted and (a) stands.** Same subscription, same binding, same receiving provider and MX as the three
+silent sends: the send to a `gmail.com` mailbox that is not a verified destination was answered in 27 seconds,
+the three to the one that is were never answered. Of every external and Cloudflare-hosted recipient measured on
+this subscription, only the verified destination produced no event. The sample is still **one verified address**,
+and Cloudflare does not document the behaviour that we found, so the product words it as "no outcome is reported
+for verified destinations", an observation: doctor voids every explanation the moment any event contradicts it,
+and the Outbox drops the reason only for a recipient with an event of its own.
+
+**What the product does with it.** `POST /api/provider/verified-destinations` reads the account's list and
+records, for each address this Node has handed mail to, the interval over which a read showed it verified: from
+Cloudflare's own `verified` timestamp to the latest read that listed it. Only that intersection is stored, never
+the account's list. doctor's `delivery_visibility` reads the record with no live call and stops calling a
+silence blind when a read explains it. It voids every explanation when an event was published for a recipient
+it explained (any type, including one that sets no delivery state, such as a complaint), or an event it could not
+attribute was for an address a read listed (either would contradict this
+addition), or an event arrived that could not be used. On a Node that is hearing outcomes, that evidence is a
+degraded finding of its own, `delivery_explanation_void`, so the verdict shows it. The Outbox shows such a
+recipient as `unobserved` with the reason `verified destination` beside it. No new `values`: nothing in code
+reads one, and the tripwire is doctor's two contradicting counts.

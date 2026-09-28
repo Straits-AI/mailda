@@ -52,9 +52,20 @@ export interface RoutingState {
 export async function boundAccount(env: Env, ctx?: Ctx): Promise<string | null> {
   const operator = ctx === undefined ? null : operatorOf(ctx);
   if (operator !== null) return operator.accountId;
+  // A failed read answers null here, and that is safe for these callers only: each treats null as no
+  // credential and asks Cloudflare nothing, so it fails closed. A caller that compares accounts to refuse
+  // uses `heldAccount`, where null has to mean no token and nothing else.
+  return heldAccount(env).catch(() => null);
+}
+
+/**
+ * The stored token's account, or null when no token is held. A failed read rejects: to a caller comparing
+ * accounts before it reads, "could not tell" must not read as "no token held", which would skip the comparison.
+ */
+export async function heldAccount(env: Env): Promise<string | null> {
   const row = await env.CATALOG.prepare(
     "SELECT account_id FROM provider_token WHERE id = 1",
-  ).first<{ account_id: string }>().catch(() => null);
+  ).first<{ account_id: string }>();
   return row?.account_id ?? null;
 }
 

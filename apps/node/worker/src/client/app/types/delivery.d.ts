@@ -11,11 +11,22 @@
  */
 
 export interface DeliveryMeta { label: string; note: string }
+/** `state` is a delivery state, or a reason token (`DELIVERY_REASONS`) for a recipient that has none. */
 export interface DeliveryEntry { state: string; count: number; label: string; note: string }
-export interface RecipientLike { kind?: string; address?: string; delivery_state?: string | null }
+export interface RecipientLike {
+  kind?: string;
+  address?: string;
+  delivery_state?: string | null;
+  /** Why no outcome is expected (`verified_destination`), or null. Never a state: an event wins. */
+  delivery_reason?: string | null;
+}
 
 export const DELIVERY_STATES: Record<string, DeliveryMeta>;
 export const UNOBSERVED: DeliveryMeta;
+/** The words for each `delivery_reason` token; the contract's `DELIVERY_REASONS` is the closed list. */
+export const DELIVERY_REASONS: Record<string, DeliveryMeta>;
+/** One recipient's state, and the reason beside it when there is one. `reason` is null whenever a state is set. */
+export function describeRecipient(recipient: RecipientLike): { state: DeliveryMeta; reason: DeliveryMeta | null };
 export const DELIVERY_SEVERITY: string[];
 export function severityRank(state: string): number;
 /** Worst first. Empty only when nothing at all has been observed — see the module's own header. */

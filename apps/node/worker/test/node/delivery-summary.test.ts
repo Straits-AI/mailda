@@ -147,8 +147,69 @@ describe("the outbox delivery summary", () => {
     // `severityRank` returns -1 for anything absent from this list, which is deliberate for an unknown
     // state and would be a bug for a known one — a state missing here would outrank a bounce.
     expect(DELIVERY_SEVERITY).toEqual(
-      ["bounced", "failed", "rejected", "deferred", "unobserved", "accepted"],
+      ["bounced", "failed", "rejected", "deferred", "unobserved", "verified_destination", "accepted"],
     );
+  });
+});
+
+/**
+ * A reason beside `unobserved` (28 September 2026): Cloudflare published no delivery event for mail to a verified
+ * destination of the account, in the one case measured, so such a recipient's silence is explained rather than
+ * pending. What would render plausibly and be wrong: a reason shown over an outcome that did arrive; a send whose
+ * every recipient is a verified destination summarised as nothing at all, which reads as "wait"; the reason
+ * ranked with the outcomes a reader must act on; a token with no words, or words for a token nothing writes.
+ */
+describe("the reason beside unobserved", () => {
+  let describeRecipient: (recipient: unknown) => {
+    state: { label: string; note: string };
+    reason: { label: string; note: string } | null;
+  };
+  let DELIVERY_REASONS: Record<string, { label: string; note: string }>;
+
+  beforeAll(async () => {
+    const source = readFileSync(SOURCE, "utf8");
+    const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    describeRecipient = module.describeRecipient;
+    DELIVERY_REASONS = module.DELIVERY_REASONS;
+  });
+
+  const silent = (delivery_reason: string | null) => ({ delivery_state: null, delivery_reason });
+
+  it("keeps the state unobserved and puts the reason beside it", () => {
+    const said = describeRecipient(silent("verified_destination"));
+    expect(said.state.label).toBe("unobserved");
+    expect(said.reason?.label).toBe("verified destination");
+    expect(said.reason?.note.startsWith("No outcome is reported for verified destinations")).toBe(true);
+  });
+
+  it("drops the reason once an outcome is observed: an event wins", () => {
+    const said = describeRecipient({ delivery_state: "accepted", delivery_reason: "verified_destination" });
+    expect(said.state.label).toBe("accepted");
+    expect(said.reason).toBeNull();
+  });
+
+  it("gives a send whose every recipient is a verified destination its one chip", () => {
+    // It adds a fact the submission state does not: nothing is coming, so do not wait.
+    expect(summariseDelivery([silent("verified_destination")])).toEqual([
+      { state: "verified_destination", count: 1, label: "verified destination", note: expect.any(String) },
+    ]);
+  });
+
+  it("ranks the reason below unobserved and above accepted", () => {
+    const summary = summariseDelivery([
+      recipient("accepted"), silent("verified_destination"), silent(null), recipient("bounced"),
+    ]);
+    expect(summary.map((entry) => entry.state)).toEqual(["bounced", "unobserved", "verified_destination", "accepted"]);
+  });
+
+  it("still says nothing when every recipient is plainly unobserved", () => {
+    expect(summariseDelivery([silent(null)])).toEqual([]);
+  });
+
+  it("has words for exactly the reasons the contract names", async () => {
+    // Imported here rather than at the top, so this file's other tests do not depend on the contract's export.
+    const contract = await import("@mailda/contract/schemas");
+    expect(Object.keys(DELIVERY_REASONS).sort()).toEqual([...contract.DELIVERY_REASONS].sort());
   });
 });
 

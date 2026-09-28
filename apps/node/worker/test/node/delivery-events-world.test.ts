@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { doctorSource } from "./support/doctor-source.ts";
+import { doctorSource, doctorTokens } from "./support/doctor-source.ts";
 
 import { ROUTES } from "@mailda/contract";
 
@@ -48,5 +48,43 @@ describe("what sending_events_consumer promises", () => {
    */
   it("keeps the live read out of doctor", () => {
     expect(doctor).not.toContain("deliveryEventsState");
+  });
+});
+
+/*
+ * `sending_events_consumer` also names the route that creates the subscription. Read from doctor's string
+ * literals (AGENTS.md §2c, rung 3), so a comment naming the route cannot satisfy it: this fails the day the
+ * finding stops naming it, or the route goes or stops being admin-only.
+ */
+describe("what sending_events_consumer names to create the subscription", () => {
+  it("names a route that exists, admin-only", () => {
+    expect(doctorTokens().literals.some((one) => one.includes("`POST /api/provider/subscription`"))).toBe(true);
+    const route = ROUTES.find((one) => one.path === "/api/provider/subscription" && one.method === "POST");
+    expect(route).toBeDefined();
+    expect(route!.authority).toEqual({ scope: "organization", allOf: ["org.admin"] });
+  });
+});
+
+/*
+ * `delivery_visibility` sends a Node that has never read its account's verified destinations to the route that
+ * reads them (28 September 2026), and reads what that route recorded rather than reading the account itself.
+ * That the fix names the route is held by `test/doctor-blindness.test.ts` ("asks for the read first when this
+ * Node has never read the list"), against the registry. Here: the route exists and is admin-only, and, read by the
+ * TypeScript parser (AGENTS.md §2c, rung 3) so that a comment naming any of them cannot decide it, doctor's code
+ * reads the recorded state, no identifier in doctor is the function that spends the credential, and no string in
+ * doctor holds the Cloudflare path it calls.
+ */
+describe("what delivery_visibility says reads the verified destinations", () => {
+  it("names a route that exists, reads what it recorded, and makes no live read of its own", () => {
+    const route = ROUTES.find((one) => one.path === "/api/provider/verified-destinations" && one.method === "POST");
+    expect(route).toBeDefined();
+    expect(route!.authority).toEqual({ scope: "organization", allOf: ["org.admin"] });
+
+    const { identifiers, literals } = doctorTokens();
+    // The parse found doctor's code: a scan that stopped matching would otherwise pass over nothing.
+    expect(identifiers.has("sendingEventsConsumerCheck")).toBe(true);
+    expect(literals.some((one) => one.includes("FROM verified_destination_read"))).toBe(true);
+    expect(identifiers.has("recordVerifiedDestinations")).toBe(false);
+    expect(literals.filter((one) => one.includes("email/routing/addresses"))).toEqual([]);
   });
 });

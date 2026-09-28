@@ -245,6 +245,17 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     ],
   },
   /*
+   * Migration 0070's two tables: which of this Node's recipients were verified Email Routing destinations of
+   * the account, and the read that recorded it (28 September 2026). One writer, `recordVerifiedDestinations`,
+   * always in one batch with this entry. Audited because the read spends the credential and changes what
+   * doctor says, so who ran it, with which credential, against which account, is answerable. The detail
+   * carries counts, never an address, because the trail is permanent and widely read. Classified under its
+   * own tables rather than `provider_token`: the acts listed there leave their fact only in the trail, and
+   * this one writes rows.
+   */
+  verified_destination_recipients: { actions: ["provider.verified_destinations_read"] },
+  verified_destination_read: { actions: ["provider.verified_destinations_read"] },
+  /*
    * Migration 0053's two tables, unread since the OAuth client left (26 September 2026) and dropped by a
    * later contract-phase migration. No action lands against them any more.
    */

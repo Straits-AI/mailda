@@ -80,6 +80,8 @@ export const EXPECTED_TABLES = [
   "provider_authorizations",
   // Migration 0066: the Node's Cloudflare API token, bound to one account.
   "provider_token",
+  // Migration 0070: which recipients were verified Email Routing destinations of the account, and the read.
+  "verified_destination_recipients", "verified_destination_read",
 ];
 
 

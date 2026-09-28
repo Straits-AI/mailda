@@ -118,7 +118,10 @@ instrument. **No deployed measurement is claimed here.**
 
 **No corpus was measured, because none exists.** This Node has never observed a real organization's
 bounce rate, and `doctor` reports the reason it might never have: a Node whose Email Sending event
-subscription was never created sees zero events for ever (`delivery_visibility`). So the eight numbers
+subscription was never created sees zero events for ever (`delivery_visibility`), and in the one case
+measured a Node's sends to verified destinations of its own account produced no events either
+(`email-sending-events.md`, 28 September 2026 addition), so that traffic adds no observation to the bounce or
+complaint rate (it still counts toward volume, which counts hand-overs). So the eight numbers
 below are **tripwires sized by arithmetic**, in AGENTS.md's sense: placed past where any good widget
 goes, so only broken things touch them. Each is stated with what it trades off, and the first real corpus
 is this receipt's first `stale_when` clause.

@@ -734,6 +734,13 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/verified-destinations",
+    summary: "Read which of the addresses this Node has handed mail to are verified Email Routing destinations of the "
+      + "account, and record when. Answers with counts. No outcome is reported for verified destinations",
+    response: S.providerVerifiedDestinationsResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/domains",
     summary: "Domain suggestions with indicative prices. Cloudflare describes these as cached and "
       + "non-authoritative, so they are never a basis to buy",

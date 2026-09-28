@@ -1173,6 +1173,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Read which of the addresses this Node has handed mail to are verified Email Routing destinations of the account, and record when. Answers with counts. No outcome is reported for verified destinations
+   *
+   * `POST /api/provider/verified-destinations`
+   */
+  async postProviderVerifiedDestinations(body?: unknown): Promise<z.infer<typeof S.providerVerifiedDestinationsResponse>> {
+    return await this.json("POST", "/api/provider/verified-destinations", {}, body) as z.infer<typeof S.providerVerifiedDestinationsResponse>;
+  }
+
+  /**
    * Domain suggestions with indicative prices. Cloudflare describes these as cached and non-authoritative, so they are never a basis to buy
    *
    * @param query.q a keyword or domain name to suggest from. A bare extension is not accepted by Cloudflare and is refused here
