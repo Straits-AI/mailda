@@ -541,6 +541,34 @@ export function useAudit(): UseQueryResult<{ entries: AuditRow[]; truncated: boo
   });
 }
 
+/** One withdrawn relation's person and object, as `withdrawals` keys it. */
+export const withdrawalKey = (subjectId: string, objectId: string): string => `${subjectId} ${objectId}`;
+
+/**
+ * The person and object of every relation an administrator withdrew, from the newest `access.revoked` entries
+ * (`GET /api/audit?action=access.revoked`, 29 September 2026), so People does not offer back what somebody took
+ * away. `truncated` when older entries exist that this read did not see. An entry without its subject or object is
+ * this Node's own fault and fails the read, which the screen shows, rather than being passed over.
+ */
+export function useWithdrawals(enabled: boolean): UseQueryResult<{ withdrawn: Set<string>; truncated: boolean }, Error> {
+  return useQuery({
+    queryKey: ["audit", "access.revoked"],
+    queryFn: async () => {
+      const { entries, truncated } = await read<{ entries: AuditRow[]; truncated: boolean }>(`${GET("/api/audit")}?action=access.revoked`);
+      const withdrawn = entries.map((entry) => {
+        const objectId = (JSON.parse(entry.detail) as { objectId?: unknown }).objectId;
+        if (entry.subject === null || typeof objectId !== "string") {
+          throw new Error(`The access.revoked entry ${entry.id} names no person or no object: ${entry.detail}`);
+        }
+        return withdrawalKey(entry.subject, objectId);
+      });
+      return { withdrawn: new Set(withdrawn), truncated };
+    },
+    enabled,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useLogs(): UseQueryResult<{ entries: LogRow[]; truncated: boolean; counts: Array<{ level: string; n: number }> }, Error> {
   return useQuery({
     queryKey: ["logs"],
@@ -2133,6 +2161,15 @@ export interface ReceivingProposal {
   apex: boolean;
   /** The zone's current catch-all rule, when apex; null otherwise. Shown so a take-over names what it replaces. */
   catchAll: CatchAllRule | null;
+  /**
+   * Every address on `domain` with a routing rule of its own, and where it goes. A literal rule outranks the
+   * catch-all, so a take-over does not reach these. `error` when the rules could not be read: the list is then
+   * unknown, never empty.
+   */
+  ownRules: {
+    addresses: Array<{ address: string; state: "rule_written" | "routed_elsewhere" | "rule_disabled"; where: string }>;
+    error: string | null;
+  };
 }
 
 export interface CatchAllRule { action: string; destinations: string[]; enabled: boolean }

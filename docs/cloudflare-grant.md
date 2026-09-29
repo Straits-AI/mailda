@@ -352,8 +352,14 @@ the *route* it was on: the take-over of one rule is a decision about one address
 decision about a whole domain. So `POST /api/provider/routing-rules/take-over` still refuses the catch-all,
 and the receiving step takes it instead, where the proposal shows the whole domain. When the domain asked
 for is a zone's own name, `GET /api/provider/receiving` reports `apex: true` and the zone's current
-catch-all (its action, destinations and whether it is on); confirming with `catchAll: true` points it at
-this Worker and writes `provider.catch_all_taken_over` to the audit trail with `before` and `after`.
+catch-all (its action, destinations and whether it is on), and on any domain `ownRules`: every address on it
+with a literal rule, classified by `classifyAddress` (`rule_written`, `routed_elsewhere`, `rule_disabled`) with
+where the rule sends it, or the error that kept the rules from being read (28 September 2026). An enabled one
+outranks the catch-all, so a take-over does not reach its address; for a disabled one Cloudflare does not say
+whether the catch-all then applies, and neither channel claims it. So every prompt that offers it (`mailda install`, `mailda setup`,
+`mailda provider --onboard-receiving`, the Setup screen) lists them first and says "every address without a rule
+of its own"; the list is in the proposal's digest, so a rule added or changed before the confirmation makes it
+stale. Confirming with `catchAll: true` points it at this Worker and writes `provider.catch_all_taken_over` to the audit trail with `before` and `after`.
 `POST /api/provider/routing-rules/put-back` restores it from that entry (`provider.catch_all_put_back`).
 Measured: `PUT /zones/{zone_id}/email/routing/rules/catch_all` is permitted to wrangler's login and to the
 grant's `email-routing-rule.write` ([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)).

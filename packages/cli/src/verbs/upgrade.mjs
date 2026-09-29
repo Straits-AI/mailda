@@ -209,6 +209,8 @@ async function setUpNode({ url, accountId, yes, cookie, state, token }) {
     process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
     Object.assign(setUp, await provisionNode({
       origin: url, cookie, accountId, token: token ?? await wranglerToken(), yes, ask, provisioned: state.provisioned,
+      // The administrator `sessionCookie` signed in as, whose own address the first one defaults to on its domain.
+      signInEmail: process.env.MAILDA_EMAIL,
     }));
     return setUp;
   }

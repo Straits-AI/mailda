@@ -14,6 +14,7 @@
     "queue:attach-consumer": "node scripts/attach-queue-consumer.mjs",
     "build:client": "node scripts/build-client.mjs",
     "axe": "node --experimental-strip-types scripts/axe.mjs",
+    "spacing": "node --experimental-strip-types scripts/spacing.mjs",
     "seed-claim-secret": "node --experimental-strip-types scripts/seed-claim-secret.mjs",
     "mutants": "node scripts/mutants.mjs"
   },

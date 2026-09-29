@@ -1233,7 +1233,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * What pointing a subdomain at this Node to receive mail would do — the MX Cloudflare requires, what is already there, and the digest a confirmation must carry. Changes nothing
+   * What pointing a subdomain at this Node to receive mail would do — the MX Cloudflare requires, what is already there, every address on it with a routing rule of its own (which a catch-all does not reach) and where each goes, and the digest a confirmation must carry. Changes nothing
    *
    * @param query.domain the subdomain to point at this Node
    *

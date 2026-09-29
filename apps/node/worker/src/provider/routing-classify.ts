@@ -1,7 +1,8 @@
 /**
  * How one address is routed, decided from a zone's Email Routing rules as Cloudflare lists them (28 September
  * 2026). Pure, and importing nothing, so the one function every caller uses (adding and removing an address,
- * the receiving onboard) is also the one a script can run against a real zone's listing.
+ * the receiving onboard, and its proposal's list of addresses with rules of their own) is also the one a script
+ * can run against a real zone's listing.
  *
  * The address's own rule is a matcher `literal` on `to` naming it exactly, and it outranks the catch-all. The
  * catch-all is a row with no literal matcher: `type: "all"` as measured in `email-routing-rule-takeover.md`, and
@@ -98,4 +99,25 @@ export function classifyAddress(
       + `the rule's id and digest, then \`mailda provider --take-over ${own.id ?? "<rule id>"} --domain ${domain} `
       + "--confirm <digest>`.",
   };
+}
+
+/** An address on a domain with an Email Routing rule of its own, as `classifyAddress` classifies it, and where it goes. */
+export interface OwnRule { address: string; state: "rule_written" | "routed_elsewhere" | "rule_disabled"; where: string }
+
+/**
+ * Every address on `domain` itself (not its subdomains) that has an Email Routing rule of its own, each classified
+ * by `classifyAddress` and sorted (28 September 2026). An enabled literal rule outranks the catch-all, so a
+ * catch-all taken over here does not reach its address; for a disabled one Cloudflare does not say whether the
+ * catch-all then applies, and `rule_disabled` claims neither. The take-over leaves every one of these rules as it is.
+ */
+export function rulesOfTheirOwn(rules: CloudflareRule[], domain: string, worker: string): OwnRule[] {
+  const suffix = `@${domain.trim().toLowerCase()}`;
+  const addresses = new Set(rules.flatMap((rule) => (rule.matchers ?? [])
+    .filter((m) => m.type === "literal" && m.field === "to" && (m.value ?? "").toLowerCase().endsWith(suffix))
+    .map((m) => (m.value ?? "").toLowerCase())));
+  return [...addresses].sort().flatMap((address) => {
+    const classified = classifyAddress(rules, address, worker, false, domain);
+    // Found by the literal matcher `classifyAddress` looks for, so it always names the rule; `[]` satisfies the type.
+    return classified.rule === null ? [] : [{ address, state: classified.state, where: whereTo(classified.rule) }];
+  });
 }

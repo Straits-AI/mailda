@@ -575,6 +575,81 @@ describe("the apex catch-all", () => {
     expect(sub.catchAll).toBeNull();
   });
 
+  /*
+   * The addresses a take-over does not reach (28 September 2026). A literal rule outranks the catch-all, and the
+   * prompt offering "every address" read as literally all on a zone where sales@, contact@ and info@ went to another
+   * Worker. Classified by `classifyAddress`; a subdomain's rule is not the apex's; unread is an error, never none.
+   */
+  it("lists every address on the domain with a rule of its own, classified, and where it goes", async () => {
+    const literal = (id: string, to: string, action: { type: string; value?: string[] }, enabled = true) =>
+      ({ id, name: id, enabled, matchers: [{ type: "literal", field: "to", value: to }], actions: [action] });
+    serving({
+      existingMx: [],
+      rules: [
+        { id: "catch_all_id", name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "drop" }] },
+        literal("r1", "Sales@example.test", { type: "worker", value: ["info-worker"] }),
+        literal("r2", "weimeng@example.test", { type: "forward", value: ["weimeng@gmail.test"] }),
+        literal("r3", "hello@example.test", { type: "worker", value: [testEnv.WORKER_NAME] }),
+        literal("r4", "old@example.test", { type: "forward", value: ["old@gmail.test"] }, false),
+        literal("r5", "a@mail.example.test", { type: "worker", value: ["info-worker"] }),
+      ],
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules).toEqual({
+      error: null,
+      addresses: [
+        { address: "hello@example.test", state: "rule_written", where: `worker to ${testEnv.WORKER_NAME}` },
+        { address: "old@example.test", state: "rule_disabled", where: "forward to old@gmail.test" },
+        { address: "sales@example.test", state: "routed_elsewhere", where: "worker to info-worker" },
+        { address: "weimeng@example.test", state: "routed_elsewhere", where: "forward to weimeng@gmail.test" },
+      ],
+    });
+    const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    expect(sub.ownRules.addresses.map((one) => one.address)).toEqual(["a@mail.example.test"]);
+  });
+
+  it("says the list could not be read, rather than empty, when the rules cannot be listed", async () => {
+    serving({ existingMx: [] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (/\/email\/routing\/rules(\?|$)/.test(String(url).replace("https://api.cloudflare.com/client/v4", ""))) {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules.addresses).toEqual([]);
+    expect(apex.ownRules.error).toContain("Authentication error");
+    // A proposal that stopped before reading the rules says so, with the reason it stopped.
+    const nowhere = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "elsewhere.test");
+    expect(nowhere.ownRules).toEqual({ addresses: [], error: "not read: no zone in this account carries elsewhere.test" });
+  });
+
+  it("says which rules route here is unknown, rather than calling this Node's rule elsewhere, without a Worker name", async () => {
+    serving({ existingMx: [], rules: [{ id: "r3", name: "hello", enabled: true, matchers: [{ type: "literal", field: "to", value: "hello@example.test" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] }] });
+    const nameless = { ...testEnv, WORKER_NAME: undefined } as unknown as Env;
+    const apex = await receivingProposalFor(nameless, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules).toEqual({ addresses: [], error: expect.stringContaining("does not know its own Worker name") });
+  });
+
+  it("refuses a confirmation as stale when a rule of an address's own changed after the proposal was shown", async () => {
+    // One rule already there, so the proposal's `rule` (the first rule on the domain) is the same before and after.
+    const rules: unknown[] = [{ id: "r0", name: "sales", enabled: true, matchers: [{ type: "literal", field: "to", value: "sales@example.test" }], actions: [{ type: "worker", value: ["info-worker"] }] }];
+    servingApex({ action: "drop", enabled: false });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (/\/email\/routing\/rules(\?|$)/.test(path) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: true, result: rules }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    rules.push({ id: "r1", name: "info", enabled: true, matchers: [{ type: "literal", field: "to", value: "info@example.test" }], actions: [{ type: "worker", value: ["info-worker"] }] });
+    await expect(onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true))
+      .rejects.toThrow(/E_RECEIVING_STALE/);
+  });
+
   it("refuses catchAll on a subdomain, by name", async () => {
     servingApex({ action: "drop", enabled: false });
     const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");

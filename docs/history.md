@@ -3878,3 +3878,117 @@ Cloudflare and never ends the run, while the setup's writes still wait for the v
 error is raised again. `mailda setup` prints no report, so it had no such inversion. The order, the hand-off
 from `deploy` to its report, and the writes staying after the refuse exit are held by
 `apps/node/worker/test/node/closing-report.test.ts`.
+
+## The domain beside the address, and a mailbox beside the invitation (28 September 2026)
+
+The Node's owner asked for two things on People. First, that an address be typed as its local part with the
+domain fixed beside it, "[ admin ] @whymelabs.com", to avoid confusion: a blank field took any address, and one
+letter wrong in the domain is an address on a domain this Node does not receive for. The domains are the ones
+the screen's own reads already show: the provisioned receiving domain (`GET /api/provider`, an audit-trail read
+with no Cloudflare call) and the domain of every address on a mailbox listed. One is a fixed suffix, several a
+picker with the provisioned one first, and none leaves the whole-address field. A value typed with its own `@` is
+sent as typed and the suffix steps aside. The install's first-address prompt asks the same way, the part before
+`@domain` with `hello` as the blank answer, and `MAILDA_ADDRESS` may now be a local part too.
+
+Second, that inviting somebody could give them a mailbox. *Also give them a mailbox at* runs three existing acts
+in order (the invitation, a mailbox named for the person, the address on it with its routing said in the Node's
+words) and grants the invitee nothing, which keeps `apps/node/worker/src/invitations.ts`'s rule that an
+invitation carries no authority. The order is chosen for refusals: a refused invitation makes no mailbox, and a
+refused mailbox or address is said on its own line beside a secret that still works. When the person has signed
+in and their email is that mailbox's address, People asks whether to give it to them and names the two
+relations the button grants, `mailbox.content.read` and `send.propose`, the pair a mailbox's creator receives.
+No route was added: the prompt is derived from `GET /api/people` and `GET /api/mailboxes`, so a mailbox at an
+address other than the person's sign-in email is not matched, and is granted in the table like any other. The
+rules are pure, in `apps/node/worker/src/client/app/screens/people-derive.ts`, and are held by
+`apps/node/worker/test/client/people-address.test.tsx`, `apps/node/worker/test/client/people-invite.test.tsx` and
+`apps/node/worker/test/node/first-address.test.ts`.
+
+## What a catch-all does not reach, and the first address from the sign-in (28 September 2026)
+
+The install offered the catch-all on `whymelabs.com` as "every address at it … addresses live in the Node". On
+that zone `sales@`, `contact@` and `info@` had rules of their own to another Worker and one more address was
+forwarded, and a literal rule outranks the catch-all, so "every address" was not true of four of them. The
+receiving proposal (`GET /api/provider/receiving`) now carries `ownRules`: every address on the domain with a
+literal rule, each classified by the one classifier (`classifyAddress`, through `rulesOfTheirOwn` in
+`apps/node/worker/src/provider/routing-classify.ts`) and with where the rule sends it, or the error that kept the
+rules from being read, which is said and never shown as none. `mailda install` and `mailda setup` print the list
+before the choice, whose option now reads "every address without a rule of its own"; `mailda provider
+--onboard-receiving` prints it under the apex line and says the same of `--catch-all`; the Setup screen lists it
+beneath the box, whose label says the same. None of those rules is changed. The list is in the proposal's
+digest, so a rule added between the proposal and its confirmation makes the confirmation stale. Printing that
+proposal also showed that `mailda provider --onboard-receiving` had never printed its confirm command on a zone
+already routing: the command was concatenated onto one branch of a conditional. It is parenthesised.
+
+The first address's default is now the administrator's own local part when they sign in with an address on the
+domain being set up and it has no rule of its own sending it elsewhere; the founder had claimed as `admin@` and
+found replies going out as `hello@`. The sign-in address is the claim's in `mailda install` and `MAILDA_EMAIL` in
+`mailda setup` and `mailda upgrade`. A rule of its own elsewhere, or disabled, falls back to `hello` and says
+where it goes; rules that could not be read fall back and say it could not be checked. The install ends with one
+line, "You sign in as … Mail goes out as …"; when the Node refused the onboarding it names the address asked for
+as one that may be on the mailbox (below, 29 September 2026). Held by
+`apps/node/worker/test/receiving.test.ts`, `apps/node/worker/test/client/setup-screen.test.tsx`,
+`apps/node/worker/test/node/catch-all-reach.test.ts` and `apps/node/worker/test/node/first-address.test.ts`.
+
+## Controls that stood a caption's distance apart (28 September 2026)
+
+"The Add the address button is sticking to the text field." It stood 4px under the field, because `.field-row`'s
+gap is a caption's distance from its field and every control after the field sat at it too. The fix is one
+shared rule: in a field row, a control after a field takes 4px more (`apps/node/worker/src/shell-css.ts`). The
+request was to review the whole application for the same thing, and reading could not do that, so
+`apps/node/worker/scripts/spacing.mjs` measures it: every route and opened state at 1440 and 390 px in both
+themes, every pair of controls sharing a row or a column, anything under 8px. It walks the same views axe does,
+because the opened states, the wait for a view to load and the page growth moved out of `axe.mjs` into
+`apps/node/worker/scripts/sweep.mjs`, which both import; `axe.mjs` launches a browser when it loads and could not
+be imported itself.
+
+Its first run found the field rows, the reader's actions and Next steps at 6px, a rule's Save draft and Cancel a
+text space apart, the Cc / Bcc link under To at the start of its row although its own rule said the end (a
+field row's button rule outranked it), the address field's domain picker 4px under the field on a phone with its
+@ left behind, and the last message 3px above the Health button on a phone. It also found two overlaps it had
+made itself, a field below a pane's fold against the status bar, because a clipped box still reports where it
+would be; the sweep now grows each view until nothing scrolls first, as axe does. The composite controls (tabs,
+a menu's items, the message list's rows, the search field and its magnifier) are exempt by a list the script
+keeps and says it keeps. After the fixes, 132 views and no pair under 8px. The shared rows are now 8px:
+`.row-actions` with the rules and approvals rows that were the same row under other names, a new
+`.inline-actions` for controls in a sentence or a table cell, where a block row would break the line, and the
+reader's, Next steps' and the queue's. CI holds that those rules are in the served sheet
+(`apps/node/worker/test/node/control-spacing.test.ts`), and says it measures no layout.
+
+On 29 September the final screenshots showed the @ inside a focused local-part field's ring: the sheet draws its focus ring 2px
+out from a control and 2px wide, and the @ stood 4px from the field and from the domain picker. Text is not a
+control, so the sweep does not measure it. Both gaps are 8px now, and the spacing test holds them.
+
+## What the invite bundle, the install's last line and the catch-all list claimed past what was read (29 September 2026)
+
+A review of the three sections above found five sentences saying more than the Node knew, and one pair of
+controls the spacing sweep could not reach.
+
+The install's last line said the first address "does not reach this Node" whenever its routing was not here,
+which included `unconfirmed` (the rules could not be read) and `rule_disabled` (Cloudflare does not say where
+the mail goes). Those two now read "whether mail to it reaches this Node could not be confirmed". A refused
+onboarding read "this run set none up", but the Node registers the address before asking Cloudflare anything, so
+a refusal after that leaves it on the mailbox; the CLI cannot tell which from the refusal, so the line now names
+the address asked for as one that may be there, and says People shows the mailbox's addresses.
+
+The list of addresses with a rule of their own was headed "it will not reach them" in both channels, over rows
+that could be disabled rules, of which Cloudflare does not say whether the catch-all then applies. The heading
+now says it of an enabled rule; the web row and a CLI note beneath the list say the rest.
+
+People's prompt said "<email> has arrived" of anybody with an account and nothing held directly on the mailbox at
+their address. Nothing observes an arrival, a relation held through a team is filed under the team, and
+departure here is revocation, so a person whose access an administrator withdrew was offered it back in one
+click. The prompt now says what was read ("has an account and holds nothing directly on the mailbox at that
+address"), and when somebody is to be asked about, People reads the `access.revoked` entries of the audit trail
+and leaves out every mailbox a relation of theirs was withdrawn on; a failed read withholds every prompt and says
+so, and older entries unseen are said beside the prompts. The README and the application shell said the mailbox
+beside an invitation "is granted to nobody"; its creator may read and send from it, as the creator of any mailbox
+may, and they now say so.
+
+Doctor's *Verify a batch* and *Continue from where it stopped* sat a text space apart, and the sweep never saw
+them because the second renders only when a verdict has more to verify. They are in `.inline-actions`, measured
+8px with a stubbed verdict. Four behaviours had no assertion that could fail (the local part's trim, the invite's
+mailbox field disabled until ticked, the address field emptied after an add, and the domain picker's `min-width`);
+each has one now, seen red with the line broken. Held by `apps/node/worker/test/node/first-address.test.ts`,
+`apps/node/worker/test/node/catch-all-reach.test.ts`, `apps/node/worker/test/client/setup-screen.test.tsx`,
+`apps/node/worker/test/client/people-invite.test.tsx`, `apps/node/worker/test/client/people-address.test.tsx` and
+`apps/node/worker/test/node/control-spacing.test.ts`.

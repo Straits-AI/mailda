@@ -7,7 +7,7 @@ import { auditedBatch, log } from "../audit.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
 import { cloudflareDelete, cloudflareGet, cloudflareGetAll, cloudflarePost, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
-import { type Classified, type CloudflareRule, catchAllRoutesHere, classifyAddress, whereTo } from "./routing-classify.ts";
+import { type Classified, type CloudflareRule, type OwnRule, catchAllRoutesHere, classifyAddress, rulesOfTheirOwn, whereTo } from "./routing-classify.ts";
 
 export type { CloudflareRule };
 
@@ -48,6 +48,14 @@ export interface ReceivingProposal {
   apex: boolean;
   /** The zone's catch-all as it stands, read when `apex`; what a take-over replaces. */
   catchAll: CatchAllRule | null;
+  /**
+   * Every address on `domain` with an Email Routing rule of its own, classified by `classifyAddress`, and where
+   * each goes (28 September 2026). An enabled literal rule outranks the catch-all, so a take-over does not reach
+   * its address (for a disabled one Cloudflare does not say), and this Node never rewrites them; the prompt that
+   * offers "every address" names them. `error` when the rules could not be read: then the list is unknown, never
+   * empty.
+   */
+  ownRules: { addresses: OwnRule[]; error: string | null };
   zone: string | null;
   zoneId: string | null;
   /** Whether the zone itself has Email Routing on. A subdomain cannot receive if its zone does not. */
@@ -80,6 +88,8 @@ async function digestOf(of: Omit<ReceivingProposal, "digest">): Promise<string> 
     of.domain, of.zone, of.zoneId, of.zoneRouting, of.enablesZone,
     of.creates.map((one) => `${one.type} ${one.name} ${one.content} ${one.priority}`),
     of.present, of.rule, of.refusal,
+    // The take-over is consented to with this list in view, so a rule added or changed since is a stale proposal.
+    of.ownRules.addresses.map((one) => `${one.address} ${one.state} ${one.where}`), of.ownRules.error,
   ])));
 }
 
@@ -102,7 +112,9 @@ export async function receivingProposalFor(
   const blank = async (over: Partial<Omit<ReceivingProposal, "digest">>): Promise<ReceivingProposal> => {
     const body = {
       domain, apex: false, catchAll: null, zone: null, zoneId: null, zoneRouting: null, enablesZone: null,
-      creates: [], present: [], rule: null, refusal: null, ...over,
+      creates: [], present: [], rule: null, refusal: null,
+      // Every early return carries a refusal, and the rules were not read because of it.
+      ownRules: { addresses: [], error: `not read: ${over.refusal ?? "the proposal stopped first"}` }, ...over,
     };
     return { ...body, digest: await digestOf(body) };
   };
@@ -144,8 +156,15 @@ export async function receivingProposalFor(
   const rules = await routingRulesOf(env, ctx, orgId, zone.id);
   const found = rules.ok ? ruleFor(rules.result, domain) : undefined;
   const catchAll = apex ? await catchAllOf(env, ctx, orgId, zone.id) : null;
+  // A read, so a Node that does not know its own Worker name says so here rather than refusing the proposal.
+  const worker: string | undefined = env.WORKER_NAME;
+  const ownRules = !rules.ok
+    ? { addresses: [], error: rules.error }
+    : worker === undefined || worker === ""
+      ? { addresses: [], error: "this Node does not know its own Worker name (WORKER_NAME), so it cannot say which rules route here" }
+      : { addresses: rulesOfTheirOwn(rules.result, domain, worker), error: null };
   return await blank({
-    apex, catchAll,
+    apex, catchAll, ownRules,
     zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
     // An apex's records come with enabling the zone: the zone list reports nothing missing, ever.
     creates: state.missing,
@@ -286,8 +305,8 @@ export async function onboardReceiving(
   if (digest !== proposal.digest) {
     throw conflict("E_RECEIVING_STALE", {
       what: "the proposal confirmed is not the one this Node would now apply",
-      why: "the zone, its routing state, the records it requires, or what is already on this subdomain has "
-        + "changed since it was shown",
+      why: "the zone, its routing state, the records it requires, what is already on this subdomain, or an "
+        + "address's own routing rule on it has changed since it was shown",
       fix: `read the proposal again and confirm the digest it prints: ${proposal.digest}`,
     });
   }

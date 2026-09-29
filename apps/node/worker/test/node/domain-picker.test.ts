@@ -11,7 +11,8 @@ describe("the domain picker's rows", () => {
   it("lists every zone as its own row, then the typed subdomain, then an explicit skip", () => {
     const rows = domainChoices([{ name: "whymelabs.com" }, { name: "mailda.site" }]);
     expect(rows.map((row) => row.value)).toEqual(["whymelabs.com", "mailda.site", "typed", ""]);
-    expect(rows[0]!.label).toContain("catch-all");
+    // A rule of an address's own outranks the catch-all, so the row does not promise every address (28 September 2026).
+    expect(rows[0]!.label).toContain("a catch-all can route every address without a rule of its own here");
     expect(rows.at(-1)!.label).toContain("cannot receive");
   });
 

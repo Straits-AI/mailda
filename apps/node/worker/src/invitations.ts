@@ -38,6 +38,12 @@ import { issueSession, type IssuedSession } from "./auth/session.ts";
  * `/people` — where the consequence of each relation is written next to it. Pre-loading grants onto an
  * invitation would mean authority arriving with an account nobody had looked at yet, and would put the same
  * decision in two places.
+ *
+ * People's "Also give them a mailbox at" (28 September 2026) does not change that, and nothing here knows it
+ * exists: after the invitation it makes a mailbox and an address with the ordinary routes, granted to nobody
+ * but the administrator who made it. Once an account with that email exists and holds nothing on the mailbox
+ * directly, and no relation of theirs on it is among the withdrawals People reads from the audit trail, People
+ * offers the grant, named, through `POST /api/access`, as it offers every other.
  */
 
 /** The address is the identity here, and `users.email` is stored lower-cased, so both sides agree. */

@@ -188,9 +188,11 @@ export function Outbox() {
         <p className="notice" role="status">
           Resending <span className="mono">{resendTarget.subject}</span> mints a new message and may deliver it twice —
           the first attempt's outcome is unknown, not failed. Say why, for the trail:{" "}
-          <input className="mono resend-reason" aria-label="Why resend" value={resendReason} onChange={(event) => setResendReason(event.target.value)} />{" "}
-          <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>Resend anyway</button>{" "}
-          <button type="button" className="linkish dim" onClick={() => setResending(null)}>Never mind</button>
+          <span className="inline-actions">
+            <input className="mono resend-reason" aria-label="Why resend" value={resendReason} onChange={(event) => setResendReason(event.target.value)} />
+            <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>Resend anyway</button>
+            <button type="button" className="linkish dim" onClick={() => setResending(null)}>Never mind</button>
+          </span>
         </p>
       )}
 
@@ -907,13 +909,13 @@ function EvidenceVerify() {
   return (
     <>
       <p>
-        <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>Verify a batch</button>
-        {verdict?.resumeAfter == null ? null : (
-          <>
-            {" "}
+        {/* A row of its own, 8px apart: a text space set the two buttons 4px apart (28 September 2026). */}
+        <span className="inline-actions">
+          <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>Verify a batch</button>
+          {verdict?.resumeAfter == null ? null : (
             <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>Continue from where it stopped</button>
-          </>
-        )}
+          )}
+        </span>
       </p>
       {problem === null ? null : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{problem}</p>}
       {verdict === null ? null : (

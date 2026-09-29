@@ -39,6 +39,8 @@ export interface ProvisionOutcome {
   sending: string | null;
   deliveryEvents: string | null;
   address: string | null;
+  /** The first address this run asked the Node for when it refused: it may be on the mailbox all the same. */
+  attempted: string | null;
   catchAll: boolean;
   /** Set when receiving ran, or was recorded, and its address does not reach this Node: what stops it. */
   routing: AddressRouting | null;
@@ -56,14 +58,31 @@ export function outcomeRoutesHere(outcome: { rule: string | null; routing?: Addr
 /** What a receiving record says for a summary: set up only when its address was routed here, or when it predates that record. */
 export function receivingOf(act: ProvisionedAct | null | undefined): { receiving: string | null; address: string | null; routing: AddressRouting | null };
 
+/** The first address from the prompt's answer: a local part on `domain`, blank as `defaultLocal`, an answer with its own `@` whole. */
+export function firstAddress(typed: string | undefined, domain: string, defaultLocal?: string): string;
+
+/** `GET /api/provider/receiving`'s `ownRules`: the addresses on the domain with a routing rule of their own. From the contract. */
+export type OwnRules = import("@mailda/contract/schemas").ProviderReceivingProposal["ownRules"];
+
+/** Those addresses and where each goes, as lines to print (unindented); unread, or a Node too old to list them, is said. Pure. */
+export function ownRulesLines(ownRules: OwnRules | null | undefined, domain: string): string[];
+
+/** The first address's default local part: the sign-in address's own when it is on `domain` and not routed elsewhere; else `hello`, with why. Pure. */
+export function defaultLocalFor(signInEmail: string | null | undefined, domain: string, ownRules: OwnRules | null | undefined): { local: string; said: string | null };
+
+/** The install's last line: who signs in, and the address mail goes out as, or may. Pure. */
+export function signInLine(email: string, setUp: ProvisionOutcome): string;
+
 /**
  * Receiving, sending and the delivery-events subscription, through the Node's routes with the operator's
- * token. A step the Node already has on record (`provisioned`) is reported and not done again.
+ * token. A step the Node already has on record (`provisioned`) is reported and not done again. `signInEmail` is
+ * the administrator's, which the first address defaults to when it is on the domain (`defaultLocalFor`).
  */
 export function provisionNode(input: {
   origin: string; cookie: string; accountId: string; token: string; yes: boolean;
   ask: (prompt: string) => Promise<string>;
   provisioned?: { receiving: ProvisionedAct | null; sending: ProvisionedAct | null; deliveryEvents: ProvisionedAct | null } | null;
+  signInEmail?: string | null;
 }): Promise<ProvisionOutcome>;
 
 /** The `== next` block after a setup. */

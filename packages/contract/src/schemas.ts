@@ -614,8 +614,23 @@ export const providerReceivingProposalResponse = z.object({
     apex: z.boolean(),
     /** The zone's current catch-all rule, read when `apex`; null otherwise. What a take-over replaces. */
     catchAll: catchAllRule.nullable(),
+    /**
+     * Every address on `domain` with an Email Routing rule of its own (28 September 2026), in `addressRouting`'s
+     * words, and where the rule sends it in Cloudflare's (`forward to a@b`, `worker to other`). A literal rule
+     * outranks the catch-all, so these are the addresses a take-over does not reach; this Node never rewrites
+     * them. `error` when the rules could not be read, and then the list is unknown, not empty.
+     */
+    ownRules: z.object({
+      addresses: z.array(z.object({
+        address: z.string().min(3),
+        state: addressRouting.shape.state.extract(["rule_written", "routed_elsewhere", "rule_disabled"]),
+        where: z.string().min(1),
+      }).strict()),
+      error: z.string().nullable(),
+    }).strict(),
   }).strict(),
 }).strict();
+export type ProviderReceivingProposal = z.infer<typeof providerReceivingProposalResponse>["proposal"];
 
 /** `confirmed` is read back from Cloudflare — a write that answered 200 is not a record in DNS. */
 export const providerReceivingOutcomeResponse = z.object({
