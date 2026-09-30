@@ -5,7 +5,7 @@ import { assertWithinBudget, BUDGETS } from "@mailda/budgets";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { messagePageQuery } from "../src/authz-read.ts";
-import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
+import { bodyIndexText, ftsQuery, indexBody, indexMessage } from "../src/search.ts";
 import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
@@ -187,7 +187,7 @@ beforeAll(async () => {
          VALUES (?,?,?,?,?,?,?)`,
       ).bind(ORG, READER, messageId, receiptId, acceptedAt, n % 20 === 0 ? "trash" : "archive", acceptedAt));
     }
-    statements.push(indexMessage(testEnv, messageId));
+    statements.push(...indexMessage(testEnv, messageId, { subject, from: `sender-${n}@supplier.example.net` }));
     /*
      * **A body for every message, and the figures depend on it.** The first version of this fixture indexed
      * only subjects, so the body arm of the union probed an empty index and the measurement reported a cost
@@ -199,9 +199,9 @@ beforeAll(async () => {
      * supposed to be the cheap case. A fixture whose two terms have the same selectivity measures one thing
      * twice.
      */
-    statements.push(indexBody(testEnv, messageId, n % RARE_EVERY === 0
+    statements.push(indexBody(testEnv, messageId, bodyIndexText(n % RARE_EVERY === 0
       ? `demurrage was claimed on booking ${n} and the container held`
-      : `container ${n} cleared and the shipment was released on time`, 0));
+      : `container ${n} cleared and the shipment was released on time`), 0));
   }
   // Batched in chunks: one 3,600-statement batch exceeds what D1 will accept in a single call.
   for (let at2 = 0; at2 < statements.length; at2 += 300) {

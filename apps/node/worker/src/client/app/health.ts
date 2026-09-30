@@ -67,6 +67,7 @@ export const HEALTH_AREA: Record<DoctorCheck, HealthArea | null> = {
   search_index_backlog: "storage",
   body_index_backlog: "storage",
   body_index_failed: "storage",
+  body_index_partial: "storage",
   preview_backlog: "storage",
 
   butler_execution: "automation",

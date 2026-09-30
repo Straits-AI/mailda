@@ -103,29 +103,79 @@ export function headerFields(block: string): Map<string, string[]> {
   return fields;
 }
 
+/** One RFC 2047 encoded word: charset, encoding, payload. */
+const ENCODED_WORD = /=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g;
+
 /**
  * Decodes RFC 2047 encoded words (`=?utf-8?B?...?=`).
  *
- * A word that fails to decode is left **as written** rather than dropped or replaced. A subject that
- * reads `=?utf-8?B?bad?=` is ugly and honest; an empty subject is a lie about what the sender sent,
- * and a thrown error would lose the message.
+ * A word that fails to decode is left **as written** rather than dropped or replaced, and so is the space
+ * around it. A subject that reads `=?utf-8?B?bad?=` is ugly and honest; an empty subject is a lie about what the
+ * sender sent, and a thrown error would lose the message.
  */
 export function decodeEncodedWords(text: string): string {
-  return text.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (whole, charset, encoding, payload) => {
-    try {
-      const bytes =
-        encoding.toUpperCase() === "B"
-          ? Uint8Array.from(atob(payload.replace(/\s/g, "")), (c) => c.charCodeAt(0))
-          : quotedPrintableWord(payload);
-      // A charset the runtime does not know throws, and is caught below.
-      // Workers types require both options. `fatal: false` is the point: a byte sequence that
-      // is invalid in the declared charset yields replacement characters rather than throwing, so a
-      // partly-mangled subject still reaches the reader.
-      return new TextDecoder(charset.trim().toLowerCase(), { fatal: false, ignoreBOM: false }).decode(bytes);
-    } catch {
-      return whole;
+  /*
+   * Adjacent words are one run (RFC 2047 §6.2): the whitespace between two words that decode, which is where a
+   * long value was folded, is not part of the text. A sender that folds a long Chinese subject into several
+   * UTF-8 words, as this Node's own sender does and Gmail does, may split a character's bytes across two of
+   * them, which RFC 2047 §5 forbids and real mail does; so adjacent **UTF-8** words are decoded as one byte
+   * sequence. Only UTF-8: an ISO-2022-JP word ends back in ASCII (RFC 1468), and joined to the next word that
+   * escape meets the next one's, which the decoder reports as U+FFFD. Every other charset is decoded word by
+   * word, as it always was, and only the folding between them is dropped.
+   */
+  let out = "";
+  let at = 0;
+  let pending: Uint8Array[] = []; // adjacent UTF-8 words not yet decoded
+  const flush = () => {
+    if (pending.length === 0) return;
+    const bytes = new Uint8Array(pending.reduce((n, piece) => n + piece.byteLength, 0));
+    pending.reduce((offset, piece) => (bytes.set(piece, offset), offset + piece.byteLength), 0);
+    out += UTF8.decode(bytes);
+    pending = [];
+  };
+  let previousDecoded = false;
+  for (const match of text.matchAll(ENCODED_WORD)) {
+    const between = text.slice(at, match.index);
+    const word = decodedWord(match[1]!, match[2]!, match[3]!);
+    if (!(previousDecoded && word !== null && /^\s*$/.test(between))) {
+      flush();
+      out += between;
     }
-  });
+    if (word === null) out += match[0];
+    else if (word instanceof Uint8Array) pending.push(word);
+    else {
+      flush();
+      out += word;
+    }
+    previousDecoded = word !== null;
+    at = match.index + match[0].length;
+  }
+  flush();
+  return out + text.slice(at);
+}
+
+// Workers types require both options. `fatal: false` is the point: a byte sequence that is invalid in the
+// declared charset yields replacement characters rather than throwing, so a partly-mangled subject still
+// reaches the reader.
+const UTF8 = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false });
+
+/**
+ * One word: its bytes when its charset is UTF-8 (to be joined with its neighbours'), its text otherwise, or
+ * `null` when it does not decode, which the caller shows as written. A charset the runtime does not know throws
+ * in `TextDecoder`, and a payload that is not base64 throws in `atob`; both are that `null`, and the word
+ * standing in the subject as written is the visible state.
+ */
+function decodedWord(charset: string, encoding: string, payload: string): Uint8Array | string | null {
+  try {
+    const decoder = new TextDecoder(charset.trim().toLowerCase(), { fatal: false, ignoreBOM: false });
+    const bytes = encoding.toUpperCase() === "B"
+      ? Uint8Array.from(atob(payload.replace(/\s/g, "")), (c) => c.charCodeAt(0))
+      : quotedPrintableWord(payload);
+    // `encoding` is the label's canonical name, so `utf8` and `UTF-8` are both `utf-8`.
+    return decoder.encoding === "utf-8" ? bytes : decoder.decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 /** Q-encoding: like quoted-printable, but `_` is a space. */

@@ -1,7 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
 import type { Ctx } from "@mailda/runtime";
-import { bodyIndexState, unindexedMessages } from "../search.ts";
+import { bodyIndexState, searchIndexBacklog } from "../search.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../reconcile.ts";
 import { type Finding } from "../doctor.ts";
 import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
@@ -442,7 +442,7 @@ export async function checkEvidenceChanged(env: Env, orgId: string | null): Prom
 export async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding[]> {
   if (orgId === null) return [];
 
-  const backlog = await unindexedMessages(env).catch(() => null);
+  const backlog = await searchIndexBacklog(env).catch(() => null);
   if (backlog === null) {
     return [{
       check: "search_index_backlog",
@@ -461,10 +461,21 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
     severity: "report",
     discloses: "infrastructure",
     ok: true,
+    /*
+     * One number for two kinds of waiting message, because telling them apart would cost an FTS5 scan per
+     * message (`searchIndexBacklog`), and the sentence says both rather than claiming either. A message with an
+     * older-form row is neither "not indexed" nor done, and it is less found than "whole words" would say: the
+     * query bigrams a CJK word the old row holds as one token, so only its Latin words and a search that is a
+     * run's first one or two characters still match (pinned in `test/message-search-cjk.test.ts`).
+     */
     detail: backlog === 0
-      ? "Every message on this Node is in the search index."
-      : `${backlog} message(s) are not in the search index yet, so a search will not find them. They are `
-        + "still reachable by paging the mailbox. The scheduled backfill indexes up to 500 a minute.",
+      ? "Every message on this Node is in the search index, in its current form."
+      : `${backlog} message(s) are waiting for the search index to write their subject and sender in its `
+        + "current form. One that was never indexed is not found by its subject; one indexed in an older form "
+        + "(before this version, or by the previous one during a deploy) is found by its words in Latin and "
+        + "other spaced scripts, but by Chinese, Japanese or Korean only when the search is the first one or two "
+        + "characters of a run, and not by full-width letters or digits. All are reachable by paging the mailbox. The "
+        + "scheduled backfill rewrites up to 500 a minute.",
     fix: backlog === 0
       ? undefined
       : "nothing — this falls on its own. If it stops falling, check the logs for `search.backfill_failed`",
@@ -474,7 +485,7 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
      *
      * **Two findings rather than one number**, because the two backfills have different costs and different
      * failure modes and an operator watching a single figure could not tell which was stuck. The subject
-     * index catches up 500 messages a minute from one D1 statement; this one reads R2, unwraps a key,
+     * index catches up 500 messages a minute without leaving D1; this one reads R2, unwraps a key,
      * decrypts and parses per message, doing 25 — so on any real archive it falls twenty times more slowly,
      * and a combined number would look alarming while nothing was wrong.
      */
@@ -482,15 +493,24 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
     severity: "report",
     discloses: "infrastructure",
     ok: true,
+    /*
+     * `olderForm` is counted apart from `pending` because it is a different answer: those messages *are*
+     * indexed and stay `indexed` until the backfill requeues them, 25 a pass. Folding them into "every message
+     * has been through the body index" is the silently-done this finding exists to rule out.
+     */
     detail: bodies === null
       ? "The catalog could not be read, so this report cannot say how much mail is searchable by its contents."
-      : bodies.pending === 0
-        ? "Every message on this Node has been through the body index."
-        : `${bodies.pending} message(s) have not been through the body index yet, so a search will not match `
-          + "words in their text. Their subjects and senders are searchable and they are reachable by "
-          + "paging. The scheduled backfill settles 25 a minute — it reads and decrypts each message, which "
-          + "is why it is slower than the subject index's.",
-    fix: bodies === null || bodies.pending === 0
+      : bodies.pending === 0 && bodies.olderForm === 0
+        ? "Every message on this Node has been through the body index, in its current form."
+        : `${bodies.pending + bodies.olderForm} message(s) are waiting for the body index: ${bodies.pending} in `
+          + `its queue and ${bodies.olderForm} indexed in an older form that it has not requeued yet. So a `
+          + "search may not match words in their text: one never indexed matches none, and one indexed in an "
+          + "older form (before this version, or by the previous one during a deploy) matches its words in "
+          + "Latin and other spaced scripts, but Chinese, Japanese or Korean only when the search is the first "
+          + "one or two characters of a run, and not full-width letters or digits. Their subjects and senders are "
+          + "searchable and they are reachable by paging. The scheduled backfill settles 25 a minute — it "
+          + "reads and decrypts each message, which is why it is slower than the subject index's.",
+    fix: bodies === null || (bodies.pending === 0 && bodies.olderForm === 0)
       ? undefined
       : "nothing — this falls on its own, slowly. If it stops falling, check the logs for "
         + "`search.body_backfill_failed`",
@@ -525,6 +545,34 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
       ? undefined
       : "`mailda search repair` lists them with the reason each failed and puts them back in the queue. "
         + "Fix the cause first — a repair that runs into the same failure spends its attempts again",
+  }, {
+    /*
+     * Bodies the index holds only the start of (`bodyIndexText`): their indexed text was longer than one D1
+     * string, and the ingest batch binds it, so it was cut rather than let fail the message's arrival. A
+     * searcher cannot see the cut from the page, so this is where it is seen (AGENTS.md §3): the limit, the
+     * size, and what cannot be found.
+     *
+     * `report` and `ok`: nothing is broken and nothing on this Node changes it. The limit is D1's, carried
+     * as platform data in `d1.max_row_bytes`, so the fix names its receipt rather than a setting.
+     */
+    check: "body_index_partial",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: true,
+    detail: bodies === null
+      ? "The catalog could not be read, so this report cannot say whether any body is indexed only in part."
+      : bodies.cut === 0
+        ? "Every indexed body is in the body index whole."
+        : `${bodies.cut} message(s) have a body whose search text is longer than the body index can hold: `
+          + `d1.max_row_bytes=${BUDGETS["d1.max_row_bytes"]} (one D1 string), and the longest asked for `
+          + `${bodies.cutLargestBytes} bytes. The index holds the first ${BUDGETS["d1.max_row_bytes"]} bytes `
+          + "of each, so words after that point in those bodies are not found by search. Their subjects and "
+          + "senders are searchable, and every message is whole and readable.",
+    fix: bodies === null || bodies.cut === 0
+      ? undefined
+      : "nothing on this Node changes it: the limit is D1's, and it moves only when D1's published limit "
+        + "does, by remeasuring docs/receipts/d1-platform-limits.md and running pnpm receipts",
+    receipt: bodies === null || bodies.cut === 0 ? undefined : "docs/receipts/d1-platform-limits.md",
   }];
 }
 

@@ -153,7 +153,12 @@ Node arrives already claimed, with the source's administrators and their passwor
 restore has to come before anything that needs `org.admin` there.
 
 **The search index has to be rebuilt.** Only its contents are missing: the destination's own migrations
-create the virtual tables, and the backfill repopulates them from the evidence.
+create the virtual tables, and the backfill repopulates them from the evidence. Since migration 0071 each
+message records the form its index rows were written in, and the dump carries those stamps while leaving the
+indexes out, so a restored Node would hold messages marked indexed beside empty indexes: the backfills would
+select nothing and `doctor` would call both complete. So `mailda backup` ends the dump it writes with
+`UPDATE messages SET search_index_form = 0, body_index_form = 0` (`searchIndexReset` in
+`packages/cli/src/backup.mjs`), and the restore needs no step of its own for it.
 
 > **Corrected 15 September 2026.** This paragraph used to open *"and `d1_migrations` will lie about it"*,
 > describing a hazard where the restored catalog claims the search migrations ran while their tables are
@@ -180,8 +185,11 @@ body_indexed_at: SQLITE_ERROR`.
 npx wrangler d1 execute CATALOG --remote --env "" --file=../../../backup-<date>/catalog.sql -y
 ```
 
-The search index's tables exist for the same reason; only their contents are missing. The backfill repopulates
-them from the evidence, and `mailda search list` reports what it could not parse.
+The search index's tables exist for the same reason; only their contents are missing. The dump's last statement
+marks every message as not yet indexed, the backfills repopulate both indexes from the evidence (subjects 500
+a minute, bodies 25), `doctor`'s `search_index_backlog` and `body_index_backlog` count down, and
+`mailda search list` reports what it could not parse. A backup taken before 0071 has no such statement and
+needs none: its messages carry no stamps, so they arrive as never indexed.
 
 **Places and row projections travel in the catalog** (ADR 45). A person's Archive and Trash are rows of
 `message_places`, and the sender's display name and the sealed preview are columns of `messages` (0068), so

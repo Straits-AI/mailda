@@ -79,8 +79,8 @@ const DOCTOR_PATH = [
    */
   "restore-detail.ts",
   /*
-   * Added with #107's `search_index_backlog` and `body_index_backlog` checks: `unindexedMessages` and
-   * `unindexedBodies` are one aggregate query each on the doctor path, so each is one prepare that must be one
+   * Added with #107's `search_index_backlog` and `body_index_backlog` checks: `searchIndexBacklog` (once
+   * `unindexedMessages`) and `bodyIndexState` (once `unindexedBodies`) are one aggregate query each on the doctor path, so each is one prepare that must be one
    * execution.
    *
    * `indexMessage`, `indexBody` and `markBodyIndexed` in the same file build **write** statements, and this

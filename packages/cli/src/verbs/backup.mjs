@@ -1,5 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { backupIndex, checkBackup, exportableTables, needsIndexRebuild, whyAdminCannotExist } from "../backup.mjs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  backupIndex, checkBackup, exportableTables, needsIndexRebuild, searchIndexReset, whyAdminCannotExist,
+} from "../backup.mjs";
 import { api, capture, claimState, configFor, doctorReport, fail, flag, run, runPreflight, sessionCookie, useConfig, WRANGLER_ARGS } from "../support.mjs";
 /* ------------------------------------------------------------------ backup ------------------------- */
 
@@ -127,6 +129,13 @@ export async function backup(argv) {
   const rebuild = needsIndexRebuild(master);
   if (rebuild) {
     process.stdout.write("\n   the search index is excluded and must be rebuilt after restoring\n");
+  }
+  // The index's rows are not in the dump and the messages' form stamps are, so the dump ends by clearing the
+  // stamps, or the restored Node's backfills would find nothing to rebuild (`searchIndexReset`).
+  const reset = searchIndexReset(master);
+  if (reset !== null) {
+    appendFileSync(catalogPath, `\n-- mailda backup: the search indexes are not in this file; rebuild them.\n${reset}\n`);
+    process.stdout.write("   the catalog ends by marking every message not yet indexed, so the backfills rebuild it\n");
   }
 
   process.stdout.write("\n== listing the evidence\n");

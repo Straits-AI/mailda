@@ -465,11 +465,9 @@ const FIGURES: Record<string, Classification> = {
     "message.metadata.bytes_per_message", "message.metadata.bytes_per_extra_delivery",
     "message.metadata.bytes_per_filed_place",
   ),
-  ...derived(
-    "§11B's 70/85/90% marks of the **Paid** 10 GB per-database ceiling, divided by the measured bytes per message",
-    ["message.metadata.bytes_per_message", "d1.paid.max_database_bytes"],
-    "shard.plan_warn_messages", "shard.plan_stop_messages", "shard.plan_route_messages",
-  ),
+  // Its three `shard.plan_*_messages` (§11B's 70/85/90% marks of the Paid 10 GB ceiling, divided by the bytes
+  // per message) are withdrawn until 0071's columns are remeasured; classify them again as `derived` from
+  // `message.metadata.bytes_per_message` and `d1.paid.max_database_bytes` when the receipt restores them.
 
   // docs/receipts/message-page-size.md
   ...mailda(
@@ -794,6 +792,19 @@ const FIGURES: Record<string, Classification> = {
     "sender.rows_read_indexed", "sender.rows_read_unindexed",
   ),
 
+  // docs/receipts/cjk-search-bigrams.md
+  ...mailda(
+    "rows read by the same searched listing statement as message-search-cost.md's figures, on a Chinese "
+      + "corpus rewritten by this repository's own searchText; a property of statements and a tokenisation "
+      + "this repository writes, not of anything Cloudflare sells",
+    "search.cjk_rows_read_per_page",
+  ),
+  ...mailda(
+    "how many index terms one search may look up, sized from the time the same statement takes on the same "
+      + "corpus against the commonest one-character search; a property of a query this repository builds",
+    "search.max_query_terms",
+  ),
+
   // docs/receipts/d1-fts5-search.md
   ...bothPlans(
     "which SQLite compile-time options D1's build ships — FTS5 itself, contentless tables, "
@@ -1057,10 +1068,11 @@ describe("every plan-conditional budget names its plan", () => {
   });
 
   it("keeps a derived figure's inputs live, so an inherited plan cannot go missing", () => {
-    // `shard.plan_*_messages` divide the **Paid** 10 GB ceiling. Nothing renames that ceiling out from under
-    // them silently: the derivation is declared, and the declaration is checked against the live budget set.
-    const { "d1.paid.max_database_bytes": _renamed, ...withoutCeiling } = budgets;
+    // `doctor.evidence_sample_size` divides the **Free** subrequest ceiling. Nothing renames that ceiling out from
+    // under it silently: the derivation is declared, and the declaration is checked against the live budget set.
+    // (This used `shard.plan_warn_messages` until those were withdrawn, 30 September 2026.)
+    const { "doctor.free.max_subrequests": _renamed, ...withoutCeiling } = budgets;
     const complaint = planScopeComplaints(withoutCeiling).join("\n");
-    expect(complaint).toContain("shard.plan_warn_messages  was derived from d1.paid.max_database_bytes");
+    expect(complaint).toContain("doctor.evidence_sample_size  was derived from doctor.free.max_subrequests");
   });
 });

@@ -142,7 +142,11 @@ function messagesSql(from, count) {
       // rows, a sealed preview on every row with body text (Latin, and one in ten CJK), generation 1,
       // projected, no attempts. The partial index `msg_preview_open` is then empty, which is its settled state.
       `${i % 10 < 7 ? `'Supplier ${String(i % 1000).padStart(3, "0")} desk'` : "NULL"},` +
-      `'${sealedPreview(i, i % 10 === 9 ? 520 : 200)}',1,'projected',0)`,
+      `'${sealedPreview(i, i % 10 === 9 ? 520 : 200)}',1,'projected',0,` +
+      // Search forms (0071), as a settled Node holds them: both indexes written in form 1 on every row, and no
+      // body cut (only a body past one D1 string is). Both selector indexes hold an entry for every row either
+      // way, which is what a settled Node pays for.
+      "1,1,NULL)",
     );
   }
   return chunked(rows,
@@ -162,7 +166,8 @@ function messagesSql(from, count) {
     `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
     `body_index_attempts,body_index_attempt_version,auth_spf,auth_dkim,auth_dmarc,auth_dmarc_policy,` +
     `auth_from_domain,quarantined_at,quarantine_reason,attachments,attachments_dangerous,quarantine_note,` +
-    `from_name,preview_sealed,preview_generation,preview_state,preview_attempts)`);
+    `from_name,preview_sealed,preview_generation,preview_state,preview_attempts,` +
+    `search_index_form,body_index_form,body_index_cut_from_bytes)`);
 }
 
 /**
@@ -237,7 +242,9 @@ CREATE TABLE messages (
   attachments INTEGER, attachments_dangerous INTEGER,
   quarantine_note TEXT,
   from_name TEXT, preview_sealed TEXT, preview_generation INTEGER,
-  preview_state TEXT NOT NULL DEFAULT 'pending', preview_attempts INTEGER NOT NULL DEFAULT 0
+  preview_state TEXT NOT NULL DEFAULT 'pending', preview_attempts INTEGER NOT NULL DEFAULT 0,
+  search_index_form INTEGER NOT NULL DEFAULT 0, body_index_form INTEGER NOT NULL DEFAULT 0,
+  body_index_cut_from_bytes INTEGER
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);
@@ -251,6 +258,10 @@ CREATE INDEX msg_body_index_due
 -- The preview backfill's selector (0068). Partial, so it costs bytes only for rows not yet projected: empty
 -- on the settled table this script builds, and counted here so it is priced rather than forgotten.
 CREATE INDEX msg_preview_open ON messages (preview_state) WHERE preview_state <> 'projected';
+-- The search re-index's selectors (0071). Not partial: an entry per row, so priced like msg_body_index_due.
+-- 0071's trigger stores nothing per row and is left out.
+CREATE INDEX msg_search_index_form ON messages (search_index_form);
+CREATE INDEX msg_body_index_form ON messages (body_index_state, body_index_form);
 CREATE TABLE mailbox_items (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, mailbox_id TEXT NOT NULL, time_bucket TEXT NOT NULL,
   message_id TEXT NOT NULL, change_number INTEGER NOT NULL, flags INTEGER NOT NULL,

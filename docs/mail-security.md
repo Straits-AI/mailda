@@ -104,8 +104,10 @@ reach a forwarded original: `E_FORWARD_CARRIES_DANGEROUS` still refuses a forwar
 because the person forwarding did not attach it.
 
 The entry alone does not name the files. Its subject is the send's manifest, so the names and verdicts are
-`SELECT ordinal, filename, verdict FROM send_attachments WHERE manifest_id = '<subject>'`, run with
-`wrangler d1 execute`. Once the send is dispatched, the same files are also the attachment parts of
+`SELECT ordinal, COALESCE(author_filename, filename), verdict FROM send_attachments WHERE manifest_id = '<subject>'`,
+run with `wrangler d1 execute`. Since 0072 the author's name, outside ASCII if written so, is `author_filename`;
+`filename` holds the ASCII-only form the previous version renders, and is the name on rows sealed before.
+Once the send is dispatched, the same files are also the attachment parts of
 `GET /api/sends/:sendId/submitted`, in the same order, which gives the names but not the verdicts. No API, CLI or
 interface screen shows the verdict of a sent file yet.
 

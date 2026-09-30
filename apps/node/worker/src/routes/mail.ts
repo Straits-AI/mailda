@@ -10,7 +10,7 @@ import { mergeConversations } from "../merge.ts";
 import { setResponseTarget } from "../mailbox-policy.ts";
 import { deleteDraft, DRAFT_LIST_CAP, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
 import { capped } from "../list-cap.ts";
-import { safeFilename } from "../outbound/headers.ts";
+import { percentEncoded, safeFilename, undisguised } from "../outbound/headers.ts";
 import { unprocessable } from "../errors.ts";
 import { addressList, isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
@@ -451,10 +451,21 @@ export const mail = {
     const name = part.filename ?? `part-${ordinal}`;
     const dot = name.lastIndexOf(".");
     const filename = safeFilename(dot > 0 ? name.slice(0, dot) : name, dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]/g, "").slice(0, 11) : "");
+    // The sender's name, less what would make the saved file lie about itself: control characters, line
+    // separators, and the direction controls that make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf` (the
+    // list the seal refuses, `undisguised`). The sender wrote it, so this saved name is the only place the reader
+    // can be protected from it.
+    const shown = undisguised(name);
     return new Response(bytes, {
       headers: {
         "content-type": mediaType,
-        "content-disposition": `attachment; filename="${filename}"`,
+        // RFC 6266: the ASCII `filename` for a client that knows nothing else, and `filename*` with the sender's
+        // own name, so `合同.pdf` saves as `合同.pdf` and not as `__.pdf`. Only when the ASCII one had to change the name,
+        // so a name that was already safe is served as it always was. Percent-encoded, so nothing in the
+        // name can end the parameter or the header.
+        "content-disposition": filename === name
+          ? `attachment; filename="${filename}"`
+          : `attachment; filename="${filename}"; filename*=UTF-8''${percentEncoded(shown)}`,
         "x-content-type-options": "nosniff",
         "cache-control": "no-store",
       },

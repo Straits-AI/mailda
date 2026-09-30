@@ -195,7 +195,7 @@ beforeEach(async () => {
       acceptedAt, acceptedAt, receiptId, acceptedAt, null));
     // Indexed, so the searched-page cases below have a corpus. Every subject carries the word "message", so
     // a search for it matches everything and fills a page — which is what makes the cursor assertion sharp.
-    statements.push(indexMessage(testEnv, messageId));
+    statements.push(...indexMessage(testEnv, messageId, { subject: `message ${n}`, from: `sender${n}@outside.example` }));
   }
   for (let start = 0; start < statements.length; start += 100) {
     await testEnv.CATALOG.batch(statements.slice(start, start + 100));

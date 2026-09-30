@@ -391,15 +391,20 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     const many = Array.from({ length: 21 }, (_, i) => ({ filename: `f${i}.txt`, contentType: "text/plain", content: utf8("x") }));
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, attachments: many }))
       .rejects.toThrow(/E_TOO_MANY_ATTACHMENTS/);
-    // A media type that is not token/token becomes octet-stream; a name with a quote, a backslash or a
-    // control byte reaches the row already safe — the MIME parameter is rendered from the row, verbatim.
+    // A media type that is not token/token becomes octet-stream. A name is kept as written, and one with a
+    // quote cannot reach the quoted parameter as it is: the builder encodes it (29 September 2026; it was
+    // rewritten to `inv_oice_.pdf` before, and a backslash or control byte is now refused rather than rewritten).
     const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
       ...composition,
-      attachments: [{ filename: 'inv"oice\\.PDF\u0007', contentType: "text/plain; charset=\"x\"\r\nX: y", content: utf8("%PDF-1.7") }],
+      attachments: [{ filename: 'inv"oice.PDF', contentType: "text/plain; charset=\"x\"\r\nX: y", content: utf8("%PDF-1.7") }],
     });
-    const row = await testEnv.CATALOG.prepare("SELECT filename, content_type FROM send_attachments WHERE manifest_id = ?")
-      .bind(sealed.id).first<{ filename: string; content_type: string }>();
-    expect(row).toEqual({ filename: "inv_oice_.pdf", content_type: "application/octet-stream" });
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT author_filename AS filename, content_type FROM send_attachments WHERE manifest_id = ?",
+    ).bind(sealed.id).first<{ filename: string; content_type: string }>();
+    expect(row).toEqual({ filename: 'inv"oice.PDF', content_type: "application/octet-stream" });
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).not.toContain('name="inv"oice');
+    expect(text).toContain("filename*=utf-8''inv%22oice.PDF");
   });
 
   it("refuses more recipients than Cloudflare accepts on a message, before anything is written", async () => {
@@ -420,6 +425,182 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
       ...composition, attachments: [{ filename: "big.exe", contentType: "application/octet-stream", content: big }],
     })).rejects.toThrow(/E_ATTACHMENTS_TOO_LARGE/);
+  });
+});
+
+describe("names and subjects outside ASCII (29 September 2026): sent as written, within the RFCs' lines", () => {
+  const PDF = utf8("%PDF-1.7\n%\xe2\xe3\xcf\xd3\nfake\n");
+
+  /** Parsed as a recipient's client parses it: the same library this Node reads inbound mail with. */
+  async function received(raw: Uint8Array) {
+    const { default: PostalMime } = await import("postal-mime");
+    return PostalMime.parse(raw);
+  }
+
+  it("sends 合同.pdf as 合同.pdf, records that name, and a recipient's parser reads it back", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "合同.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    const row = await testEnv.CATALOG.prepare("SELECT author_filename AS filename FROM send_attachments WHERE manifest_id = ?")
+      .bind(sealed.id).first<{ filename: string }>();
+    expect(row?.filename).toBe("合同.pdf");
+
+    const { raw } = await renderRfc822(testEnv, sealed.id);
+    const text = new TextDecoder().decode(raw);
+    expect(text).toContain('Content-Type: application/pdf; name="=?utf-8?B?5ZCI5ZCMLnBkZg==?="');
+    expect(text).toContain("Content-Disposition: attachment; filename=\"=?utf-8?B?5ZCI5ZCMLnBkZg==?=\";\r\n filename*=utf-8''%E5%90%88%E5%90%8C.pdf");
+    const parsed = await received(raw);
+    expect(parsed.attachments.map((one) => one.filename)).toEqual(["合同.pdf"]);
+    expect(new Uint8Array(parsed.attachments[0]!.content as ArrayBuffer)).toEqual(PDF);
+  });
+
+  it("splits a long name into RFC 2231 continuations, whole triplets on lines under 78, and it reads back whole", async () => {
+    const name = `a${"报价单".repeat(26)}.xlsx`; // 240 bytes: under the limit, far past one line; the "a" shifts
+    // the percent triplets off the segment boundary, so a segment that split one would show here
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: name, contentType: "application/octet-stream", content: PDF }],
+    });
+    const { raw } = await renderRfc822(testEnv, sealed.id);
+    const text = new TextDecoder().decode(raw);
+    const continuations = text.split("\r\n").filter((line) => /^ filename\*\d+\*=/.test(line));
+    expect(continuations.length).toBeGreaterThan(1);
+    expect(continuations[0]).toMatch(/^ filename\*0\*=utf-8''a%/);
+    for (const line of continuations) {
+      expect(line.length).toBeLessThanOrEqual(78);
+      expect(line.replace(/^ filename\*\d+\*=(utf-8'')?/, "").replace(/;$/, "")).toMatch(/^(%[0-9A-F]{2}|[A-Za-z0-9!#$&+\-.^_`|~])+$/);
+    }
+    expect((await received(raw)).attachments.map((one) => one.filename)).toEqual([name]);
+  });
+
+  it("refuses a name that could break the header or disguise the file, and one too long, rather than altering it", async () => {
+    for (const [filename, code] of [
+      ["invoice\u202Efdp.exe", /E_ATTACHMENT_NAME_INVALID/], ["../合同.pdf", /E_ATTACHMENT_NAME_INVALID/],
+      ["a\tb.pdf", /E_ATTACHMENT_NAME_INVALID/], ["  ", /E_ATTACHMENT_NAME_INVALID/],
+      [`${"合".repeat(84)}.pdf`, /E_ATTACHMENT_NAME_TOO_LONG/], // 256 bytes
+    ] as const) {
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename, contentType: "application/pdf", content: PDF }],
+      }), filename).rejects.toThrow(code);
+    }
+    // 255 bytes is a name.
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: `${"合".repeat(83)}ab.pdf`, contentType: "application/pdf", content: PDF }],
+    })).resolves.toBeDefined();
+    // Kept in NFC: macOS hands over `café.pdf` decomposed, and the recipient should see one name for one name.
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "cafe\u0301.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    const row = await testEnv.CATALOG.prepare("SELECT author_filename AS filename FROM send_attachments WHERE manifest_id = ?")
+      .bind(sealed.id).first<{ filename: string }>();
+    expect(row?.filename).toBe("caf\u00e9.pdf");
+  });
+
+  it("folds a 300-character Chinese subject into encoded words of at most 75, no line past 78, and it reads back whole", async () => {
+    const subject = `关于发票的问题：${"请尽快确认付款安排。".repeat(29)}`;
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, subject });
+    const { raw } = await renderRfc822(testEnv, sealed.id);
+    const text = new TextDecoder().decode(raw);
+    const head = text.slice(0, text.indexOf("\r\n\r\n")).split("\r\n");
+    const start = head.findIndex((line) => line.startsWith("Subject: "));
+    const end = head.findIndex((line, i) => i > start && !line.startsWith(" "));
+    const lines = head.slice(start, end);
+    expect(lines.length).toBeGreaterThan(10);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(78);
+      for (const word of line.match(/=\?[^?]+\?B\?[^?]*\?=/g) ?? []) expect(word.length).toBeLessThanOrEqual(75);
+    }
+    expect((await received(raw)).subject).toBe(subject);
+    const { headerFields, decodeEncodedWords } = await import("../src/mime.ts");
+    const block = text.slice(0, text.indexOf("\r\n\r\n"));
+    expect(decodeEncodedWords(headerFields(block).get("subject")![0]!)).toBe(subject);
+  });
+
+  it("keeps the column the previous version renders to what it can interpolate, and the author's name beside it", async () => {
+    // The previous renderer builds `name="${filename}"` from `send_attachments.filename` with no encoding, and a
+    // manifest sealed here may be rendered by it after a rollback. So that column keeps `safeFilename`'s output
+    // and the author's own name is in `author_filename`, which only this version reads (0072).
+    for (const [filename, safe] of [["合同.pdf", "__.pdf"], ['x.js" y=".pdf', "x.js__y__.pdf"]] as const) {
+      const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename, contentType: "application/pdf", content: PDF }],
+      });
+      const row = await testEnv.CATALOG.prepare(
+        "SELECT filename, author_filename FROM send_attachments WHERE manifest_id = ?",
+      ).bind(sealed.id).first<{ filename: string; author_filename: string }>();
+      expect(row).toEqual({ filename: safe, author_filename: filename });
+      // And this version sends the author's name, not the safe one.
+      expect((await received((await renderRfc822(testEnv, sealed.id)).raw)).attachments[0]!.filename).toBe(filename);
+    }
+  });
+
+  it("renders a row the previous version sealed, which has no author_filename, from its filename as before", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "合同.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    await testEnv.CATALOG.prepare("UPDATE send_attachments SET author_filename = NULL WHERE manifest_id = ?")
+      .bind(sealed.id).run();
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).toContain('Content-Type: application/pdf; name="__.pdf"\r\n');
+  });
+
+  it("refuses a name spelled as an encoded word, which a recipient would decode into a name nobody judged", async () => {
+    // `=?utf-8?Q?invoice=2Ejs?=` has no dot, so the judge sees no extension; a decoding client saves it under a .js name.
+    for (const filename of ["=?utf-8?Q?invoice=2Ejs?=", "report.pdf =?utf-8?Q?=2Ejs?="]) {
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename, contentType: "application/pdf", content: PDF }],
+      }), filename).rejects.toThrow(/E_ATTACHMENT_NAME_INVALID.*=\?/);
+    }
+  });
+
+  it("refuses every direction control and line separator, not only the overrides", async () => {
+    // U+061C ARABIC LETTER MARK is Bidi_Control like U+200F, which was already refused; U+2028 and U+2029 break
+    // a name across lines wherever it is shown.
+    for (const filename of ["a؜b.pdf", "a b.pdf", "a b.pdf"]) {
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename, contentType: "application/pdf", content: PDF }],
+      }), JSON.stringify(filename)).rejects.toThrow(/E_ATTACHMENT_NAME_INVALID/);
+    }
+  });
+
+  it("folds a long name's RFC 2047 fallback into words of at most 75, and it still reads back whole", async () => {
+    const name = `${"合".repeat(83)}.pdf`; // 253 bytes: one word of it would be 352 characters
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: name, contentType: "application/pdf", content: PDF }],
+    });
+    const { raw } = await renderRfc822(testEnv, sealed.id);
+    const text = new TextDecoder().decode(raw);
+    const words = text.match(/=\?utf-8\?B\?[^?]*\?=/g) ?? [];
+    expect(words.length).toBeGreaterThan(10);
+    for (const word of words) expect(word.length).toBeLessThanOrEqual(75);
+    // Every line but the one carrying the field name stays within 78.
+    const block = text.slice(text.indexOf("Content-Type: application/pdf"), text.indexOf("\r\n\r\n", text.indexOf("Content-Type: application/pdf")));
+    for (const line of block.split("\r\n").filter((line) => line.startsWith(" "))) expect(line.length).toBeLessThanOrEqual(78);
+    const { headerFields, decodeEncodedWords } = await import("../src/mime.ts");
+    const disposition = headerFields(block).get("content-disposition")![0]!;
+    expect(decodeEncodedWords(/filename="([^"]*)"/.exec(disposition)![1]!)).toBe(name);
+    expect((await received(raw)).attachments[0]!.filename).toBe(name);
+  });
+
+  it("renders ASCII, and a short name or subject that fits one word, exactly as before", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, subject: "合同",
+      attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).toContain("\r\nSubject: =?utf-8?B?5ZCI5ZCM?=\r\nMessage-ID:");
+    expect(text).toContain('Content-Type: application/pdf; name="invoice.pdf"\r\n');
+    expect(text).toContain('Content-Disposition: attachment; filename="invoice.pdf"\r\n\r\n');
+  });
+
+  it("fills a word to its 42 bytes before folding: fourteen Han characters are one word, fifteen are two", async () => {
+    // The boundary the docs state ("a value that fits one word renders as before"); a fold one character early
+    // is still valid mail, so only this pins the size.
+    const subjectLines = async (subject: string) => {
+      const text = new TextDecoder().decode((await renderRfc822(testEnv,
+        (await sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, subject })).id)).raw);
+      return text.slice(text.indexOf("\r\nSubject: ") + 2, text.indexOf("\r\nMessage-ID:")).split("\r\n");
+    };
+    expect(await subjectLines("合".repeat(14))).toEqual([`Subject: =?utf-8?B?${btoa(String.fromCharCode(...utf8("合".repeat(14))))}?=`]);
+    expect(await subjectLines("合".repeat(15))).toHaveLength(2);
   });
 });
 
@@ -453,6 +634,9 @@ describe("header injection", () => {
     // sending anyway is exactly the quiet alteration that forbids.
     expect(() => new HeaderBlock().add("Subject", "clean")).not.toThrow();
     expect(() => new HeaderBlock().add("Subject", "dirty\r\n")).toThrow(/refused rather than stripped/);
+    // The filename parameter too, whose name the seal has already judged: the builder does not rely on that.
+    expect(() => new HeaderBlock().addWithFilename("Content-Type", "application/pdf", "name", "a\r\nBcc: c@d.com"))
+      .toThrow(/E_HEADER_INJECTION/);
   });
 
   it("makes injection unrepresentable rather than checked — a NEW header cannot bypass it", () => {

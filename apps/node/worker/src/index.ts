@@ -158,7 +158,9 @@ const handler = {
 
       try {
         /*
-         * Catching the search index up on mail that arrived before it existed (#107).
+         * Writing the subject index for every message not yet in its current form (#107, 0071): mail that
+         * arrived before the index existed, and mail indexed in an older form, by this Node before `searchText`
+         * or by the previous version during a deploy.
          *
          * Bounded and resumable, so this is safe to run every minute forever: once the archive is indexed it
          * writes nothing and costs one query. Logged **only when it did something**, for the reason the notice
@@ -174,7 +176,8 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "search.backfilled",
-            message: `Indexed ${indexed} message(s) that arrived before the search index existed.`,
+            message: `Wrote the subject index for ${indexed} message(s) not yet in its current form `
+              + "(never indexed, or indexed in an older form).",
             orgId,
             detail: { indexed },
           });
@@ -222,8 +225,8 @@ const handler = {
         /*
          * The body index's backfill (#107 L2), which is a different animal from the one above.
          *
-         * That one is a single `INSERT … SELECT` inside D1. This one reads R2, unwraps a vault key, decrypts
-         * and parses MIME **per message**, so it is bounded to 25 a minute rather than 500 and a long archive
+         * That one reads `messages` and writes D1, never leaving it. This one reads R2, unwraps a vault key,
+         * decrypts and parses MIME **per message**, so it is bounded to 25 a minute rather than 500 and a long archive
          * catches up over hours. `doctor`'s `body_index_backlog` is what makes that visible instead of
          * mysterious.
          *
@@ -236,7 +239,8 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "search.bodies_backfilled",
-            message: `Indexed the bodies of ${bodies} message(s) that predate the body index.`,
+            message: `Settled the body index for ${bodies} message(s) (never indexed, retried, or re-formed from `
+              + "an older form).",
             orgId,
             detail: { settled: bodies },
           });

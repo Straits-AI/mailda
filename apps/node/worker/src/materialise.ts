@@ -12,7 +12,7 @@ import type { QuarantineReason } from "@mailda/contract/schemas";
 import { allowedTypesOf, DANGEROUS, overLimits } from "./attachments.ts";
 import { auditedBatch, log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
-import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
+import { bodyIndexText, indexBody, indexMessage, settleBodyIndex } from "./search.ts";
 import { indexableText } from "./search-body.ts";
 
 /**
@@ -138,6 +138,8 @@ export async function materialiseReceipt(
    * by paging and by subject, which is the same position `renderBody` takes when it reports `unparsed`.
    */
   const bodyWords = await indexableText(raw);
+  // What the body index will hold, computed once: `indexBody` binds its text and the settlement records its cut.
+  const bodyIndexed = bodyWords.kind === "text" ? bodyIndexText(bodyWords.text) : null;
 
   /*
    * What was attached (0057), counted and judged from the same parse. NULL when the parser could not read
@@ -263,16 +265,19 @@ export async function materialiseReceipt(
      *
      * That shape is also what handles the redelivery above: `INSERT OR IGNORE` against `msg_by_receipt` means
      * a second delivery of the same receipt mints a fresh `msg_…` id and writes no row, and a search insert
-     * binding its own values would then index an id that belongs to nothing. Selecting from `messages` makes
-     * the two statements agree by construction rather than by both being correct.
+     * of its own values would then index an id that belongs to nothing. Selecting from `messages` makes the
+     * two statements agree by construction rather than by both being correct.
+     *
+     * The subject and sender are the **same values** the insert above binds: the index holds `searchText` of
+     * them, which SQL cannot compute, and `indexMessage` compares them with the row it selects.
      */
-    indexMessage(env, messageId),
+    ...indexMessage(env, messageId, { subject: headers.subject, from: headers.from }),
     /*
      * The body index, in the same batch and after the message for the same reason (#107 L2). Omitted
      * entirely when there is nothing to index — an empty index row can never match, and it would still be
      * counted as indexed, which would make the backfill's remaining-work figure a lie.
      */
-    ...(bodyWords.kind === "text" ? [indexBody(env, messageId, bodyWords.text, 0)] : []),
+    ...(bodyIndexed === null ? [] : [indexBody(env, messageId, bodyIndexed, 0)]),
     /*
      * Settled either way, in the same batch, and settled to the state that is **true** rather than to one
      * "finished" value. A headers-only message is `empty`; one whose body the parser could not read is
@@ -289,7 +294,10 @@ export async function materialiseReceipt(
       messageId,
       bodyWords.kind === "unparseable"
         ? { state: "unindexable", error: bodyWords.why }
-        : { state: bodyWords.kind === "text" ? "indexed" : "empty" },
+        : bodyIndexed === null
+          ? { state: "empty" }
+          // The cut goes on the message in the same batch as the text it describes (`bodyIndexText`).
+          : { state: "indexed", cutFromBytes: bodyIndexed.cutFromBytes },
       at,
       /*
        * Claim zero. The message row is inserted by this same batch, so nothing can be holding a lease on it

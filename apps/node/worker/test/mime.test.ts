@@ -99,6 +99,29 @@ describe("RFC 2047 encoded words", () => {
     );
   });
 
+  it("reads adjacent words as one run: no space where the value was folded, and a character split across words", () => {
+    // 合同 is e5 90 88 e5 90 8c; Gmail-style splitting may cut a character's bytes across two words.
+    expect(decodeEncodedWords("=?utf-8?B?5ZCI?= =?utf-8?B?5ZCM?=")).toBe("合同");
+    expect(decodeEncodedWords("=?UTF-8?B?5ZA=?=\t=?utf-8?B?iOWQjA==?=")).toBe("合同");
+    expect(decodeEncodedWords("=?utf-8?Q?=E5=90?= =?utf-8?Q?=88?=")).toBe("合");
+    // Text between words is text: the space next to it stays.
+    expect(decodeEncodedWords("=?utf-8?B?5ZCI?= and =?utf-8?B?5ZCM?=")).toBe("合 and 同");
+  });
+
+  it("decodes each word of a charset other than UTF-8 on its own: ISO-2022-JP words end in ASCII", () => {
+    // RFC 1468: each word ends with ESC ( B. Joined, that escape meets the next word's ESC $ B, and the WHATWG
+    // decoder reports two escapes in a row with U+FFFD. Japanese mailers fold a long subject exactly so.
+    const word = "=?ISO-2022-JP?B?GyRCJUYlOSVIGyhC?=";
+    expect(decodeEncodedWords(word)).toBe("テスト");
+    expect(decodeEncodedWords(`${word} ${word}`)).toBe("テストテスト");
+    expect(decodeEncodedWords(`${word}\r\n ${word}`)).toBe("テストテスト");
+  });
+
+  it("leaves a bad word among good ones as written, with the space around it, and decodes the rest", () => {
+    expect(decodeEncodedWords("=?utf-8?B?5ZCI?= =?utf-8?B?!!!?= =?utf-8?B?5ZCM?=")).toBe("合 =?utf-8?B?!!!?= 同");
+    expect(decodeEncodedWords("=?x-unknown?B?YQ==?= =?x-unknown?B?Yg==?=")).toBe("=?x-unknown?B?YQ==?= =?x-unknown?B?Yg==?=");
+  });
+
   it("leaves an undecodable word as written rather than dropping it", () => {
     // Ugly and honest beats an empty subject, which would be a lie about what the sender sent.
     expect(decodeEncodedWords("=?utf-8?B?!!!not-base64!!!?=")).toContain("=?utf-8?B?");

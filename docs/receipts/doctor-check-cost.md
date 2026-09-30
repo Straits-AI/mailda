@@ -16,6 +16,24 @@ values:
   doctor.stalled_outbox_seconds: 600
 ---
 
+## Correction, 30 September 2026: `body_index_partial`, a fourth search finding from the same query
+
+`body_index_partial` reports bodies the body index holds only the start of (`d1.max_row_bytes`, recorded per
+message as `body_index_cut_from_bytes`, migration `0071_search_form.sql`). Its figures are two more aggregates
+in `bodyIndexState`'s one `GROUP BY`, beside the count of bodies indexed in an older form that
+`body_index_backlog` now reports; `search_index_backlog` is still one query, now over the indexed
+`search_index_form` rather than a `NOT EXISTS` into the FTS5 table. Measured before and after in the same
+working tree, on `apps/node/worker/test/outbound-recheck.test.ts`'s doctor fixtures:
+
+```
+before    subrequests=35  d1=29  r2=6  findings=32
+after     subrequests=35  d1=29  r2=6  findings=33
+```
+
+**+0 subrequests, +0 D1 queries, +1 finding.** `values:` is untouched. The subject count's rows read fell
+from one FTS5 scan per message (4,501,455 on 3,000 messages under vitest-pool-workers) to the backlog's
+index entries; the body query's rows read are unchanged, one pass over `messages` as before.
+
 ## Correction, 28 September 2026: `delivery_visibility` reads the verified-destination record in the statement it already issued
 
 `delivery_visibility` now tells apart silence a read of the account's verified destinations explains from

@@ -3992,3 +3992,84 @@ each has one now, seen red with the line broken. Held by `apps/node/worker/test/
 `apps/node/worker/test/node/catch-all-reach.test.ts`, `apps/node/worker/test/client/setup-screen.test.tsx`,
 `apps/node/worker/test/client/people-invite.test.tsx`, `apps/node/worker/test/client/people-address.test.tsx` and
 `apps/node/worker/test/node/control-spacing.test.ts`.
+
+## 合同.pdf arrived as __.pdf (29 September 2026)
+
+An audit made while planning a Chinese interface found three defects that meet a Chinese-speaking customer on
+their first day whatever language the interface is in. This entry is two of them; search is the third.
+
+`safeFilename` replaced every character outside `[A-Za-z0-9._-]` with `_`. It ran on every outbound attachment at
+the seal, so a file named `合同.pdf` reached its recipient as `__.pdf`, and the manifest stored `__.pdf` as the
+evidence of what was sent; it ran on downloads too, so a received `合同.pdf` saved as `__.pdf`. The seal now keeps
+the name as the author gave it (NFC), and refuses rather than rewrites one with a control character, a direction
+control or a path separator, or one past 255 bytes. The header builder renders a plain name exactly as before and
+any other as an RFC 2047 word beside RFC 2231's `filename*`, with continuations when it is long; a recipient's
+parser (`postal-mime`, the one this Node reads inbound mail with) reads `合同.pdf` and a 240-byte name back whole.
+Downloads add RFC 6266's `filename*` beside the ASCII fallback, less the sender's direction controls.
+
+The subject was one encoded word of any length: about sixteen Han characters passed RFC 2047's 75-character word,
+and about 245 passed RFC 5322's 998-octet line, which is a MUST. It is now words of whole characters, 42 bytes
+each, one per folded line; a short subject renders as it did. Reading one back showed the other half of the bug:
+the parser decoded adjacent words one at a time and kept the folding space between them, so a long subject from
+this Node or from Gmail read back with spaces in it, and a character whose bytes a sender split across two words
+became two replacement characters. Adjacent words are now one run.
+
+Held by the tests under "names and subjects outside ASCII" in `apps/node/worker/test/outbound.test.ts`, the
+adjacent-words case in `apps/node/worker/test/mime.test.ts` and the download case in
+`apps/node/worker/test/quarantine.test.ts`. Each changed line was broken by hand and its test seen red; the one
+that survived at first, the NFC step, has a case of its own now.
+
+The review of it found five more, each fixed with a test seen red. Joining every adjacent word's bytes put one
+ISO-2022-JP word's closing escape against the next one's opening escape, which the decoder reports as U+FFFD, so
+every folded Japanese subject gained one at each fold; only UTF-8 words are joined now, and "adjacent words are
+one run" above holds for them alone. One word that did not decode left its whole run undecoded with the folds
+removed; now only that word is left as written, with its spaces. A name spelled as the Q-encoded word of a
+script's name, with no dot in it, was judged plain (no extension) and sent as written, and a recipient's client
+decoded it to the script's name; a name containing `=?` is refused. The direction-control list was hand-written
+and missed U+061C; it is Unicode's `Bidi_Control` now, with the line and paragraph separators, one list for the
+seal and the download. A long name's RFC 2047 fallback was one word of 352 characters; it is folded like a
+subject. And the author's name had replaced `safeFilename`'s output in `send_attachments.filename`, which the
+previous version renders raw if a rollback leaves it dispatching this version's manifests; the name moved to
+`author_filename` (`0072_send_attachment_author_name.sql`) and `filename` keeps what the previous renderer can
+interpolate.
+
+Subjects and sender names stored before this change keep the old decoder's reading: spaces at each fold, and
+U+FFFD pairs where a sender split a character. `messages.subject` and `from_name` are decoded once, at arrival,
+and re-deriving them would read every message's evidence from R2, because which subjects were folded is not
+visible in the column. Not done; `docs/message-search.md` says so for search.
+
+## 发票 did not find 关于发票的问题 (30 September 2026)
+
+The third of the defects above. `unicode61` splits on everything that is not a letter or a number, which is a
+word tokenizer for text written with spaces and a sentence tokenizer for Chinese and Japanese: `关于发票的问题` was
+one token, so `发票` found nothing, `订单123` was one token, so `123` did not find it, and full-width `ＡＢＣ` was not
+`abc`, for anyone receiving such mail. `searchText` (`apps/node/worker/src/search.ts`) now rewrites every indexed
+text and every query identically: NFKC inside words, and every Han, kana or Hangul run as overlapping bigrams plus
+its last character. Measured on a literary corpus (Lu Xun, 《吶喊》), not mail: 3.8 times the posting bytes on
+Chinese, none on English, 941 rows read for a full page of the commonest character against the 1,000-row budget
+([receipt](./receipts/cjk-search-bigrams.md)).
+
+The first cut of 0071 emptied the subject index and requeued bodies, which was right only if no old-form writer
+ran afterwards, and `mailda deploy` applies migrations before the canary, so the previous version keeps indexing
+until promotion and nothing would have revisited its rows. So 0071 became additive: each message records the form
+its rows were written in, both backfills select below `SEARCH_FORM`, and a trigger clears the body stamp on every
+claim. The same change found that the subject backfill's and `doctor`'s `NOT EXISTS` into the FTS5 table scanned
+the index once per message, 4,501,465 rows read a minute on a caught-up 3,000-message Node locally, and replaced it
+with an indexed range. `q` over 12 typed words is refused (`E_SEARCH_TOO_MANY_WORDS`) instead of truncated. A body
+is indexed up to `d1.max_row_bytes`, and the cut is recorded and reported (`body_index_partial`). And
+`d1-fts5-search.md`'s disclosure wording, which ADR 28 repeated, was corrected: the contentless body index keeps
+offsets and gives back a body's tokens in order, and a CJK body as its text. ADR 28 now says so, and keeps
+`detail=full`.
+
+The review of the change found five more, each fixed with a test that goes red when its fix is undone. NFKC over the whole text turned
+separators into letters (`Acme™` became `AcmeTM`, so `acme widget` stopped finding it); it now folds only inside
+words. The word limit did not bound index terms, since a pasted Chinese paragraph is one word and a term per
+character, and a phrase's time grows with its terms without showing in rows read; it is now refused past
+`search.max_query_terms` (128), sized where the worst phrase costs no more than the commonest one-character search.
+`mailda backup` carried the form stamps without the indexes, so a restored Node would have held mail marked
+indexed beside empty indexes, found nothing, and had `doctor` call both complete; the dump now ends by clearing the
+stamps. `doctor`, 0071 and the docs said old-form mail was still "found by whole words", which is true only of
+Latin text: the query bigrams a CJK word the old row holds as one token, so until re-formed such mail is found by
+its CJK text only as a run's first one or two characters, and the text now says so, rollback included. And 0071's
+columns made `message-metadata-bytes.md` stale while no Cloudflare write was allowed to remeasure it, so its three
+shard thresholds are withdrawn until it is, as they were for 0068.

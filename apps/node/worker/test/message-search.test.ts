@@ -8,7 +8,7 @@ import { messagePageQuery } from "../src/authz-read.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
 import {
-  BODY_INDEX_LEASE_MS, bodyIndexState, claimBodyIndexBatch, failedBodyIndex, ftsQuery, indexBody,
+  BODY_INDEX_LEASE_MS, bodyIndexState, bodyIndexText, claimBodyIndexBatch, failedBodyIndex, ftsQuery, indexBody,
   indexMessage,
   repairBodyIndex, settleBodyIndex,
 } from "../src/search.ts";
@@ -133,7 +133,7 @@ beforeAll(async () => {
       ).bind(messageId, org, "2026-Q3", `${org}/raw/${receiptId}`, "0".repeat(64), 18_000,
         `${receiptId}@example.net`, ctx.id("thr"), subject, from, AT, AT, receiptId, AT,
         `${receiptId}@example.net`, ctx.id("cnv")));
-      out.push(indexMessage(testEnv, messageId));
+      out.push(...indexMessage(testEnv, messageId, { subject, from }));
       /*
        * **`cabotage` appears in no subject anywhere**, so a match on it can only have come from the body
        * index. The first fixture used `bunkering`, which is also a word in the ingest test's subject further
@@ -145,9 +145,9 @@ beforeAll(async () => {
        */
       out.push(indexBody(
         testEnv, messageId,
-        receiptId === DEMURRAGE
+        bodyIndexText(receiptId === DEMURRAGE
           ? "cabotage rules disputed, and the demurrage position restated"
-          : `cabotage rules disputed for ${receiptId}`,
+          : `cabotage rules disputed for ${receiptId}`),
         0,
       ));
     }
@@ -873,7 +873,7 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
      */
     const afterLapse = new Date(Date.parse(AT) + BODY_INDEX_LEASE_MS + 1_000).toISOString();
     await claimBodyIndexBatch(testEnv, afterLapse, 5).all();
-    await settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine!.version).run();
+    await settleBodyIndex(testEnv, messageId, { state: "indexed", cutFromBytes: null }, AT, mine!.version).run();
 
     const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
       .bind(messageId).first<{ s: string }>();
@@ -887,7 +887,7 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
     const current = await testEnv.CATALOG.prepare(
       "SELECT body_index_attempt_version AS v FROM messages WHERE id = ?",
     ).bind(messageId).first<{ v: number }>();
-    await settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, current!.v).run();
+    await settleBodyIndex(testEnv, messageId, { state: "indexed", cutFromBytes: null }, AT, current!.v).run();
     const after = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
       .bind(messageId).first<{ s: string }>();
     expect(after?.s).toBe("indexed");
@@ -923,8 +923,8 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
 
     // The slow worker returns, holding the version it claimed.
     await testEnv.CATALOG.batch([
-      indexBody(testEnv, messageId, "cabotage", mine!.version),
-      settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine!.version),
+      indexBody(testEnv, messageId, bodyIndexText("cabotage"), mine!.version),
+      settleBodyIndex(testEnv, messageId, { state: "indexed", cutFromBytes: null }, AT, mine!.version),
     ]);
 
     const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
@@ -1008,8 +1008,8 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
 
     // The worker that was already running returns.
     await testEnv.CATALOG.batch([
-      indexBody(testEnv, messageId, "cabotage", mine.version),
-      settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine.version),
+      indexBody(testEnv, messageId, bodyIndexText("cabotage"), mine.version),
+      settleBodyIndex(testEnv, messageId, { state: "indexed", cutFromBytes: null }, AT, mine.version),
     ]);
 
     const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
@@ -1119,7 +1119,9 @@ describe("a windowed search leaves out the mail outside the window", () => {
         `${receiptId}@example.net`, ctx.id("thr"), `Demurrage notice on day ${index}`,
         "sender@supplier.example", acceptedAt, acceptedAt, receiptId, acceptedAt,
         `${receiptId}@example.net`, ctx.id("cnv")));
-      statements.push(indexMessage(testEnv, messageId));
+      statements.push(...indexMessage(testEnv, messageId, {
+        subject: `Demurrage notice on day ${index}`, from: "sender@supplier.example",
+      }));
     }
     await testEnv.CATALOG.batch(statements);
   });
@@ -1232,7 +1234,7 @@ async function seedRepairable(messageId: string, indexedText: string | null): Pr
       `${receiptId}@example.net`, ctx.id("thr"), "Repairable", "x@y.example", AT, AT, receiptId, AT,
       `${receiptId}@example.net`, ctx.id("cnv"), indexedText === null ? "pending" : "indexed"),
   ]);
-  if (indexedText !== null) await indexBody(testEnv, messageId, indexedText, 0).run();
+  if (indexedText !== null) await indexBody(testEnv, messageId, bodyIndexText(indexedText), 0).run();
 }
 
 /** Which messages the body index answers for a term — the index alone, not the authorized listing. */
