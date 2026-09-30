@@ -138,6 +138,18 @@ export const MESSAGE_PAGE_PARAMS =
   } as const;
 
 /**
+ * How many words one search (`q`) may carry — **words typed**, not index terms: a run of Chinese, Japanese or
+ * Korean without spaces is one word however many bigrams the index makes of it, and so is `订单123`.
+ *
+ * **Sized, not measured.** It was twelve when a search truncated silently, and nobody measured it then
+ * either. With every word required, twelve already names one message, and a pasted paragraph is what passes
+ * it. It is here rather than in `@mailda/budgets` for the reason `MAX_WINDOW_DAYS` is not a budget key: no
+ * receipt stands behind it, and a key would read as though one did. Here because the route's description
+ * below states it, and the Node's refusal (`E_SEARCH_TOO_MANY_WORDS`, in `ftsQuery`) reads the same constant.
+ */
+export const SEARCH_MAX_WORDS = 12;
+
+/**
  * The sentence every per-person filter of `GET /api/messages` ends with, and its summary carries: the limit is
  * named where the caller meets it (AGENTS §3). The contract does not import budgets, so the budget is named, not
  * quoted; the SDK and the Skill are generated from these strings, which is how an agent learns it.
@@ -330,8 +342,13 @@ export const ROUTES = [
       },
       {
         name: MESSAGE_PAGE_PARAMS.q,
-        description: "Words that must all appear in the subject or sender address. The last word matches as "
-          + "a prefix, so a part-typed word narrows. Not a query language: operators are read as words.",
+        description: "Words that must all appear in the subject or sender address, or in the body where you "
+          + "may read content. The last word matches as a prefix, so a part-typed word narrows. Chinese, "
+          + "Japanese and Korean match any part of a run, and a run without spaces counts as one word. Not a "
+          + `query language: operators are read as words. At most ${SEARCH_MAX_WORDS} words; more is refused `
+          + "with E_SEARCH_TOO_MANY_WORDS rather than cut. At most search.max_query_terms index terms in all, "
+          + "where each character of a Chinese, Japanese or Korean run is about one; more is refused with "
+          + "E_SEARCH_TOO_LONG.",
       },
       {
         name: MESSAGE_PAGE_PARAMS.since,

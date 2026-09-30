@@ -868,7 +868,8 @@ export const healthResponse = z.object({
  * equal to the names the doctor's source emits.
  */
 export const DOCTOR_CHECKS = [
-  "agent_withdrawn_capabilities", "body_index_backlog", "body_index_failed", "butler_execution",
+  "agent_withdrawn_capabilities", "body_index_backlog", "body_index_failed", "body_index_partial",
+  "butler_execution",
   "butler_loop_detection", "butler_paused", "butler_run_silence", "catalog_reachable", "credential_key",
   "delivery_attribution", "delivery_explanation_void", "delivery_visibility", "doctor_cost", "domain_paused", "draft_bodies_stranded",
   "evidence_bucket_reachable", "evidence_key_generation", "evidence_orphans", "evidence_present",

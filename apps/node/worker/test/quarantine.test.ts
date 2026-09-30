@@ -227,6 +227,30 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
     expect(exported?.n).toBe(1);
   });
 
+  it("saves a part under its sender's name, 合同.pdf, beside an ASCII fallback, and never with direction controls", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'message.export','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, ADMIN, OFF.id, new Date(ctx.now()).toISOString()).run();
+    const session = await issueSession(testEnv, ctx, { orgId: ORG, userId: ADMIN });
+    const headers = { cookie: `${ACCESS_COOKIE}=${session.accessToken}` };
+    for (const [sent, disposition] of [
+      ["filename*=utf-8''%E5%90%88%E5%90%8C.pdf", `attachment; filename="__.pdf"; filename*=UTF-8''%E5%90%88%E5%90%8C.pdf`],
+      ["filename*=utf-8''report%E2%80%AEfdp.exe", `attachment; filename="report_fdp.exe"; filename*=UTF-8''reportfdp.exe`],
+      // U+061C is a direction control too (Bidi_Control), and U+2028 a line separator.
+      ["filename*=utf-8''a%D8%9Cb%E2%80%A8c.pdf", `attachment; filename="a_b_c.pdf"; filename*=UTF-8''abc.pdf`],
+    ] as const) {
+      const part = withAttachment("x", "application/pdf", PDF).map((line) =>
+        line.startsWith("Content-Disposition") ? `Content-Disposition: attachment; ${sent}` : line.startsWith("Content-Type: application") ? "Content-Type: application/pdf" : line);
+      const id = await accept(PASSED, OFF.address, part);
+      await materialiseReceipt(testEnv, ctx, id);
+      const response = await SELF.fetch(`https://node/api/messages/${id}/attachments/0`, { headers });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toBe(disposition);
+    }
+  });
+
   it("lists the parts on the body route, judged, and carries none of their bytes", async () => {
     const id = await accept(PASSED, OFF.address, withAttachment("invoice.pdf", "application/pdf", MZ));
     await materialiseReceipt(testEnv, createSystemCtx(), id);

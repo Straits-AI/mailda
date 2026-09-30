@@ -151,8 +151,10 @@ export function checkBackup({ index, catalog, inventory }) {
   if (index.rebuildSearchIndex === true) {
     notes.push(
       "this backup excludes the search index, which is a rebuildable derivative rather than evidence. A "
-      + "restored Node's own migrations create its tables; their contents come from the backfill. Until that "
-      + "runs, search returns nothing on a Node whose mail is all present.",
+      + "restored Node's own migrations create its tables; their contents come from the backfill, which the "
+      + "catalog's last statement starts by marking every message as not yet indexed. Until it has run, search "
+      + "misses mail that is all present, and `mailda doctor`'s search_index_backlog and body_index_backlog "
+      + "count what is left.",
     );
   }
   if (index.verified === null || index.verified === undefined) {
@@ -302,4 +304,26 @@ export function exportableTables(sqliteMaster) {
 export function needsIndexRebuild(sqliteMaster) {
   return exportableTables(sqliteMaster).excluded
     .some((one) => one.why.startsWith("a virtual table"));
+}
+
+/**
+ * The statement `catalog.sql` ends with when the search indexes were left out, or `null` when none is needed.
+ *
+ * Every message records the form its index rows were written in (`search_index_form`, `body_index_form`,
+ * migration 0071), and the backfills rebuild only what is below the current form. The export carries those
+ * columns and not the indexes, so a restored Node would hold messages stamped current beside empty indexes:
+ * neither backfill would select one, every search would return nothing for good, and `doctor` would report
+ * both indexes complete. So the dump marks every message as not yet indexed, and the destination's backfills
+ * rebuild both indexes from the evidence (bodies through the requeue of older forms), with `doctor` counting
+ * down. In the file rather than in the runbook, so a restore cannot leave it out.
+ *
+ * Only when the source's `messages` has the columns: the destination is at least the source's schema (a dump
+ * into an older one fails on its first unknown column), so the statement then names columns it has.
+ */
+export function searchIndexReset(sqliteMaster) {
+  const messages = sqliteMaster.find((row) => row.name === "messages");
+  if (!needsIndexRebuild(sqliteMaster) || typeof messages?.sql !== "string") return null;
+  // Both columns arrived in 0071, so one names the pair.
+  if (!/\bsearch_index_form\b/.test(messages.sql)) return null;
+  return "UPDATE messages SET search_index_form = 0, body_index_form = 0;";
 }

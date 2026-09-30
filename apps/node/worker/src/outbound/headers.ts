@@ -38,11 +38,177 @@ const NON_ASCII = /[^\x20-\x7e]/;
 /** RFC 5322 field names: printable ASCII, no colon, no space. */
 const VALID_NAME = /^[\x21-\x39\x3b-\x7e]+$/;
 
-/** RFC 2047 encodes a value that is not already ASCII. Applied automatically, never by a caller. */
+/**
+ * How many UTF-8 bytes one encoded word carries.
+ *
+ * RFC 2047 §2 caps an encoded word at 75 characters. `=?utf-8?B?` and `?=` take 12, leaving 63 for base64,
+ * which holds 45 bytes; 42 (a multiple of 3, so no padding inside a subject) keeps the first line of
+ * `Subject: ` plus one word within RFC 5322's 78-character SHOULD. Fixed by the two RFCs, not measured.
+ */
+const WORD_BYTES = 42;
+
+/**
+ * RFC 2047 encodes a value that is not already ASCII. Applied automatically, never by a caller.
+ *
+ * As **several** encoded words, each whole characters, one per folded line. It was one word of any length,
+ * so a subject of about sixteen Han characters passed RFC 2047's 75-character limit on a word and one of
+ * about 245 passed RFC 5322's 998-octet limit on a line, which is a MUST. A value that fits one word renders
+ * exactly as it did, so a manifest sealed before this change sends the bytes it always would have.
+ */
 function encodeIfNeeded(value: string): string {
-  if (!NON_ASCII.test(value)) return value;
-  const utf8 = new TextEncoder().encode(value);
-  return `=?utf-8?B?${btoa(String.fromCharCode(...utf8))}?=`;
+  return NON_ASCII.test(value) ? encodedWords(value) : value;
+}
+
+/**
+ * A value as RFC 2047 encoded words of at most `WORD_BYTES` bytes of whole characters each, one per folded line.
+ *
+ * CRLF plus a space is folding whitespace, and a decoder ignores whitespace between adjacent encoded words
+ * (RFC 2047 §6.2), so the value reads back whole. A value of `WORD_BYTES` or fewer is one word, as it always was.
+ */
+function encodedWords(value: string): string {
+  const words: string[] = [];
+  let chunk: number[] = [];
+  for (const char of value) {
+    const bytes = new TextEncoder().encode(char);
+    if (chunk.length + bytes.length > WORD_BYTES) {
+      words.push(encodedWord(chunk));
+      chunk = [];
+    }
+    chunk.push(...bytes);
+  }
+  words.push(encodedWord(chunk));
+  return words.join("\r\n ");
+}
+
+function encodedWord(bytes: readonly number[]): string {
+  return `=?utf-8?B?${btoa(String.fromCharCode(...bytes))}?=`;
+}
+
+/** A filename that can sit in a quoted MIME parameter as it is: printable ASCII with no quote or backslash. */
+const PLAIN_PARAMETER = /^[\x20\x21\x23-\x5b\x5d-\x7e]*$/;
+
+/** RFC 5987 / RFC 2231 `attr-char`: what a `*=` parameter carries unencoded. Everything else is `%XX`. */
+const ATTR_CHAR = /[A-Za-z0-9!#$&+\-.^_`|~]/;
+
+/** A value as an RFC 5987 / RFC 2231 extended parameter's payload: UTF-8, percent-encoded outside `attr-char`. */
+export function percentEncoded(value: string): string {
+  let out = "";
+  for (const char of value) {
+    if (ATTR_CHAR.test(char)) {
+      out += char;
+      continue;
+    }
+    for (const byte of new TextEncoder().encode(char)) out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+  }
+  return out;
+}
+
+/** Whether a filename can go in `filename="…"` unchanged, which is also whether a download needs `filename*`. */
+export function isPlainFilename(name: string): boolean {
+  return PLAIN_PARAMETER.test(name);
+}
+
+/**
+ * How many characters of a percent-encoded name go on one continuation line. RFC 2231 §3 continuations
+ * exist so a long parameter fits RFC 5322's lines; 54 keeps the longest, ` filename*0*=utf-8''` plus the
+ * segment and its `;`, within the 78-character SHOULD. Arithmetic on the RFCs, not a measurement.
+ */
+const SEGMENT_CHARS = 54;
+
+/**
+ * A parameter carrying a filename, for `Content-Type` (`name`) or `Content-Disposition` (`filename`).
+ *
+ * A plain name renders as `key="name"`, exactly as every part sealed before 29 September 2026 did, so an
+ * already sealed manifest sends the bytes it was approved with. Anything else renders twice: an RFC 2047
+ * encoded word in the quoted `key="…"`, which Outlook and most clients read, and RFC 2231's `key*=utf-8''…`,
+ * which a client that knows it prefers (§4), split into `key*0*`, `key*1*` … continuations when long. The
+ * name was `safeFilename`'s output before, which turned `合同.pdf` into `__.pdf` for the recipient.
+ */
+function filenameParameters(key: string, name: string): string {
+  if (isPlainFilename(name)) return `${key}="${name}"`;
+  // Folded inside the quotes, as a subject is: one word of a 253-byte name would be 352 characters against RFC
+  // 2047's 75. RFC 5322 §3.2.4 allows folding whitespace in a quoted string, and the decoder drops it between
+  // words. The first word shares its line with the field name and media type, so that line runs to about 111
+  // characters for a PDF (121 for a spreadsheet's long media type, seen end to end on 30 September 2026): past
+  // RFC 5322's 78 SHOULD, far inside its 998 MUST; every line after it is within 78.
+  const fallback = `${key}="${encodedWords(name)}"`;
+  const encoded = percentEncoded(name);
+  if (encoded.length <= SEGMENT_CHARS) return `${fallback};\r\n ${key}*=utf-8''${encoded}`;
+  const segments: string[] = [];
+  for (let at = 0; at < encoded.length;) {
+    let end = Math.min(at + SEGMENT_CHARS, encoded.length);
+    // Never split a %XX triplet across two segments. `>=` in the first clause survives `mutants` and is
+    // harmless: a triplet ending exactly at `end` is whole, and moving `end` back only shortens a segment.
+    const lastPercent = encoded.lastIndexOf("%", end - 1);
+    if (lastPercent > end - 3 && lastPercent >= at) end = lastPercent;
+    segments.push(encoded.slice(at, end));
+    at = end;
+  }
+  return [fallback, ...segments.map((segment, i) => `${key}*${i}*=${i === 0 ? "utf-8''" : ""}${segment}`)]
+    .join(";\r\n ");
+}
+
+/**
+ * The bytes a filename may have: 255, the file-name limit of the file systems a recipient saves to (POSIX
+ * `NAME_MAX` on ext4 and APFS; NTFS counts 255 UTF-16 units, which 255 UTF-8 bytes never exceed). A fixed
+ * platform value, not a measurement. Refused past it rather than cut, for the reason control characters are.
+ */
+export const MAX_FILENAME_BYTES = 255;
+
+/**
+ * Characters that make a shown name lie about itself: control characters, every bidirectional control
+ * (`Bidi_Control`: U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), and the line and paragraph
+ * separators. `invoice<U+202E>fdp.exe` displays as `invoiceexe.pdf`, a name that shows one extension and has
+ * another; U+2028 breaks a name across lines wherever it is shown. By Unicode property rather than listed by hand,
+ * which is how U+061C was missed. One list for the seal (`attachmentName`) and the download (`undisguised`).
+ */
+const DISGUISING = String.raw`\p{Cc}\p{Bidi_Control}\p{Zl}\p{Zp}`;
+
+/** What a filename may not carry: the characters above, and a path separator, because a name is not a path. */
+const NOT_IN_A_FILENAME = new RegExp(`[${DISGUISING}/\\\\]`, "u");
+
+/** A name less the characters that would make it lie about itself: for a name somebody else wrote. */
+export function undisguised(name: string): string {
+  return name.replace(new RegExp(`[${DISGUISING}]`, "gu"), "");
+}
+
+/**
+ * An attachment's name as the author gave it, in NFC, or a refusal.
+ *
+ * Kept as written: it is what the recipient sees and what the seal records, and the header builder encodes
+ * it. Refused, never altered, when it carries a character above or runs past `MAX_FILENAME_BYTES`, for ADR
+ * 35's reason: a send whose parts were quietly renamed is not the send its author sealed.
+ */
+export function attachmentName(field: string, candidate: string): string {
+  const name = candidate.normalize("NFC");
+  const bad = NOT_IN_A_FILENAME.exec(name);
+  /*
+   * `=?` opens an RFC 2047 encoded word, and a plain name is sent as it is: `=?utf-8?Q?invoice=2Ejs?=` has no
+   * dot, so the judge sees no extension and calls it plain, and a recipient's client decodes it and saves
+   * it under a .js name. Refused for `bad`'s reason: the name judged would not be the name received.
+   */
+  const word = name.includes("=?");
+  if (name.trim() === "" || bad !== null || word) {
+    throw unprocessable("E_ATTACHMENT_NAME_INVALID", {
+      what: bad !== null
+        ? `${field} ${JSON.stringify(name)} contains U+${bad[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`
+        : word ? `${field} ${JSON.stringify(name)} contains "=?", which a recipient's client decodes as an encoded word`
+        : `${field} has no name`,
+      why: "a name travels in a MIME header and is shown to the recipient; control and direction characters " +
+        "can break the header or disguise the file's type, an encoded word is decoded into a different name, " +
+        "and a path separator is not part of a name",
+      fix: "rename the file without that character",
+    });
+  }
+  const bytes = new TextEncoder().encode(name).byteLength;
+  if (bytes > MAX_FILENAME_BYTES) {
+    throw unprocessable("E_ATTACHMENT_NAME_TOO_LONG", {
+      what: `${field} is ${bytes} bytes long; a name may be ${MAX_FILENAME_BYTES}`,
+      why: "the file systems a recipient saves to refuse a longer name, and cutting it would send a different name",
+      fix: "rename the file shorter",
+    });
+  }
+  return name;
 }
 
 /**
@@ -143,6 +309,17 @@ export class HeaderBlock {
     }
     if (CONTROL.test(value)) throw injectionError(name);
     this.#fields.push(`${name}: ${encodeIfNeeded(value)}`);
+    return this;
+  }
+
+  /**
+   * A field whose value ends in a filename parameter: `Content-Type` with `name`, `Content-Disposition` with
+   * `filename`. The name is encoded here (`filenameParameters`), so no caller interpolates one into a value.
+   */
+  addWithFilename(name: string, value: string, key: "name" | "filename", filename: string): this {
+    if (CONTROL.test(filename)) throw injectionError(name);
+    this.add(name, value);
+    this.#fields[this.#fields.length - 1] += `; ${filenameParameters(key, filename)}`;
     return this;
   }
 

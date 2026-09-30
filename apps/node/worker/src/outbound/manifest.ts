@@ -17,7 +17,7 @@ import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
 import { domainOf, type Outcome } from "../policy.ts";
 import { stagePolicy } from "../governed.ts";
 import { domainPaused } from "./recheck.ts";
-import { HeaderBlock, normalizeAddress, safeFilename } from "./headers.ts";
+import { attachmentName, HeaderBlock, normalizeAddress, safeFilename } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
 
@@ -767,13 +767,17 @@ export async function sealManifest(
   const judged = attachments.map((one, ordinal) => ({
     ...one,
     ordinal,
-    // The media type is a token/token (RFC 2045 §5.1) or it is `application/octet-stream`; the name goes
-    // through `safeFilename` so a quote, a backslash or a control byte cannot reach the MIME parameter.
-    // Both were interpolated raw (the 17 September audit): no header injection, since `HeaderBlock` refuses
-    // CR/LF, but a malformed part a recipient's client resolves however it likes.
+    // The media type is a token/token (RFC 2045 §5.1) or it is `application/octet-stream`. The name is kept as
+    // the author gave it (NFC), refused if it carries a control or direction character or is too long, and
+    // encoded only when the header is built (`HeaderBlock.addWithFilename`). It went through `safeFilename`
+    // until 29 September 2026, which sent `合同.pdf` as `__.pdf` and recorded that as the evidence.
     contentType: MEDIA_TYPE.test(one.contentType) ? one.contentType.toLowerCase() : "application/octet-stream",
-    filename: safeFilename(one.filename.replace(/\.[^.]*$/, ""), extensionOf(one.filename)),
-    verdict: classifyAttachment(one.filename, one.content),
+    filename: attachmentName(`attachment ${ordinal}`, one.filename),
+    // What `send_attachments.filename` holds, which is what the previous version renders, raw, if it dispatches
+    // this manifest after a rollback: `safeFilename`'s output, as every row before 29 September 2026 held
+    // (`migrations/0072_send_attachment_author_name.sql`). This version renders `filename` above.
+    previousFilename: safeFilename(one.filename.replace(/\.[^.]*$/, ""), extensionOf(one.filename)),
+    verdict: classifyAttachment(one.filename.normalize("NFC"), one.content),
   }));
   const dangerous = judged.filter((one) => DANGEROUS.has(one.verdict));
   // The mailbox's own limits (0065), the same judge filing uses. A mailbox that will not accept a 20 MB
@@ -838,9 +842,10 @@ export async function sealManifest(
     const stored = await putEvidence(env, sentObjectKey(orgId, manifestId, `att-${one.ordinal}`), one.content);
     attachmentRows.push(env.CATALOG.prepare(
       `INSERT INTO send_attachments
-         (id, org_id, manifest_id, ordinal, filename, content_type, bytes, sha256, blob_key, verdict, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(ctx.id("sat"), orgId, manifestId, one.ordinal, one.filename, one.contentType,
+         (id, org_id, manifest_id, ordinal, filename, author_filename, content_type, bytes, sha256, blob_key,
+          verdict, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("sat"), orgId, manifestId, one.ordinal, one.previousFilename, one.filename, one.contentType,
       one.content.byteLength, stored.plaintextSha256, stored.blobKey, one.verdict, at));
   }
 
@@ -1165,11 +1170,13 @@ export async function renderRfc822(
   /*
    * Attachments (0060), read back as evidence and hashed against the row before they leave — the same check
    * the recheck makes on an approved send, made here on every send because these bytes are about to be
-   * sent. Base64 in 76-column lines (RFC 2045 §6.8); the filename goes through `safeFilename`'s rule via
-   * the header builder's own refusal of control characters, and is RFC 2047-encoded when it needs to be.
+   * sent. Base64 in 76-column lines (RFC 2045 §6.8); the filename is encoded by the header builder
+   * (`HeaderBlock.addWithFilename`): plain when it can be, RFC 2047 and RFC 2231 when it cannot.
    */
   const parts = await env.CATALOG.prepare(
-    "SELECT filename, content_type, sha256, blob_key FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal",
+    // The author's name, or, on a row the previous version sealed, the `safeFilename` output it stored (0072).
+    `SELECT COALESCE(author_filename, filename) AS filename, content_type, sha256, blob_key
+       FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal`,
   ).bind(manifestId).all<{ filename: string; content_type: string; sha256: string; blob_key: string }>();
   const attachmentParts: Bytes[] = [];
   for (const part of parts.results) {
@@ -1183,10 +1190,11 @@ export async function renderRfc822(
     }
     attachmentParts.push(
       new HeaderBlock()
-        // Both values were validated at the seal (`MEDIA_TYPE`, `safeFilename`) and stored so; rendered as stored.
-        .add("Content-Type", `${part.content_type}; name="${part.filename}"`)
+        // Both values were validated at the seal (`MEDIA_TYPE`, `attachmentName`) and stored so; the name is
+        // encoded by the builder, as a plain `name="…"` when it can be, which is every name sealed before.
+        .addWithFilename("Content-Type", part.content_type, "name", part.filename)
         .add("Content-Transfer-Encoding", "base64")
-        .add("Content-Disposition", `attachment; filename="${part.filename}"`)
+        .addWithFilename("Content-Disposition", "attachment", "filename", part.filename)
         .bytes(base64Lines(bytes)),
     );
   }

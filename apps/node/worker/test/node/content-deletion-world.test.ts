@@ -145,6 +145,18 @@ const SITES: Site[] = [
       "destroys anything a hold preserves: the message, its bytes and its metadata are untouched.",
   },
   {
+    file: "src/search.ts",
+    target: "message_search",
+    content: false,
+    why:
+      "A subject-index row in an older form, dropped by `reindexMessages` in the same batch that writes the " +
+      "message's current row (0071's form column). Not content: `message_search` holds a copy of `subject` " +
+      "and `from_addr`, which stay on `messages` untouched, rewritten through `searchText`, and the batch " +
+      "writes the replacement from those columns, so nothing is lost and there is no moment with neither " +
+      "row. No legal-hold guard, because nothing here destroys anything a hold preserves: the message, its " +
+      "bytes and its metadata are untouched, and a held message is re-indexed like any other.",
+  },
+  {
     file: "src/recovery.ts",
     target: "recovery_codes",
     content: false,

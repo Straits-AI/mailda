@@ -18,7 +18,7 @@ import {
   readableSubjects,
 } from "../src/authz-read.ts";
 import { sponsorTerm } from "../src/delegation.ts";
-import { indexBody, indexMessage } from "../src/search.ts";
+import { bodyIndexText, indexBody, indexMessage } from "../src/search.ts";
 import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
@@ -457,9 +457,9 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
       `${RECEIPT}@example.net`, ctx.id("thr"), "Quarterly restructuring", "x@y.example", at, at,
       RECEIPT, at, `${RECEIPT}@example.net`, ctx.id("cnv")).run();
     await testEnv.CATALOG.prepare("DELETE FROM message_search WHERE message_id = ?").bind(messageId).run();
-    await indexMessage(testEnv, messageId).run();
+    await testEnv.CATALOG.batch(indexMessage(testEnv, messageId, { subject: "Quarterly restructuring", from: "x@y.example" }));
     // `cabotage` is in no subject, so a match on it can only have come through the body arm.
-    await indexBody(testEnv, messageId, "cabotage schedules attached", 0).run();
+    await indexBody(testEnv, messageId, bodyIndexText("cabotage schedules attached"), 0).run();
   }
 
   async function pageFor(who: { orgId: string; userId: string; delegatorUserId?: string | null }, q: string | null = null) {

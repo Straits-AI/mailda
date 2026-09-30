@@ -267,6 +267,24 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
   two backlogs separately. A body that cannot be parsed is never body-searchable; one whose read failed is
   retried with backoff, and `mailda search repair` or the `body_index_failed` finding on the Doctor screen lists
   them with the reason each failed and requeues chosen messages.
+- **Chinese, Japanese and Korean are found by any part of a sentence.** `发票` finds `关于发票的问题`, `123` finds
+  `订单123`, and `abc` finds full-width `ＡＢＣ`. Runs are indexed as overlapping character pairs, which costs about
+  3.8 times the index storage for Chinese text and nothing for English
+  ([receipt](./docs/receipts/cjk-search-bigrams.md)). Thai, Lao, Khmer and Myanmar are not yet covered.
+- **A search may carry at most 12 words, and at most 128 index terms; more is refused, not cut.** A run of
+  Chinese, Japanese or Korean without spaces counts as one word and about one term a character, so a pasted
+  paragraph is refused with `E_SEARCH_TOO_LONG` rather than searched slowly.
+- **Mail indexed before this release is re-indexed on its own, including mail the previous version indexes
+  during a deploy or after a rollback.** Each message records the form its search rows were written in, and the
+  backfills rewrite whatever is older, subjects 500 a minute and bodies 25. Meanwhile such mail is found by its
+  words in Latin and other spaced scripts, but by Chinese, Japanese or Korean only when the search is the first
+  one or two characters of a run, and `doctor`'s `search_index_backlog` and `body_index_backlog` count it. After a
+  rollback the previous version finds the re-indexed mail the same limited way until the code rolls forward.
+- **A restored Node rebuilds both search indexes.** `mailda backup` leaves the indexes out (they are derived) and
+  ends its dump by marking every message not yet indexed, so the backfills rebuild them from the evidence.
+- **A very long body is searchable only in its first 2,000,000 bytes of indexed text** (D1's limit on one
+  string; a Chinese body passes it at about 300,000 characters). Words after that point are not found, and
+  `doctor`'s `body_index_partial` counts such messages and names the limit and the largest size.
 - **A row's preview and sender name appear on older mail once a backfill reaches it**, up to
   `PREVIEW_BACKFILL_LIMIT` (`src/preview.ts`) on each scheduled pass that finds the body and authentication
   backfills idle; `doctor` reports the backlog (`preview_backlog`). A row the

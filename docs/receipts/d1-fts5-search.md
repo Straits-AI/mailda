@@ -18,6 +18,24 @@ values:
 `dc8d1b7d…`, 27 August 2026, wrangler 4.118.0. Every probe table was dropped afterwards and its absence
 confirmed by reading `sqlite_master`.
 
+## Correction, 30 September 2026: the contentless index discloses the token sequence, not a bag of words
+
+The section below says a D1 dump of the contentless body index discloses *"which words appear in which
+message"* and *"not the message"*, and that the second copy *"is not a copy of the content"*. That is too
+small. `message_body_search` is created without a `detail=` option, so it is FTS5's default, `detail=full`,
+which stores every token's **offset** as well as its presence. `fts5vocab(message_body_search, 'instance')`
+reads them back as `(term, doc, col, offset)`, so a dump yields each body's tokens **in order**: the text
+with punctuation and case removed. That is most of the message.
+
+`searchText` (search form 1, 30 September 2026) makes it plainer for Chinese, Japanese and Korean: their runs are indexed as overlapping
+bigrams, and a chain of bigrams is the original characters, so such a body reads back as its text.
+`apps/node/worker/test/message-search-cjk.test.ts` reconstructs one from the instance view and asserts it.
+
+What remains true: `SELECT body` returns null, there is no `_content` table, and `snippet()` has nothing to
+cut from. What is not: that the disclosure is tokens *and not text*. `detail=column` or `detail=none` would
+store less (no offsets, so no order) at the price of phrase queries — which the CJK search depends on, since
+a typed run is a phrase of bigrams. That trade is ADR 28's to decide and is not changed here.
+
 These five facts decide whether Mailda can have full-text search at all, and, more importantly, how much
 of ADR 28's guarantee it has to give up to get it. The answer to the second question turned out to be much
 less than expected, which is why this was measured before the design was written rather than after.

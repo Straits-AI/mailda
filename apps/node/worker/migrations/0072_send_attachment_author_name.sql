@@ -1,0 +1,14 @@
+-- The name an attachment's author gave it, beside the name the previous version can render.
+-- phase: expand
+--
+-- Until 29 September 2026 `send_attachments.filename` held `safeFilename`'s output, `[A-Za-z0-9._-]` only, and
+-- the renderer of that time interpolates it into `name="…"` and `filename="…"` with no encoding of its own. A
+-- manifest is rendered when it is dispatched, not when it is sealed (an undo window, an approval, a schedule),
+-- so a manifest this version seals can be rendered by the previous one after a rollback (Blueprint §11A). Had
+-- `filename` taken the author's name, that renderer would send a name that closes the parameter's quote early, so the
+-- recipient reads a .js name beside a verdict judged on the .pdf the name ends in, and base64 a whole `Content-Type` holding `合同.pdf` into one unparseable word.
+--
+-- So `filename` keeps holding what that renderer can interpolate safely, and the author's name (NFC, refused
+-- rather than altered: `attachmentName` in `src/outbound/headers.ts`) is here. This version renders
+-- `COALESCE(author_filename, filename)`: NULL on every row sealed before, whose `filename` renders as it did.
+ALTER TABLE send_attachments ADD COLUMN author_filename TEXT;

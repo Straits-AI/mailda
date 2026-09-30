@@ -244,13 +244,17 @@ describe("every read of the search index names the organization it is reading fo
      * hundred lines apart, in different files, and diverged for four months because nothing ever put them
      * side by side.
      *
-     * **This was one file and is now two, and the second one is not a relaxation.** `search-backfill.ts`
-     * exists because `doctor-meter-honesty.test.ts` forbids `.batch(` in any file on the doctor path — the
-     * cost meter counts a batch as zero executions — and `doctor` imports the counting functions from
+     * **It is one file again.** The subject backfill was an `INSERT … SELECT` of its own in
+     * `search-backfill.ts`; since 0071 the index holds `searchText` of the subject, which SQL cannot compute,
+     * so the backfill writes through `indexMessage` like ingest, and both writers are in `search.ts`.
+     *
+     * The split between the two files remains: `search-backfill.ts` exists because
+     * `doctor-meter-honesty.test.ts` forbids `.batch(` in any file on the doctor path — the cost meter
+     * counts a batch as zero executions — and `doctor` imports the counting functions from
      * `search.ts`. `decidersByMailbox` was split out for the same guard, and that guard's own comment records
      * it, so this is the established shape rather than a workaround.
      *
-     * What the rule still holds is that there is no **third** writer. And the lifetime rule survives in the
+     * What the rule holds is that `search.ts` is the only writer. And the lifetime rule survives in the
      * form that matters: when message deletion arrives, the index delete belongs beside `indexBody` in
      * `search.ts`, where the insert it has to mirror is visible — not beside the message delete, where the
      * index is out of sight.
@@ -259,7 +263,7 @@ describe("every read of the search index names the organization it is reading fo
       const source = readFileSync(join(workerDir, file), "utf8");
       return new RegExp(`INSERT (INTO|OR REPLACE INTO)\\s+(${INDEX}|${BODY_INDEX})\\b`).test(source);
     });
-    expect(writers.sort()).toEqual(["src/search-backfill.ts", "src/search.ts"]);
+    expect(writers.sort()).toEqual(["src/search.ts"]);
 
     /*
      * And the split is only justified while the reason for it holds. If `search.ts` ever gains a `.batch(`,

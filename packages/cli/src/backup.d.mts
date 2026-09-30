@@ -85,3 +85,6 @@ export function exportableTables(sqliteMaster: Array<{ name?: unknown; sql?: unk
  */
 /** Whether a restore must rebuild the search index — the one derivative the export leaves out. */
 export function needsIndexRebuild(sqliteMaster: Array<{ name?: unknown; sql?: unknown }>): boolean;
+
+/** The statement `catalog.sql` ends with when the search indexes were left out, or `null` when none is needed. */
+export function searchIndexReset(sqliteMaster: Array<{ name?: unknown; sql?: unknown }>): string | null;

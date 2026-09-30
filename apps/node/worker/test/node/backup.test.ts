@@ -9,7 +9,7 @@ import { withoutComments } from "../without-comments.ts";
 
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
 const {
-  backupIndex, checkBackup, exportableTables, needsIndexRebuild, sha256Of, whyAdminCannotExist,
+  backupIndex, checkBackup, exportableTables, needsIndexRebuild, searchIndexReset, sha256Of, whyAdminCannotExist,
 } = backup;
 
 /**
@@ -161,6 +161,20 @@ describe("which tables a D1 export may ask for", () => {
     // create them — and only their contents are missing.
     expect(needsIndexRebuild(MASTER)).toBe(true);
     expect(needsIndexRebuild([{ name: "users", sql: "CREATE TABLE users (id TEXT)" }])).toBe(false);
+  });
+
+  it("ends the dump by marking every message not yet indexed, when the source records the form (0071)", () => {
+    /*
+     * The export carries `messages` with its form stamps and leaves the indexes out, so without this a restored
+     * Node's backfills select nothing and search stays empty while `doctor` calls both indexes complete. The
+     * rebuild itself is proved in `test/message-search-cjk.test.ts`; this is which dumps get the statement.
+     */
+    const stamped = { name: "messages", sql: "CREATE TABLE messages (id TEXT, search_index_form INTEGER, body_index_form INTEGER)" };
+    expect(searchIndexReset([...MASTER, stamped])).toBe("UPDATE messages SET search_index_form = 0, body_index_form = 0;");
+    // A source from before 0071 has no stamps to clear, and the statement would name columns it lacks.
+    expect(searchIndexReset([...MASTER, { name: "messages", sql: "CREATE TABLE messages (id TEXT)" }])).toBeNull();
+    // Nothing excluded, nothing to rebuild.
+    expect(searchIndexReset([stamped])).toBeNull();
   });
 });
 

@@ -484,7 +484,7 @@ export class GeneratedClient extends Transport {
    *
    * @param query.mailbox Only this mailbox's mail. Omit for every mailbox you may read.
    *
-   * @param query.q Words that must all appear in the subject or sender address. The last word matches as a prefix, so a part-typed word narrows. Not a query language: operators are read as words.
+   * @param query.q Words that must all appear in the subject or sender address, or in the body where you may read content. The last word matches as a prefix, so a part-typed word narrows. Chinese, Japanese and Korean match any part of a run, and a run without spaces counts as one word. Not a query language: operators are read as words. At most 12 words; more is refused with E_SEARCH_TOO_MANY_WORDS rather than cut. At most search.max_query_terms index terms in all, where each character of a Chinese, Japanese or Korean run is about one; more is refused with E_SEARCH_TOO_LONG.
    *
    * @param query.since Only mail accepted at or after this point: a date (2026-09-01), which means from the start of that day UTC, or a full instant (2026-09-01T08:30:00.000Z). When this Node accepted it, never the sender's Date header, which the sender chooses.
    *

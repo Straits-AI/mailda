@@ -12,10 +12,25 @@ values:
   message.metadata.bytes_per_message: 2089
   message.metadata.bytes_per_extra_delivery: 432
   message.metadata.bytes_per_filed_place: 391
-  shard.plan_warn_messages: 3597986
-  shard.plan_stop_messages: 4368983
-  shard.plan_route_messages: 4625982
 ---
+
+
+## Withdrawn 30 September 2026: the shard thresholds, until migration 0071 is measured
+
+Migration 0071 adds three columns to `messages` (`search_index_form`, `body_index_form`,
+`body_index_cut_from_bytes`) and two indexes with an entry per row (`msg_search_index_form`,
+`msg_body_index_form`), which is this receipt's `stale_when`. It landed without this measurement: the measurement
+makes a scratch database in the account the Node runs in, and the change was made where no Cloudflare write was
+allowed. So, as when 0067 and 0068 landed on 26 September, `shard.plan_warn_messages`, `shard.plan_stop_messages`
+and `shard.plan_route_messages` are **withdrawn** rather than carried on a figure known to be low, and nothing in
+the code reads them. The three `message.metadata.*` figures stay, and they describe the schema before 0071.
+
+**Not a measurement, and not used as one:** two integer columns holding 1 on a settled row cost no payload (SQLite
+serial type 9) and a header byte each, the NULL cut column one header byte, and the two index entries roughly 10
+and 20 bytes, so about 35 bytes on 2,089 a message (about 1.7 %), which would lower each threshold by about as
+much. The remeasure is one run of `apps/node/worker/scripts/measure-message-bytes.mjs`, whose schema already
+carries 0071's shape (`test/node/byte-measurement-corpus.test.ts` holds it to the drift guard's); then restore the
+three values here, `pnpm receipts`, and classify them again in `test/node/budget-plan-scope.test.ts`.
 
 
 ## Re-measured 27 September 2026: row projections, a person's places, and ids at their true width
