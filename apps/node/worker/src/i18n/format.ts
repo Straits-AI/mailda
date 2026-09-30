@@ -45,7 +45,7 @@ const meets = (a: string | undefined, b: string | undefined): boolean =>
 
 /**
  * The Chinese register's one space between Han and a Latin letter or digit (`docs/i18n.md`), where a filled value
- * meets its template: `前往{route}` with `Butler` is `前往 Butler`. The catalog check can see only the template, so
+ * meets its template: `{name}已发布` with `lead-response` is `lead-response 已发布`. The catalog check can see only the template, so
  * the join is made here. Only a template with Han in it is touched, so English output is byte-identical, and never
  * inside the value, which may be somebody's words.
  */

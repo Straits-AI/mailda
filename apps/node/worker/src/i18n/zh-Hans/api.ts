@@ -20,7 +20,7 @@ export const api: Twin<typeof source> = {
   "api.grant.approval.decide": "对此邮箱的邮件作出审批决定，但不能审批自己的。",
   "api.grant.message.export": "将一封邮件的副本带出节点。",
   "api.grant.ediscovery.export": "针对一个事项执行批量导出。",
-  "api.grant.org.admin": "管理组织：规则、Butler、访问权限、法律保全。",
+  "api.grant.org.admin": "管理组织：规则、管家、访问权限、法律保全和隔离。",
 
   "api.agent.mailbox.metadata.read": "查看有哪些邮件——发件人、主题、时间。不含邮件本身。",
   "api.agent.mailbox.content.read": "阅读邮件本身，包括原始字节。",

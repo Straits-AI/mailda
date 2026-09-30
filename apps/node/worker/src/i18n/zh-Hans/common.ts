@@ -9,7 +9,7 @@ export const common: Twin<typeof source> = {
   "route./rules": "规则",
   "route./people": "成员",
   "route./matters": "事项",
-  "route./butlers": "Butler",
+  "route./butlers": "管家",
   "route./agents": "代理",
   "route./limits": "限额",
   "route./outbox": "发件箱",
@@ -19,7 +19,7 @@ export const common: Twin<typeof source> = {
   "route./setup": "配置",
   "route./drafts": "草稿",
   "route./archive": "归档",
-  "route./trash": "废纸篓",
+  "route./trash": "回收站",
 
   "route./settings": "设置",
   "title.route": "{screen} · {brand}",

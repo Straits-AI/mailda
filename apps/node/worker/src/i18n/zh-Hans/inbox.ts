@@ -9,17 +9,17 @@ import type { Twin } from "../catalog.ts";
 export const inbox: Twin<typeof source> = {
   "inbox.moved.inbox": "已移到收件箱。",
   "inbox.moved.archive": "已归档。",
-  "inbox.moved.trash": "已移到废纸篓。",
+  "inbox.moved.trash": "已移到回收站。",
   "inbox.movedBack.inbox": "已移回收件箱。",
   "inbox.movedBack.archive": "已移回归档。",
-  "inbox.movedBack.trash": "已移回废纸篓。",
+  "inbox.movedBack.trash": "已移回回收站。",
   "inbox.alreadyArchived": "已在归档中。",
   "inbox.undo": "撤销",
 
   "inbox.search.label": "搜索邮件",
   "inbox.search.submit": "搜索",
   "inbox.search.clear": "清除搜索",
-  "inbox.search.found": "已在所有邮件（包括归档和废纸篓）中搜索发件人、主题和正文 · {n} 条匹配",
+  "inbox.search.found": "已在所有邮件（包括归档和回收站）中搜索发件人、主题和正文 · {n} 条匹配",
   "inbox.search.capped": "最匹配的 {n} 条结果——换用更具体的词语可看到其他邮件",
   "inbox.search.none":
     "没有邮件与这些词语匹配。每个词都必须出现，而且必须出现在同一处——主题中的词和正文中的词不会一起匹配。只有在你可以读取内容的邮箱中才会搜索正文；其他邮箱只搜索主题和发件人。",
@@ -68,13 +68,13 @@ export const inbox: Twin<typeof source> = {
 
   "inbox.label.showing": "正在显示标签为 {label} 的邮件。",
   "inbox.label.showAll": "显示全部",
-  "inbox.trash.note": "废纸篓会保留邮件，直到你把它们移回。这里的邮件不会被删除。",
+  "inbox.trash.note": "回收站会保留邮件，直到你把它们移回。这里的邮件不会被删除。",
 
   "inbox.act.reply": "回复",
   "inbox.act.replyAll": "全部回复",
   "inbox.act.forward": "转发",
   "inbox.act.archive": "归档",
-  "inbox.act.trash": "移到废纸篓",
+  "inbox.act.trash": "移到回收站",
   "inbox.act.unread": "标为未读",
   "inbox.act.read": "标为已读",
   "inbox.act.next": "下一封邮件",
@@ -107,7 +107,7 @@ export const inbox: Twin<typeof source> = {
   "inbox.empty.unread": "收件箱中没有未读邮件。",
   "inbox.empty.mine": "收件箱中没有由你处理的工单。",
   "inbox.empty.archive": "没有已归档的邮件。",
-  "inbox.empty.trash": "废纸篓是空的。",
+  "inbox.empty.trash": "回收站是空的。",
   "inbox.empty.inbox": "你的收件箱中没有可见的邮件。邮件能否到达本节点是另一个问题——诊断的入站路由检查可以回答它。",
   "inbox.empty.routing": "检查入站路由",
 

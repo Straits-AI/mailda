@@ -19,7 +19,7 @@ export const palette: Twin<typeof source> = {
   "palette.alias./rules": "rules gz guize",
   "palette.alias./people": "people cy chengyuan",
   "palette.alias./matters": "matters sx shixiang",
-  "palette.alias./butlers": "butlers",
+  "palette.alias./butlers": "butlers gj guanjia",
   "palette.alias./agents": "agents dl daili",
   "palette.alias./limits": "limits xe xiane",
   "palette.alias./outbox": "outbox fjx fajianxiang",
@@ -29,6 +29,6 @@ export const palette: Twin<typeof source> = {
   "palette.alias./setup": "setup pz peizhi",
   "palette.alias./drafts": "drafts cg caogao",
   "palette.alias./archive": "archive gd guidang",
-  "palette.alias./trash": "trash fzl feizhilou",
+  "palette.alias./trash": "trash hsz huishouzhan",
   "palette.alias./settings": "settings sz shezhi",
 };

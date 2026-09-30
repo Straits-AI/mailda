@@ -4169,3 +4169,16 @@ none by the Japanese cut, none synthesised. And `scripts/axe.mjs` and `scripts/s
 `--locale <tag>`, so the preview can be swept by the same hand run as English. On a local Node with seven messages,
 both locales: axe found no AA violation in 145 views (English) and 146 (Chinese), and spacing no pair under 8px in 132
 views each.
+
+## The owner's review of the Chinese words (30 September 2026)
+
+**The owner answered every glossary row and every reviewer flag on a review page, one recorded decision each**:
+90 decisions, 86 confirming and four changing a word. Butler and Butlers are now **管家** (Latin Butler is an avoided
+form in zh-Hans; the CLI noun `butler` stays Latin), and Trash is **回收站** (废纸篓 joined `NEVER`, so no sentence
+keeps it). 79 of 81 rows carry the owner's confirmation (`CONFIRMED` in `glossary.ts`); the flags adopted changed the
+rail's count to 由你处理, Health's outbound area to "Outbound mail" / 出站邮件, and named the holds `org.admin` governs.
+**Two rows are held, not confirmed.** passkey: the owner asked for 密钥, which already names cryptographic keys here
+(密钥恢复副本, the key vault) where Apple and Google say 通行密钥, so it stays 通行密钥 and proposed while the owner
+is asked once; its two keys are now bound, so a released zh-Hans cannot ship until it is answered. Move to Trash:
+confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, which the owner has not seen; it rides on
+the same question. `docs/i18n.md` has the detail.

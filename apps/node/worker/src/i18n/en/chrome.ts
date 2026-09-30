@@ -73,7 +73,7 @@ export const chrome = {
   "chrome.notice.grant": "grant {grant}",
 
   "health.area.inbound": "Inbound routing",
-  "health.area.outbound": "Outbound delivery",
+  "health.area.outbound": "Outbound mail",
   "health.area.worker": "Worker and keys",
   "health.area.storage": "Database and storage",
   "health.area.automation": "Automation",

@@ -12,7 +12,7 @@ export const chrome: Twin<typeof source> = {
   "chrome.group.admin": "管理",
   "chrome.row.automations": "自动化流程",
   "chrome.rail.unparsed": "{n} 封未解析",
-  "chrome.rail.mailbox": "{unclaimed} 个未认领，{claimed} 个处理中，{mine} 个是我的",
+  "chrome.rail.mailbox": "{unclaimed} 个未认领，{claimed} 个处理中，{mine} 个由你处理",
   "chrome.rail.mine": "我的 {n}",
   "chrome.drawer.open": "打开导航",
   "chrome.drawer.close": "关闭导航",
@@ -57,7 +57,7 @@ export const chrome: Twin<typeof source> = {
   "chrome.notice.grant": "授权 {grant}",
 
   "health.area.inbound": "入站路由",
-  "health.area.outbound": "出站投递",
+  "health.area.outbound": "出站邮件",
   "health.area.worker": "Worker 与密钥",
   "health.area.storage": "数据库与存储",
   "health.area.automation": "自动化",
