@@ -1,0 +1,63 @@
+<section class="ledger" aria-label="Doctor">
+<header class="ledger-head">
+<h1>Doctor</h1>
+<span class="state verdict-refuse">refuse</span>
+</header>
+<p class="notice dim mono">claimed · read [clock]</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Check</th>
+<th scope="col">State</th>
+<th scope="col">Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">d1_reachable</td>
+<td>
+<span class="state delivery-accepted">ok</span>
+</td>
+<td>D1 answered.</td>
+</tr>
+<tr>
+<td class="mono">transport_adapters</td>
+<td>
+<span class="state severity-refuse">refuse</span>
+</td>
+<td>No adapter can send. <span class="dim">Fix: Supply credentials below.</span>
+</td>
+</tr>
+<tr>
+<td class="mono">queue_backlog</td>
+<td>
+<span class="state severity-degraded">degraded</span>
+</td>
+<td>12 messages waiting.</td>
+</tr>
+<tr>
+<td class="mono">domain_verified</td>
+<td>
+<span class="state severity-report">report</span>
+</td>
+<td>Nothing is verified yet.</td>
+</tr>
+</tbody>
+</table>
+<section class="transport" aria-label="Sending credentials">
+<h2>Sending credentials</h2>
+<p class="dim">Sends go through <span class="mono">cloudflare-rest</span>. There is no EMAIL binding, so reconstructed sends go over the REST API for account acc_123. Authored sends are refused: that API builds its own MIME, so the bytes sent would not be the bytes recorded.</p>
+<label class="field-row" for="transport-account">
+<span>Cloudflare account id</span>
+<input id="transport-account" class="mono" value="">
+</label>
+<label class="field-row" for="transport-token">
+<span>Email Sending API token</span>
+<input id="transport-token" class="mono" type="password" value="">
+</label>
+<p class="dim">Needs the <span class="mono">Email Sending: Edit</span> permission. It is encrypted on arrival and no route returns it — to change it, supply a new one.</p>
+<p>
+<button class="quiet" type="button" disabled="">Save credentials</button>
+</p>
+</section>
+</section>

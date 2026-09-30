@@ -142,13 +142,21 @@ describe("the glossary", () => {
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
     const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
-    // Every row is confirmed since the owner answered the two held ones on 1 October 2026.
-    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
+    // Every row the owner reviewed is confirmed (the two held ones answered on 1 October 2026). What would stop
+    // zh-Hans being released today is exactly the rows added since, on every key they govern.
+    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([
+      "zh-Hans send.reason.policy_denied: send.denied is proposed, not confirmed",
+      "zh-Hans send.reason.approval_denied: send.denied is proposed, not confirmed",
+      "zh-Hans composer.sendNote: recall is proposed, not confirmed",
+      "zh-Hans composer.how.body: recall is proposed, not confirmed",
+      "zh-Hans composer.bodyUnavailable.unreadable: vault is proposed, not confirmed",
+    ]);
     // Put back to proposed, passkey is reported on both keys it governs.
     const heldAgain = CONCEPTS.map((concept) => (concept.id === "passkey" ? { ...concept, status: "proposed" as const } : concept));
     expect(confirmedBeforeShipping(released(heldAgain))).toEqual([
       "zh-Hans api.passkey.unsupported: passkey is proposed, not confirmed",
       "zh-Hans api.passkey.none: passkey is proposed, not confirmed",
+      ...confirmedBeforeShipping(released(CONCEPTS)),
     ]);
     // A row put back to proposed is reported on every key it governs, its own and a prose concept's alike.
     const unconfirmed = CONCEPTS.map((concept) => (concept.id === "brand" ? { ...concept, status: "proposed" as const } : concept));
@@ -159,9 +167,10 @@ describe("the glossary", () => {
     expect(confirmedBeforeShipping(released(confirmed))).toEqual([]);
   });
 
-  it("records the owner's review against rows that exist, and leaves no row proposed", () => {
+  it("records the owner's review against rows that exist, and leaves proposed only the rows awaiting it", () => {
     const ids = new Set(CONCEPTS.map((concept) => concept.id));
     expect([...CONFIRMED].filter((id) => !ids.has(id))).toEqual([]);
-    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual([]);
+    // Added after the owner's review, for the owner's next one (layer 2a). A new proposed row is an edit here.
+    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual(["send.denied", "recall", "vault"]);
   });
 });

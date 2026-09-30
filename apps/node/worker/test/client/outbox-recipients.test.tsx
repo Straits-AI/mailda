@@ -51,3 +51,27 @@ describe("a recipient no outcome is reported for", () => {
     expect(rows).toEqual([["unobserved", "verified destination"], ["accepted"]]);
   });
 });
+
+/**
+ * A newer Node's tokens (docs/i18n.md, "a wire token outside the union renders raw, in mono"): this client has no
+ * words for them, so each is drawn as the identifier it is, in `<code>`, and cannot pass for a translated word.
+ */
+describe("a token this client has no words for", () => {
+  it("is drawn in code wherever the Outbox shows a token: state, reason, delivery state and kind", async () => {
+    const newer = {
+      ...SENDS,
+      sends: [{
+        ...SENDS.sends[0]!, state: "paused_by_quota", state_reason: "quota_exhausted",
+        recipients: [{ ...recipient("friend@gmail.test", "greylisted", null), kind: "resent-to" }],
+      }],
+    };
+    answerWith((call) => (call.path.startsWith("/api/sends") && call.method === "GET" ? Response.json(newer) : undefined));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><Outbox /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "two recipients" }));
+
+    const coded = (selector: string) => [...document.querySelectorAll(selector)].map((one) => one.textContent);
+    expect(coded("tr.entry .state code")).toEqual(["paused_by_quota", "quota_exhausted", "greylisted"]);
+    expect(coded(".recipient code")).toEqual(["resent-to", "greylisted"]);
+  });
+});

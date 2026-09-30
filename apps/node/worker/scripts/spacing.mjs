@@ -254,7 +254,7 @@ for (const theme of THEMES) {
         }
       } finally {
         if (leave !== undefined) {
-          await leave.run(page).catch((error) => say(`      (could not ${leave.what}: ${String(error).split("\n")[0]})`));
+          await leave.run(page, words).catch((error) => say(`      (could not ${leave.what}: ${String(error).split("\n")[0]})`));
         }
         await page.close();
       }

@@ -1,7 +1,11 @@
 import { BUDGETS } from "@mailda/budgets";
 
+import type { BodyScript } from "@mailda/contract/schemas";
+
 import { type AttachmentSummary, summariseAttachments } from "../attachments.ts";
+import { headerBlock, headerFields } from "../mime.ts";
 import { type JudgedLink, judgeLink } from "./links.ts";
+import { bodyScript } from "./script.ts";
 
 /**
  * Extracting a message body, and rendering it without trusting it (ADR 37, ADR 38).
@@ -91,6 +95,9 @@ const KEEP = new Set([
   "ul", "ol", "li", "dl", "dt", "dd",
   "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col",
   "a", "img", "figure", "figcaption",
+  // Their only job is the direction a sender states (`dir`, kept on every element below); unwrapped, an Arabic
+  // or Hebrew name in English text loses its isolation and the punctuation around it reorders.
+  "bdo", "bdi",
 ]);
 
 /**
@@ -115,6 +122,14 @@ const ALLOWED_ATTRIBUTES: Record<string, ReadonlySet<string>> = {
   abbr: new Set(["title"]),
 };
 
+/**
+ * Attributes kept on every element: the sender's own statement of the language and direction of what they wrote
+ * (critic M9, Blueprint §5C "preserved original message language"). Neither can fetch, script or style anything;
+ * `lang` picks the glyph forms and the voice a screen reader uses, `dir` the direction a paragraph runs. On
+ * `<html>` they merge onto the frame's own root after the reader's `data-theme` (`frameHead` in `reader.tsx`).
+ */
+const EVERY_ELEMENT: ReadonlySet<string> = new Set(["lang", "dir"]);
+
 /** Schemes a link may use. Everything else — `javascript:`, `data:`, `vbscript:` — is dropped. */
 const SAFE_SCHEMES = /^(https?:|mailto:)/i;
 
@@ -125,6 +140,40 @@ export interface ExtractedBody {
   truncated: boolean;
   /** Every attached part, named and judged, and none of its bytes: the original `.eml` is where those live. */
   attachments: AttachmentSummary[];
+  /**
+   * A charset the rendered body was decoded with (its HTML parts, else its plain ones), never an attachment's, or
+   * null for none declared.
+   * The body's encoding, not a header view: it is what `bodyScript` reads the message's script from.
+   */
+  charset: string | null;
+}
+
+/** The part of `postal-mime`'s parse tree this reads: a node's content type and its children. Not its public API. */
+interface PartNode {
+  contentType?: { parsed?: { value?: string; params?: Readonly<Record<string, string | undefined>> } };
+  contentDisposition?: { parsed?: { value?: string } };
+  childNodes?: PartNode[];
+}
+
+/**
+ * The first charset declared by an inline `type` part in the tree, depth first, as `postal-mime` decoded it.
+ *
+ * Every inline part of the type is in the rendered body (`postal-mime` joins them), so any one's charset is the
+ * body's; an attachment's is not, so an attached `report.html; charset=big5` is passed over (`postal-mime`'s own
+ * `isInlineTextNode` test), wherever in the tree it sits.
+ *
+ * `postal-mime` decodes each text part with its charset and does not return it, so this reads the parser's own
+ * tree (`root`), which is not in its type declarations. Pinned by the multipart GB2312 case in
+ * `test/render.test.ts`: a `postal-mime` that renames the tree turns that red rather than quietly reading null.
+ */
+function charsetOf(node: PartNode | undefined, type: string): string | null {
+  if (node === undefined || node.contentDisposition?.parsed?.value?.toLowerCase() === "attachment") return null;
+  if (node.contentType?.parsed?.value?.toLowerCase() === type) return node.contentType.parsed.params?.charset ?? null;
+  for (const child of node.childNodes ?? []) {
+    const found = charsetOf(child, type);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 /**
@@ -142,7 +191,8 @@ export async function extractBody(raw: Uint8Array): Promise<ExtractedBody> {
   // message the reader could not see. The bound belongs where the cost is (a body held in memory and
   // handed to a client), not where it silently changes what the message *is*.
   const { default: PostalMime } = await import("postal-mime");
-  const parsed = await PostalMime.parse(raw);
+  const parser = new PostalMime();
+  const parsed = await parser.parse(raw);
 
   const rawHtml = typeof parsed.html === "string" && parsed.html.length > 0 ? parsed.html : null;
   const rawText = typeof parsed.text === "string" && parsed.text.length > 0 ? parsed.text : null;
@@ -153,6 +203,7 @@ export async function extractBody(raw: Uint8Array): Promise<ExtractedBody> {
     text: rawText === null ? null : rawText.slice(0, MAX_BODY_BYTES),
     truncated: overBound,
     attachments: summariseAttachments(parsed.attachments),
+    charset: charsetOf((parser as unknown as { root?: PartNode }).root, rawHtml === null ? "text/plain" : "text/html"),
   };
 }
 
@@ -163,6 +214,8 @@ export interface SanitizedBody {
   inputHadContent: boolean;
   /** Every kept link, judged against what it says and against `ownDomains` (`links.ts`). */
   links: JudgedLink[];
+  /** The sender's `lang` on the document's first `<html>` or `<body>`, or null: the last word on its script. */
+  lang: string | null;
 }
 
 /** Links per body a surface is handed. Past this a message is a link farm, and the count says so. */
@@ -183,6 +236,7 @@ export async function sanitizeHtml(html: string, ownDomains: readonly string[] =
    */
   const anchors: { href: string; text: string }[] = [];
   let open: { href: string; text: string } | null = null;
+  let lang: string | null = null;
 
   const rewriter = new HTMLRewriter().on("*", {
     element(element) {
@@ -217,8 +271,9 @@ export async function sanitizeHtml(html: string, ownDomains: readonly string[] =
 
       const allowed = ALLOWED_ATTRIBUTES[tag] ?? new Set<string>();
       for (const name of present) {
-        if (!allowed.has(name)) element.removeAttribute(name);
+        if (!allowed.has(name) && !EVERY_ELEMENT.has(name)) element.removeAttribute(name);
       }
+      if (lang === null && (tag === "html" || tag === "body")) lang = element.getAttribute("lang") || null;
 
       if (tag === "img") {
         // The attribute was already stripped by the allowlist; this counts what was withheld so the
@@ -305,6 +360,7 @@ export async function sanitizeHtml(html: string, ownDomains: readonly string[] =
   return {
     html: sanitized, blockedRemote, inputHadContent: html.trim().length > 0,
     links: anchors.map((one) => judgeLink(one.href, one.text, ownDomains)),
+    lang,
   };
 }
 
@@ -326,10 +382,13 @@ export interface RenderedBody {
   attachments: AttachmentSummary[];
   /** Every link in the rendered HTML, judged. Empty for a text-only body: a bare URL cannot say one thing and go to another. */
   links: JudgedLink[];
+  /** The script the message says it is in (`script.ts`), for the frame's glyph forms; null when it says none. */
+  script: BodyScript | null;
 }
 
 /** `ownDomains` are the organization's own, for the lookalike verdict; the caller reads them from `addresses`. */
 export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] = []): Promise<RenderedBody> {
+  const language = headerFields(headerBlock(raw)).get("content-language")?.[0] ?? null;
   let extracted: ExtractedBody;
   try {
     extracted = await extractBody(raw);
@@ -347,12 +406,18 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       problem:
         `This message's body could not be read (${(error as Error).message.split("\n")[0]}). ` +
         `The original is unchanged and can still be downloaded.`,
+      script: bodyScript(null, language),
     };
   }
+  const script = bodyScript(extracted.charset, language);
 
   if (extracted.html !== null) {
     try {
-      const { html, blockedRemote, inputHadContent, links } = await sanitizeHtml(extracted.html, ownDomains);
+      const sanitized = await sanitizeHtml(extracted.html, ownDomains);
+      const { html, blockedRemote, inputHadContent, links } = sanitized;
+      // Where the charset and `Content-Language` are silent, the HTML's own root `lang` is the message still
+      // speaking, and outranks the reader's guess (most UTF-8 Japanese mail says `<html lang="ja">` and no more).
+      const said = script ?? bodyScript(null, sanitized.lang);
 
       // Nothing survived, but there was something to begin with. Reporting `html` here would show an
       // empty panel while asserting the message had been rendered — a reader cannot tell that from a
@@ -372,6 +437,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
             (extracted.text === null
               ? "The original is unchanged and can still be downloaded."
               : "Its plain-text alternative is shown instead."),
+          script: said,
         };
       }
 
@@ -384,6 +450,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       attachments: extracted.attachments,
         links,
         problem: null,
+        script: said,
       };
     } catch (error) {
       // The careful error handling above stopped one line short: `extractBody` was wrapped and
@@ -404,6 +471,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
           (extracted.text === null
             ? "The original is unchanged and can still be downloaded."
             : "Its plain-text alternative is shown instead."),
+        script,
       };
     }
   }
@@ -418,6 +486,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       attachments: extracted.attachments,
     links: [],
       problem: null,
+      script,
     };
   }
 
@@ -430,5 +499,6 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
     attachments: extracted.attachments,
     links: [],
     problem: null,
+    script,
   };
 }

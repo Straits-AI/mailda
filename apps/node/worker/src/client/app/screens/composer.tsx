@@ -3,12 +3,15 @@ import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { apiFetch } from "/app/session.js";
 import { CONFIG } from "/app/config.js";
+import { t } from "/app/locale.js";
 
-import { claimCase, stealCase, useMailboxes } from "../api.ts";
+import { claimCase, saidBy, stealCase, useMailboxes, type Said } from "../api.ts";
+import * as format from "../format.ts";
+import { marked, sentence } from "../words.tsx";
 import { splitAddresses } from "./split-addresses.ts";
 import { classifyAttachment, DANGEROUS, encodedBytes } from "../../../attachments.ts";
 import type { AttachmentVerdict } from "@mailda/contract/schemas";
-import { VERDICT_WORDS } from "./reader.tsx";
+import { verdictWords } from "./reader.tsx";
 
 /**
  * The docked composer — the reason ADR 30 put React at this layer.
@@ -107,6 +110,26 @@ export interface ComposerContext {
   bodyUnavailable?: "missing" | "unreadable" | null;
 }
 
+/*
+ * What a reply or a forward writes into the mail before anybody types: the subject's prefix and the quote line.
+ * The prefix is `Re:` or `Fwd:` whatever the interface's language, because it goes into the mail, which is data;
+ * it is not doubled after a Chinese client's own (回复：, 答复：, 转发：, with either colon, critic L5). The quote
+ * line is in the author's language (plan decision 13, as Gmail and Outlook write theirs) and carries the offset,
+ * so a correspondent in another zone does not misread the hour.
+ */
+export function replySubject(subject: string): string {
+  return /^(?:re:|回复[:：]|答复[:：])/i.test(subject) ? subject : `Re: ${subject}`;
+}
+
+export function forwardSubject(subject: string): string {
+  return /^(?:fwd?:|转发[:：])/i.test(subject) ? subject : `Fwd: ${subject}`;
+}
+
+/** When this Node accepted the message (the reader's Received, with its offset), and who wrote it. */
+export function quoteLine(acceptedAt: string, from: string): string {
+  return t("composer.quote", { date: format.zonedTime(acceptedAt), from });
+}
+
 interface DraftResponse {
   draft: {
     id: string;
@@ -129,8 +152,8 @@ interface DraftResponse {
 export interface ComposerHandle {
   /** The draft's id once the Node has one; a new message has none until its first save. */
   draftId(): string | null;
-  /** Everything on screen onto the Node. Null once it is there, or the Node's words for why it is not. */
-  save(): Promise<string | null>;
+  /** Everything on screen onto the Node. Null once it is there, or why it is not, with who said so. */
+  save(): Promise<Said | null>;
   /**
    * Whether Seal and send is running, from the claim before it to the Node's answer. The shell keeps this dock while
    * it is: replaced, its refusal would land on a component nobody can see.
@@ -144,24 +167,25 @@ type Phase =
   | { kind: "browser" }
   | { kind: "saving" }
   | { kind: "saved"; at: string }
-  | { kind: "failed"; why: string };
+  | { kind: "failed"; why: Said };
 
-function phaseText(phase: Phase): string {
+function phaseText(phase: Phase): React.ReactNode {
   switch (phase.kind) {
     case "empty":
-      return "empty draft";
+      return t("composer.phase.empty");
     case "browser":
-      return "this browser only · a reload loses it";
+      return t("composer.phase.browser");
     case "saving":
-      return "saving to your node…";
+      return t("composer.phase.saving");
     case "saved":
-      return `saved on your node · ${new Date(phase.at).toLocaleTimeString(undefined, { hour12: false })}`;
+      return t("composer.phase.saved", { time: format.clock(phase.at) });
     case "failed":
       // The failure has to be louder than the success it replaces. A draft that silently stopped saving is
       // worse than one that never saved, because the first version taught the person to trust it.
-      return `not saved — ${phase.why}`;
+      return sentence("composer.phase.failed", { why: marked(phase.why) });
   }
 }
+
 
 export function Composer({ context, onClose, ref }: {
   context: ComposerContext;
@@ -204,13 +228,13 @@ export function Composer({ context, onClose, ref }: {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "empty" });
   const [sealing, setSealing] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<React.ReactNode>(null);
   /**
    * The Node's words when the claim at send found the case held by somebody else (#42). Separate from
    * `problem` because it carries a way through — take the case, audited, and send — which a refusal of the
    * seal itself does not.
    */
-  const [held, setHeld] = useState<string | null>(null);
+  const [held, setHeld] = useState<Said | null>(null);
   /**
    * Which address this goes out as. Empty means "not chosen", which is only a problem when there is a choice
    * to make — the Node decides that, and its refusal names the addresses.
@@ -350,7 +374,7 @@ export function Composer({ context, onClose, ref }: {
    */
   const sealRun = useRef<Promise<boolean> | null>(null);
   /** The Node's words for the last write that failed, which the phase label shows and `save` hands the shell. */
-  const failure = useRef<string | null>(null);
+  const failure = useRef<Said | null>(null);
   /** True while `close` is waiting for the Node, so the buttons cannot be pressed twice. */
   const [closing, setClosing] = useState(false);
 
@@ -391,11 +415,11 @@ export function Composer({ context, onClose, ref }: {
         }),
       });
       if (!response.ok) {
-        const refusal = (await response.json().catch(() => null)) as { message?: string } | null;
-        return failed(refusal?.message ?? `this Node answered ${response.status}`);
+        const answer = (await response.json().catch(() => null)) as { message?: string } | null;
+        return failed(saidBy(answer?.message, t("composer.save.answered", { status: response.status })));
       }
       const { draft } = (await response.json()) as DraftResponse;
-      if (draft === null) return failed("this Node answered without a draft");
+      if (draft === null) return failed({ message: t("composer.save.noDraft"), fromNode: false });
       setDraftId(draft.id);
       /*
        * Into the ref as well as into state, and this is load-bearing rather than belt-and-braces.
@@ -414,11 +438,11 @@ export function Composer({ context, onClose, ref }: {
       setPhase({ kind: "saved", at: draft.updatedAt });
       return true;
     } catch (error) {
-      return failed((error as Error).message);
+      return failed({ message: (error as Error).message, fromNode: false });
     }
   }
 
-  function failed(why: string): false {
+  function failed(why: Said): false {
     failure.current = why;
     setPhase({ kind: "failed", why });
     return false;
@@ -497,7 +521,7 @@ export function Composer({ context, onClose, ref }: {
 
   useImperativeHandle(ref, () => ({
     draftId: () => latest.current.draftId,
-    save: async () => (await flush() ? null : failure.current ?? "this draft could not be saved"),
+    save: async () => (await flush() ? null : failure.current ?? { message: t("composer.save.failed"), fromNode: false }),
     sealing: () => sealing,
   }));
 
@@ -527,10 +551,7 @@ export function Composer({ context, onClose, ref }: {
       }
       // The phase label already carries `why` and announces it. `problem` as well, because this person
       // asked to leave and is being kept here, which is a louder fact than an autosave that will retry.
-      setProblem(
-        "This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it "
-        + "on purpose.",
-      );
+      setProblem(t("composer.close.kept"));
     } finally {
       setClosing(false);
     }
@@ -559,8 +580,8 @@ export function Composer({ context, onClose, ref }: {
       if (context.caseId !== undefined) {
         const claimed = take === "steal" ? await stealCase(context.caseId) : await claimCase(context.caseId);
         if (!claimed.ok) {
-          setHeld(claimed.kind === "held" ? claimed.message : null);
-          if (claimed.kind !== "held") setProblem(claimed.message);
+          setHeld(claimed.kind === "held" ? claimed : null);
+          if (claimed.kind !== "held") setProblem(marked(claimed));
           return;
         }
         setHeld(null);
@@ -580,7 +601,8 @@ export function Composer({ context, onClose, ref }: {
       await navigate({ to: "/outbox" });
     } catch (error) {
       // The claim before the seal, or the refresh after it: `sealDraft` answers the seal's own failures.
-      setProblem(`This Node could not be reached (${(error as Error).message}).${sealed ? "" : " Nothing was sealed, so nothing will be sent."}`);
+      const why = (error as Error).message;
+      setProblem(sealed ? t("composer.unreachable", { why }) : t("composer.unreachable.unsealed", { why }));
     } finally {
       setSealing(false);
     }
@@ -635,16 +657,13 @@ export function Composer({ context, onClose, ref }: {
         retired.current = false;
         // The Node's four-part message, verbatim. It names the remedy, and paraphrasing it would drop
         // the half that tells somebody what to do.
-        setProblem(result.message ?? "This message could not be sealed.");
+        setProblem(marked(saidBy(result.message, t("composer.seal.refused"))));
         return false;
       }
       return true;
     } catch (error) {
       retired.current = false;
-      setProblem(
-        `This Node could not be reached (${(error as Error).message}). Nothing was sealed, so nothing ` +
-        `will be sent.`,
-      );
+      setProblem(t("composer.unreachable.unsealed", { why: (error as Error).message }));
       return false;
     }
   }
@@ -679,23 +698,22 @@ export function Composer({ context, onClose, ref }: {
           // Refused, so the draft and the dock both stay, and the dock goes on saving what is typed into it.
           retired.current = false;
           const result = (await response.json().catch(() => null)) as { message?: string } | null;
-          setProblem(
-            result?.message
-            ?? `This Node answered ${response.status} and gave no reason, so this draft may still be here.`,
-          );
+          setProblem(marked(saidBy(result?.message, t("composer.discard.silent", { status: response.status }))));
           return;
         }
       }
     } catch (error) {
       // Never reached the Node: the same outcome as a refusal, said, rather than a rejection nobody hears.
       retired.current = false;
-      setProblem(`This Node could not be reached (${(error as Error).message}), so this draft may still be here.`);
+      setProblem(t("composer.discard.unreachable", { why: (error as Error).message }));
       return;
     }
     onClose();
   }
 
-  const title = context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message";
+  const title = context.inReplyToMessageId
+    ? t("composer.title.reply")
+    : context.forwardOfMessageId ? t("composer.title.forward") : t("composer.title.new");
   return (
     <section className="composer-dock" aria-label={title}>
       <header className="dock-head">
@@ -715,15 +733,17 @@ export function Composer({ context, onClose, ref }: {
           {/* Neither while a seal is in the air: the Node is deciding whether this is still a draft, and its
               refusal has to find the dock, and the words, still here. */}
           <button type="button" className="linkish" onClick={() => void discard()} disabled={closing || sealing}>
-            Discard
+            {t("composer.discard")}
           </button>
           <button type="button" className="linkish" onClick={() => void close()} disabled={closing || sealing}>
-            {closing ? "Saving…" : "Close"}
+            {closing ? t("composer.closing") : t("composer.close")}
           </button>
         </span>
         {context.originalSubject === undefined ? null : (
           <p className="dock-context">
-            {context.forwardOfMessageId === undefined ? "Replying to" : "Forwarding"}: <span>{context.originalSubject}</span>
+            {context.forwardOfMessageId === undefined
+              ? sentence("composer.context.reply", { subject: <span>{context.originalSubject}</span> })
+              : sentence("composer.context.forward", { subject: <span>{context.originalSubject}</span> })}
           </p>
         )}
       </header>
@@ -748,16 +768,16 @@ export function Composer({ context, onClose, ref }: {
         */}
         {mailboxes.isPending ? null : sendingBox === undefined ? (
           <div className="field-row">
-            <span>From</span>
+            <span>{t("composer.field.from")}</span>
             <div className="dim">
               {mailboxes.isError
-                ? `This Node could not read this mailbox's addresses (${mailboxes.error.message}), so the address this goes out from is not shown.`
-                : "This mailbox is not among the ones this Node listed, so the address this goes out from is not shown."}
+                ? sentence("composer.from.unreadable", { why: marked(mailboxes.error) })
+                : t("composer.from.unlisted")}
             </div>
           </div>
         ) : senderOptions.length > 1 ? (
           <label className="field-row" htmlFor="composer-from">
-            <span>From</span>
+            <span>{t("composer.field.from")}</span>
             <select
               id="composer-from"
               ref={fromField}
@@ -766,7 +786,7 @@ export function Composer({ context, onClose, ref }: {
               onChange={(event) => setSenderAddress(event.target.value)}
               required
             >
-              <option value="">Choose an address…</option>
+              <option value="">{t("composer.from.choose")}</option>
               {senderOptions.map((option) => (
                 <option key={option} value={option}>{option}</option>
               ))}
@@ -774,18 +794,18 @@ export function Composer({ context, onClose, ref }: {
           </label>
         ) : (
           <div className="field-row">
-            <span>From</span>
+            <span>{t("composer.field.from")}</span>
             {senderOptions.length === 1
-              ? <div><span className="mono">{senderOptions[0]}</span> <span className="dim">· the {sendingBox.name} mailbox</span></div>
-              : <div className="dim">No address yet: a send from {sendingBox.name} is refused until an administrator adds one on People.</div>}
+              ? <div><span className="mono">{senderOptions[0]}</span> <span className="dim">{t("composer.from.mailbox", { name: sendingBox.name })}</span></div>
+              : <div className="dim">{t("composer.from.none", { name: sendingBox.name })}</div>}
           </div>
         )}
         {senderOptions.length === 0 ? null : (
-          <p className="hint">More addresses for this mailbox are added on People, by an administrator.</p>
+          <p className="hint">{t("composer.from.more")}</p>
         )}
 
         <label className="field-row" htmlFor="composer-to">
-          <span>To</span>
+          <span>{t("composer.field.to")}</span>
           <input
             id="composer-to"
             ref={toField}
@@ -795,23 +815,23 @@ export function Composer({ context, onClose, ref }: {
             required
           />
           {showCopies ? null : (
-            <button type="button" className="linkish composer-copies" onClick={() => setShowCopies(true)}>Cc / Bcc</button>
+            <button type="button" className="linkish composer-copies" onClick={() => setShowCopies(true)}>{t("composer.field.copies")}</button>
           )}
         </label>
         {showCopies ? (
           <>
             <label className="field-row" htmlFor="composer-cc">
-              <span>Cc</span>
+              <span>{t("composer.field.cc")}</span>
               <input id="composer-cc" className="mono" value={cc} onChange={(event) => setCc(event.target.value)} />
             </label>
             <label className="field-row" htmlFor="composer-bcc">
-              <span>Bcc</span>
+              <span>{t("composer.field.bcc")}</span>
               <input id="composer-bcc" className="mono" value={bcc} onChange={(event) => setBcc(event.target.value)} />
             </label>
           </>
         ) : null}
         <label className="field-row" htmlFor="composer-subject">
-          <span>Subject</span>
+          <span>{t("composer.field.subject")}</span>
           <input
             id="composer-subject"
             value={subject}
@@ -820,7 +840,7 @@ export function Composer({ context, onClose, ref }: {
           />
         </label>
         <label className="field-row" htmlFor="composer-body">
-          <span>Message</span>
+          <span>{t("composer.field.body")}</span>
           <textarea
             id="composer-body"
             ref={bodyField}
@@ -832,7 +852,7 @@ export function Composer({ context, onClose, ref }: {
         </label>
 
         <label className="field-row" htmlFor="composer-files">
-          <span>Attach</span>
+          <span>{t("composer.field.attach")}</span>
           <input
             id="composer-files"
             type="file"
@@ -869,23 +889,28 @@ export function Composer({ context, onClose, ref }: {
           role="status"
         >
           {files.length === 0
-            ? `Up to ${megabytes(rawBudget)} in total, ${CONFIG.maxAttachments} files.`
+            ? t("composer.limit.none", { size: megabytes(rawBudget), n: CONFIG.maxAttachments })
             // Padding can put a set over the budget while its sizes sum to the limit or a few bytes under it, so
             // an over figure is at least one byte past the limit and never rounds to read as fitting.
-            : `${used(overBudget ? Math.max(usedRaw, rawBudget + 1) : usedRaw, overBudget)} of ${megabytes(rawBudget)} used, ${files.length} of ${CONFIG.maxAttachments} files.`}
-          {overBudget ? " Over the limit: remove a file or send a link." : ""}
-          {overCount ? " Too many files." : ""}
+            : t("composer.limit.used", {
+              used: used(overBudget ? Math.max(usedRaw, rawBudget + 1) : usedRaw, overBudget),
+              size: megabytes(rawBudget),
+              count: files.length,
+              n: CONFIG.maxAttachments,
+            })}
+          {overBudget ? t("composer.limit.over") : ""}
+          {overCount ? t("composer.limit.tooMany") : ""}
           {/*
             * A wait, not a fault, so not in the danger tone; but it holds the send, so it is named here. Uncounted,
             * and the flagged count held back until every file is judged: this region is read whole on each change,
             * so a count per judged file would read the line again for every file attached.
             */}
-          {checking === 0 ? "" : " Checking files…"}
-          {unreadable === 0 ? "" : ` ${count(unreadable)} could not be read: remove and attach again.`}
-          {checking > 0 || flagged.length === 0 ? "" : ` ${count(flagged.length)} judged dangerous: see the warning below.`}
+          {checking === 0 ? "" : t("composer.limit.checking")}
+          {unreadable === 0 ? "" : t("composer.limit.unreadable", { n: unreadable })}
+          {checking > 0 || flagged.length === 0 ? "" : t("composer.limit.flagged", { n: flagged.length })}
         </p>
         {files.length === 0 ? null : (
-          <ul className="attachments" aria-label="Attached files">
+          <ul className="attachments" aria-label={t("composer.files.label")}>
             {files.map(({ file, verdict, unread, judging: reading }, index) => (
               <li key={`${file.name}-${index}`}>
                 <span className="mono">{file.name}</span>{" "}
@@ -896,25 +921,23 @@ export function Composer({ context, onClose, ref }: {
                   onClick={() => setFiles((was) => was.filter((one) => one.file !== file))}
                   disabled={sealing}
                 >
-                  Remove
+                  {t("composer.file.remove")}
                 </button>
-                {reading ? <span className="dim"> Checking…</span> : null}
+                {reading ? <span className="dim"> {t("composer.file.checking")}</span> : null}
                 {verdict !== null && DANGEROUS.has(verdict) ? (
                   <p className="notice warn">
-                    {file.name} is {VERDICT_WORDS[verdict]}. It will be sent because you attached it, and the seal
-                    records that you did. Some receiving servers refuse programs and scripts (Gmail refuses .exe,
-                    .js, .jar and others, even inside a zip), so a link may be the only way it arrives.
+                    {t("composer.file.dangerous", { name: file.name, what: verdictWords(verdict) ?? verdict })}
                   </p>
                 ) : null}
                 {unread === null ? null : (
                   <span className="bad">
-                    {" "}This browser could not read it ({unread}), so it cannot be sent: remove it and attach it again.
+                    {" "}{t("composer.file.unread", { why: unread })}
                   </span>
                 )}
               </li>
             ))}
             <li className="dim">
-              Files travel with the send, not with the draft: close this and they are not kept.
+              {t("composer.files.kept")}
             </li>
           </ul>
         )}
@@ -926,12 +949,7 @@ export function Composer({ context, onClose, ref }: {
            * that recovers it, the other is not and says so rather than offering hope.
            */
           <p className="notice bad" role="status">
-            {bodyUnavailable === "unreadable"
-              ? "This draft's text is stored on this Node and cannot be opened — it is sealed under a key "
-                + "generation the vault does not hold. It is not lost, and saving over it is refused. "
-                + "Restore the vault with one of the ten recovery codes, then reopen this draft."
-              : "This draft's text is gone: the row recording it is here and the stored object is not. The "
-                + "recipients and subject above are intact. Nothing can recover the writing."}
+            {t(`composer.bodyUnavailable.${bodyUnavailable}`)}
           </p>
         )}
 
@@ -942,7 +960,7 @@ export function Composer({ context, onClose, ref }: {
         )}
         {held === null ? null : (
           <p className="composer-held" role="alert">
-            {held}{" "}
+            {marked(held)}{" "}
             {/* Available to any colleague and audited, the escape hatch the absent claim timeout depends on. */}
             <button
               type="button"
@@ -951,7 +969,7 @@ export function Composer({ context, onClose, ref }: {
               disabled={sealing || blocked}
               aria-describedby={blocked ? "composer-files-limit" : undefined}
             >
-              Take it anyway
+              {t("composer.takeAnyway")}
             </button>
           </p>
         )}
@@ -964,25 +982,17 @@ export function Composer({ context, onClose, ref }: {
             // The reason, where a browse-mode reader meets the disabled button.
             aria-describedby={blocked ? "composer-files-limit" : undefined}
           >
-            {sealing ? "Sealing…" : "Seal and send"}
+            {sealing ? t("composer.sealing") : t("composer.seal")}
           </button>
           {/*
             Every fact of the send, at the weight of a footnote beside the act: it goes out as the mailbox (ADR
             36), the author is recorded, the hold, and no recall. The why is one click down, not gone.
           */}
-          <span className="send-note">
-            Sent as the mailbox; who wrote it is recorded here. Held {holdWindowSeconds()} s so you can stop it;
-            no recall.
-          </span>
+          <span className="send-note">{t("composer.sendNote", { n: holdWindowSeconds() })}</span>
         </div>
         <details className="send-how">
-          <summary>How sending works</summary>
-          <p>
-            This will be sent from the mailbox, not from you. Who wrote it is recorded here and does not
-            travel with the message. Sealing records exactly what will be sent before anything leaves, then
-            waits {holdWindowSeconds()} seconds so you can still stop it — nothing is recalled, because a
-            recall would not be honest.
-          </p>
+          <summary>{t("composer.how")}</summary>
+          <p>{t("composer.how.body", { n: holdWindowSeconds() })}</p>
         </details>
       </form>
     </section>
@@ -1014,11 +1024,6 @@ async function judge(file: File): Promise<Attached> {
     // Shown under the file and on the limit line rather than dropped, and the send waits for it to be removed.
     return { file, verdict: null, unread: (error as Error).message, judging: false };
   }
-}
-
-/** "1 file", "2 files": the count the limit line leads a clause with. */
-function count(n: number): string {
-  return `${n} ${n === 1 ? "file" : "files"}`;
 }
 
 /** A file's size in KB (1,024 bytes), never "0 KB" for a file that is there. */

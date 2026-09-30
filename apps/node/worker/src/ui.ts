@@ -178,8 +178,8 @@ export function page(): string {
 const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); readonly type: string }> = {
   "/app/app.js": { source: appScript, type: "text/javascript; charset=utf-8" },
   "/app/session.js": { source: sessionScript, type: "text/javascript; charset=utf-8" },
-  // The delivery vocabulary and the rule about which outcomes a reader is shown. A separate module so a
-  // test can evaluate it — `app.client.js` touches `document` at load, so nothing could reach it there,
+  // The rules about which state, reason and outcome a reader is shown; the words are the catalog's. A separate
+  // module so a test can evaluate it — `app.client.js` touches `document` at load, so nothing could reach it there,
   // and the one rule that decides whether a bounce is visible was the one rule with no coverage.
   "/app/delivery.js": { source: deliveryScript, type: "text/javascript; charset=utf-8" },
   // The React application (ADR 30). Imported dynamically by `app.client.js` once somebody is signed in,

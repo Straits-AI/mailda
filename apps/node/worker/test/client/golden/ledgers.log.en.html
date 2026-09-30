@@ -1,0 +1,45 @@
+<section class="ledger" aria-label="Operational log">
+<header class="ledger-head">
+<h1>Log</h1>
+<p class="dim mono">1 error · 1 warn · 1 trace</p>
+</header>
+<p class="notice dim">Showing the newest 3 entries. Older ones exist and are not listed.</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Log entries">
+<table>
+<thead>
+<tr>
+<th scope="col">Level</th>
+<th scope="col">Event</th>
+<th scope="col">Message</th>
+<th scope="col" class="num">At</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<span class="state state-log-error">error</span>
+</td>
+<td class="mono">send.failed</td>
+<td>The transport timed out.</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+<tr>
+<td>
+<span class="state state-log-warn">warn</span>
+</td>
+<td class="mono">breaker.opened</td>
+<td>Too many bounces.</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+<tr>
+<td>
+<span class="state state-log-trace">trace</span>
+</td>
+<td class="mono">future.level</td>
+<td>A level this interface has no words for.</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>

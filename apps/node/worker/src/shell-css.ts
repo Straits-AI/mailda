@@ -1,4 +1,6 @@
-import { themeCss } from "./theme.ts";
+import type { BodyScript } from "@mailda/contract/schemas";
+
+import { FRAME_SCRIPTS, scriptFamily, themeCss } from "./theme.ts";
 
 /**
  * The whole stylesheet, served at `/app/app.css` rather than written into the document (#97).
@@ -104,6 +106,9 @@ const RULES = `
 }
 :root:lang(zh) .rail-heading { font-size: 12px; }
 :root:lang(zh) .rail-group-toggle { font-size: 12px; line-height: 1.3; }
+/* A column header is a word. Han may break between any two characters, so a narrow column (the Queue's Response,
+   over a dash) stacked 响应 one character per line at 1440; keep-all breaks a Han run only where a space is. */
+:root:lang(zh) thead th { word-break: keep-all; }
 
 /* ---- base ------------------------------------------------------------------------------- */
 
@@ -1776,4 +1781,13 @@ dialog.drawer { animation: drawer-in var(--t-pane) ease-out; }
 `;
 
 /** The shell's stylesheet: the theme blocks, then every rule. Served as `/app/app.css` by `src/ui.ts`. */
-export const SHELL_CSS = themeCss() + RULES;
+/**
+ * A plain-text body is the sender's text in the shell's document, so it is drawn in the message's script, as the
+ * frame is (critic M9): `reader.tsx` writes `data-script` on the `<pre>`, and the families are the frame's own
+ * (`scriptFamily` in `src/theme.ts`). Class and attribute outrank `.message-text`'s `font`, and so the
+ * interface's `:root:lang(zh)` stack.
+ */
+const MESSAGE_TEXT_SCRIPTS = (Object.keys(FRAME_SCRIPTS) as BodyScript[])
+  .map((script) => `.message-text[data-script="${script}"] { font-family: ${scriptFamily(script)}; }`).join("\n") + "\n";
+
+export const SHELL_CSS = themeCss() + RULES + MESSAGE_TEXT_SCRIPTS;

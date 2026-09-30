@@ -105,14 +105,17 @@ export const CONCEPTS: readonly Concept[] = [
     keys: ["brand.name"], prose: true, avoid: { "zh-Hans": ["麦达", "迈达", "秒达"] },
     note: "淼达 (Miǎodá) is a homophone of 秒达, 'arrives in seconds', a delivery slogan: never write that, and never pun on 达",
   }),
-  row("node", "Node", "节点", { avoid: { "zh-Hans": ["服务器", "实例"] }, note: "one deployment in the customer's own account; 本节点 for 'this Node'" }),
+  row("node", "Node", "节点", {
+    sentences: ["ledgers.audit.empty", "ledgers.log.empty", "ledgers.transport.none", "ledgers.outbox.daily.throttled"],
+    avoid: { "zh-Hans": ["服务器", "实例"] }, note: "one deployment in the customer's own account; 本节点 for 'this Node'" }),
   row("butler", "Butler", "管家", {
-    sentences: ["api.grant.org.admin"], avoid: { "zh-Hans": ["Butler", "机器人", "智能助手"] },
+    sentences: ["api.grant.org.admin", "ledgers.outbox.gate.failed", "ledgers.outbox.release.title"],
+    avoid: { "zh-Hans": ["Butler", "机器人", "智能助手"] },
     note: "the owner's word (30 Sep 2026), replacing Latin Butler, which is now avoided so one locale has one word. The CLI noun `butler` stays Latin and in mono",
   }),
   row("mailbox", "mailbox", "邮箱", { note: "a storage and access boundary; never used for an address" }),
-  row("address", "address", "邮件地址", { avoid: { "zh-Hans": ["邮箱"] } }),
-  row("case", "case", "工单", { avoid: { "zh-Hans": ["案件", "案例"] } }),
+  row("address", "address", "邮件地址", { sentences: ["reader.assign.email"], avoid: { "zh-Hans": ["邮箱"] } }),
+  row("case", "case", "工单", { sentences: ["reader.assign.noCase", "reader.assign.closed"], avoid: { "zh-Hans": ["案件", "案例"] } }),
   row("matter", "Matter", "事项", {
     avoid: { "zh-Hans": ["调查", "案件"] },
     note: "a supervised read, legal hold, departure handover or regulatory request; 调查 would call a routine handover an investigation (critic H3, D9)",
@@ -126,7 +129,7 @@ export const CONCEPTS: readonly Concept[] = [
     sentences: ["api.passkey.unsupported", "api.passkey.none"], avoid: { "zh-Hans": ["通行证"] },
     note: "not 密钥, which already names cryptographic keys here (escrow is 密钥恢复副本, and the key vault); 通行密钥 is how Apple and Google localize passkey. The owner first chose 密钥 (30 Sep 2026), was asked once, and confirmed 通行密钥 (1 Oct 2026)",
   }),
-  row("claim", "claim", "认领", { avoid: { "zh-Hans": ["注册", "激活"] } }),
+  row("claim", "claim", "认领", { sentences: ["ledgers.doctor.claimed", "ledgers.doctor.unclaimed"], avoid: { "zh-Hans": ["注册", "激活"] } }),
   row("claim-secret", "claim secret", "认领码", { avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
   row("invitation-secret", "invitation secret", "邀请码", { avoid: { "zh-Hans": ["邀请密钥"] } }),
   row("grant", "grant", "授权", { avoid: { "zh-Hans": ["许可"] } }),
@@ -140,10 +143,11 @@ export const CONCEPTS: readonly Concept[] = [
   row("setup", "Setup", "配置", { keys: ["route./setup"], avoid: { "zh-Hans": ["设置"] } }),
 
   // Navigation: each route's name is its own row, bound to its `route.*` key.
-  row("route.inbox", "Inbox", "收件箱", { keys: ["route./"] }),
+  row("route.inbox", "Inbox", "收件箱", { keys: ["route./"], sentences: ["reader.act.toInbox"] }),
   row("route.queue", "Queue", "队列", { keys: ["route./queue"] }),
   row("route.drafts", "Drafts", "草稿", { keys: ["route./drafts"] }),
-  row("route.outbox", "Outbox", "发件箱", { keys: ["route./outbox"], avoid: { "zh-Hans": ["已发送"] }, note: "ADR 39: the outbox never says sent" }),
+  row("route.outbox", "Outbox", "发件箱", {
+    keys: ["route./outbox"], sentences: ["ledgers.outbox.empty"], avoid: { "zh-Hans": ["已发送"] }, note: "ADR 39: the outbox never says sent" }),
   row("route.archive", "Archive", "归档", { keys: ["route./archive"], avoid: { "zh-Hans": ["存档", "封存"] } }),
   row("route.trash", "Trash", "回收站", {
     keys: ["route./trash"], sentences: ["inbox.moved.trash", "inbox.movedBack.trash", "inbox.search.found", "inbox.empty.trash"],
@@ -180,43 +184,53 @@ export const CONCEPTS: readonly Concept[] = [
   row("connectivity.offline", "Offline", "离线", { keys: ["chrome.connection.offline"] }),
 
   // Submission states (`SendState`, this Node's scale). Each names who said no.
-  row("send.held", "held", "暂留", { avoid: { "zh-Hans": ["待发送", "撤回"] } }),
-  row("send.awaiting", "awaiting", "待放行", { avoid: { "zh-Hans": ["发送中", "处理中"] } }),
-  row("send.cancelled", "cancelled", "已取消", { avoid: { "zh-Hans": ["已撤回"] } }),
-  row("send.withheld", "withheld", "扣发", { avoid: { "zh-Hans": ["已取消", "失败", "拒绝"] } }),
-  row("send.throttled", "throttled", "限流中", { avoid: { "zh-Hans": ["失败"] } }),
+  row("send.held", "held", "暂留", { keys: ["send.state.held"], avoid: { "zh-Hans": ["待发送", "撤回"] } }),
+  row("send.awaiting", "awaiting", "待放行", { keys: ["send.state.awaiting"], avoid: { "zh-Hans": ["发送中", "处理中"] } }),
+  row("send.cancelled", "cancelled", "已取消", { keys: ["send.state.cancelled"], avoid: { "zh-Hans": ["已撤回"] } }),
+  row("send.withheld", "withheld", "扣发", { keys: ["send.state.withheld"], avoid: { "zh-Hans": ["已取消", "失败", "拒绝"] } }),
+  row("send.throttled", "throttled", "限流中", { keys: ["send.state.throttled"], avoid: { "zh-Hans": ["失败"] } }),
   row("send.refused", "refused", "服务商拒收", {
-    avoid: { "zh-Hans": ["拒收", "退信", "失败"] },
+    keys: ["send.state.refused"], avoid: { "zh-Hans": ["拒收", "退信", "失败"] },
     note: "the mail service would not accept it and it never left (critic H3). A bare 拒收 reads as the recipient's server, which is `bounced`",
   }),
-  row("send.suppressed", "suppressed", "已抑制", { avoid: { "zh-Hans": ["已屏蔽", "黑名单"] } }),
+  row("send.suppressed", "suppressed", "已抑制", { keys: ["send.state.suppressed"], avoid: { "zh-Hans": ["已屏蔽", "黑名单"] } }),
   row("send.handed_over", "handed over", "已移交", {
+    keys: ["send.state.handed_over"], sentences: ["ledgers.outbox.daily.unmeasured", "ledgers.outbox.daily.throttled"],
     avoid: { en: ["accepted"], "zh-Hans": ["已发送", "发送成功", "已送达", "已投递", "已交付", "受理"] },
-    note: "the transport took the bytes. D8: its English note says 'Accepted by the mail service', a delivery word; fix the English with submission vocabulary ('Taken by the mail service', docs/i18n.md D8)",
+    note: "the transport took the bytes. D8 (fixed 1 Oct 2026): its note said 'Accepted by the mail service', a delivery word, and now says 'Taken by the mail service' (docs/i18n.md)",
   }),
   row("send.propose", "propose", "提交", {
     sentences: ["api.agent.send.propose"], avoid: { "zh-Hans": ["提议"] },
     note: "an agent drafts and submits a send intent for a person to seal; 提议 reads as suggesting an email",
   }),
-  row("send.outcome_unknown", "outcome unknown", "结果未知", { avoid: { "zh-Hans": ["失败", "异常"] } }),
+  row("send.denied", "denied", "否决", {
+    sentences: ["send.reason.policy_denied", "send.reason.approval_denied"], avoid: { "zh-Hans": ["拒绝"] },
+    note: "a rule or an approver decided against a send (layer 2a, proposed). 拒绝 is the refusal family (拒收, 投递前被拒), which is somebody else's server",
+  }),
+  row("send.outcome_unknown", "outcome unknown", "结果未知", {
+    // `never_submitted` is this state read with one more column (`describeSend`): the same label, a stronger note.
+    keys: ["send.state.outcome_unknown", "send.state.never_submitted"], avoid: { "zh-Hans": ["失败", "异常"] },
+  }),
 
   // Delivery states (per recipient, the receiving world's scale).
-  row("delivery.accepted", "accepted", "已受理", { avoid: { "zh-Hans": ["已送达", "已收到", "投递成功", "已读"] } }),
-  row("delivery.bounced", "bounced", "退信", { avoid: { "zh-Hans": ["拒收", "失败"] }, note: "the note must say 退信; 拒收 is on the send scale" }),
-  row("delivery.deferred", "deferred", "延迟", { avoid: { "zh-Hans": ["失败", "退信"] } }),
-  row("delivery.failed", "failed", "服务出错", { avoid: { "zh-Hans": ["发送失败"] } }),
-  row("delivery.rejected", "rejected", "投递前被拒", { avoid: { "zh-Hans": ["退信"] } }),
-  row("delivery.unobserved", "unobserved", "未观测到", { avoid: { "zh-Hans": ["待投递", "正常", "未知"] } }),
-  row("delivery.verified_destination", "verified destination", "已验证的目标地址", { avoid: { "zh-Hans": ["已确认送达"] } }),
+  row("delivery.accepted", "accepted", "已受理", { keys: ["delivery.state.accepted"], avoid: { "zh-Hans": ["已送达", "已收到", "投递成功", "已读"] } }),
+  row("delivery.bounced", "bounced", "退信", { keys: ["delivery.state.bounced"], avoid: { "zh-Hans": ["拒收", "失败"] }, note: "the note must say 退信; 拒收 is on the send scale" }),
+  row("delivery.deferred", "deferred", "延迟", { keys: ["delivery.state.deferred"], avoid: { "zh-Hans": ["失败", "退信"] } }),
+  row("delivery.failed", "failed", "服务出错", { keys: ["delivery.state.failed"], avoid: { "zh-Hans": ["发送失败"] } }),
+  row("delivery.rejected", "rejected", "投递前被拒", { keys: ["delivery.state.rejected"], avoid: { "zh-Hans": ["退信"] } }),
+  row("delivery.unobserved", "unobserved", "未观测到", { keys: ["delivery.state.unobserved"], avoid: { "zh-Hans": ["待投递", "正常", "未知"] } }),
+  row("delivery.verified_destination", "verified destination", "已验证的目标地址", {
+    keys: ["delivery.reason.verified_destination"], avoid: { "zh-Hans": ["已确认送达"] },
+  }),
 
   // Words one English word would merge.
   row("case.held", "Held (a colleague holds the case)", "他人处理中", { avoid: { "zh-Hans": ["暂留"] } }),
   row("quarantine", "quarantine / held back", "隔离"),
-  row("legal-hold", "legal hold", "法律保全", { avoid: { "zh-Hans": ["保留", "冻结"] } }),
-  row("policy-hold", "policy hold", "规则暂扣"),
+  row("legal-hold", "legal hold", "法律保全", { sentences: ["ledgers.collect.warning"], avoid: { "zh-Hans": ["保留", "冻结"] } }),
+  row("policy-hold", "policy hold", "规则暂扣", { keys: ["send.reason.policy_hold"] }),
   row("case.hand-over", "Hand over (a case)", "转交", { avoid: { "zh-Hans": ["移交"] } }),
   row("case.release", "Release", "放回队列", {
-    sentences: ["inbox.released"], avoid: { "zh-Hans": ["退回", "释放"] },
+    keys: ["queue.act.release"], sentences: ["inbox.released"], avoid: { "zh-Hans": ["退回", "释放"] },
     note: "giving up a claimed case. 退回 is the rejection family (退信), so a released case would read as refused",
   }),
   row("case.mine", "hold", "由你处理", {
@@ -228,7 +242,21 @@ export const CONCEPTS: readonly Concept[] = [
   row("revoke", "revoke", "吊销", { avoid: { "zh-Hans": ["撤回"] } }),
   row("withdraw", "withdraw", "收回", { avoid: { "zh-Hans": ["撤回"] } }),
   row("undo", "undo", "撤销", { avoid: { "zh-Hans": ["撤回"] } }),
-  row("seal", "seal", "定稿", { avoid: { "zh-Hans": ["封存"] } }),
+  row("seal", "seal", "定稿", {
+    sentences: ["composer.seal.refused", "composer.unreachable.unsealed", "composer.file.dangerous"],
+    avoid: { "zh-Hans": ["封存"] },
+    // Not `composer.bodyUnavailable.unreadable`: its "sealed under a key" is encryption (加密), not this act. The
+    // button's "Seal and send" (定稿并发送) is held by `composer-words.test.tsx`: a binding matches English by case.
+  }),
+  // Layer 2a, proposed: the composer's two words that no row had.
+  row("recall", "recall", "撤回", {
+    sentences: ["composer.sendNote", "composer.how.body"], avoid: { "zh-Hans": ["召回"] },
+    note: "taking a message back after it left, which no Node can do: named only to say there is none. The word revoke, withdraw, undo and held keep clear of",
+  }),
+  row("vault", "vault", "密钥库", {
+    sentences: ["composer.bodyUnavailable.unreadable"], avoid: { "zh-Hans": ["保险库", "金库"] },
+    note: "the key generations that open this Node's sealed content, restored with the recovery codes",
+  }),
   row("place.delete", "Move to Trash", "移到回收站", {
     keys: ["inbox.act.trash"], avoid: { "zh-Hans": ["删除"] },
     note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). The owner confirmed 移到废纸篓 (30 Sep 2026), renamed Trash 回收站, and confirmed 移到回收站 (1 Oct 2026)",

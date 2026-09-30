@@ -9,8 +9,8 @@
  *
  * **Plain JavaScript, served as `/app/theme.js`, so there is one copy.** The framework-free script (the claim,
  * the sign-in, a locked-out doctor) applies the choice before it renders anything, and the React shell reads
- * and changes it. `delivery.client.js` is shared between the same two for the same reason: two copies of a
- * vocabulary are two chances to disagree.
+ * and changes it. `delivery.client.js` is served the same way for the same reason: two copies of a rule are
+ * two chances to disagree.
  *
  * **The attribute is the whole mechanism.** The stylesheet's unqualified `:root` is the dark palette,
  * `:root[data-theme="light"]` is the light one, and `:root[data-theme="system"]` is light only under

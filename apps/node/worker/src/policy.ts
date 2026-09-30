@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { SendReason } from "@mailda/contract/schemas";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
@@ -123,7 +124,7 @@ function isOutcome(value: string): value is Outcome {
  * refusals are `withheld` plus a reason, so distinctness lives in the reason column rather than in five new
  * states — two conventions in one state machine is what later reads as an accident.
  */
-export const STATE_FOR: Record<Outcome, { state: "held" | "awaiting" | "withheld"; reason: string | null }> = {
+export const STATE_FOR: Record<Outcome, { state: "held" | "awaiting" | "withheld"; reason: SendReason | null }> = {
   allow: { state: "held", reason: null },
   hold: { state: "awaiting", reason: "policy_hold" },
   require_approval: { state: "awaiting", reason: "policy_approval_required" },
@@ -131,24 +132,24 @@ export const STATE_FOR: Record<Outcome, { state: "held" | "awaiting" | "withheld
 };
 
 /**
- * The reasons #60 writes. The **words** for them live in `src/client/delivery.client.js`, not here.
+ * The reasons #60 writes. The **words** for them live in the catalog (`src/i18n/en/delivery.ts`), not here.
  *
- * That placement is not an accident and not laziness. `delivery.client.js` already owns every send-state
- * sentence, for the reason stated in its own header: the rule deciding what a reader is shown belongs
- * somewhere a test can reach, and the outbox's last honesty defect lived in the one module with no coverage.
- * Repeating the sentences here would create a second definition of the same claim, and the one that reads as
- * authoritative would be whichever file the reader opened. So this module owns the **token** — which is what
- * #62's vocabulary is built from — and one module owns the prose.
+ * That placement is not an accident and not laziness. The catalog owns every send-state and send-reason
+ * sentence, keyed by the contract's `SEND_REASONS`, and `src/client/delivery.client.js` decides which one a
+ * reader is shown, somewhere a test can reach. Repeating the sentences here would create a second definition of
+ * the same claim, and the one that reads as authoritative would be whichever file the reader opened. So this
+ * module owns the **token** (typed `SendReason`, so it must be one the contract declares) and one module owns
+ * the prose.
  *
  * **Derived from `STATE_FOR` rather than written out**, because a second literal list of the same three
  * tokens is the correspondence problem this split exists to avoid, one level down: the mapping is what
  * actually writes a reason into `send_manifests.state_reason`, so anything else claiming to be the list of
- * reasons has to be computed from it or it is a claim nothing keeps true. `test/policy.test.ts` reads this
- * against the exact bytes `ui.ts` serves, which is what makes "one module owns the prose" an enforced
- * statement rather than a note about where the sentences happen to live today.
+ * reasons has to be computed from it or it is a claim nothing keeps true. `test/outbound-recheck.test.ts` holds
+ * every minting module's lists against the contract's in both directions, and the catalog's type holds the
+ * words to the same list, which is what makes "one module owns the prose" an enforced statement.
  */
-export const POLICY_REASONS: readonly string[] =
-  Object.values(STATE_FOR).map((mapped) => mapped.reason).filter((reason): reason is string => reason !== null);
+export const POLICY_REASONS: readonly SendReason[] =
+  Object.values(STATE_FOR).map((mapped) => mapped.reason).filter((reason): reason is SendReason => reason !== null);
 
 /* ---- approval stages, which are part of a require_approval version's content ----------------- */
 

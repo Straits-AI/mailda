@@ -4194,3 +4194,47 @@ rail's count to 由你处理, Health's outbound area to "Outbound mail" / 出站
 cryptographic keys here (密钥恢复副本, the key vault) where Apple and Google say 通行密钥; asked once, the owner chose
 通行密钥 on 1 October. Move to Trash: confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, and the
 owner confirmed that too. Every row is now confirmed. `docs/i18n.md` has the detail.
+
+## The interface's languages, layer 2a: the reader, the composer, the Queue and the ledgers (1 October 2026)
+
+**The screens where mail is read, written and accounted for now speak from the catalog.** The reader, the
+composer and Drafts, the Queue, and the Outbox, Audit, Log and Doctor moved 669 of the untranslated scan's findings
+into six new areas, 400 keys in each language. Each migration was held to its English by goldens taken from the
+file before its first edit, so the English that changed did so on purpose: the Outbox's empty state no longer says
+"Nothing has been sent" (D5; nothing is sent at the submission scale, ADR 39), `handed_over`'s note no longer says
+"Accepted by the mail service", a delivery word (D8), and the reader's thread row says "handed over" rather than
+the raw token. The Queue decided "just now" by comparing a formatted duration with the string "under a minute"; it
+now decides on the milliseconds, so the decision survives a translation.
+
+**The sending vocabulary moved out of `/app/delivery.js` without moving its rules.** The module still decides which
+state, reason and summary a reader is shown, including the one case where `outcome_unknown` is provably "never
+submitted", and now returns the contract's tokens. The contract declares the tokens as `as const` lists while the
+wire stays a string, so an older client still parses a newer Node, and the catalog's keys are typed by those lists:
+a token without words no longer compiles, where before a test had to evaluate the served module to notice.
+
+**A message keeps its own script.** Chinese mail in an English interface was drawn in whatever forms the platform
+picked for Han, which can be Japanese ones. The body route now says which script the message's charset or `Content-Language`
+names, the frame's root carries it as `data-script` (never `lang`), and `/app/frame.css` puts that script's faces
+first; the sanitiser keeps a sender's `lang` and `dir`. On a local Node, a GB2312 plain-text message and a UTF-8
+HTML one saying `Content-Language: zh` were drawn in Simplified forms under both interfaces, by the browser's own
+font report rather than by eye.
+
+**A reply's quote line is its author's words, so it is in its author's language** and carries its offset from UTC,
+which a correspondent in another zone needs to read the hour. `Re:` and `Fwd:` stay English on the wire and are not
+added after a Chinese client's `回复：`, `答复：` or `转发：`.
+
+**The tables grew as the work predicted, and the projection for the rest did not hold.** Both catalogs are now
+about 49 KB raw (13.5 KB and 15.8 KB gzip), the shell's gzip fell by 1.2 KB as the words left it, and nothing new
+loads before sign-in. At this layer's rate the whole interface's English table would be near 100 KB raw, not the
+60 KB projected on 30 September ([receipt](./receipts/react-shell-bundle.md)). Three glossary rows were added and
+wait for the owner: denied (否决), recall (撤回) and vault (密钥库).
+
+**The screenshots and sweeps found what the goldens could not.** A Chinese column header in a narrow column
+stacked one character per line (Han may break anywhere; headers now keep a Han run whole); the composer's
+"Replying to:" said 回复：, which is the Chinese reply prefix itself, so its head read as a doubled subject (now
+正在回复：); the Outbox's Retry trailed a separator when no `.eml` followed. axe found the Log's table scrolling
+sideways at 390 px with nothing in it a keyboard could reach, the first time the swept Node had a log entry, so it is
+now in a named `Scroller`. And the sweeps' locators for the reader, composer and Queue controls still said English,
+which the migration made untrue under `--locale zh-Hans`; they now read the catalog, as the first six did. On a local
+Node with nine messages and eight seeded sends, both locales: axe found no AA violation in 146 views each, and
+spacing no pair under 8px in 132 views each.

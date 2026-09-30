@@ -238,9 +238,9 @@ no longer exists is dead work nobody can clear; and the decision path's conditio
 and report the send as released.
 
 `withheld` and `awaiting` keep [#62][62]'s convention: gates are `awaiting` plus a reason, refusals are
-`withheld` plus a reason. The reason tokens are minted in code and the **words** live in
-`src/client/delivery.client.js`, which is the one module a test can evaluate as the exact bytes a browser is
-served.
+`withheld` plus a reason. The reason tokens are minted in code, each typed by the contract's
+`SEND_REASONS`, and the **words** live in the catalog (`apps/node/worker/src/i18n/en/delivery.ts`), keyed by that
+list, so a declared reason without words does not compile.
 
 An approved send goes back to `held`, with `state_reason` cleared: the gate is gone, so it is an ordinary send
 waiting out whatever remains of its hold window. The record that it was gated and approved is in

@@ -1,0 +1,155 @@
+<section class="ledger" aria-label="Doctor">
+<header class="ledger-head">
+<h1>Doctor</h1>
+<span class="state verdict-degraded">degraded</span>
+</header>
+<p class="notice dim mono">claimed · read [clock]</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Check</th>
+<th scope="col">State</th>
+<th scope="col">Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">recovery_escrow</td>
+<td>
+<span class="state severity-degraded">degraded</span>
+</td>
+<td>recovery_escrow detail<div class="codes-sheet">
+<p>
+<strong>Write these down now.</strong> Store them, then confirm one.</p>
+<ol class="codes" aria-label="Recovery codes">
+<li class="mono">aaaa-bbbb-cccc</li>
+<li class="mono">dddd-eeee-ffff</li>
+</ol>
+<p class="dim">Set <span class="mono">rcs_1</span>, carrying content key generation 2 and credential key generation 3. Put them somewhere that survives losing this computer and this Cloudflare account.</p>
+<p>
+<button type="button" class="quiet">I have saved these ten codes</button>
+</p>
+</div>
+<label class="field-row" for="recovery-code">
+<span>Confirm one code</span>
+<input id="recovery-code" class="mono" autocomplete="off" type="password" value="">
+</label>
+<p>
+<button type="button" class="quiet" disabled="">Confirm</button> <span class="dim">Compared against the hash, never spent. Type it; nothing here fills it in for you.</span>
+</p>
+</td>
+</tr>
+<tr>
+<td class="mono">evidence_present</td>
+<td>
+<span class="state delivery-accepted">ok</span>
+</td>
+<td>evidence_present detail<p>
+<span class="inline-actions">
+<button type="button" class="quiet">Verify a batch</button>
+<button type="button" class="linkish">Continue from where it stopped</button>
+</span>
+</p>
+<p class="notice mono" role="status">50 object(s) checked in receipts, 1024 bytes read: 2 fault(s). More remains.<span style="display: block;">missing receipts.blob_key rcpt_7: no object</span>
+<span style="display: block;">altered receipts.blob_key rcpt_9: hash differs</span>
+</p>
+</td>
+</tr>
+<tr>
+<td class="mono">evidence_orphans</td>
+<td>
+<span class="state severity-degraded">degraded</span>
+</td>
+<td>evidence_orphans detail<p class="notice">This deletes every object the reconciler finds no referent for — orphaned raw mail past the grace period, stranded draft bodies and export residue. It is refused for the whole organization while a legal hold stands.</p>
+<p>
+<button type="button" class="quiet">Delete them now</button>
+</p> <button type="button" class="linkish dim">Never mind</button>
+</td>
+</tr>
+<tr>
+<td class="mono">recovery_key_conflicts</td>
+<td>
+<span class="state severity-degraded">degraded</span>
+</td>
+<td>recovery_key_conflicts detail<label class="field-row" for="ack-restore">
+<span>Restore id</span>
+<input id="ack-restore" class="mono" value="">
+</label>
+<label class="field-row" for="ack-scope">
+<span>What was examined</span>
+<input id="ack-scope" value="">
+</label>
+<label class="field-row" for="ack-conclusion">
+<span>What was concluded</span>
+<input id="ack-conclusion" value="">
+</label>
+<p>
+<button type="button" class="quiet">Record the assessment</button>
+</p>
+</td>
+</tr>
+<tr>
+<td class="mono">body_index_failed</td>
+<td>
+<span class="state severity-degraded">degraded</span>
+</td>
+<td>body_index_failed detail<table class="search-failed">
+<thead>
+<tr>
+<th scope="col">Repair</th>
+<th scope="col">Message</th>
+<th scope="col">State</th>
+<th scope="col" class="num">Attempts</th>
+<th scope="col">Error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<input aria-label="Repair msg_a" type="checkbox">
+</td>
+<td class="mono">msg_a</td>
+<td>
+<span class="state state-index-retryable">retryable</span>
+</td>
+<td class="num mono dim">2</td>
+<td class="dim mono">R2 timed out</td>
+</tr>
+<tr>
+<td>
+<input aria-label="Repair msg_b" type="checkbox">
+</td>
+<td class="mono">msg_b</td>
+<td>
+<span class="state state-index-unindexable">unindexable</span>
+</td>
+<td class="num mono dim">5</td>
+<td class="dim mono">—</td>
+</tr>
+</tbody>
+</table>
+<p class="dim">Tick the ones worth retrying — fix the cause first.</p>
+<p>
+<button type="button" class="quiet">Requeue 1 message(s)</button>
+</p>
+</td>
+</tr>
+</tbody>
+</table>
+<section class="transport" aria-label="Sending credentials">
+<h2>Sending credentials</h2>
+<p class="dim">Sends go through <span class="mono">cloudflare</span>. The EMAIL binding is present and is preferred: it holds no credential, and it is the only adapter that can submit the exact bytes an authored send records.</p>
+<label class="field-row" for="transport-account">
+<span>Cloudflare account id</span>
+<input id="transport-account" class="mono" value="">
+</label>
+<label class="field-row" for="transport-token">
+<span>Email Sending API token</span>
+<input id="transport-token" class="mono" type="password" value="">
+</label>
+<p class="dim">Needs the <span class="mono">Email Sending: Edit</span> permission. It is encrypted on arrival and no route returns it — to change it, supply a new one.</p>
+<p>
+<button class="quiet" type="button" disabled="">Save credentials</button>
+</p>
+</section>
+</section>

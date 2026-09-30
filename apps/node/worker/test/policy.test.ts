@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { utf8 } from "@mailda/evidence";
+import { SEND_REASONS } from "@mailda/contract/schemas";
 
 import {
   createPolicyDraft, editPolicyDraft, evaluate, isStricter, OUTCOMES, POLICY_REASONS, publishPolicy,
   stricter, canonicalConditions, domainOf, STATE_FOR, type Outcome, type PolicyConditions,
 } from "../src/policy.ts";
-import deliveryScript from "../src/client/delivery.client.js";
 import {
   cancelSend, dispatchDue, releasePolicyHold, type SendState,
 } from "../src/outbound/dispatch.ts";
@@ -613,28 +613,18 @@ describe("the state a decision produces (#60's mapping)", () => {
     expect(STATE_FOR.deny).toEqual({ state: "withheld", reason: "policy_denied" });
   });
 
-  it("gives every reason token it can write words in the module a browser is served", () => {
-    // `src/policy.ts` mints the tokens and `src/client/delivery.client.js` owns the sentences, which is a
-    // split two files assert in prose and nothing was checking. The failure it admits is not hypothetical:
-    // `describeReason` falls back to the raw token, so a reason with no entry shows somebody
-    // `policy_approval_required` where a sentence naming who can clear it belongs — the same defect
-    // `delivery-summary.test.ts` catches for states, which had no counterpart for reasons.
-    //
-    // Asserted against the **exact bytes** `ui.ts` serves rather than against an imported map, because
-    // `delivery.client.js` is a Text module (wrangler `rules`) and cannot be imported as a namespace inside
-    // workerd. That is the stronger check anyway: what is asserted is what a browser gets.
+  it("writes only reason tokens the contract declares, which is where their words are keyed", () => {
+    // `src/policy.ts` mints the tokens and the catalog owns the sentences (`src/i18n/en/delivery.ts`), keyed by
+    // the contract's `SEND_REASONS`, so a declared token without words does not compile. The failure this admits
+    // is not hypothetical: a reason with no words shows somebody `policy_approval_required` where a sentence
+    // naming who can clear it belongs.
     //
     // `POLICY_REASONS` is derived from `STATE_FOR`, so a fifth outcome or a renamed token arrives here
-    // automatically instead of needing this list edited. The dispatch's own reasons come from
-    // `DISPATCH_REASONS` for exactly the same reason: this line was a hand-written `"authority_lost"` until
-    // #62 added the other five, and a hand-written list beside a derived one is the half that goes stale.
-    // `test/outbound-recheck.test.ts` checks the other direction — that nothing in the client explains a
-    // token no module mints.
+    // automatically instead of needing this list edited. `test/outbound-recheck.test.ts` checks the whole
+    // vocabulary in both directions: every declared token is minted by some module, and nothing else is.
     expect([...POLICY_REASONS].sort())
       .toEqual(["policy_approval_required", "policy_denied", "policy_hold"]);
-    for (const reason of [...POLICY_REASONS, ...DISPATCH_REASONS]) {
-      expect(deliveryScript, `no words for ${reason}`).toContain(`\n  ${reason}: {`);
-    }
+    for (const reason of [...POLICY_REASONS, ...DISPATCH_REASONS]) expect(SEND_REASONS).toContain(reason);
   });
 
   it("seals a send in held when policy allows, and records that it was evaluated", async () => {

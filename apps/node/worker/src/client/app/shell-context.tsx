@@ -3,7 +3,7 @@ import {
 } from "react";
 
 import { t } from "/app/locale.js";
-import type { MailboxQueue } from "./api.ts";
+import type { MailboxQueue, Said } from "./api.ts";
 import { Composer, type ComposerContext, type ComposerHandle } from "./screens/composer.tsx";
 import { Modal } from "./ui/popover.tsx";
 
@@ -61,10 +61,10 @@ interface Compose {
   close(): void;
   start(rows: readonly MailboxQueue[]): void;
   /**
-   * Saves what the open composer holds, now: null once the Node has it (or nothing is open), else the Node's
-   * words for why not. Sign-out asks first, so the session does not end under words typed in the autosave pause.
+   * Saves what the open composer holds, now: null once the Node has it (or nothing is open), else why not, with
+   * who said so. Sign-out asks first, so the session does not end under words typed in the autosave pause.
    */
-  save(): Promise<string | null>;
+  save(): Promise<Said | null>;
   /**
    * True, having said so, while the open composer's seal is in the air: nothing may replace that dock yet. `open`
    * asks it too; a caller with an act of its own to do first (a reply claims its case) asks it before that act.

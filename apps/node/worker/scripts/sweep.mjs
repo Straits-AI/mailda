@@ -39,7 +39,7 @@ export function address(origin, route, locale) {
 /**
  * The words a state's locators look for, in the run's locale: the catalog the page itself renders from, so a locator
  * on a migrated control follows its translation instead of failing as a state that could not open. A locator on a
- * screen not migrated yet (the reader, the composer, the queue) is still an English literal, because that screen still
+ * screen not migrated yet (the rule and Butler editors) is still an English literal, because that screen still
  * renders English under every locale.
  */
 export function wordsFor(locale) {
@@ -80,6 +80,10 @@ function named(requests) {
   return [...requests].map((request) => `${request.method()} ${new URL(request.url()).pathname}${new URL(request.url()).search}`).join(", ");
 }
 
+/** `Nothing`'s loading notice in every locale's words, so a sweep under `--locale` waits for it too. */
+const LOADING = new RegExp(`^(?:${Object.values(CATALOGS).map((catalog) => catalog.app["chrome.nothing.loading"]
+  .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`);
+
 /**
  * Whether the screen has loaded: nothing in flight for `QUIET_MS`, then no "Reading…" notice left in it
  * (`Nothing`'s loading state in chrome.tsx, the one the shell renders). An audit taken the moment the shell mounted
@@ -106,7 +110,7 @@ export async function unsettled(page) {
     }
     await page.waitForTimeout(50);
   }
-  const reading = page.locator("p.notice", { hasText: /^Reading…$/ });
+  const reading = page.locator("p.notice", { hasText: LOADING });
   const gone = await reading.first().waitFor({ state: "detached", timeout: SETTLE_MS }).then(() => true, () => false);
   if (gone) return null;
   const where = await reading.first().evaluate((el) => {
@@ -210,10 +214,10 @@ export async function wholePage(page) {
  * because the decision is read from the Node, never from a locator that failed.
  */
 /** Discards the open composer's draft, so an audit leaves none behind. No dock, no draft: a state that never opened one. */
-async function discardDraft(page) {
+async function discardDraft(page, words) {
   const dock = page.locator(".composer-dock");
   if ((await dock.count()) === 0) return;
-  await dock.getByRole("button", { name: "Discard", exact: true }).click();
+  await dock.getByRole("button", { name: words["composer.discard"], exact: true }).click();
   await dock.waitFor({ state: "detached", timeout: 10_000 });
 }
 
@@ -242,10 +246,10 @@ const claimedHere = new WeakSet();
  * newest message's case first, as any reply does, and nothing gives that back, so on a Node where that case was
  * open a run leaves it held by the account that ran it, and the Hand to state then finds it held and claims none.
  */
-async function releaseClaimed(page) {
+async function releaseClaimed(page, words) {
   if (!claimedHere.has(page)) return;
   const mine = page.locator("tr.case-row.mine");
-  await mine.getByRole("button", { name: "Release", exact: true }).click();
+  await mine.getByRole("button", { name: words["queue.act.release"], exact: true }).click();
   // The row stops being mine once the Node has released the case and the queue has been read again.
   await mine.waitFor({ state: "detached", timeout: 10_000 });
   claimedHere.delete(page);
@@ -266,11 +270,11 @@ async function butlers(page) {
 }
 
 export const STATES = [
-  ["/", "composer — reply", async (page) => {
+  ["/", "composer — reply", async (page, words) => {
     await selectFirstMessage(page);
     // `exact`: Playwright matches a name as a case-insensitive substring, so "Reply" alone would also
     // match "Reply all" and fail as ambiguous, which read as a state that could not be opened.
-    await page.getByRole("button", { name: "Reply", exact: true }).click();
+    await page.getByRole("button", { name: words["inbox.act.reply"], exact: true }).click();
     await page.waitForSelector(".composer-dock", { timeout: 10_000 });
   }, DISCARD],
   ["/", "composer — new message", async (page, words) => {
@@ -283,9 +287,9 @@ export const STATES = [
     }
     await page.waitForSelector(".composer-dock", { timeout: 10_000 });
   }],
-  ["/", "composer — forward", async (page) => {
+  ["/", "composer — forward", async (page, words) => {
     await selectFirstMessage(page);
-    await page.getByRole("button", { name: "Forward", exact: true }).click();
+    await page.getByRole("button", { name: words["inbox.act.forward"], exact: true }).click();
     await page.waitForSelector(".composer-dock", { timeout: 10_000 });
   }, DISCARD],
   ["/", "message details", async (page) => {
@@ -293,28 +297,28 @@ export const STATES = [
     await page.locator(".reader-details summary").click();
     await page.waitForSelector(".reader-details[open]", { timeout: 10_000 });
   }],
-  ["/", "headers dialog", async (page) => {
+  ["/", "headers dialog", async (page, words) => {
     await selectFirstMessage(page);
     await page.locator(".reader-details summary").click();
-    await page.getByRole("button", { name: "View headers", exact: true }).click();
+    await page.getByRole("button", { name: words["reader.headers.view"], exact: true }).click();
     // The text, not the dialog: the dialog opens before the headers arrive, and a loading state is not the view.
     await page.waitForSelector("dialog.headers-dialog[open] pre", { timeout: 10_000 });
   }],
-  ["/", "assign popover", async (page) => {
+  ["/", "assign popover", async (page, words) => {
     await selectFirstMessage(page);
-    await page.getByRole("button", { name: "Assign", exact: true }).click();
+    await page.getByRole("button", { name: words["reader.assign"], exact: true }).click();
     // Past "Reading…": whichever of its answers this case gets (the form, the holder, closed) is the view. A
     // locator rather than `waitForFunction`, which evaluates a string in the page and the CSP refuses it.
-    await page.locator(".assign-popover", { hasNotText: "Reading…" }).waitFor({ timeout: 10_000 });
+    await page.locator(".assign-popover", { hasNotText: words["chrome.nothing.loading"] }).waitFor({ timeout: 10_000 });
   }],
   ["/", "reader (390px)", async (page) => {
     // One pane at a time below 768px; the viewport is restored after the audit, in `finally`.
     await page.setViewportSize({ width: 390, height: 844 });
     await selectFirstMessage(page);
   }],
-  ["/", "overflow menu", async (page) => {
+  ["/", "overflow menu", async (page, words) => {
     await selectFirstMessage(page);
-    await page.getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("button", { name: words["reader.more"] }).click();
     await page.waitForSelector("[role=menu]", { timeout: 10_000 });
   }],
   ["/", "filter popover", async (page, words) => {
@@ -360,11 +364,11 @@ export const STATES = [
    * With no case held here it claims the first open one, as a person would; the line says so, and `RELEASE`
    * gives it back.
    */
-  ["/queue", "hand to a colleague", async (page) => {
-    const handTo = page.getByRole("button", { name: "Hand to…", exact: true });
+  ["/queue", "hand to a colleague", async (page, words) => {
+    const handTo = page.getByRole("button", { name: words["queue.handTo.open"], exact: true });
     if ((await handTo.count()) === 0) {
       console.log("      (no case held here: claiming the first open one, which is released after the audit)");
-      await page.getByRole("button", { name: "Claim", exact: true }).first().click();
+      await page.getByRole("button", { name: words["queue.act.claim"], exact: true }).first().click();
       claimedHere.add(page);
     }
     await handTo.first().click();

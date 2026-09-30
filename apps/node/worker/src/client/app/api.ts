@@ -44,7 +44,7 @@ export interface Said {
 export type Refused = { readonly ok: false } & Said;
 
 /** The Node's words when it sent some (`said` is a string), else this interface's `fallback`. */
-function saidBy(said: unknown, fallback: string): Said {
+export function saidBy(said: unknown, fallback: string): Said {
   return typeof said === "string" ? { message: said, fromNode: true } : { message: fallback, fromNode: false };
 }
 

@@ -88,6 +88,13 @@ export const STRUCTURAL_ATTRIBUTES: ReadonlyMap<string, string> = new Map([
   ["fill", "an SVG paint"],
   ["stroke", "an SVG paint"],
   ["xmlns", "a namespace URI"],
+  // React types these as a literal union plus `string & {}`, which the token rule no longer counts as closed.
+  ["role", "an ARIA role token"],
+  ["type", "an input or button type token"],
+  ["autoComplete", "an autofill token"],
+  ["inputMode", "a virtual keyboard token"],
+  ["target", "a browsing-context keyword"],
+  ["style", "CSS property values"],
 ]);
 
 export type FindingKind = "text" | "literal" | "formatter";
@@ -148,14 +155,20 @@ export function clientProgram(files: readonly string[], virtual: ReadonlyMap<str
   return ts.createProgram({ rootNames: [...files, ...virtual.keys()], options, host });
 }
 
-/** A union with a string-literal member, or a template-literal type: one of a closed set, not words. */
+/**
+ * One of a closed set of strings: a union with a string-literal member (or a template-literal type), and no member
+ * that holds any string. `string & {}`, the autocomplete idiom, is such a member: `"a" | (string & {})` let any
+ * English sentence written where it went pass as a token. Other members (an object, a number, null) hold no words.
+ */
 function isTokenType(checker: ts.TypeChecker, type: ts.Type | undefined): boolean {
   if (type === undefined) return false;
   const resolved = type.flags & ts.TypeFlags.TypeParameter ? checker.getBaseConstraintOfType(type) ?? type : type;
   const members = resolved.isUnion() ? resolved.types : [resolved];
-  return members.some((member) =>
-    member.isStringLiteral() || (member.flags & ts.TypeFlags.TemplateLiteral) !== 0
-    || (member.isIntersection() && member.types.some((part) => part.isStringLiteral())));
+  const literal = (member: ts.Type) => member.isStringLiteral() || (member.flags & ts.TypeFlags.TemplateLiteral) !== 0
+    || (member.isIntersection() && member.types.some((part) => part.isStringLiteral()));
+  const open = (member: ts.Type) => (member.flags & ts.TypeFlags.String) !== 0
+    || (member.isIntersection() && !literal(member) && member.types.some((part) => (part.flags & ts.TypeFlags.String) !== 0));
+  return members.some(literal) && !members.some(open);
 }
 
 const COMPARISONS = new Set([

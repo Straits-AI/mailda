@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { answerWith, calls, reset } from "./session-stub.ts";
@@ -89,6 +89,23 @@ describe("resuming a draft", () => {
     const rows = (await screen.findAllByRole("button")).map((button) => button.textContent ?? "");
     expect(rows[0]).toContain("ana@example.test");
     expect(rows[1]).toContain("no recipient yet");
+  });
+});
+
+describe("the list in English", () => {
+  /*
+   * Byte for byte as it was before its words moved into the catalog (ADR 46). The times are the machine's zone,
+   * so they are replaced by the formatter that writes each one, which `composer-words.test.tsx` holds.
+   */
+  it("renders the rows, the cap and the empty list as it did before", async () => {
+    mount([REPLY, NEW], true);
+    await screen.findByRole("list", { name: "Drafts" });
+    const listed = document.body.innerHTML
+      .replace(/(<time[^>]* title=")[^"]*(">)[^<]*(<\/time>)/g, "$1{dateTime}$2{mediumDateTime}$3");
+    cleanup();
+    mount([]);
+    await screen.findByText("No drafts.");
+    await expect(`${listed}\n${document.body.innerHTML}\n`).toMatchFileSnapshot("./golden/drafts.en.html");
   });
 });
 

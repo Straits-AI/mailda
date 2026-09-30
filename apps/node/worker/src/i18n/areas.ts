@@ -21,6 +21,12 @@ export const AREAS = {
   inbox: ["inbox"],
   settings: ["settings"],
   api: ["api"],
+  reader: ["reader"],
+  composer: ["composer"],
+  drafts: ["drafts"],
+  queue: ["queue"],
+  ledgers: ["ledgers"],
+  delivery: ["send", "delivery"],
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 
 export type AreaName = keyof typeof AREAS;
