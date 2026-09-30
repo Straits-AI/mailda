@@ -1,21 +1,71 @@
 ---
 id: message-metadata-bytes
 kind: measured-tripwire
-measured_on: 2026-09-27
+measured_on: 2026-09-30
 # First measured 3 August 2026 (the original section below). Every value in `values:` was re-derived on
-# 27 September, and bytes_per_filed_place was measured for the first time then, so this is the date they carry.
+# 30 September, after migration 0071, so this is the date they carry; bytes_per_filed_place was first measured
+# on 27 September.
 stale_when: >
   the messages, mailbox_items or message_places schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
   measurement in this file, or D1's per-database ceiling moves from 10 GB
 values:
-  message.metadata.bytes_per_message: 2089
+  message.metadata.bytes_per_message: 2255
   message.metadata.bytes_per_extra_delivery: 432
   message.metadata.bytes_per_filed_place: 391
+  shard.plan_warn_messages: 3333123
+  shard.plan_stop_messages: 4047363
+  shard.plan_route_messages: 4285444
 ---
 
 
-## Withdrawn 30 September 2026: the shard thresholds, until migration 0071 is measured
+## Re-measured 30 September 2026: the search forms, and a row that crossed a page boundary
+
+Migration 0071 adds three columns to `messages` (`search_index_form`, `body_index_form`,
+`body_index_cut_from_bytes`) and two indexes with an entry per row (`msg_search_index_form`,
+`msg_body_index_form`). It landed earlier the same day without this measurement, and the three shard thresholds
+were withdrawn (the section below). They are restored here from this round.
+
+**2,254.8 bytes per message, up from 2,089.0; an extra delivery 432.1 and a filed place 391.2, both unchanged.**
+One run of `apps/node/worker/scripts/measure-message-bytes.mjs`, unchanged since 0071 landed, in its own scratch
+database `mailda-bytes-scratch` in the account this Node is deployed in, created and deleted by the script
+(14:47 to 14:48 UTC). `wrangler d1 list` before and after showed the same 71 databases and no scratch one, and
+`wrangler d1 info` on the name reported none. Corpus as 27 September's run B, plus 0071's settled state: both
+forms `1` on every row and no body cut.
+
+| stage | 30 September | 27 September, run B |
+|:--|--:|--:|
+| empty database | 12,288 | 12,288 |
+| schema only, 3 tables, 12 named indexes | 86,016 | 77,824 (10 indexes) |
+| + 2,000 messages, 1 delivery each | 4,640,768 | 4,308,992 |
+| + 2,000 more messages | 9,150,464 | 8,486,912 |
+| + 2,000 extra deliveries | 10,014,720 | 9,351,168 |
+| + 2,000 filed places | 10,801,152 | 10,137,600 |
+| + 2,000 more filed places | 11,583,488 | 10,919,936 |
+
+- Per message: (9,150,464 − 4,640,768) / 2,000 = **2,254.8 bytes**
+- Per extra delivery: (10,014,720 − 9,150,464) / 2,000 = **432.1 bytes**
+- Per filed place: (11,583,488 − 10,801,152) / 2,000 = **391.2 bytes**
+
+**166 bytes a message, where the withdrawal estimated about 35.** The indexes cost what it said; the columns did
+not. Split on a local SQLite file (`node:sqlite`, the same corpus and schema, `PRAGMA page_count` and `dbstat`),
+which is a cross-check of the cause and not the figure: the schema before 0071 gave 2,086.9 (remote 2,089.0), the
+three columns alone 2,224.1, and the whole of 0071 2,252.8 (remote 2,254.8). So the two indexes are **29 bytes**
+(27 leaf pages for 4,000 rows), and the three columns, about 3 bytes of record header and payload a row, are
+**137**. `dbstat` shows why: a `messages` record is about 990 bytes, the leaves held 3.75 rows a page before 0071
+and 3.33 after, 1,067 leaf pages for 4,000 rows then and 1,200 now. The row sat just under the size at which four
+share a page, and three bytes tipped more pages from four rows to three. This is the boundary the rounds of 27 and
+29 August warned of ("the next small column will look free too"), and this time the small change is the one that
+crossed it: priced at the pages it spills, not at its bytes. Those rounds' picture of two ~1,632-byte rows to a page took the
+whole per-message figure for the row; the row is about half of it, and indexes and the delivery are the rest.
+
+**Measured:** real remote D1, seeded through `wrangler d1 execute --remote`, size read from
+`wrangler d1 info --json`, wrangler 4.118.0. The scratch database was created and deleted by the script.
+
+## Withdrawn 30 September 2026, and resolved the same day: the shard thresholds, until migration 0071 was measured
+
+**Resolved** by the round above, which measured 0071 and restored the three thresholds. Kept as written, because
+its estimate is the thing that round found wrong.
 
 Migration 0071 adds three columns to `messages` (`search_index_form`, `body_index_form`,
 `body_index_cut_from_bytes`) and two indexes with an entry per row (`msg_search_index_form`,
@@ -389,36 +439,37 @@ ULIDs at their true 30-character width (#6). 20 mailboxes, quarterly time bucket
 elsewhere at 90%, three numbers that until now had no measurement behind them. Against
 D1's 10 GB per-database ceiling (receipt: `d1-platform-limits`):
 
-Divisor: **2,089 bytes per message**, from the 27 September measurement above. Every figure in this table is
+Divisor: **2,255 bytes per message**, from the 30 September measurement above. Every figure in this table is
 that ceiling times the mark, rounded down, divided by that number and rounded down, so it can be checked in
 one line. It counts one delivery and no filed places per message; each extra delivery costs 432 bytes and
 each filed place 391 more.
 
 | Threshold | Bytes | Messages |
 |---|---:|---:|
-| Shard capacity | 10,737,418,240 | 5,139,980 |
-| 70%: warn and plan the next shard | 7,516,192,768 | **3,597,986** |
-| 85%: stop optional bulky projections | 9,126,805,504 | **4,368,983** |
-| 90%: route new metadata to a new shard | 9,663,676,416 | **4,625,982** |
+| Shard capacity | 10,737,418,240 | 4,761,604 |
+| 70%: warn and plan the next shard | 7,516,192,768 | **3,333,123** |
+| 85%: stop optional bulky projections | 9,126,805,504 | **4,047,363** |
+| 90%: route new metadata to a new shard | 9,663,676,416 | **4,285,444** |
 
-**A single shard holds at most roughly 5.1 million messages** (an upper bound: see the first caveat below), down from 6 million before row projections and the
-true id width, 6.5 million before authentication results, 7.1 million after threading, and 8.5 million
+**A single shard holds at most roughly 4.8 million messages** (an upper bound: see the first caveat below), down from 5.1 million before
+0071's search forms, 6 million before row projections and the true id width, 6.5 million before authentication results, 7.1 million after threading, and 8.5 million
 before it. For most organisations that is still years of mail, which remains the useful
 thing to know: sharding is not a day-one problem, and the planner should say so rather than
 implying it is imminent. But the direction matters. **Two indexes cost 1.4 million messages
-of headroom**, and 0068's row projections cost 0.8 million, so the next projection added to this table is
-not free either, and §11B's "stop optional bulky projections at 85%" now has a concrete meaning.
+of headroom**, 0068's row projections cost 0.8 million, and 0071's three small columns and two indexes 0.4 million, so the next
+projection added to this table is not free either, and §11B's "stop optional bulky projections at 85%" now has a concrete meaning.
 
 Against the **1 TB account-level ceiling** that #5 found missing from §11B, the one
-sharding cannot relieve, a Node tops out near **526 million messages** at most across all shards
-combined (1,099,511,627,776 / 2,089). This paragraph said 674 million until 27 September, which is the
-12 August divisor of 1,632; the 17 September round moved the table above and not this line. That is the
+sharding cannot relieve, a Node tops out near **487 million messages** at most across all shards
+combined (1,099,511,627,776 / 2,255). This paragraph said 526 million from 27 to 30 September, and 674 million
+before that, which is the 12 August divisor of 1,632; the 17 September round moved the table above and not this
+line. That is the
 boundary where §11B's advice to select the PostgreSQL `ControlStoreAdapter` actually applies.
 
 ## Note on fan-out
 
-A message delivered to five mailboxes costs 2,089 + 4 × 432 = **3,817 bytes**, not 10,445
-(27 September figures; this line used the 4 August ones until then).
+A message delivered to five mailboxes costs 2,255 + 4 × 432 = **3,983 bytes**, not 11,275
+(30 September figures; this line used the 4 August ones until 27 September).
 The `messages` row is written once and shared; only `mailbox_items` multiplies. Shared and
 role mailboxes are therefore much cheaper than a naive per-delivery estimate suggests,
 which matters because §9's shared-inbox model makes multi-delivery the normal case for
@@ -432,8 +483,8 @@ operational mail rather than an edge case.
   indexes (`ir_derived_key`, `ir_needs_reseal`, `ir_org_accepted`, `ir_org_sender`) and one `outbox` row with
   `outbox_unpublished`, written together in `apps/node/worker/src/ingress.ts`, and nothing deletes either. Nor
   are the search postings (`message_search`, `message_body_search`), whose per-message size
-  `message-search-cost.md` records as unmeasured. So every message count derived here (5,139,980, the three
-  `shard.plan_*` values, 526 million) is an upper bound, and `bytes_per_extra_delivery` a lower one. No figure
+  `message-search-cost.md` records as unmeasured. So every message count derived here (4,761,604, the three
+  `shard.plan_*` values, 487 million) is an upper bound, and `bytes_per_extra_delivery` a lower one. No figure
   for the gap is given, because none was measured.
 - The next round should seed one `ingress_receipts` row and one `outbox` row per delivery in
   `apps/node/worker/scripts/measure-message-bytes.mjs`, and carry them into the shape
