@@ -1334,7 +1334,7 @@ describe("the counter survives a clock that moves, which is the only kind there 
  * A dispatch that throws must still say why (#37).
  *
  * The claim moves the manifest to `outcome_unknown` before submitting, which is the right pessimism: if
- * the invocation dies mid-dispatch, the send lands in the one state nothing retries. But the claim writes
+ * the invocation dies mid-dispatch, the send lands in the one state nothing retries. But the claim wrote
  * only `state` and `attempts` — every *other* route to a terminal state goes through `applyOutcome`, which
  * records `last_error` and an audit entry together. So a throw in between produced the only terminal state
  * reachable with no reason at all: no `last_error`, no audit entry, no log line, and never retried.
@@ -1446,6 +1446,32 @@ describe("a dispatch that fails before an outcome (#37)", () => {
       .bind(sealed.id).first<{ state: string; last_error: string | null }>();
     expect(row?.state).toBe("outcome_unknown");
     expect(row?.last_error).toContain("the adapter itself came apart");
+  });
+
+  it("records the reason for a throttled send too, whose provider words the claim used to keep", async () => {
+    // The recorder writes only where `last_error` is NULL, and the claim of a `throttled` send kept the 429's
+    // words. So the throw was never recorded, no entry was appended, and "slow down" explained an unknown outcome.
+    const sealed = await sealManifest(testEnv, atTime(2_600_000_000_000), ORG, composition);
+    await dispatchOne(testEnv, atTime(2_600_000_600_000), ORG, sealed.id,
+      fakeTransport({ kind: "throttled", reason: "provider 429: slow down" }));
+    const throttled = await testEnv.CATALOG.prepare("SELECT state, last_error FROM send_manifests WHERE id = ?")
+      .bind(sealed.id).first<{ state: string; last_error: string | null }>();
+    // The premise: a throttled send with the provider's words on it.
+    expect(throttled).toEqual({ state: "throttled", last_error: "provider 429: slow down" });
+
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET body_normalized_key = ? WHERE id = ?")
+      .bind(`${ORG}/sent/absent/never-written.txt`, sealed.id).run();
+    await expect(dispatchOne(testEnv, atTime(2_600_000_660_000), ORG, sealed.id,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<never@acme.example>" }))).rejects.toThrow();
+
+    const row = await testEnv.CATALOG.prepare("SELECT state, last_error FROM send_manifests WHERE id = ?")
+      .bind(sealed.id).first<{ state: string; last_error: string | null }>();
+    expect(row?.state).toBe("outcome_unknown");
+    expect(row?.last_error).toContain("the dispatch failed before an outcome was recorded");
+    const entries = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND subject = ? AND action = 'send.outcome_unknown'",
+    ).bind(ORG, sealed.id).first<{ n: number }>();
+    expect(entries?.n).toBe(1);
   });
 });
 

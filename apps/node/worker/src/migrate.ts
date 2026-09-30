@@ -70,6 +70,7 @@ import m0069 from "../migrations/0069_outbox_retry.sql";
 import m0070 from "../migrations/0070_verified_destinations.sql";
 import m0071 from "../migrations/0071_search_form.sql";
 import m0072 from "../migrations/0072_send_attachment_author_name.sql";
+import m0073 from "../migrations/0073_state_reason_invariant.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -197,6 +198,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0070_verified_destinations.sql", sql: m0070 },
   { name: "0071_search_form.sql", sql: m0071 },
   { name: "0072_send_attachment_author_name.sql", sql: m0072 },
+  { name: "0073_state_reason_invariant.sql", sql: m0073 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */
