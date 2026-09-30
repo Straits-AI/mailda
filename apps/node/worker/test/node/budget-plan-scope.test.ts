@@ -465,9 +465,11 @@ const FIGURES: Record<string, Classification> = {
     "message.metadata.bytes_per_message", "message.metadata.bytes_per_extra_delivery",
     "message.metadata.bytes_per_filed_place",
   ),
-  // Its three `shard.plan_*_messages` (§11B's 70/85/90% marks of the Paid 10 GB ceiling, divided by the bytes
-  // per message) are withdrawn until 0071's columns are remeasured; classify them again as `derived` from
-  // `message.metadata.bytes_per_message` and `d1.paid.max_database_bytes` when the receipt restores them.
+  ...derived(
+    "§11B's 70/85/90% marks of the **Paid** 10 GB per-database ceiling, divided by the measured bytes per message",
+    ["message.metadata.bytes_per_message", "d1.paid.max_database_bytes"],
+    "shard.plan_warn_messages", "shard.plan_stop_messages", "shard.plan_route_messages",
+  ),
 
   // docs/receipts/message-page-size.md
   ...mailda(
@@ -1088,7 +1090,8 @@ describe("every plan-conditional budget names its plan", () => {
   it("keeps a derived figure's inputs live, so an inherited plan cannot go missing", () => {
     // `doctor.evidence_sample_size` divides the **Free** subrequest ceiling. Nothing renames that ceiling out from
     // under it silently: the derivation is declared, and the declaration is checked against the live budget set.
-    // (This used `shard.plan_warn_messages` until those were withdrawn, 30 September 2026.)
+    // (This used `shard.plan_warn_messages` until those were withdrawn on 30 September 2026; they were restored
+    // the same day, and `doctor.evidence_sample_size` stayed as the example.)
     const { "doctor.free.max_subrequests": _renamed, ...withoutCeiling } = budgets;
     const complaint = planScopeComplaints(withoutCeiling).join("\n");
     expect(complaint).toContain("doctor.evidence_sample_size  was derived from doctor.free.max_subrequests");

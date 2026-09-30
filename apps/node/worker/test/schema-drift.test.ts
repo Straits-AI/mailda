@@ -110,13 +110,11 @@ const MEASURED_SHAPE = {
        */
       "from_name", "preview_sealed", "preview_generation", "preview_state", "preview_attempts",
       /*
-       * Added by migration 0071 (the search form, 30 September 2026) **without remeasuring**, which breaks the
-       * rule at the foot of this file on purpose, as 0068 did, and for 0068's reason: the measurement makes a
-       * scratch database in the account the Node runs in, and the change was made where no Cloudflare write was
-       * allowed. So the receipt's three shard thresholds are **withdrawn** until it is remeasured, rather than
-       * left reading as measured on a schema they were not measured on. `message.metadata.bytes_per_message`
-       * stays at 2,089 with the receipt saying it predates these columns; its estimate of the change is an
-       * estimate. `scripts/measure-message-bytes.mjs` already builds this shape, so the remeasure is one run.
+       * Added by migration 0071 (the search form, 30 September 2026) without remeasuring, which broke the rule
+       * at the foot of this file on purpose, as 0068 did, and withdrew the receipt's shard thresholds until it
+       * was. Remeasured against real remote D1 the same day: 2,089 → 2,255 bytes per message, 137 of it these
+       * three columns tipping a row of about 990 bytes from four to a page to three, and 29 the two indexes
+       * below. See docs/receipts/message-metadata-bytes.md.
        */
       "search_index_form", "body_index_form", "body_index_cut_from_bytes",
     ],
@@ -126,7 +124,7 @@ const MEASURED_SHAPE = {
       "msg_body_index_due",
       // 0068's backfill selector. Partial and empty once the backfill has caught up: it cost its root page.
       "msg_preview_open",
-      // 0071's re-index selectors, an entry per row each; unmeasured, see the columns above.
+      // 0071's re-index selectors, an entry per row each: 29 bytes a message between them, see the columns above.
       "msg_search_index_form", "msg_body_index_form",
     ],
   },
