@@ -4170,6 +4170,19 @@ none by the Japanese cut, none synthesised. And `scripts/axe.mjs` and `scripts/s
 both locales: axe found no AA violation in 145 views (English) and 146 (Chinese), and spacing no pair under 8px in 132
 views each.
 
+## The per-message bytes, remeasured after the search forms (30 September 2026)
+
+0071's search forms landed earlier the same day without the remote measurement, and the three shard thresholds were
+withdrawn. With the account owner's consent the script ran once against a scratch D1 that it created and deleted,
+and the account's database list was the same 71 before and after
+([receipt](./receipts/message-metadata-bytes.md)). **A message now costs 2,255 bytes, up from 2,089**, where the
+withdrawal had estimated about 35 more. The two indexes cost what it said, 29 bytes; the three small columns cost
+137, because a `messages` record of about 990 bytes sat just under the size at which four share a page, and three
+bytes tipped more pages to three rows. A local SQLite copy of the same corpus split the two causes and matched the
+remote figures to two bytes. An extra delivery (432) and a filed place (391) did not move. A 10 GB shard holds at
+most about 4.8 million messages, and the thresholds are back in the budgets: warn at 3,333,123, stop bulky
+projections at 4,047,363, route new metadata at 4,285,444. The account-wide ceiling now reads at most 487 million.
+
 ## The owner's review of the Chinese words (30 September 2026)
 
 **The owner answered every glossary row and every reviewer flag on a review page, one recorded decision each**:

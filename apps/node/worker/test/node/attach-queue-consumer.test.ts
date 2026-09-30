@@ -1,9 +1,9 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { readWranglerConfig, WORKER_DIR } from "./wrangler-world";
 
@@ -77,6 +77,11 @@ err("stub npx: unhandled command: " + args);
 const stubDir = mkdtempSync(join(tmpdir(), "mailda-wrangler-stub-"));
 writeFileSync(join(stubDir, "npx"), STUB, { mode: 0o755 });
 chmodSync(join(stubDir, "npx"), 0o755);
+// Removed after the file's tests: it was left behind on every run, 171 of them in /tmp by 30 September 2026.
+afterAll(() => {
+  rmSync(stubDir, { recursive: true, force: true });
+  if (existsSync(stubDir)) throw new Error(`the stub directory ${stubDir} is still there`);
+});
 
 function attach(scenario: string): { status: number | null; text: string } {
   const run = spawnSync(process.execPath, [SCRIPT], {
