@@ -13,10 +13,12 @@ import type { Locale } from "./locales.ts";
  * ## Status: every row is proposed, and only the owner confirms one
  *
  * A row's `status` is `"proposed"` until the repository's owner confirms that word, and then it becomes
- * `{ confirmedBy, record }`, where `record` links the owner's own written confirmation (a PR review comment
- * or an issue comment). An author, human or agent, never writes a `confirmedBy` for somebody else: the only
- * edit to a row's status is copying that record in. The check cannot tell who typed the field, so **the real
- * gate is the owner's approval of the pull request that carries the edit**, and `docs/i18n.md` says so.
+ * `{ confirmedBy, record }`, where `record` links the owner's own written confirmation and says when it was
+ * made (a PR review comment, an issue comment, or a decision the owner recorded on a review page). An author,
+ * human or agent, never writes a `confirmedBy` for somebody else: the only edit to a row's status is copying
+ * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026. The check cannot
+ * tell who typed the field, so **the real gate is the owner's approval of the pull request that carries the
+ * edit**, and `docs/i18n.md` says so.
  *
  * What the status gates: a locale that is **not** a preview may not ship a key bound to a proposed row. A
  * preview locale may, because reviewing proposed words in place is what a preview is for, and a preview is
@@ -51,6 +53,42 @@ export interface Concept {
 
 const proposed = "proposed" as const;
 
+/**
+ * The owner's review of 30 September 2026: every row and every reviewer flag answered on the review page, one
+ * recorded decision each, by the owner's account. 79 rows confirmed, three of them with the word the owner chose
+ * there (butler and route.butlers 管家, route.trash 回收站). Two were held and answered the next day
+ * (`OWNER_ANSWER` below): `passkey`, asked whether 密钥 or 通行密钥, and `place.delete`, whose phrase changed
+ * after the owner confirmed it.
+ */
+const OWNER_REVIEW = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, decisions recorded 30 September 2026",
+} as const;
+/**
+ * The two rows held on 30 September, answered by the owner on 1 October 2026 in the working session ("passkey use
+ * 通行密钥, move to trash ok") and recorded on the same review page: passkey stays 通行密钥, and 移到回收站 is
+ * confirmed as the phrase for Move to Trash.
+ */
+const OWNER_ANSWER = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, answered 1 October 2026 in the working session",
+} as const;
+const ANSWERED: ReadonlySet<string> = new Set(["passkey", "place.delete"]);
+/** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
+export const CONFIRMED: ReadonlySet<string> = new Set([
+  "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
+  "recovery-codes", "claim", "claim-secret", "invitation-secret", "grant", "provider", "catch-all", "sponsor", "effect",
+  "graph-node", "session", "settings", "setup", "route.inbox", "route.queue", "route.drafts", "route.outbox",
+  "route.archive", "route.trash", "route.people", "route.matters", "route.approvals", "route.rules", "route.butlers",
+  "route.agents", "route.limits", "route.audit", "route.log", "route.doctor", "automate", "compose", "palette",
+  "health.refuse", "health.degraded", "health.report", "outbound", "refusal.code", "connectivity.connected",
+  "connectivity.unreachable", "connectivity.offline", "send.held", "send.awaiting", "send.cancelled", "send.withheld",
+  "send.throttled", "send.refused", "send.suppressed", "send.handed_over", "send.propose", "send.outcome_unknown",
+  "delivery.accepted", "delivery.bounced", "delivery.deferred", "delivery.failed", "delivery.rejected",
+  "delivery.unobserved", "delivery.verified_destination", "case.held", "quarantine", "legal-hold", "policy-hold",
+  "case.hand-over", "case.release", "case.mine", "revoke", "withdraw", "undo", "seal",
+]);
+
 /** The eight lookback sentences for an empty Mine, which all say "in a case you hold". */
 const LOOKBACK_MINE: readonly Key[] = (["newest", "older"] as const).flatMap((when) => (["counted", "uncounted"] as const)
   .flatMap((counted) => (["any", "filtered"] as const).map((scope) => `inbox.lookback.${when}.${counted}.${scope}.mine` as const)));
@@ -68,7 +106,10 @@ export const CONCEPTS: readonly Concept[] = [
     note: "淼达 (Miǎodá) is a homophone of 秒达, 'arrives in seconds', a delivery slogan: never write that, and never pun on 达",
   }),
   row("node", "Node", "节点", { avoid: { "zh-Hans": ["服务器", "实例"] }, note: "one deployment in the customer's own account; 本节点 for 'this Node'" }),
-  row("butler", "Butler", "Butler", { avoid: { "zh-Hans": ["机器人", "智能助手"] }, note: "Latin; the first use glossed Butler（自动化流程）. 管家 is the alternative" }),
+  row("butler", "Butler", "管家", {
+    sentences: ["api.grant.org.admin"], avoid: { "zh-Hans": ["Butler", "机器人", "智能助手"] },
+    note: "the owner's word (30 Sep 2026), replacing Latin Butler, which is now avoided so one locale has one word. The CLI noun `butler` stays Latin and in mono",
+  }),
   row("mailbox", "mailbox", "邮箱", { note: "a storage and access boundary; never used for an address" }),
   row("address", "address", "邮件地址", { avoid: { "zh-Hans": ["邮箱"] } }),
   row("case", "case", "工单", { avoid: { "zh-Hans": ["案件", "案例"] } }),
@@ -81,7 +122,10 @@ export const CONCEPTS: readonly Concept[] = [
   row("receipt.ingress", "receipt", "接收记录", { avoid: { "zh-Hans": ["回执", "收据"] } }),
   row("escrow", "escrow", "密钥恢复副本", { avoid: { "zh-Hans": ["托管"] } }),
   row("recovery-codes", "recovery codes", "恢复码", { avoid: { "zh-Hans": ["备用码"] } }),
-  row("passkey", "passkey", "通行密钥", { avoid: { "zh-Hans": ["通行证"] } }),
+  row("passkey", "passkey", "通行密钥", {
+    sentences: ["api.passkey.unsupported", "api.passkey.none"], avoid: { "zh-Hans": ["通行证"] },
+    note: "not 密钥, which already names cryptographic keys here (escrow is 密钥恢复副本, and the key vault); 通行密钥 is how Apple and Google localize passkey. The owner first chose 密钥 (30 Sep 2026), was asked once, and confirmed 通行密钥 (1 Oct 2026)",
+  }),
   row("claim", "claim", "认领", { avoid: { "zh-Hans": ["注册", "激活"] } }),
   row("claim-secret", "claim secret", "认领码", { avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
   row("invitation-secret", "invitation secret", "邀请码", { avoid: { "zh-Hans": ["邀请密钥"] } }),
@@ -101,12 +145,18 @@ export const CONCEPTS: readonly Concept[] = [
   row("route.drafts", "Drafts", "草稿", { keys: ["route./drafts"] }),
   row("route.outbox", "Outbox", "发件箱", { keys: ["route./outbox"], avoid: { "zh-Hans": ["已发送"] }, note: "ADR 39: the outbox never says sent" }),
   row("route.archive", "Archive", "归档", { keys: ["route./archive"], avoid: { "zh-Hans": ["存档", "封存"] } }),
-  row("route.trash", "Trash", "废纸篓", { keys: ["route./trash"], avoid: { "zh-Hans": ["删除"] }, note: "ADR 45: nothing a person places is destroyed. 回收站 is the alternative" }),
+  row("route.trash", "Trash", "回收站", {
+    keys: ["route./trash"], sentences: ["inbox.moved.trash", "inbox.movedBack.trash", "inbox.search.found", "inbox.empty.trash"],
+    avoid: { "zh-Hans": ["删除"] },
+    // `inbox.trash.note` names Trash and is not bound: it says 不会被删除, and `avoid` has no negation escape.
+    // The old word 废纸篓 is in `NEVER`, which covers it too.
+    note: "the owner's word (30 Sep 2026), replacing 废纸篓. ADR 45: nothing a person places is destroyed",
+  }),
   row("route.people", "People", "成员", { keys: ["route./people"] }),
   row("route.matters", "Matters", "事项", { keys: ["route./matters"], avoid: { "zh-Hans": ["调查"] } }),
   row("route.approvals", "Approvals", "审批", { keys: ["route./approvals"] }),
   row("route.rules", "Rules", "规则", { keys: ["route./rules"] }),
-  row("route.butlers", "Butlers", "Butler", { keys: ["route./butlers"] }),
+  row("route.butlers", "Butlers", "管家", { keys: ["route./butlers"], avoid: { "zh-Hans": ["Butler"] } }),
   row("route.agents", "Agents", "代理", { keys: ["route./agents"], avoid: { "zh-Hans": ["智能体"] }, note: "machine identities; nothing proves one is an AI" }),
   row("route.limits", "Limits", "限额", { keys: ["route./limits"] }),
   row("route.audit", "Audit", "审计", { keys: ["route./audit"] }),
@@ -172,13 +222,19 @@ export const CONCEPTS: readonly Concept[] = [
   row("case.mine", "hold", "由你处理", {
     sentences: ["inbox.tab.mineTitle", "inbox.empty.mine", ...LOOKBACK_MINE], avoid: { "zh-Hans": ["认领"] },
     note: "Mine: a case you hold, claimed or handed to you (a hand-over sets the assignee too); 认领 would say you claimed it. Mirrors 他人处理中",
+    // `chrome.rail.mailbox` says 由你处理 too (the owner's review, R1) and is not bound: its English says "mine", not
+    // "hold", and its Chinese says 未认领 for the unclaimed count, which this row's avoided 认领 would catch.
   }),
   row("revoke", "revoke", "吊销", { avoid: { "zh-Hans": ["撤回"] } }),
   row("withdraw", "withdraw", "收回", { avoid: { "zh-Hans": ["撤回"] } }),
   row("undo", "undo", "撤销", { avoid: { "zh-Hans": ["撤回"] } }),
   row("seal", "seal", "定稿", { avoid: { "zh-Hans": ["封存"] } }),
-  row("place.delete", "Move to Trash", "移到废纸篓", { keys: ["inbox.act.trash"], avoid: { "zh-Hans": ["删除"] }, note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4)" }),
-];
+  row("place.delete", "Move to Trash", "移到回收站", {
+    keys: ["inbox.act.trash"], avoid: { "zh-Hans": ["删除"] },
+    note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). The owner confirmed 移到废纸篓 (30 Sep 2026), renamed Trash 回收站, and confirmed 移到回收站 (1 Oct 2026)",
+  }),
+].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
+  : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only
@@ -194,6 +250,7 @@ export const NEVER: Readonly<Record<Exclude<Locale, "en">, ReadonlyArray<{ reado
     { phrase: "必达", why: "a pun on 达 that claims delivery" },
     { phrase: "秒达", why: "the homophone of 淼达, a delivery slogan: the brand misspelt as an overclaim" },
     { phrase: "您", why: "the register is 你 (docs/i18n.md)" },
+    { phrase: "废纸篓", why: "Trash is 回收站 (the owner's review, 30 September 2026): one place, one word, in every sentence" },
   ],
 };
 

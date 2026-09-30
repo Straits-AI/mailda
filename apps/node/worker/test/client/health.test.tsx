@@ -76,7 +76,7 @@ describe("the six areas", () => {
     const popover = await openPopover();
     expect(rows(popover)).toEqual([
       ["Inbound routing", "ok"],
-      ["Outbound delivery", "report · 1 failing"],
+      ["Outbound mail", "report · 1 failing"],
       ["Worker and keys", "refuse · 1 failing"],
       ["Database and storage", "degraded · 2 failing"],
       ["Automation", "ok"],
@@ -87,7 +87,7 @@ describe("the six areas", () => {
   it("reads an area an administrator's report has no check in as no checks, never ok", async () => {
     mount(report("ok", [finding("inbound_routing", true)]));
     const popover = await openPopover();
-    expect(rows(popover)[1]).toEqual(["Outbound delivery", "no checks"]);
+    expect(rows(popover)[1]).toEqual(["Outbound mail", "no checks"]);
   });
 
   it("reads a member's reduced report as ok in your checks, and says the verdict counts what was withheld", async () => {

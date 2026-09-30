@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AREAS } from "../../src/i18n/areas.ts";
 import { CATALOGS } from "../../src/i18n/catalog.ts";
 import * as en from "../../src/i18n/en/index.ts";
-import { CONCEPTS, NEGATES, NEVER, type Concept } from "../../src/i18n/glossary.ts";
+import { CONCEPTS, CONFIRMED, NEGATES, NEVER, type Concept } from "../../src/i18n/glossary.ts";
 import { LOCALES } from "../../src/i18n/locales.ts";
 import * as zhHans from "../../src/i18n/zh-Hans/index.ts";
 import {
@@ -141,11 +141,27 @@ describe("the glossary", () => {
 
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
-    const released = confirmedBeforeShipping(planted({}, { preview: false }));
-    expect(released).toContain("zh-Hans brand.name: brand is proposed, not confirmed");
-    expect(released).toContain("zh-Hans route./outbox: route.outbox is proposed, not confirmed");
+    const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
+    // Every row is confirmed since the owner answered the two held ones on 1 October 2026.
+    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
+    // Put back to proposed, passkey is reported on both keys it governs.
+    const heldAgain = CONCEPTS.map((concept) => (concept.id === "passkey" ? { ...concept, status: "proposed" as const } : concept));
+    expect(confirmedBeforeShipping(released(heldAgain))).toEqual([
+      "zh-Hans api.passkey.unsupported: passkey is proposed, not confirmed",
+      "zh-Hans api.passkey.none: passkey is proposed, not confirmed",
+    ]);
+    // A row put back to proposed is reported on every key it governs, its own and a prose concept's alike.
+    const unconfirmed = CONCEPTS.map((concept) => (concept.id === "brand" ? { ...concept, status: "proposed" as const } : concept));
+    expect(confirmedBeforeShipping(released(unconfirmed))).toContain("zh-Hans brand.name: brand is proposed, not confirmed");
+    expect(confirmedBeforeShipping(released(unconfirmed))).toContain("zh-Hans language.unreadable: brand is proposed, not confirmed");
     // Confirmed rows ship.
     const confirmed = CONCEPTS.map((concept) => ({ ...concept, status: { confirmedBy: "owner", record: "a PR review" } }));
-    expect(confirmedBeforeShipping({ ...planted({}, { preview: false }), concepts: confirmed })).toEqual([]);
+    expect(confirmedBeforeShipping(released(confirmed))).toEqual([]);
+  });
+
+  it("records the owner's review against rows that exist, and leaves no row proposed", () => {
+    const ids = new Set(CONCEPTS.map((concept) => concept.id));
+    expect([...CONFIRMED].filter((id) => !ids.has(id))).toEqual([]);
+    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual([]);
   });
 });

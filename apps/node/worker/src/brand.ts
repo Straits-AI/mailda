@@ -43,8 +43,9 @@
  * exactly like 秒达, "arrives in seconds", a common delivery slogan, and an input method typing `miaoda` may offer
  * 秒达 first. That slogan claims delivery, which this product says it cannot know (ADR 39, 40), so 秒达, 必达 and
  * 使命必达 are never-phrases in the glossary (`src/i18n/glossary.ts`) and no copy puns on 达. In Traditional
- * Chinese, when it is authored, the name is 淼達. No trademark search for 淼达 has been made; one belongs before
- * anything public uses it.
+ * Chinese, when it is authored, the name is 淼達. The owner confirmed 淼达 as the mark on 30 September 2026, in the
+ * glossary review (`docs/i18n.md`). No trademark search for 淼达 has been made; one (CNIPA, classes 9, 38 and 42)
+ * belongs before anything public uses it.
  */
 
 /**

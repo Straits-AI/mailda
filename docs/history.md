@@ -4182,3 +4182,15 @@ bytes tipped more pages to three rows. A local SQLite copy of the same corpus sp
 remote figures to two bytes. An extra delivery (432) and a filed place (391) did not move. A 10 GB shard holds at
 most about 4.8 million messages, and the thresholds are back in the budgets: warn at 3,333,123, stop bulky
 projections at 4,047,363, route new metadata at 4,285,444. The account-wide ceiling now reads at most 487 million.
+
+## The owner's review of the Chinese words (30 September 2026)
+
+**The owner answered every glossary row and every reviewer flag on a review page, one recorded decision each**:
+90 decisions, 86 confirming and four changing a word. Butler and Butlers are now **管家** (Latin Butler is an avoided
+form in zh-Hans; the CLI noun `butler` stays Latin), and Trash is **回收站** (废纸篓 joined `NEVER`, so no sentence
+keeps it). 79 of 81 rows carry the owner's confirmation (`CONFIRMED` in `glossary.ts`); the flags adopted changed the
+rail's count to 由你处理, Health's outbound area to "Outbound mail" / 出站邮件, and named the holds `org.admin` governs.
+**Two rows were held and answered the next day.** passkey: the owner asked for 密钥, which already names
+cryptographic keys here (密钥恢复副本, the key vault) where Apple and Google say 通行密钥; asked once, the owner chose
+通行密钥 on 1 October. Move to Trash: confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, and the
+owner confirmed that too. Every row is now confirmed. `docs/i18n.md` has the detail.

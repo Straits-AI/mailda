@@ -18,13 +18,21 @@ values:
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
   shell.pre_auth_locale_bytes: 3347
-  shell.catalog_bytes_en: 17711
-  shell.catalog_bytes_zh_hans: 18349
+  shell.catalog_bytes_en: 17707
+  shell.catalog_bytes_zh_hans: 18374
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
 composer and nobody had priced either half.
 
+
+## Re-measured 30 September 2026, later: the owner's review of the Chinese words
+
+The same build, after the owner's glossary review changed words in both tables (Trash 回收站, Butler 管家, the
+rail's count, "Outbound mail" / 出站邮件, the `org.admin` grant sentence): the `en` table **17,707 raw / 4,891
+gzip** (−4), the `zh-Hans` table **18,374 raw / 5,976 gzip** (+25). Word changes only, inside the 10% band; the
+shell (759,600 / 220,486) and `/app/locale.js` (3,347 raw) did not move. Printed by `wrangler deploy --dry-run`,
+whose build step is `scripts/build-client.mjs`.
 
 ## Re-measured 30 September 2026: the interface's languages (ADR 46), after 2.7% of drift measured first
 

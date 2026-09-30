@@ -92,7 +92,7 @@ replaced the shape around it:
   *Unreachable*, an offline browser *Offline*); it replaced a green dot with *listening* written beside it,
   which nothing had ever computed. The word is a polite `role="status"` region that stays mounted, so a screen
   reader hears it change. *Health:* and the verdict's own word (`ok`, `degraded`, `refuse`) opens a
-  popover that groups the findings into six areas (Inbound routing, Outbound delivery, Worker and keys,
+  popover that groups the findings into six areas (Inbound routing, Outbound mail, Worker and keys,
   Database and storage, Automation, Access and recovery) and links to Doctor. The popover reads the report
   the status bar already holds and never fetches one, because a doctor run is dozens of subrequests with
   `doctor.max_subrequests_per_run` as its ceiling (`doctor-check-cost.md`), and opening a popover is not a
@@ -196,8 +196,9 @@ Mailda only, and 淼达 never appears there. The sign-in and claim lockup, 淼�
 `lang="en"` so a new owner connects the name to the `mailda` CLI and `mailda.site`, is built with the
 pre-authentication screens' translation (layer 3), not now. `mailda` stays in every identifier. The name is a
 homophone of 秒达, "arrives in seconds", a delivery slogan: the product says it cannot know delivery (ADR 39), so
-秒达, 必达 and 使命必达 are never-phrases in the glossary, and no copy puns on 达. `src/brand.ts` records it. Still
-the owner's call, and still proposed in the glossary like every other Chinese word (`docs/i18n.md`).
+秒达, 必达 and 使命必达 are never-phrases in the glossary, and no copy puns on 达. `src/brand.ts` records it. The owner
+confirmed 淼达 as the mark on 30 September 2026 (the glossary review, `docs/i18n.md`). No trademark search for it has
+been made; one belongs before anything public uses it.
 
 ### Flow Blue is not a text colour on two of the brand's own three grounds
 
