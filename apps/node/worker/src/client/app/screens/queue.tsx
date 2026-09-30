@@ -6,6 +6,7 @@ import {
   type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
   setAttachmentLimits, setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
 } from "../api.ts";
+import { isComposingKey } from "../ui/ime.ts";
 
 /**
  * The shared queue: what two people work without colliding.
@@ -36,7 +37,7 @@ import {
  * Handing a case to a colleague, by the address they sign in with. A field that appears on "hand to" rather
  * than a picker: the directory is an administrator's read, and the person doing this knows the address.
  */
-function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
+export function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>Hand to…</button>;
@@ -45,7 +46,7 @@ function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
       <input
         className="mono" placeholder="colleague@…" aria-label="Colleague's sign-in address" value={email}
         onChange={(event) => setEmail(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Enter" && email.trim() !== "") { event.preventDefault(); onAssign(email.trim()); } }}
+        onKeyDown={(event) => { if (event.key === "Enter" && !isComposingKey(event.nativeEvent) && email.trim() !== "") { event.preventDefault(); onAssign(email.trim()); } }}
       />
       <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>Hand over</button>
     </span>
@@ -414,7 +415,7 @@ export function Queue() {
             defaultValue={current?.first_response_minutes ?? ""}
             aria-label="First response target in minutes; empty promises nothing"
             onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
+              if (event.key !== "Enter" || isComposingKey(event.nativeEvent)) return;
               const raw = (event.target as HTMLInputElement).value.trim();
               void onSetTarget(raw === "" ? null : Number(raw));
             }}

@@ -60,6 +60,51 @@ const RULES = `
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
+/* ---- Simplified Chinese (ADR 30 as amended, ADR 46) --------------------------------------
+   No CJK webfont: four weights of an SC face are about 9.7 MB, and every platform this interface targets
+   already has one. The stack names them after Inter and before system-ui, so Latin letters stay Inter and Han gets a
+   real Simplified face in real weights; left to system-ui, Linux Chromium drew Japanese glyph forms and a
+   faux bold. :lang(zh) matches zh-Hans, which bootLocale puts on the html element. Tracking is zeroed,
+   because letter-spacing breaks the even grid Han is set on. The rail labels move from 11px to 12px, a size
+   already on the scale, since their strokes are what 11px loses first; and the group toggle, set solid at
+   11px/1, gets a line-height of 1.3 so a Han face's taller glyphs are not clipped. Presentation values with
+   that basis, not measurements.
+   The stack starts with "Inter Latin": Inter's own four files again, so no byte is added, with a unicode-range
+   that leaves out the punctuation Chinese shares with Latin (U+00B7, U+2014, U+2018-2019, U+201C-201D, U+2026).
+   Inter has those glyphs, so under its plain name a quote, dash or ellipsis inside a Chinese sentence would be set
+   narrow and on the Latin baseline; left out, they fall through to the SC face with the Han around them. */
+@font-face {
+  font-family: "Inter Latin";
+  src: url("/app/fonts/inter-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00B6, U+00B8-2013, U+2015-2017, U+201A-201B, U+201E-2025, U+2027-FFFF;
+}
+@font-face {
+  font-family: "Inter Latin";
+  src: url("/app/fonts/inter-500.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00B6, U+00B8-2013, U+2015-2017, U+201A-201B, U+201E-2025, U+2027-FFFF;
+}
+@font-face {
+  font-family: "Inter Latin";
+  src: url("/app/fonts/inter-600.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00B6, U+00B8-2013, U+2015-2017, U+201A-201B, U+201E-2025, U+2027-FFFF;
+}
+@font-face {
+  font-family: "Inter Latin";
+  src: url("/app/fonts/inter-700.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00B6, U+00B8-2013, U+2015-2017, U+201A-201B, U+201E-2025, U+2027-FFFF;
+}
+:root:lang(zh) {
+  --body: "Inter Latin", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", monospace;
+  --track-wordmark: 0; --track-hero: 0; --track-display: 0; --track-caps: 0; --track-label: 0;
+}
+:root:lang(zh) .rail-heading { font-size: 12px; }
+:root:lang(zh) .rail-group-toggle { font-size: 12px; line-height: 1.3; }
+
 /* ---- base ------------------------------------------------------------------------------- */
 
 * { box-sizing: border-box; }
@@ -286,7 +331,7 @@ button.linkish { display: inline-flex; align-items: center; min-height: 24px; }
   gap: 8px;
   margin: 0;
   font: 700 18px/1.2 var(--body);
-  letter-spacing: -.02em;
+  letter-spacing: var(--track-wordmark);
   white-space: nowrap;
   color: var(--text-primary);
 }
@@ -328,7 +373,7 @@ main {
 /* The pre-authentication hero heading. The shell's page titles are .ledger-head h1 and .list-title. */
 h1 {
   font: 700 clamp(1.9rem, 4.6vw, 3rem)/1.1 var(--body);
-  letter-spacing: -.018em;
+  letter-spacing: var(--track-hero);
   margin: 0 0 1rem;
   max-width: 30ch;
   text-wrap: balance;
@@ -501,7 +546,7 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
 /* The rail scrolls; its children never shrink to fit. Flex items shrink by default, and with Admin open at
    1280x720 that squeezed the Admin toggle from 24px to 16px (WCAG 2.5.8) and Compose from 36px to 32px. */
 .rail > * { flex-shrink: 0; }
-.rail .wordmark { font-size: 15px; font-weight: 600; letter-spacing: -.01em; padding: 2px 8px 12px; }
+.rail .wordmark { font-size: 15px; font-weight: 600; letter-spacing: var(--track-display); padding: 2px 8px 12px; }
 .rail .wordmark svg { width: 20px; height: 20px; }
 .compose-button { width: 100%; height: 36px; margin: 0 0 14px; }
 .compose-button.compact { width: 36px; height: 36px; padding: 0; margin: 0; flex: none; }
@@ -509,7 +554,7 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
 /* The group labels are the one uppercase text in the interface. */
 .rail-heading {
   font: 600 11px/1.3 var(--body);
-  letter-spacing: .06em;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   color: var(--text-muted);
   margin: 16px 10px 4px;
@@ -522,7 +567,7 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
   margin: 12px 0 0;
   padding: 0 8px 0 10px;
   font: 600 11px/1 var(--body);
-  letter-spacing: .06em;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   color: var(--text-muted);
   background: transparent;
@@ -859,7 +904,7 @@ body:has(.composer-dock) .toast-region {
   border-right: 1px solid var(--border-soft);
 }
 .list-head { display: flex; align-items: baseline; gap: 8px; padding: 18px 16px 10px; }
-.list-title { margin: 0; font: 600 26px/1.2 var(--body); letter-spacing: -.01em; max-width: none; }
+.list-title { margin: 0; font: 600 26px/1.2 var(--body); letter-spacing: var(--track-display); max-width: none; }
 .list-count { font: 500 14px/1 var(--body); font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .list-tools { display: flex; align-items: center; gap: 8px; padding: 0 16px 10px; }
 
@@ -1303,7 +1348,7 @@ body:has(.composer-dock) .toast-region {
   min-width: 0;
   margin-bottom: 20px;
 }
-.ledger-head h1 { margin: 0; max-width: none; font: 600 26px/1.2 var(--body); letter-spacing: -.01em; }
+.ledger-head h1 { margin: 0; max-width: none; font: 600 26px/1.2 var(--body); letter-spacing: var(--track-display); }
 .ledger-head p { margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 /* After .ledger-head p, and as specific: its margin reset otherwise took the auto margin off the New butler and
    New rule paragraphs, which then sat beside the title. */
@@ -1610,7 +1655,7 @@ tr.detail dd { margin: 0; word-break: break-all; }
 /* The withheld-content placeholder: a word, dotted, so it cannot be mistaken for a subject line that happens
    to say "restricted". No strikethrough and no lock glyph: both read as an error, and this is a correct,
    ordinary answer. */
-.restricted { font-size: 12px; letter-spacing: .04em; color: var(--text-secondary); border-bottom: 1px dotted var(--border); cursor: help; }
+.restricted { font-size: 12px; letter-spacing: var(--track-label); color: var(--text-secondary); border-bottom: 1px dotted var(--border); cursor: help; }
 
 .field-row select { min-width: min(18rem, 100%); }
 .queue-picker { display: inline-flex; align-items: baseline; gap: 8px; margin-left: auto; }

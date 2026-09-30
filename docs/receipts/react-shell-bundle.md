@@ -1,7 +1,7 @@
 ---
 id: react-shell-bundle
 kind: measured-tripwire
-measured_on: 2026-09-27
+measured_on: 2026-09-30
 stale_when: >
   react, react-dom, @tanstack/react-router or @tanstack/react-query change major version; the esbuild
   target moves below es2022; a fourth runtime dependency is added to the authenticated application; the
@@ -9,17 +9,64 @@ stale_when: >
   bundle moves more than 10% from the recorded figure for any reason, including screens being added —
   the clause above watched only the dependencies, and the number is mostly application code; or a
   webfont face is added, removed or reweighted, since those bytes are served per Node and are counted
-  separately below
+  separately below; a locale is added; either catalog moves more than 10%, which every migrated screen does
+  until the interface is migrated; or `/app/locale.js` starts carrying an `app` table, which
+  `test/catalog-served.test.ts` refuses
 values:
-  shell.bundle_bytes: 737772
-  shell.bundle_gzip_bytes: 213501
+  shell.bundle_bytes: 759600
+  shell.bundle_gzip_bytes: 220486
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
+  shell.pre_auth_locale_bytes: 3347
+  shell.catalog_bytes_en: 17711
+  shell.catalog_bytes_zh_hans: 18349
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
 composer and nobody had priced either half.
 
+
+## Re-measured 30 September 2026: the interface's languages (ADR 46), after 2.7% of drift measured first
+
+**The drift first, so the i18n work is not blamed for it.** On `i18n-l1` at `146cfaa`, before one line of the
+language work existed, the build printed **757,990 raw / 220,625 gzip**: +20,218 (+2.74%) and +7,124 (+3.34%)
+over the 27 September figure. That is the tree growing since, not attributed here, and it is inside the 10% band.
+
+**Then layer 1 of the language work**, the mechanism and the screens it migrated (the chrome, the palette, the
+shell context, health, the shortcuts, the inbox's list pane, Settings, and `api.ts`'s own sentences), measured
+with the same command after its last catalog change, which now prints four lines:
+
+| | before (`146cfaa`) | after layer 1 | its own cost |
+|:--|--:|--:|--:|
+| shell bundle raw | 757,990 | **759,600** | +1,610 (+0.21%) |
+| shell bundle gzip | 220,625 | **220,486** | −139 (−0.06%) |
+| `/app/locale.js`, loaded before sign-in | 0 | **3,347 raw / 1,655 gzip** | new |
+| the `en` app table, served per viewer | 0 | **17,711 raw / 4,892 gzip** | new |
+| the `zh-Hans` app table, served per viewer | 0 | **18,349 raw / 5,965 gzip** | new |
+| React before sign-in | 0 | **0** | 0 |
+
+`/app/locale.js` is the runtime (plural choice, placeholder filling, negotiation, storage) and every locale's
+pre-sign-in words, esbuild-built from `src/client/locale.ts` with `charset: "utf8"`: the default escapes each Han
+character as six bytes. Its last 262 bytes (3,085 before) are the Han-Latin space the runtime puts where a filled value
+meets a Chinese template, added after the screenshots showed `前往Butler`. **No dependency was added**: the runtime is `Intl` plus this repository's own
+`src/i18n/format.ts` and `src/client/locale.ts`. The shell leaves `/app/locale.js` external, so its growth is the Settings language block,
+the per-route title, the IME guard and the two small modules the migration will use (`format.ts`, `words.tsx`).
+
+**The shell barely moved because the words left it.** The mechanism added code (the runtime calls, the language
+block, the per-route title, the IME guard, `format.ts`, `words.tsx`), and the migrated screens took their English
+out of the bundle into the tables, so the gzip figure fell. The tables are about 30% of the interface, the screens
+this layer migrated; every later migration moves more words from the bundle into both, so the catalog figures go
+stale on each by design (`stale_when`), and each layer's last change remeasures them. An earlier draft of this
+receipt recorded 1,208 and 1,182 bytes, measured before the screens were migrated, and was corrected in the same
+change. The design's projection for the whole interface, from the words counted in the tree, is an English table
+of roughly 60 KB raw and 19 KB gzip; that is a provisional estimate, not a value here. A viewer downloads one table, at a content-tagged URL cached for
+a year (`src/i18n/served.ts`), so it is paid once per deploy that changes it, not once a minute.
+
+The gzip figure is within a byte of itself: the shell carries `@mailda/budgets`, so this very value is in the
+bytes it measures, so recording a figure can move the next build's by a byte.
+
+`shell.pre_auth_bundle_bytes` stays **0**: `test/shell-split.test.ts` holds the page, and
+`test/node/shell-preload.test.ts` holds that the shell is preloaded only when it is handed the page.
 
 ## Re-measured 26 and 27 September 2026: the interface redesign, and 28.6% of drift found before it started
 

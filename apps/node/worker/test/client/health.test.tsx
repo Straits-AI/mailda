@@ -17,7 +17,7 @@ const route = vi.hoisted(() => ({ pathname: "/" }));
 vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { StatusBar } = await import("../../src/client/app/chrome.tsx");
-const { AREA_LABELS, healthRows } = await import("../../src/client/app/health.ts");
+const { healthRows } = await import("../../src/client/app/health.ts");
 
 type Finding = { check: string; severity: "refuse" | "degraded" | "report"; ok: boolean; detail: string };
 const finding = (check: string, ok: boolean, severity: Finding["severity"] = "degraded"): Finding =>
@@ -82,7 +82,6 @@ describe("the six areas", () => {
       ["Automation", "ok"],
       ["Access and recovery", "ok"],
     ]);
-    expect(rows(popover).map(([label]) => label)).toEqual(Object.values(AREA_LABELS));
   });
 
   it("reads an area an administrator's report has no check in as no checks, never ok", async () => {

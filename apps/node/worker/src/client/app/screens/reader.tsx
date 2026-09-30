@@ -10,6 +10,7 @@ import {
 } from "../api.ts";
 import { useToast } from "../shell-context.tsx";
 import { Icon } from "../ui/icons.tsx";
+import { isComposingKey } from "../ui/ime.ts";
 import { Menu, type MenuItem } from "../ui/menu.tsx";
 import { Modal, Popover } from "../ui/popover.tsx";
 
@@ -593,6 +594,8 @@ function Labels({ message, onFilter, adding, setAdding, done }: {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
+            // The IME's own Enter commits a candidate, and its Escape cancels one: neither is meant for the field.
+            if (isComposingKey(event.nativeEvent)) return;
             if (event.key === "Escape") {
               setAdding(false);
               setDraft("");

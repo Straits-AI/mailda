@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
 import { THEME_CHOICES, chooseTheme, currentTheme, storedTheme, type ThemeChoice } from "/app/theme.js";
+import { t } from "/app/locale.js";
+import type { Key } from "../../../i18n/catalog.ts";
 
-import { signOutEverywhere, useMe } from "../api.ts";
+import { signOutEverywhere, useMe, type Said } from "../api.ts";
 import { Nothing } from "../chrome.tsx";
 import { useCompose } from "../shell-context.tsx";
 import { setShortcutsEnabled, shortcutsEnabled, storedShortcuts } from "../ui/shortcuts.ts";
+import { marked, NodeWords, sentence } from "../words.tsx";
+import { Language } from "./language.tsx";
 import { Passkeys } from "./people.tsx";
 
 /**
@@ -48,18 +52,31 @@ function SessionClock() {
   if (readout === null) return null;
   // `aria-live` deliberately absent. A countdown that announces itself every second makes a screen reader
   // unusable; the states that matter (renewing, signed out) are announced by the surfaces that change.
-  return <p>Renews in <span className="mono">{readout}</span></p>;
+  return <p>{sentence("settings.session.renews", { time: <span className="mono">{readout}</span> })}</p>;
 }
+
+/** The two sign-outs, named by their catalog keys' last part: `settings.sign_out`, `settings.sign_out_everywhere`. */
+type SignOut = "sign_out" | "sign_out_everywhere";
+
+/**
+ * What stopped a sign-out: a draft that would not save (framed by this page's sentence), or the revocation the
+ * Node refused, with who wrote its words (`Said`). Kept as text and a kind, never as a rendered sentence.
+ *
+ * ponytail: the draft's words are `compose.save()`'s, English today because the composer is not migrated
+ * (layer 2a), so they go inside `<NodeWords>`. When the composer migrates, `save()` returns a `Said` and this
+ * becomes `marked()` like the revocation.
+ */
+type Problem = { kind: "draft"; said: string } | { kind: "revocation"; said: Said };
 
 function Account() {
   const me = useMe();
   const compose = useCompose();
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   /**
    * The sign-out a draft that would not save held back, offered again under its own name: "Sign out everywhere
    * anyway" ends every session on every device, and must not read as the plain "Sign out" beside it.
    */
-  const [held, setHeld] = useState<{ run: () => Promise<void>; label: string } | null>(null);
+  const [held, setHeld] = useState<SignOut | null>(null);
 
   /**
    * Every session, every device. The Node revokes first and this page signs out second, so a revocation that
@@ -67,63 +84,67 @@ function Account() {
    */
   async function everywhere() {
     const outcome = await signOutEverywhere();
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem({ kind: "revocation", said: outcome }); return; }
     await logout();
   }
+
+  const run = (which: SignOut): Promise<void> => (which === "sign_out" ? logout() : everywhere());
 
   /**
    * An open composer's words go to the Node before the session ends. Signing out unmounts the composer, and its
    * last-chance save would then run with no session: whatever was typed in the autosave pause was lost. A save
    * the Node refuses keeps the session, says why in the Node's words, and leaves the choice to lose the words.
    */
-  async function signOut(then: () => Promise<void>, label: string) {
+  async function signOut(which: SignOut) {
     setProblem(null);
     setHeld(null);
     const unsaved = await compose.save();
     if (unsaved !== null) {
       // A moment, not a standing state: the dock goes on autosaving, and a later save does not come back here.
-      setProblem(`Your draft was not saved on your Node when you asked to sign out, so you are still signed in: ${unsaved}`);
-      setHeld({ run: then, label: `${label} anyway` });
+      setProblem({ kind: "draft", said: unsaved });
+      setHeld(which);
       return;
     }
-    await then();
+    await run(which);
   }
 
   let who: React.ReactNode;
   if (me.isPending) who = <Nothing kind="loading" />;
-  else if (me.isError) who = <Nothing kind="failed" detail={me.error.message} />;
+  else if (me.isError) who = <Nothing kind="failed" detail={marked(me.error)} />;
   else if (me.data.principalKind === "agent") {
-    who = <p>Signed in as an agent, <span className="mono">{me.data.principalId}</span>.</p>;
+    who = <p>{sentence("settings.account.agent", { who: <span className="mono">{me.data.principalId}</span> })}</p>;
   } else {
-    who = <p>Signed in as <span className="mono">{me.data.email ?? me.data.principalId}</span>.</p>;
+    who = <p>{sentence("settings.account.person", { who: <span className="mono">{me.data.email ?? me.data.principalId}</span> })}</p>;
   }
 
   return (
     <section className="settings-block" aria-labelledby="settings-account">
-      <h2 id="settings-account">Account</h2>
+      <h2 id="settings-account">{t("settings.account.heading")}</h2>
       {who}
-      {problem === null ? null : <p className="bad" role="alert">{problem}</p>}
+      {problem === null ? null : (
+        <p className="bad" role="alert">
+          {problem.kind === "draft"
+            ? sentence("settings.account.draft", { problem: <NodeWords>{problem.said}</NodeWords> })
+            : marked(problem.said)}
+        </p>
+      )}
       <p className="row-actions">
         {held === null ? null : (
-          <button type="button" className="btn" onClick={() => void held.run()}>{held.label}</button>
+          <button type="button" className="btn" onClick={() => void run(held)}>{t(`settings.${held}.anyway`)}</button>
         )}
-        <button type="button" className="btn" onClick={() => void signOut(logout, "Sign out")}>Sign out</button>
+        <button type="button" className="btn" onClick={() => void signOut("sign_out")}>{t("settings.sign_out")}</button>
         <button
           type="button"
           className="btn"
-          title="Ends every session you hold, on every device, including this one."
-          onClick={() => void signOut(everywhere, "Sign out everywhere")}
+          title={t("settings.sign_out_everywhere.title")}
+          onClick={() => void signOut("sign_out_everywhere")}
         >
-          Sign out everywhere
+          {t("settings.sign_out_everywhere")}
         </button>
       </p>
     </section>
   );
 }
-
-const THEME_LABELS: Record<ThemeChoice, string> = { dark: "Dark", light: "Light", system: "System" };
-
-const NOT_SAVED = "Not saved in this browser; this applies until you reload.";
 
 /**
  * Dark, Light or System, for this viewer in this browser (`/app/theme.js`). Choosing applies first, so the
@@ -136,9 +157,9 @@ function Appearance() {
 
   return (
     <section className="settings-block" aria-labelledby="settings-appearance">
-      <h2 id="settings-appearance">Appearance</h2>
+      <h2 id="settings-appearance">{t("settings.appearance.heading")}</h2>
       <fieldset className="theme-choice">
-        <legend>Theme</legend>
+        <legend>{t("settings.theme.legend")}</legend>
         {THEME_CHOICES.map((choice) => (
           <label key={choice} className="theme-option">
             <input
@@ -151,14 +172,14 @@ function Appearance() {
                 setTheme(choice);
               }}
             />
-            {THEME_LABELS[choice]}
-            {choice === "system" ? <span className="theme-note">Follows your device's light or dark setting.</span> : null}
+            {t(`settings.theme.${choice}`)}
+            {choice === "system" ? <span className="theme-note">{t("settings.theme.system_note")}</span> : null}
           </label>
         ))}
       </fieldset>
-      {unsaved ? <p className="notice" role="status">{NOT_SAVED}</p> : null}
+      {unsaved ? <p className="notice" role="status">{t("settings.not_saved")}</p> : null}
       {unreadable
-        ? <p className="notice" role="status">This browser would not let Mailda read a saved theme, so each page starts in Dark.</p>
+        ? <p className="notice" role="status">{t("settings.theme.unreadable")}</p>
         : null}
     </section>
   );
@@ -168,18 +189,21 @@ function Appearance() {
  * The keys the shell and the Inbox register, as a person reads them. A table rather than the registrations
  * themselves: the Inbox's are only registered while it is mounted, and this page is not the Inbox.
  */
-const SHORTCUT_MAP: ReadonlyArray<{ keys: readonly string[]; does: string }> = [
-  { keys: ["C"], does: "Compose" },
-  { keys: ["Ctrl", "K"], does: "Command palette (⌘K on a Mac; works even with single-key shortcuts off)" },
-  { keys: ["R"], does: "Reply, claiming the case first" },
-  { keys: ["A"], does: "Reply all, claiming the case first" },
-  { keys: ["F"], does: "Forward" },
-  { keys: ["E"], does: "Archive" },
-  { keys: ["J"], does: "Next message" },
-  { keys: ["K"], does: "Previous message" },
-  { keys: ["Shift", "I"], does: "Mark unread" },
-  { keys: ["Z"], does: "Undo, when a notice offers it" },
-  { keys: ["Esc"], does: "Close a menu, popover or dialog" },
+/** The key caps the table shows, which stay Latin in every locale (`docs/i18n.md`). */
+type KeyCap = "C" | "Ctrl" | "K" | "R" | "A" | "F" | "E" | "J" | "Shift" | "I" | "Z" | "Esc";
+
+const SHORTCUT_MAP: ReadonlyArray<{ keys: readonly KeyCap[]; does: Extract<Key, `settings.shortcut.${string}`> }> = [
+  { keys: ["C"], does: "settings.shortcut.compose" },
+  { keys: ["Ctrl", "K"], does: "settings.shortcut.palette" },
+  { keys: ["R"], does: "settings.shortcut.reply" },
+  { keys: ["A"], does: "settings.shortcut.reply_all" },
+  { keys: ["F"], does: "settings.shortcut.forward" },
+  { keys: ["E"], does: "settings.shortcut.archive" },
+  { keys: ["J"], does: "settings.shortcut.next" },
+  { keys: ["K"], does: "settings.shortcut.previous" },
+  { keys: ["Shift", "I"], does: "settings.shortcut.unread" },
+  { keys: ["Z"], does: "settings.shortcut.undo" },
+  { keys: ["Esc"], does: "settings.shortcut.close" },
 ];
 
 /**
@@ -193,7 +217,7 @@ function Keyboard() {
 
   return (
     <section className="settings-block" aria-labelledby="settings-keyboard">
-      <h2 id="settings-keyboard">Keyboard</h2>
+      <h2 id="settings-keyboard">{t("settings.keyboard.heading")}</h2>
       <label className="settings-check">
         <input
           type="checkbox"
@@ -203,19 +227,19 @@ function Keyboard() {
             setEnabled(event.target.checked);
           }}
         />
-        Single-key shortcuts
+        {t("settings.keyboard.switch")}
       </label>
-      {unsaved ? <p className="notice" role="status">{NOT_SAVED}</p> : null}
+      {unsaved ? <p className="notice" role="status">{t("settings.not_saved")}</p> : null}
       {unreadable
-        ? <p className="notice" role="status">This browser would not let Mailda read a saved shortcut choice, so single-key shortcuts start on.</p>
+        ? <p className="notice" role="status">{t("settings.keyboard.unreadable")}</p>
         : null}
       <table className="shortcut-table">
-        <caption className="visually-hidden">Keyboard shortcuts</caption>
+        <caption className="visually-hidden">{t("settings.keyboard.caption")}</caption>
         <tbody>
           {SHORTCUT_MAP.map((row) => (
             <tr key={row.does}>
               <td>{row.keys.map((key, index) => <span key={key}>{index === 0 ? null : " + "}<kbd>{key}</kbd></span>)}</td>
-              <td>{row.does}</td>
+              <td>{t(row.does)}</td>
             </tr>
           ))}
         </tbody>
@@ -227,15 +251,16 @@ function Keyboard() {
 export function Settings() {
   return (
     <>
-      <header className="ledger-head"><h1>Settings</h1></header>
+      <header className="ledger-head"><h1>{t("route./settings")}</h1></header>
       <Account />
       <section className="settings-block" aria-labelledby="settings-session">
-        <h2 id="settings-session">Session</h2>
+        <h2 id="settings-session">{t("settings.session.heading")}</h2>
         <SessionClock />
-        <p>This Node: <span className="mono">{location.host}</span></p>
+        <p>{sentence("settings.session.node", { host: <span className="mono">{location.host}</span> })}</p>
       </section>
       <Passkeys />
       <Appearance />
+      <Language />
       <Keyboard />
     </>
   );

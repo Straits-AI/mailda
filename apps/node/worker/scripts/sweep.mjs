@@ -7,9 +7,47 @@
  * `src/app-routes.ts`'s own argument, and `axe.mjs` could not simply be imported: it launches a browser and runs when
  * it loads (AGENTS.md 2b, the seam is the pure part in one module and the effect in another).
  *
- * Nothing here launches a browser or signs in. Each state is `[route, name, reach(page), leave?]`, and a `reach` may
- * throw `NotApplicable` with the Node's own reason.
+ * Nothing here launches a browser or signs in. Each state is `[route, name, reach(page, words), leave?]`, and a `reach`
+ * may throw `NotApplicable` with the Node's own reason.
  */
+
+import { CATALOGS } from "../src/i18n/catalog.ts";
+import { LOCALES, isLocale } from "../src/i18n/locales.ts";
+
+/**
+ * Both sweeps' arguments: the Node's origin, and `--locale <tag>` (ADR 46). Without the flag a run is what it always
+ * was: no `?locale=` on any address, so the page takes the browser's language, which is English in Playwright's
+ * Chromium. With it, every address carries `?locale=<tag>`, the review flag, which is the only way to reach a preview
+ * locale (`docs/i18n.md`); a run under `zh-Hans` measures what a reviewer sees, English on unmigrated screens included.
+ * pnpm's own `--` is skipped, as it always was.
+ */
+export function sweepArgs(argv) {
+  const args = argv.slice(2).filter((arg) => arg !== "--");
+  const at = args.indexOf("--locale");
+  const locale = at === -1 ? null : args.splice(at, 2)[1];
+  if (locale !== null && !isLocale(locale)) {
+    throw new Error(`--locale ${locale}: not a locale this Node ships (${LOCALES.map((entry) => entry.tag).join(", ")})`);
+  }
+  return { origin: args[0] ?? "http://127.0.0.1:8787", locale };
+}
+
+/** A route's address under the run's locale: the review flag when one was asked for, and the bare route otherwise. */
+export function address(origin, route, locale) {
+  return locale === null ? `${origin}${route}` : `${origin}${route}${route.includes("?") ? "&" : "?"}locale=${locale}`;
+}
+
+/**
+ * The words a state's locators look for, in the run's locale: the catalog the page itself renders from, so a locator
+ * on a migrated control follows its translation instead of failing as a state that could not open. A locator on a
+ * screen not migrated yet (the reader, the composer, the queue) is still an English literal, because that screen still
+ * renders English under every locale.
+ */
+export function wordsFor(locale) {
+  return CATALOGS[locale ?? "en"].app;
+}
+
+/** A `^prefix` pattern from a message's words before its first placeholder: "Health: {verdict}" matches "Health: ok". */
+const leading = (message) => new RegExp(`^${message.split("{")[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 
 /**
  * Before any page script runs: the theme choice, and the first-run override. The override is the "Open the
@@ -235,13 +273,13 @@ export const STATES = [
     await page.getByRole("button", { name: "Reply", exact: true }).click();
     await page.waitForSelector(".composer-dock", { timeout: 10_000 });
   }, DISCARD],
-  ["/", "composer — new message", async (page) => {
-    await page.getByRole("button", { name: "Compose", exact: true }).click();
+  ["/", "composer — new message", async (page, words) => {
+    await page.getByRole("button", { name: words["chrome.compose"], exact: true }).click();
     // With more than one mailbox the shell asks which one first (#94); choose the first real option.
-    const chooser = page.getByRole("dialog", { name: "Choose a mailbox" });
+    const chooser = page.getByRole("dialog", { name: words["shell.chooser.label"] });
     if (await chooser.isVisible({ timeout: 1_000 }).catch(() => false)) {
       await chooser.locator("select").selectOption({ index: 1 });
-      await chooser.getByRole("button", { name: "Start message" }).click();
+      await chooser.getByRole("button", { name: words["shell.chooser.start"] }).click();
     }
     await page.waitForSelector(".composer-dock", { timeout: 10_000 });
   }],
@@ -279,22 +317,22 @@ export const STATES = [
     await page.getByRole("button", { name: "More actions" }).click();
     await page.waitForSelector("[role=menu]", { timeout: 10_000 });
   }],
-  ["/", "filter popover", async (page) => {
-    await page.getByRole("button", { name: "Filter", exact: true }).click();
+  ["/", "filter popover", async (page, words) => {
+    await page.getByRole("button", { name: words["inbox.filter.label"], exact: true }).click();
     await page.waitForSelector(".filter-popover", { timeout: 10_000 });
   }],
-  ["/", "health popover", async (page) => {
-    await page.getByRole("button", { name: /^Health:/ }).click();
+  ["/", "health popover", async (page, words) => {
+    await page.getByRole("button", { name: leading(words["chrome.health.bar"]) }).click();
     await page.waitForSelector(".health-popover", { timeout: 10_000 });
   }],
   ["/", "command palette", async (page) => {
     await page.keyboard.press("Control+K");
     await page.waitForSelector("dialog.palette", { timeout: 10_000 });
   }],
-  ["/", "navigation drawer (390px)", async (page) => {
+  ["/", "navigation drawer (390px)", async (page, words) => {
     // The narrow layout only exists below 1120px; the viewport is restored after the audit, in `finally`.
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: words["chrome.drawer.open"] }).click();
     await page.waitForSelector("dialog.drawer", { timeout: 10_000 });
   }],
   ["/rules", "rule editor", async (page) => {

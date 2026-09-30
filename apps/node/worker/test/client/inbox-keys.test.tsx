@@ -182,6 +182,25 @@ describe("A and F", () => {
     expect((dock.querySelector("#composer-subject") as HTMLInputElement).value).toBe("Fwd: message 2");
     expect(calls.filter((call) => call.path.endsWith("/claim"))).toHaveLength(1);
   });
+
+  // What a Chinese mail client writes (critic L5); the prefix this screen adds is the mail's own `Re:`/`Fwd:`.
+  it.each([
+    ["回复：发票", "r", "Reply", "回复：发票"],
+    ["回复:发票", "r", "Reply", "回复:发票"],
+    ["转发：报价", "f", "Forward", "转发：报价"],
+    ["转发:报价", "f", "Forward", "转发:报价"],
+    ["发票", "r", "Reply", "Re: 发票"],
+    ["报价", "f", "Forward", "Fwd: 报价"],
+  ])("keeps %j as the subject's prefix on %s, so it is not doubled", async (subject, letter, dock, expected) => {
+    pages = { "": { messages: [row(1, { subject })], next_cursor: null } };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><ShellProvider><Inbox /></ShellProvider></QueryClientProvider>);
+    const button = await screen.findByRole("button", { name: new RegExp(subject) });
+    await act(async () => { button.click(); });
+    button.focus();
+    await key(letter);
+    expect(((await screen.findByRole("region", { name: dock })).querySelector("#composer-subject") as HTMLInputElement).value).toBe(expected);
+  });
 });
 
 describe("J and K cost nothing but the bodies they open (R11)", () => {

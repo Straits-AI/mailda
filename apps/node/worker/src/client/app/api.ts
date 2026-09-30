@@ -1,5 +1,6 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
+import { t } from "/app/locale.js";
 import type { AddressRemoval, AddressRouting, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
 export type { AddressRemoval, AddressRouting };
 import {
@@ -28,13 +29,39 @@ import {
  * interface too: "could not be read" is a different statement from "empty".
  */
 
-/** A read that failed, carrying what the Node said rather than a generic apology. */
-export class ReadFailure extends Error {
+/**
+ * A failure's words, and who wrote them (ADR 46). `fromNode` words are the Node's own English, kept English for
+ * the agents that parse them, and a screen shows them inside `<NodeWords>` (`marked()` in `words.tsx`); otherwise
+ * they are this interface's sentence ("this Node answered 503"), in the viewer's language, and marking them
+ * `lang="en"` would tell a screen reader to read Chinese with an English voice.
+ */
+export interface Said {
+  readonly message: string;
+  readonly fromNode: boolean;
+}
+
+/** A refusal, with its words and who wrote them. */
+export type Refused = { readonly ok: false } & Said;
+
+/** The Node's words when it sent some (`said` is a string), else this interface's `fallback`. */
+function saidBy(said: unknown, fallback: string): Said {
+  return typeof said === "string" ? { message: said, fromNode: true } : { message: fallback, fromNode: false };
+}
+
+/** A refusal in the Node's words when its body carried any, else this interface's sentence naming the status. */
+function refused(said: unknown, status: number): Refused {
+  return { ok: false, ...saidBy(said, answered(status)) };
+}
+
+/** A read that failed, carrying what the Node said rather than a generic apology, and whether the Node said it. */
+export class ReadFailure extends Error implements Said {
   readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
+  readonly fromNode: boolean;
+  constructor(status: number, said: Said) {
+    super(said.message);
     this.name = "ReadFailure";
     this.status = status;
+    this.fromNode = said.fromNode;
   }
 }
 
@@ -71,10 +98,7 @@ async function read<T>(path: string): Promise<T> {
   if (!response.ok) {
     // The Node's error bodies carry `message`; anything else is a genuine surprise and says so.
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new ReadFailure(
-      response.status,
-      body?.message ?? `This Node answered ${response.status} and gave no reason.`,
-    );
+    throw new ReadFailure(response.status, saidBy(body?.message, t("api.no_reason", { status: String(response.status) })));
   }
   return (await response.json()) as T;
 }
@@ -88,7 +112,7 @@ async function act<T = Record<string, unknown>>(
   path: string,
   method: "POST" | "PUT" | "DELETE" = "POST",
   body?: unknown,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+): Promise<{ ok: true; value: T } | Refused> {
   const response = await apiFetch(path, {
     method,
     headers: { "content-type": "application/json" },
@@ -96,20 +120,34 @@ async function act<T = Record<string, unknown>>(
   });
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (response.ok) return { ok: true, value: (parsed ?? {}) as T };
-  return { ok: false, message: refusalText(parsed, response.status) };
+  return refusalOf(parsed, response.status);
 }
 
 /**
  * A refusal body, as one string. Most carry `message` with the four parts already joined; a few handlers
  * (`POST /api/search/repair`) send `{ error, what, why, fix }` bare, and reading only `error` from those
- * showed a screen the word "unprocessable" and nothing else — the code without the why or the fix.
+ * showed a screen the word "unprocessable" and nothing else — the code without the why or the fix. That block
+ * is the Node's: its what, why and fix, under labels that stay Latin in every locale (`api.refusal`).
  */
-function refusalText(parsed: Record<string, unknown> | null, status: number): string {
-  if (typeof parsed?.message === "string") return parsed.message;
-  if (typeof parsed?.what === "string") {
-    return `${String(parsed.error ?? "refused")}  ${parsed.what}\n  why      ${String(parsed.why ?? "")}\n  fix      ${String(parsed.fix ?? "")}`;
+function refusalOf(parsed: Record<string, unknown> | null, status: number): Refused {
+  if (typeof parsed?.what === "string" && typeof parsed.message !== "string") {
+    return {
+      ok: false,
+      fromNode: true,
+      message: t("api.refusal", {
+        code: String(parsed.error ?? t("api.refusal.code")), what: parsed.what, why: String(parsed.why ?? ""), fix: String(parsed.fix ?? ""),
+      }),
+    };
   }
-  return String(parsed?.error ?? `This Node answered ${status}.`);
+  return refused(parsed?.message ?? parsed?.error, status);
+}
+
+/**
+ * The fallback when a failure's body carries no words. The status is passed as text: it is a code, not a
+ * quantity, so it is never grouped or given another script's digits.
+ */
+function answered(status: number): string {
+  return t("api.answered", { status: String(status) });
 }
 
 /** Short, because a revocation must not be hidden by a cache. See the header. */
@@ -467,7 +505,7 @@ export function patchReadInCache(queryClient: QueryClient, messageId: string, re
 /** PUT /api/messages/:messageId/place. The Node's refusal verbatim on failure. Callers invalidate ["messages"]. */
 export async function setPlace(
   messageId: string, place: Place,
-): Promise<{ ok: true; place: Place } | { ok: false; message: string }> {
+): Promise<{ ok: true; place: Place } | Refused> {
   const result = await act<{ place: Place }>(at("PUT", "/api/messages/:messageId/place", { messageId }), "PUT", { place });
   return result.ok ? { ok: true, place: result.value.place } : result;
 }
@@ -558,7 +596,7 @@ export function useWithdrawals(enabled: boolean): UseQueryResult<{ withdrawn: Se
       const withdrawn = entries.map((entry) => {
         const objectId = (JSON.parse(entry.detail) as { objectId?: unknown }).objectId;
         if (entry.subject === null || typeof objectId !== "string") {
-          throw new Error(`The access.revoked entry ${entry.id} names no person or no object: ${entry.detail}`);
+          throw new Error(t("api.withdrawal.malformed", { id: entry.id, detail: entry.detail }));
         }
         return withdrawalKey(entry.subject, objectId);
       });
@@ -687,8 +725,8 @@ export function useCases(mailboxId: string | null): UseQueryResult<{ cases: Case
  */
 export type ClaimResult =
   | { ok: true; case: CaseRow }
-  | { ok: false; kind: "held"; heldBy: string; heldSince: string; message: string }
-  | { ok: false; kind: "closed" | "not_found" | "failed"; message: string };
+  | ({ ok: false; kind: "held"; heldBy: string; heldSince: string } & Said)
+  | ({ ok: false; kind: "closed" | "not_found" | "failed" } & Said);
 
 async function caseAct(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
   return claimResultOf(await apiFetch(at("POST", "/api/cases/:caseId/:action", { caseId, action }), { method: "POST" }));
@@ -704,17 +742,13 @@ async function claimResultOf(response: Response): Promise<ClaimResult> {
     return {
       ok: false,
       kind: "held",
-      heldBy: String(body.heldBy ?? "somebody"),
+      heldBy: String(body.heldBy ?? t("api.held.somebody")),
       heldSince: String(body.heldSince ?? ""),
-      message: String(body.message ?? "Somebody else is holding this."),
+      ...saidBy(body.message, t("api.held.message")),
     };
   }
-  const kind = body?.error === "closed" ? "closed" : body?.error === "not_found" ? "not_found" : "failed";
-  return {
-    ok: false,
-    kind,
-    message: String(body?.message ?? body?.reason ?? `This Node answered ${response.status}.`),
-  };
+  const kind: "closed" | "not_found" | "failed" = body?.error === "closed" ? "closed" : body?.error === "not_found" ? "not_found" : "failed";
+  return { kind, ...refused(body?.message ?? body?.reason, response.status) };
 }
 
 /**
@@ -738,7 +772,7 @@ export const closeCase = (id: string) => caseAct(id, "close");
 export async function setResponseTarget(
   mailboxId: string,
   minutes: number | null,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -747,7 +781,7 @@ export async function setResponseTarget(
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
   // The Node's four-part message verbatim: it names the remedy, and paraphrasing drops that half.
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 /**
@@ -771,23 +805,23 @@ export const removeAddress = (address: string) =>
   );
 
 /** Renames a mailbox. Administrator only, audited with both names; the rail and the queue show the new one. */
-export async function renameMailbox(mailboxId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function renameMailbox(mailboxId: string, name: string): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
   });
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 /** Creates a mailbox, named. Administrator only, audited; the creator may read and send from it. */
-export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | { ok: false; message: string }> {
+export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | Refused> {
   const response = await apiFetch(at("POST", "/api/mailboxes"), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
   });
   const body = (await response.json().catch(() => null)) as { mailboxId?: string; message?: string } | null;
   if (response.ok) return { ok: true, mailboxId: body?.mailboxId ?? "" };
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 /** Turns one of a mailbox's quarantine switches on or off. Administrator only, and audited. */
@@ -795,7 +829,7 @@ export async function setQuarantineSwitch(
   mailboxId: string,
   which: "dmarc" | "attachments",
   on: boolean,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -803,20 +837,20 @@ export async function setQuarantineSwitch(
   });
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 /** Sets a mailbox's attachment limits (0065). Administrator only, and audited. */
 export async function setAttachmentLimits(
   mailboxId: string,
   limits: { attachmentMaxBytes?: number | null; attachmentAllowedTypes?: string[] | null },
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(limits),
   });
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 export interface QuarantinedDelivery {
@@ -845,11 +879,11 @@ export function useQuarantine(enabled: boolean) {
 }
 
 /** Lets one held delivery into its mailbox's queue. */
-export async function releaseQuarantined(messageId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function releaseQuarantined(messageId: string): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("POST", "/api/quarantine/:messageId/release", { messageId }), { method: "POST" });
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 export interface DraftListRow {
@@ -872,7 +906,7 @@ export function useDrafts(): UseQueryResult<{ drafts: DraftListRow[]; truncated:
 /** Marks a message read or unread, for the caller (0062), carrying the Node's refusal verbatim when it refuses. */
 export async function setRead(
   messageId: string, read: boolean,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | Refused> {
   const result = await act(at("PUT", "/api/messages/:messageId/read", { messageId }), "PUT", { read });
   return result.ok ? { ok: true } : result;
 }
@@ -880,13 +914,13 @@ export async function setRead(
 /** Puts words on a message or takes them off (0061). Answers the whole set afterwards. */
 export async function setLabels(
   messageId: string, change: { add?: string[]; remove?: string[] },
-): Promise<{ ok: true; labels: string[] } | { ok: false; message: string }> {
+): Promise<{ ok: true; labels: string[] } | Refused> {
   const response = await apiFetch(at("PUT", "/api/messages/:messageId/labels", { messageId }), {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(change),
   });
   const body = (await response.json().catch(() => null)) as { labels?: string[]; message?: string } | null;
   if (response.ok) return { ok: true, labels: body?.labels ?? [] };
-  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+  return refused(body?.message, response.status);
 }
 
 /** The labels on a listed row, parsed once. */
@@ -902,7 +936,7 @@ export function labelsOf(row: { labels_json: string }): string[] {
 export async function mergeConversations(
   from: string,
   into: string,
-): Promise<{ ok: true; messagesMoved: number } | { ok: false; message: string }> {
+): Promise<{ ok: true; messagesMoved: number } | Refused> {
   const response = await apiFetch(at("POST", "/api/conversations/merge"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -913,10 +947,7 @@ export async function mergeConversations(
     return { ok: true, messagesMoved: Number(body.messagesMoved ?? 0) };
   }
   // The refusal reason *is* the deliverable here — it names the case pair to resolve first.
-  return {
-    ok: false,
-    message: String(body?.reason ?? body?.message ?? `This Node answered ${response.status}.`),
-  };
+  return refused(body?.reason ?? body?.message, response.status);
 }
 
 /* ------------------------------------------------------------------ Layer 5: Butlers (#78) --------- */
@@ -1239,9 +1270,9 @@ export function usePasskeys(): UseQueryResult<{ passkeys: PasskeyRow[] }, Error>
  */
 export async function registerPasskey(
   label: string,
-): Promise<{ ok: true; value: { id: string } } | { ok: false; message: string }> {
+): Promise<{ ok: true; value: { id: string } } | Refused> {
   if (typeof PublicKeyCredential === "undefined") {
-    return { ok: false, message: "This browser has no passkey support." };
+    return { ok: false, message: t("api.passkey.unsupported"), fromNode: false };
   }
 
   const challenged = await act<{ publicKey: Record<string, unknown> }>(
@@ -1266,9 +1297,9 @@ export async function registerPasskey(
     }) as PublicKeyCredential | null;
   } catch {
     // A cancelled prompt is a decision, not a failure. Reported as one so the screen says nothing alarming.
-    return { ok: false, message: "No passkey was created." };
+    return { ok: false, message: t("api.passkey.none"), fromNode: false };
   }
-  if (credential === null) return { ok: false, message: "No passkey was created." };
+  if (credential === null) return { ok: false, message: t("api.passkey.none"), fromNode: false };
 
   return await act<{ registered: { id: string } }>(
     at("POST", "/api/auth/passkeys"), "POST",
@@ -1472,22 +1503,33 @@ export const publishPolicyVersion = (id: string) =>
 
 /* ------------------------------------------------------------------ Layer 2/3: people (#39, #81) --- */
 
+type GrantableRelation =
+  | "mailbox.metadata.read" | "mailbox.content.read" | "send.propose" | "approval.decide"
+  | "message.export" | "ediscovery.export" | "org.admin";
+
 /**
  * The relations an administrator may grant, and what each one lets somebody do.
  *
  * Mirrors `GRANTABLE` in `src/access.ts` minus `supervised.read`, which is **not** granted this way: it is a
  * time-boxed grant needing two approvals and a matter (§7), and the Node refuses it here with a message
  * saying so. Listing it as an option would be offering a door that answers with a lecture.
+ *
+ * `what` is a getter over the catalog (`api.grant.<relation>`), so the words are read in the viewer's language
+ * when a screen shows them and never held as data (ADR 46); a relation with no words there does not compile.
  */
 export const GRANTABLE_RELATIONS = [
-  { relation: "mailbox.metadata.read", object: "mailbox", what: "See that mail exists — senders, subjects, when. Not the message itself." },
-  { relation: "mailbox.content.read", object: "mailbox", what: "Read the messages." },
-  { relation: "send.propose", object: "mailbox", what: "Write and send from this mailbox, and claim its cases." },
-  { relation: "approval.decide", object: "mailbox", what: "Decide approvals for its mail. Never their own." },
-  { relation: "message.export", object: "mailbox", what: "Take a copy of a message out of the Node." },
-  { relation: "ediscovery.export", object: "mailbox", what: "Run a bulk export against a matter." },
-  { relation: "org.admin", object: "organization", what: "Administer the organization: rules, Butlers, access, holds." },
+  grantable("mailbox.metadata.read", "mailbox"),
+  grantable("mailbox.content.read", "mailbox"),
+  grantable("send.propose", "mailbox"),
+  grantable("approval.decide", "mailbox"),
+  grantable("message.export", "mailbox"),
+  grantable("ediscovery.export", "mailbox"),
+  grantable("org.admin", "organization"),
 ] as const;
+
+function grantable(relation: GrantableRelation, object: "mailbox" | "organization") {
+  return { relation, object, get what(): string { return t(`api.grant.${relation}`); } };
+}
 
 export interface PersonRow {
   id: string;
@@ -1522,16 +1564,16 @@ export const revokeAccess = (subjectId: string, relation: string, objectId: stri
   act(at("POST", "/api/access"), "DELETE", { subjectId, relation, objectId });
 
 /** Renames a team. Administrator only, audited with both names, since a stage cites the id and a person reads the name. */
-export async function renameTeam(teamId: string, name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function renameTeam(teamId: string, name: string): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("POST", "/api/teams/:teamId/rename", { teamId }), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
   });
   if (response.ok) return { ok: true };
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+  return refused(parsed?.message, response.status);
 }
 
-export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function createTeam(name: string): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("POST", "/api/teams"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1539,12 +1581,12 @@ export async function createTeam(name: string): Promise<{ ok: true } | { ok: fal
   });
   if (response.ok) return { ok: true };
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+  return refused(parsed?.message, response.status);
 }
 
 export async function setTeamMember(
   teamId: string, userId: string, member: boolean,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | Refused> {
   const response = await apiFetch(at("POST", "/api/teams/:teamId/members", { teamId }), {
     method: member ? "POST" : "DELETE",
     headers: { "content-type": "application/json" },
@@ -1552,7 +1594,7 @@ export async function setTeamMember(
   });
   if (response.ok) return { ok: true };
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+  return refused(parsed?.message, response.status);
 }
 
 /** A team's roster. Per team rather than folded into the listing, which returns a count by design. */
@@ -1645,12 +1687,17 @@ export const liftSuppression = (address: string, reason: string) =>
 
 /* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
 
+/** `MATTER_TYPES` in `src/matters.ts`, which the Node refuses anything outside of. */
+type MatterType = "legal_hold" | "security_incident" | "departure_handover" | "regulatory_request";
+
+/** Each matter type and why one is opened; `what` is read from the catalog when shown, as `GRANTABLE_RELATIONS` does. */
 export const MATTER_TYPES = [
-  { type: "legal_hold", what: "Preserving mail for a legal obligation." },
-  { type: "security_incident", what: "Investigating a compromise or a misuse of an account." },
-  { type: "departure_handover", what: "Passing on the work of somebody who has left." },
-  { type: "regulatory_request", what: "Answering a regulator." },
+  matter("legal_hold"), matter("security_incident"), matter("departure_handover"), matter("regulatory_request"),
 ] as const;
+
+function matter(type: MatterType) {
+  return { type, get what(): string { return t(`api.matter.${type}`); } };
+}
 
 export interface MatterRow {
   id: string;
@@ -1819,7 +1866,7 @@ export const revokeInvitation = (id: string) =>
 
 export async function invite(
   email: string,
-): Promise<{ ok: true; secret: string; email: string; expiresAt: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; secret: string; email: string; expiresAt: string } | Refused> {
   const response = await apiFetch(at("POST", "/api/invitations"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1830,10 +1877,7 @@ export async function invite(
     const minted = parsed?.invitation as { secret: string; email: string; expiresAt: string };
     return { ok: true, ...minted };
   }
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
+  return refused(parsed?.message ?? parsed?.error, response.status);
 }
 
 /** One capability an agent may be granted, as this Node's own vocabulary describes it. */
@@ -1909,29 +1953,20 @@ export function useAgents(): UseQueryResult<{ agents: AgentRow[] }, Error> {
 export type AgentRelation =
   "mailbox.metadata.read" | "mailbox.content.read" | "send.propose" | "message.export";
 
-/** What each relation lets an agent do, in the words somebody choosing needs rather than the tuple's name. */
-export const AGENT_RELATIONS: { relation: AgentRelation; says: string; reachesContent: boolean }[] = [
-  {
-    relation: "mailbox.metadata.read",
-    says: "See that mail exists — senders, subjects, when. Not the message itself.",
-    reachesContent: false,
-  },
-  {
-    relation: "mailbox.content.read",
-    says: "Read the messages themselves, including the original bytes.",
-    reachesContent: true,
-  },
-  {
-    relation: "send.propose",
-    says: "Draft and propose mail from this mailbox. Sealing a send is withheld from every machine.",
-    reachesContent: false,
-  },
-  {
-    relation: "message.export",
-    says: "Take copies of individual messages out of this mailbox.",
-    reachesContent: true,
-  },
-];
+/**
+ * What each relation lets an agent do, in the words somebody choosing needs rather than the tuple's name.
+ * `says` is read from the catalog (`api.agent.<relation>`) when shown, as `GRANTABLE_RELATIONS` does.
+ */
+export const AGENT_RELATIONS = [
+  agentRelation("mailbox.metadata.read", false),
+  agentRelation("mailbox.content.read", true),
+  agentRelation("send.propose", false),
+  agentRelation("message.export", true),
+] as const;
+
+function agentRelation(relation: AgentRelation, reachesContent: boolean) {
+  return { relation, reachesContent, get says(): string { return t(`api.agent.${relation}`); } };
+}
 
 export async function mintAgent(input: {
   name: string;
@@ -1939,7 +1974,7 @@ export async function mintAgent(input: {
   capabilities: string[];
   grants: { mailboxId: string; relation: AgentRelation }[];
   lifetimeDays?: number;
-}): Promise<{ ok: true; token: string; agent: AgentRow; notice: string } | { ok: false; message: string }> {
+}): Promise<{ ok: true; token: string; agent: AgentRow; notice: string } | Refused> {
   const response = await apiFetch(at("POST", "/api/agents"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1954,18 +1989,15 @@ export async function mintAgent(input: {
       notice: String(parsed?.notice ?? ""),
     };
   }
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
+  return refused(parsed?.message ?? parsed?.error, response.status);
 }
 
-export async function revokeAgent(agentId: string): Promise<{ ok: boolean; message: string }> {
+export async function revokeAgent(agentId: string): Promise<{ ok: boolean } & Said> {
   const response = await apiFetch(at("DELETE", "/api/agents/:agentId", { agentId }), { method: "DELETE" });
   const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   return {
     ok: response.ok,
-    message: String(parsed?.message ?? parsed?.error ?? (response.ok ? "Revoked." : `Answered ${response.status}.`)),
+    ...saidBy(parsed?.message ?? parsed?.error, response.ok ? t("api.revoked") : t("api.answered.short", { status: String(response.status) })),
   };
 }
 
@@ -2218,11 +2250,12 @@ export const forgetProviderToken = () =>
 async function proposalFor<T>(
   path: string,
   domain: string,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+): Promise<{ ok: true; value: T } | Refused> {
   try {
     return { ok: true, value: await read<T>(`${path}?domain=${encodeURIComponent(domain)}`) };
   } catch (failure) {
-    return { ok: false, message: failure instanceof Error ? failure.message : String(failure) };
+    // A read that never reached the Node (the browser's "Failed to fetch") is not the Node's English.
+    return { ok: false, message: failure instanceof Error ? failure.message : String(failure), fromNode: failure instanceof ReadFailure && failure.fromNode };
   }
 }
 

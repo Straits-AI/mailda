@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
 } from "react";
 
+import { t } from "/app/locale.js";
 import type { MailboxQueue } from "./api.ts";
 import { Composer, type ComposerContext, type ComposerHandle } from "./screens/composer.tsx";
 import { Modal } from "./ui/popover.tsx";
@@ -31,7 +32,8 @@ import { Modal } from "./ui/popover.tsx";
  */
 
 export interface Toast {
-  text: string;
+  /** A node, so the Node's words inside it can carry their own `lang` (`marked()` in `words.tsx`). */
+  text: React.ReactNode;
   /** "status" (default) goes to the polite live region; "alert" to the assertive one. */
   tone?: "status" | "alert";
   /**
@@ -111,7 +113,9 @@ const ToastContext = createContext<Toasts | null>(null);
 const SearchContext = createContext<PendingSearch | null>(null);
 const CommandsContext = createContext<CommandRegistry | null>(null);
 
-function need<T>(value: T | null, hook: string): T {
+type Hook = "useCompose" | "useToast" | "useToastAction" | "usePendingSearch" | "useRegisterCommands" | "useCommands";
+
+function need<T>(value: T | null, hook: Hook): T {
   if (value === null) throw new Error(`${hook} outside ShellProvider`);
   return value;
 }
@@ -134,7 +138,7 @@ function ComposeChooser({ rows, onStart, onClose }: {
   // its first one anyway, which would look chosen.
   const [chosen, setChosen] = useState("");
   return (
-    <Modal className="compose-chooser" label="Choose a mailbox" onClose={onClose}>
+    <Modal className="compose-chooser" label={t("shell.chooser.label")} onClose={onClose}>
       <form
         method="dialog"
         onSubmit={(event) => {
@@ -142,20 +146,22 @@ function ComposeChooser({ rows, onStart, onClose }: {
           if (chosen !== "") onStart(chosen);
         }}
       >
-        <label htmlFor="compose-from">Send from</label>
+        <label htmlFor="compose-from">{t("shell.chooser.from")}</label>
         <select id="compose-from" value={chosen} onChange={(event) => setChosen(event.target.value)}>
-          <option value="">Choose a mailbox…</option>
+          <option value="">{t("shell.chooser.none")}</option>
           {rows.map((row) => (
             // The address, not only the name: two mailboxes can both be called Support, and the address is
             // what a recipient sees. A mailbox with none is said to have none: `sealManifest` refuses it.
             <option key={row.id} value={row.id}>
-              {row.name}{row.addresses === null ? " (no address)" : ` · ${row.addresses.split(",")[0]!}`}
+              {row.addresses === null
+                ? t("shell.chooser.option.no_address", { name: row.name })
+                : t("shell.chooser.option", { name: row.name, address: row.addresses.split(",")[0]! })}
             </option>
           ))}
         </select>
         <p className="row-actions">
-          <button type="submit" className="primary" disabled={chosen === ""}>Start message</button>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={chosen === ""}>{t("shell.chooser.start")}</button>
+          <button type="button" className="btn" onClick={onClose}>{t("shell.cancel")}</button>
         </p>
       </form>
     </Modal>
@@ -184,7 +190,7 @@ function ToastSlot({ toast, onDismiss, onAction }: {
       {toast.action === undefined ? null : (
         <>
           <button type="button" className="toast-action" onClick={onAction}>{toast.action.label}</button>
-          <button type="button" className="toast-dismiss" aria-label="Dismiss" onClick={onDismiss}>×</button>
+          <button type="button" className="toast-dismiss" aria-label={t("shell.toast.dismiss")} onClick={onDismiss}>×</button>
         </>
       )}
     </div>
@@ -266,7 +272,7 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
    */
   const refuseWhileSealing = useCallback(() => {
     if (composer.current?.sealing() !== true) return false;
-    show({ tone: "alert", text: "Still sealing the open message. Open this again once the Node has answered it." });
+    show({ tone: "alert", text: t("shell.sealing") });
     return true;
   }, [show]);
   const open = useCallback((context: ComposerContext) => {
@@ -305,7 +311,7 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
   }, [docked]);
   const start = useCallback((rows: readonly MailboxQueue[]) => {
     if (rows.length === 0) {
-      show({ text: "Sending needs send.propose on a mailbox, and you hold it on none." });
+      show({ text: t("shell.no_mailbox") });
     } else if (rows.length === 1) {
       open({ mailboxId: rows[0]!.id });
     } else {

@@ -43,8 +43,43 @@ const outDir = join(workerRoot, "generated");
 // `.client.js` so wrangler's Text rule matches it and `ui.ts` can import it as a string, exactly like
 // the framework-free scripts it sits beside.
 const outFile = join(outDir, "app.bundle.client.js");
+// The second entry point (ADR 46): the viewer's language, served as `/app/locale.js` and imported by both the
+// framework-free script and the shell. `.bundle.client.js` for the same Text rule, and so the committed
+// `*.bundle.client.js` declaration in `src/bundle-modules.d.ts` types it too.
+const localeEntry = join(workerRoot, "src/client/locale.ts");
+const localeOutFile = join(outDir, "locale.bundle.client.js");
 
 await mkdir(outDir, { recursive: true });
+
+/*
+ * Each locale's `app` table is served at a URL carrying a tag of its content (`src/i18n/served.ts`), and that URL
+ * is written into `/app/locale.js` here. The Worker computes the same URLs from the same function, so the two
+ * cannot disagree. The catalogs are TypeScript, which this plain-node script cannot import on every Node the
+ * one-click install might run, so esbuild bundles the one module in memory and it is evaluated from a data URL.
+ */
+const served = await build({
+  entryPoints: [join(workerRoot, "src/i18n/served.ts")],
+  bundle: true, format: "esm", platform: "neutral", write: false, logLevel: "silent",
+});
+const { messagePaths, tableModule } = await import(
+  `data:text/javascript;base64,${Buffer.from(served.outputFiles[0].contents).toString("base64")}`
+);
+
+const locale = await build({
+  entryPoints: [localeEntry],
+  bundle: true,
+  format: "esm",
+  target: "es2022",
+  platform: "browser",
+  minify: true,
+  sourcemap: false,
+  // esbuild's default, `ascii`, writes every Han character as a six-byte `\uXXXX` escape; this file carries each
+  // locale's pre-sign-in words, so that would roughly double the Chinese half. It is served as UTF-8.
+  charset: "utf8",
+  define: { __MAILDA_LOCALE_BUILD__: JSON.stringify({ messages: messagePaths(), strict: false }) },
+  outfile: localeOutFile,
+  logLevel: "silent",
+});
 
 const result = await build({
   entryPoints: [entry],
@@ -68,8 +103,11 @@ const result = await build({
   // integer — +7,960 bytes raw, +2,783 gzip, measured with this very line. See `composer.tsx`.
   // `/app/theme.js` is external for the first reason: the framework-free script applies the viewer's theme
   // before anything renders and Settings changes it, and one module instance on the page is one answer.
-  // Types for all four: `src/client/app/types/`, mapped by `src/client/tsconfig.json`.
-  external: ["/app/session.js", "/app/delivery.js", "/app/theme.js", "/app/config.js"],
+  // Types for the first four: `src/client/app/types/`, mapped by `src/client/tsconfig.json`, which maps the fifth
+  // onto its own source, `src/client/locale.ts`, so there is no hand-written declaration of it to drift.
+  // `/app/locale.js` is external for the first reason too: the framework-free script installs the viewer's
+  // words before the shell loads, and the shell's `t()` must read that same table.
+  external: ["/app/session.js", "/app/delivery.js", "/app/theme.js", "/app/config.js", "/app/locale.js"],
   // React reads this to strip development-only warnings and the dev-mode reconciler. Without it the
   // bundle carries both, which is both larger and slower.
   define: { "process.env.NODE_ENV": '"production"' },
@@ -78,8 +116,8 @@ const result = await build({
   logLevel: "silent",
 });
 
-if (result.warnings.length > 0) {
-  for (const warning of result.warnings) {
+for (const { warnings } of [locale, result]) {
+  for (const warning of warnings) {
     console.warn(`warning: ${warning.text} (${warning.location?.file}:${warning.location?.line})`);
   }
 }
@@ -93,3 +131,11 @@ const gzipped = gzipSync(readFileSync(outFile)).length;
 // reproducible by running the build.
 
 console.log(`app bundle: ${bytes} bytes raw, ${gzipped} bytes gzip -> ${outFile.replace(workerRoot, ".")}`);
+const localeBytes = readFileSync(localeOutFile);
+console.log(`locale module: ${localeBytes.length} bytes raw, ${gzipSync(localeBytes).length} bytes gzip -> ${localeOutFile.replace(workerRoot, ".")}`);
+// The per-locale `app` tables are served by the Worker, not written here; their sizes are printed so
+// `docs/receipts/react-shell-bundle.md` can cite this command for them too.
+for (const [tag, path] of Object.entries(messagePaths())) {
+  const table = Buffer.from(tableModule(tag));
+  console.log(`messages ${tag}: ${table.length} bytes raw, ${gzipSync(table).length} bytes gzip -> ${path}`);
+}

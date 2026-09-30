@@ -34,6 +34,7 @@
  * every push. Run it by hand against a Node you have signed into:
  *
  *   pnpm --filter @mailda/worker run axe -- http://127.0.0.1:8787
+ *   pnpm --filter @mailda/worker run axe -- --locale zh-Hans http://127.0.0.1:8787
  *
  * The authenticated screens need a session, which is why the URL is an argument rather than a constant —
  * a harness that could only ever see the sign-in form would be measuring the wrong half of the product.
@@ -43,14 +44,15 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { APP_ROUTES } from "../src/app-routes.ts";
-import { NotApplicable, SETTLE_MS, STATES, themed, tracked, unsettled, wholePage } from "./sweep.mjs";
+import { NotApplicable, SETTLE_MS, STATES, address, sweepArgs, themed, tracked, unsettled, wholePage, wordsFor } from "./sweep.mjs";
 
 const require = createRequire(import.meta.url);
 const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
-// The first argument that is not pnpm's own `--`: `pnpm run axe -- <url>`, as the header writes it, passes the
-// `--` through, and taking argv[2] signed in to a Node called "--".
-const origin = process.argv.slice(2).find((arg) => arg !== "--") ?? "http://127.0.0.1:8787";
+// The first argument that is not pnpm's own `--` (`pnpm run axe -- <url>` passes it through, and taking argv[2] signed
+// in to a Node called "--"), and `--locale <tag>`, which runs every view under the review flag (`sweep.mjs`, ADR 46).
+const { origin, locale } = sweepArgs(process.argv);
+const words = wordsFor(locale);
 /*
  * **Imported, not copied.** This was a hand-maintained list whose own comment said it was "kept in step with
  * `src/app-routes.ts` by hand — five paths" while holding six, so it had already drifted before anybody
@@ -186,7 +188,7 @@ async function audit(page, label) {
  */
 async function open(browserContext, route, mount = ".app-shell") {
   const page = await tracked(browserContext);
-  await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded" });
+  await page.goto(address(origin, route, locale), { waitUntil: "domcontentloaded" });
   // The shell mounts after the session module resolves, so a snapshot taken on DOMContentLoaded would
   // measure an empty div. Waiting for the rail is waiting for the application to exist.
   const mounted = await page
@@ -269,7 +271,7 @@ for (const theme of THEMES) {
   currentTheme = theme;
   const anonymous = await themed(await browser.newContext(), theme);
   const page = await tracked(anonymous);
-  await page.goto(origin, { waitUntil: "networkidle" });
+  await page.goto(address(origin, "/", locale), { waitUntil: "networkidle" });
   const ready = await page.waitForSelector("form", { timeout: 10_000 }).then(() => true).catch(() => false);
   if (!ready) {
     console.log(`${theme.padEnd(5)} sign-in      SKIPPED — no form rendered`);
@@ -288,7 +290,7 @@ for (const theme of THEMES) {
     }
     const view = await tracked(anonymous);
     try {
-      await view.goto(origin, { waitUntil: "networkidle" });
+      await view.goto(address(origin, "/", locale), { waitUntil: "networkidle" });
       await view.waitForSelector("form", { timeout: 10_000 });
       await reach(view);
       await auditWhole(view, label, `${theme} ${name}`);
@@ -338,7 +340,7 @@ for (const theme of THEMES) {
       // Loaded before anything is pressed, and again before the audit: what a state opens can load too.
       const before = await unsettled(page);
       if (before !== null) throw new Unsettled(`before opening: ${before}`);
-      await reach(page);
+      await reach(page, words);
       await page.waitForTimeout(300);
       const after = await unsettled(page);
       if (after !== null) throw new Unsettled(`once open: ${after}`);

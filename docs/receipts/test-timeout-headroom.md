@@ -322,3 +322,9 @@ reads it with the rest. It writes no json report, since on CI that file would ov
 Unmeasured: its duration on CI. The headroom ceiling reads the node suite's report, so this case is held to
 half of `test.timeout_ms` there like every other test. If CI flags it, that is this measurement going stale,
 not a reason to exempt it from the ceiling.
+
+## A third exemption, recorded on its own
+
+The untranslated-text scan's hook bound, `test.untranslated_scan_timeout_ms`, measures a different cost from
+everything above (typing the client program, not a slow test), on a different date, and goes stale on a different
+condition, so it has its own receipt: `docs/receipts/untranslated-scan-timeout.md`.

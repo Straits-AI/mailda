@@ -1,6 +1,16 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 
+import { install } from "/app/locale.js";
+import { CATALOGS } from "../../src/i18n/catalog.ts";
+
+/**
+ * The English words, installed the way `loadApp()` installs a served table, so every screen renders what an
+ * English viewer sees and the suite's English queries (`getByRole("button", { name: "Archive" })`) keep meaning
+ * what they meant. A test about another locale installs its own table in its own file.
+ */
+install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app });
+
 /**
  * Unmount whatever the last test mounted.
  *

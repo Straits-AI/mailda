@@ -134,6 +134,22 @@ describe("finding", () => {
     expect(palette()).toBeNull();
   });
 
+  // An IME's Enter commits a candidate (发票), not the highlighted command. Chrome marks it `isComposing`; Safari
+  // sends it after compositionend with only `keyCode` 229. Each must leave the palette open and go nowhere.
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229", { keyCode: 229 }],
+  ])("does not run a command on an input method's Enter (%s)", (_, composing) => {
+    mount();
+    open();
+    fireEvent.change(input(), { target: { value: "queue" } });
+    fireEvent.keyDown(input(), { key: "Enter", ...composing });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(palette()).not.toBeNull();
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(navigate).toHaveBeenCalledWith({ to: "/queue" });
+  });
+
   it("moves with the arrow keys, and says which option is active", () => {
     mount();
     open();

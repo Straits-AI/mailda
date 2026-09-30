@@ -7,9 +7,11 @@ import {
 } from "@tanstack/react-router";
 import { createRoot, type Root } from "react-dom/client";
 
+import { t } from "/app/locale.js";
 import { APP_ROUTES, type AppRoute } from "../../app-routes.ts";
 import { Shell, tabsOf } from "./chrome.tsx";
 import { ShellProvider } from "./shell-context.tsx";
+import { DocumentTitle } from "./title.ts";
 import { SectionTabs } from "./ui/section-tabs.tsx";
 import { Drafts } from "./screens/drafts.tsx";
 import { Settings } from "./screens/settings.tsx";
@@ -67,6 +69,7 @@ const rootRoute = createRootRoute({
        screen and nothing else; the one-line notice in the shell remains for a member, and for an
        administrator who opened the app anyway. */
     <ShellProvider>
+      <DocumentTitle />
       <Gate>
         <Shell />
       </Gate>
@@ -77,9 +80,12 @@ const rootRoute = createRootRoute({
 /**
  * Butlers and Rules are one sidebar row, "Automations", and two routes: a tab each, so a bookmark to either
  * still lands on it. The tabs come from the sidebar's own record (`SIDEBAR_HOME`, where Rules is a tab of
- * Butlers), so the two cannot disagree.
+ * Butlers), so the two cannot disagree. Built at render, not at import: the tabs' names are words, and words
+ * are read when shown, never kept (ADR 46).
  */
-const AUTOMATIONS = tabsOf("/butlers");
+function Automations() {
+  return <SectionTabs label={t("chrome.row.automations")} tabs={tabsOf("/butlers")} />;
+}
 
 /**
  * One component per path in `APP_ROUTES`, which the Worker also reads so a deep link returns the page.
@@ -91,10 +97,10 @@ const SCREENS: Record<AppRoute, () => React.JSX.Element> = {
   "/": () => <Inbox />,
   "/queue": Queue,
   "/approvals": Approvals,
-  "/rules": () => <><SectionTabs label="Automations" tabs={AUTOMATIONS} /><Policies /></>,
+  "/rules": () => <><Automations /><Policies /></>,
   "/people": People,
   "/matters": Matters,
-  "/butlers": () => <><SectionTabs label="Automations" tabs={AUTOMATIONS} /><Butlers /></>,
+  "/butlers": () => <><Automations /><Butlers /></>,
   "/agents": Agents,
   "/limits": Limits,
   "/outbox": Outbox,
