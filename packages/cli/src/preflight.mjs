@@ -25,33 +25,9 @@
  * that is wrong together.
  *
  * The functions here are pure and take text, so they can be tested against real wrangler output rather than
- * against a machine that happens to be configured a particular way.
+ * against a machine that happens to be configured a particular way. Since 30 September 2026 that text is
+ * wrangler's own JSON (`whoami --json`) and `wrangler --version`, not its tables and banner.
  */
-
-/**
- * The accounts a `wrangler whoami` table names, as `[{name, id}]`.
- *
- * Parsed from the box-drawn table, which is the only place wrangler prints them. The id is matched as 32 hex
- * characters rather than "the second cell", so a change to the table's column order cannot silently produce
- * account names as ids.
- */
-export function accountsFrom(whoami) {
-  const accounts = [];
-  for (const line of whoami.split("\n")) {
-    if (!line.includes("│")) continue;
-    const cells = line.split("│").map((cell) => cell.trim()).filter((cell) => cell !== "");
-    const id = cells.find((cell) => /^[0-9a-f]{32}$/i.test(cell));
-    if (id === undefined) continue;
-    const name = cells.find((cell) => cell !== id) ?? "(unnamed)";
-    accounts.push({ name, id });
-  }
-  return accounts;
-}
-
-/** Whether wrangler thinks anybody is signed in. `whoami` says so in prose; there is no exit code for it. */
-export function signedIn(whoami) {
-  return /You are logged in|associated with the email|Account Name/i.test(whoami);
-}
 
 /**
  * Which account a deploy would use, or why it cannot tell.
@@ -108,9 +84,12 @@ function listOf(accounts) {
   return accounts.map((one) => `             ${one.id}  ${one.name}`).join("\n");
 }
 
-/** wrangler's own version, out of its banner. */
+/**
+ * wrangler's own version, from `wrangler --version`, which prints it bare (`4.118.0`). It used to be read from
+ * `whoami`'s banner, which `--json` leaves out.
+ */
 export function wranglerVersionFrom(text) {
-  return /wrangler\s+(\d+\.\d+\.\d+)/i.exec(text)?.[1] ?? null;
+  return /(\d+\.\d+\.\d+)/.exec(text)?.[1] ?? null;
 }
 
 /**

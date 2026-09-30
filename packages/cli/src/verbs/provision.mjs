@@ -1,10 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { providerVerifiedDestinationsResponse } from "@mailda/contract/schemas";
 
 import { api, capture, choose, fail, wrapAt } from "../support.mjs";
-import { tokenFromWranglerConfig, wranglerConfigPaths } from "../wrangler-config.mjs";
+import { tokenFrom } from "../wrangler-config.mjs";
 
 /**
  * Setting a Node up to receive, send and observe outcomes, with the consent the operator already gave
@@ -23,29 +24,44 @@ import { tokenFromWranglerConfig, wranglerConfigPaths } from "../wrangler-config
  * with one thing left to do, and the Setup screen and `mailda provider` do that thing later.
  */
 export async function wranglerToken() {
-  return (await wranglerTokenIfAny())
-    ?? fail("wrangler's login token could not be found, so the account cannot be set up from here.\n\n"
-      + "  why      the install reuses the consent `wrangler login` gave rather than asking for another; the\n"
-      + "           token is read from the file wrangler writes, and none of these hold one:\n"
-      + wranglerConfigPaths(process.env, process.platform, homedir()).map((one) => `             ${one}\n`).join("")
+  const read = wranglerTokenRead();
+  return read.token
+    ?? fail("wrangler's login token could not be had, so the account cannot be set up from here.\n\n"
+      + "  why      the install reuses the consent `wrangler login` gave rather than asking for another, and\n"
+      + `           ${read.error}\n`
       + "  fix      run `npx wrangler login`, then re-run; or set CLOUDFLARE_API_TOKEN to a token that may\n"
       + "           write Email Routing, Email Sending and Queues in this account");
 }
 
 /**
- * wrangler's login token, or null when there is none. For a step that is worth doing and not worth ending a
- * run over: `mailda upgrade` has already deployed by the time it reads verified destinations.
+ * The token wrangler would act with, or why there is none (30 September 2026): `wrangler auth token --json`, which
+ * applies wrangler's own precedence (a Global API Key with its email first, then `CLOUDFLARE_API_TOKEN`, then the
+ * login), refreshes an expired login, and reads wherever wrangler keeps it. It used to return
+ * `CLOUDFLARE_API_TOKEN` without asking, which provisioned with a different credential from the one wrangler
+ * deployed with whenever a Global API Key was set beside it.
+ *
+ * **Quiet**, always: `capture` echoes what it reads unless told not to, and this answer is a credential that
+ * would otherwise land in the terminal or a Workers Builds log. Only stdout is parsed.
+ *
+ * **Kept out of wrangler's debug log.** wrangler writes every line it prints, this answer included, to a log
+ * file under its config directory, kept 30 days and created with the default umask (4.118.0 and 4.90.1, run
+ * with a made-up token: `docs/receipts/wrangler-json-output.md`). `WRANGLER_WRITE_LOGS=false` stops that from
+ * 4.91.0; below it, `WRANGLER_LOG_PATH` sends the file into a private directory removed as soon as wrangler
+ * exits. Both, because this runs before any preflight has checked the version.
+ *
+ * Under the Deploy button (Workers Builds, `CLOUDFLARE_API_TOKEN` and no login) nothing calls this: `mailda
+ * deploy` never reads the token.
  */
-export async function wranglerTokenIfAny() {
-  if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
-  // `whoami` refreshes an expired token and rewrites the file; the read below then sees a live one.
-  capture("npx", ["wrangler", "whoami"], { quiet: true });
-  for (const path of wranglerConfigPaths(process.env, process.platform, homedir())) {
-    if (!existsSync(path)) continue;
-    const found = tokenFromWranglerConfig(readFileSync(path, "utf8"));
-    if (found !== null) return found.token;
+export function wranglerTokenRead() {
+  const logs = mkdtempSync(join(tmpdir(), "mailda-wrangler-log-"));
+  try {
+    const answer = capture("npx", ["wrangler", "auth", "token", "--json"], {
+      quiet: true, env: { WRANGLER_WRITE_LOGS: "false", WRANGLER_LOG_PATH: logs },
+    });
+    return tokenFrom(answer.stdout, answer.status, answer.stderr);
+  } finally {
+    rmSync(logs, { recursive: true, force: true });
   }
-  return null;
 }
 
 /** The operator's own credential, for one request and no longer; the Node never stores it. */
@@ -132,14 +148,30 @@ export function domainChoices(zones) {
   ];
 }
 
-/** The zones the operator's token can see in this account, or an empty list when the read fails. */
-export async function zonesOf(accountId, token) {
-  const response = await fetch(`https://api.cloudflare.com/client/v4/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`, {
-    headers: { authorization: `Bearer ${token}` },
-  }).catch(() => null);
-  const body = await response?.json().catch(() => ({}));
-  const zones = Array.isArray(body?.result) ? body.result : [];
-  return zones.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name }));
+/**
+ * The zones the operator's token can see in this account, every page of them (30 September 2026).
+ *
+ * This read one page of 50 and stopped, so an account with a 51st zone lost it from the picker without a word.
+ * It pages on the API's own `result_info.total_pages` now. A page that fails is said, with how far the read
+ * got, and what was read is still offered; nothing is dropped silently. `fetchImpl` is for the test.
+ */
+export async function zonesOf(accountId, token, fetchImpl = fetch) {
+  const zones = [];
+  for (let page = 1; ; page += 1) {
+    const url = `https://api.cloudflare.com/client/v4/zones?account.id=${encodeURIComponent(accountId)}&per_page=50&page=${page}`;
+    const response = await fetchImpl(url, { headers: { authorization: `Bearer ${token}` } }).catch((error) => error);
+    const body = response instanceof Error ? null : await response.json().catch(() => null);
+    if (response instanceof Error || !response.ok || !Array.isArray(body?.result)) {
+      const why = response instanceof Error ? response.message : `answered ${response.status}`;
+      process.stdout.write(`   note: the zone list stopped at page ${page} (${why}); ${zones.length} zone(s) were read before it.\n`);
+      break;
+    }
+    zones.push(...body.result.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name })));
+    // The API's count when it gives one; otherwise a short page is the last.
+    const total = body.result_info?.total_pages;
+    if (typeof total === "number" ? page >= total : body.result.length < 50) break;
+  }
+  return zones;
 }
 
 /** The two routing states that deliver an address here; every other one is named, never counted as set up. */

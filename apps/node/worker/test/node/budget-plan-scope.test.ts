@@ -694,6 +694,14 @@ const FIGURES: Record<string, Classification> = {
     "wrangler.r2_bucket_list_page_size", "wrangler.r2_bucket_list_marks_truncation",
   ),
 
+  // docs/receipts/wrangler-json-output.md
+  ...bothPlans(
+    "the earliest wrangler release with `whoami --json`, `auth token --json` and the output-file entries the "
+      + "CLI reads, established from wrangler's own package tarballs and changelog. A property of the CLI, "
+      + "which is the same program on every plan",
+    "wrangler.json_output_min_version",
+  ),
+
   // docs/receipts/wrangler-login-reach.md
   ...bothPlans(
     "what wrangler's login token may do in the account: create subdomain routing records and rules, and "

@@ -1,8 +1,9 @@
 import { doctor } from "./doctor.mjs";
 import { resolve } from "node:path";
-import { activeVersionFrom, contractingAmong, deployExitCode, hostnameIn, promotionVerdict, servedVersionOf, versionIdFrom } from "../deploy-parse.mjs";
-import { planFor, renderPlan, resourcesFrom as resourcesFromConfig } from "../deploy-plan.mjs";
+import { activeVersionFrom, contractingAmong, deployExitCode, deploymentIdFrom, hostnameIn, promotionVerdict, servedVersionOf, versionIdFrom, workersDevUrlFrom } from "../deploy-parse.mjs";
+import { planFor, renderPlan, workflowGuard, resourcesFrom as resourcesFromConfig } from "../deploy-plan.mjs";
 import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, configFor, useConfig } from "../support.mjs";
+import { wranglerSaid } from "../wrangler-config.mjs";
 /**
  * Whether this account has no `mailda` Worker yet.
  *
@@ -68,10 +69,24 @@ export function firstInstall() {
  * deploy` without running a suite. This check asks the **account** rather than the file, so it sees who
  * actually owns the Workflow rather than what the config intends.
  *
- * Not fatal when the answer cannot be read. `wrangler workflows list` needs a permission a deploy token may
- * not carry, and refusing every deploy because a *diagnostic* was unavailable is the wrong trade — a warning
- * that names what went unchecked is. The reverse of `firstInstall`, deliberately: there, being wrong means
- * skipping the canary on a live Node, so ambiguity stops the command.
+ * ## Asked by name, and three answers kept apart (30 September 2026)
+ *
+ * This used to scan `wrangler workflows list`, which prints **one page** (`--page` defaults to 1) and says
+ * nothing about the rest. A Workflow on page two left `owner` null and the guard passed without a word: the
+ * `wrangler-list-pagination.md` shape. `wrangler workflows describe <name>` asks about the one Workflow, and
+ * its answer is one of three:
+ *
+ *   - wrangler's own not-found marker (`ABSENT_MARKERS` in `deploy-plan.mjs`, measured on 4.118.0): there is
+ *     nothing to take, and a first deploy of this Node is exactly this case;
+ *   - an owner: compared, and a different one refuses;
+ *   - anything else. A failed call is a **note**, not a refusal: refusing every deploy because a diagnostic
+ *     was unavailable is the wrong trade, the reverse of `firstInstall`, where being wrong skips the canary on
+ *     a live Node. But a call that **succeeded** and named no owner is a refusal: that is wrangler's format
+ *     changing under this parse, and passing there is the silent pass this replaced.
+ *
+ * The decision is `workflowGuard` in `deploy-plan.mjs`, where it is tested with values. Under an API token
+ * (the Deploy button's Workers Builds) the call is the same one; a Workflow rides the Workers Scripts
+ * permission the deploy already needs to create it (`workflow-provisioning.md`). Not exercised under a token.
  */
 function refuseIfWorkflowBelongsElsewhere(config) {
   const workerName = /"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
@@ -99,25 +114,31 @@ function refuseIfWorkflowBelongsElsewhere(config) {
     );
   }
 
-  // Quiet: the answer is one row of the table, and echoing every Workflow the account owns above the deploy
-  // was a screenful of somebody else's names for an operator to scroll past.
-  const listed = capture("npx", ["wrangler", "workflows", "list"], { quiet: true });
-  if (listed.status !== 0) {
+  // Quiet: a question, answered below in this command's own words.
+  const described = capture("npx", ["wrangler", "workflows", "describe", workflowName, ...WRANGLER_ARGS], { quiet: true });
+  const guard = workflowGuard(described, workerName);
+  if (guard.state === "unread") {
     process.stdout.write(
-      `\n   note: could not read this account's Workflows, so whether \`${workflowName}\` already belongs to\n`
-      + "         another Worker went unchecked. If a second Node in this account shares that name, this\n"
-      + "         deploy will take its Butler engine without saying so (#99).\n",
+      `\n   note: could not read the Workflow \`${workflowName}\`, so whether it already belongs to another\n`
+      + "         Worker went unchecked. If a second Node in this account shares that name, this deploy\n"
+      + "         will take its Butler engine without saying so (#99). wrangler said:\n"
+      + `         ${wranglerSaid(described.stderr, 2).join(" ")}\n`,
     );
-    return;
   }
-
-  /*
-   * `wrangler workflows list` prints a table; the row is `│ <name> │ <script> │ …`. Matched on the workflow's
-   * own name so a second, unrelated Workflow in the account cannot be mistaken for this one.
-   */
-  const row = listed.text.split("\n").find((line) => line.includes(workflowName));
-  const owner = row?.split("│").map((cell) => cell.trim()).filter(Boolean)[1] ?? null;
-  if (owner !== null && owner !== workerName) {
+  if (guard.state === "unparsed") {
+    fail(
+      `refusing to deploy: \`wrangler workflows describe ${workflowName}\` answered, and named no owner.\n\n`
+      + "  why      a Workflow is owned by exactly one script, and deploying over another Node's takes it\n"
+      + "           without a warning (#99). The owner is read from the `Script Name:` line, which was not\n"
+      + "           there, so wrangler's wording has changed and this check cannot tell whose it is.\n"
+      + `  fix      nothing has changed. Read the owner with \`npx wrangler workflows describe ${workflowName}\`,\n`
+      + "           then bring `ownerFrom` in packages/cli/src/deploy-plan.mjs up to wrangler's wording.\n"
+      + "           wrangler said:\n"
+      + `           ${described.stdout.trim().split("\n").slice(0, 8).join("\n           ")}`,
+    );
+  }
+  if (guard.state === "stolen") {
+    const owner = guard.owner;
     fail(
       `refusing to deploy: the Workflow \`${workflowName}\` belongs to the Worker \`${owner}\`, and this\n`
       + `config deploys \`${workerName}\`.\n\n`
@@ -310,10 +331,10 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
 
   /*
    * Preflight first, and before `refuseIfWorkflowBelongsElsewhere` specifically. That guard is the one that
-   * used to run first and silently no-op: on an ambiguous account `wrangler workflows list` fails, and the
-   * guard printed a note and returned, so #99's protection against one Node stealing another's Butler engine
-   * was skipped in exactly the situation where nothing else worked either. Settling the account before the
-   * guard runs is what makes the guard's answer mean something.
+   * used to run first and silently no-op: on an ambiguous account its wrangler call fails, and the guard
+   * printed a note and returned, so #99's protection against one Node stealing another's Butler engine was
+   * skipped in exactly the situation where nothing else worked either. Settling the account before the guard
+   * runs is what makes the guard's answer mean something.
    */
   // `needsUrl: false`: a first install has no URL to give, since the Node does not exist yet, and the
   // refusal below still names it once `firstInstall()` says this is not one.
@@ -335,11 +356,11 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
       + "   roll back to and nothing a migration could break — and the bindings do not exist until a deploy\n"
       + "   provisions them, which is why neither step below can come first.\n",
     );
-    // Captured (and echoed) rather than run attached: wrangler prints the Node's URL exactly once, here,
-    // and `mailda install` needs it to say where to go next.
-    const uploaded = capture("npx", ["wrangler", "deploy", ...WRANGLER_ARGS]);
+    // Captured (and echoed) rather than run attached: the Node's URL is in the `deploy` entry wrangler writes
+    // to its output file, and `mailda install` needs it to say where to go next.
+    const uploaded = capture("npx", ["wrangler", "deploy", ...WRANGLER_ARGS], { output: true });
     if (uploaded.status !== 0) fail("the first deploy failed.");
-    installedUrl = /https:\/\/[a-z0-9.-]+\.workers\.dev/i.exec(uploaded.text)?.[0] ?? null;
+    installedUrl = workersDevUrlFrom(uploaded.entries);
     // `wrangler deploy` attaches a custom domain in the config itself (measured 25 September 2026).
     await hostnameLive(hostnameIn(deployConfig.text));
     process.stdout.write("\n== applying migrations for the first time\n");
@@ -463,18 +484,20 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
    * this command found live rather than from whatever the list says after it has changed.
    */
   process.stdout.write("\n== reading the version currently serving\n");
-  // Quiet, by `capture`'s rule: a question, answered in one line below. The full list is every deployment
-  // this Node has ever had, and it scrolled past the plan on every upgrade.
-  const deployments = capture("npx", ["wrangler", "deployments", "list", ...WRANGLER_ARGS], { quiet: true });
-  if (deployments.status !== 0) fail(`could not list deployments (exit ${deployments.status}).`);
-  const serving = activeVersionFrom(deployments.text);
+  // Quiet, by `capture`'s rule: a question, answered in one line below.
+  const deployments = capture("npx", ["wrangler", "deployments", "status", "--json", ...WRANGLER_ARGS], { quiet: true });
+  if (deployments.status !== 0) fail(`could not read the latest deployment (exit ${deployments.status}).\n${deployments.stderr.trim()}`);
+  const serving = activeVersionFrom(deployments.stdout);
   if (serving === null) {
     fail(
       "could not tell which version is currently serving.\n\n"
       + "  why      the canary is checked by placing it alongside that version at 0% and overriding to it.\n"
-      + "           Without the incumbent's id this command cannot build that pair, and guessing would\n"
-      + "           publish a deployment that drops the version now serving.\n"
-      + "  fix      nothing has changed. Run `wrangler deployments list` and check the output.",
+      + "           Without one incumbent's id this command cannot build that pair, and guessing would\n"
+      + "           publish a deployment that drops a version now serving. The latest deployment must have\n"
+      + "           exactly one version holding traffic; a gradual rollout in progress has two.\n"
+      + "  fix      nothing has changed. `wrangler deployments status` shows the latest deployment; finish or\n"
+      + "           roll back a rollout with `wrangler versions deploy <id>@100`, then re-run. wrangler said:\n"
+      + `           ${deployments.stdout.trim().split("\n").slice(0, 12).join("\n           ")}`,
     );
   }
   process.stdout.write(`   serving   ${serving}\n`);
@@ -482,15 +505,17 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
   process.stdout.write("\n== uploading a canary version (no traffic)\n");
   const uploaded = capture("npx", [
     "wrangler", "versions", "upload", "--message", "mailda deploy", ...WRANGLER_ARGS,
-  ]);
+  ], { output: true });
   if (uploaded.status !== 0) {
     fail(`uploading the canary failed (exit ${uploaded.status}). No traffic moved.`);
   }
-  const version = versionIdFrom(uploaded.text);
+  const version = versionIdFrom(uploaded.entries);
   if (version === null) {
     fail(
-      "could not find the new version's id in wrangler's output.\n\n"
-      + "  why      the id is what promotes this version, and guessing it would promote something else.\n"
+      "wrangler wrote no version id for the upload to its output file.\n\n"
+      + "  why      the id is what promotes this version, and guessing it would promote something else. It is\n"
+      + "           read from the `version-upload` entry wrangler writes to WRANGLER_OUTPUT_FILE_PATH, never\n"
+      + "           from its prose.\n"
       + "  fix      the canary is uploaded and serving no traffic, so nothing is broken. Read the id from\n"
       + "           the output above and finish with `wrangler versions deploy <id>@100`.",
     );
@@ -502,15 +527,17 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
    * silently interrogate the incumbent. 0% means no request reaches it except one carrying the override.
    */
   process.stdout.write("\n== placing the canary in the deployment at 0%\n");
-  if (run("npx", [
+  const placed = capture("npx", [
     "wrangler", "versions", "deploy", `${version}@0`, `${serving}@100`, "--yes", ...WRANGLER_ARGS,
-  ]) !== 0) {
+  ], { output: true });
+  if (placed.status !== 0) {
     fail(
       "could not place the canary in the deployment.\n\n"
       + `  why      the canary cannot be reached without being in it, and ${serving} is still at 100%.\n`
-      + "  fix      nothing was promoted. Re-run, or check `wrangler deployments list`.",
+      + "  fix      nothing was promoted. Re-run, or check `wrangler deployments status`.",
     );
   }
+  process.stdout.write(`   deployment ${deploymentIdFrom(placed.entries) ?? "(wrangler wrote no deployment id)"}\n`);
 
   /*
    * The gate. Against the **canary**, reached through a version override on the production hostname — a
@@ -614,9 +641,11 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
   }
 
   process.stdout.write("\n== moving traffic to the checked version\n");
-  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes", ...WRANGLER_ARGS]) !== 0) {
+  const promoted = capture("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes", ...WRANGLER_ARGS], { output: true });
+  if (promoted.status !== 0) {
     fail("promoting the canary failed. The previous version is still serving.");
   }
+  process.stdout.write(`   deployment ${deploymentIdFrom(promoted.entries) ?? "(wrangler wrote no deployment id)"}\n`);
 
   /*
    * The consumer last, because it attaches to a queue the deploy provisions — and out of band, because a

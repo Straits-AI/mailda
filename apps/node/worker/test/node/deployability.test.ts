@@ -504,20 +504,20 @@ describe("what a customer's deploy can provision", () => {
 });
 
 /**
- * The one thing about this Worker that **no install path provisions**: its queue consumer.
+ * The one thing about this Worker that **no declaration provisions**: its queue consumer.
  *
  * Everything in the describe above asks whether a customer's deploy can create what the config declares.
  * This asks the opposite question, which #72 forced into existence: the consumer *cannot* be declared, so it
  * is attached by a script, and a script nothing checks is a step that quietly stops existing. Three ways
  * that goes wrong and all three are cheap to catch here — the script disappearing, the script losing the
- * binding it discovers by, and the script being chained into `deploy` after somebody decides it should not
- * be.
+ * binding it discovers by, and the script being chained into the worker package's own `deploy` as a second
+ * owner of a step `mailda deploy` already runs.
  *
  * What the script *does* when it runs is a different question and is answered in
  * `test/node/attach-queue-consumer.test.ts`, which runs it against a stub wrangler: whether it discovers
  * the queue rather than composing a name, whether a second run succeeds, and what it refuses.
  */
-describe("the queue consumer, which no install path attaches", () => {
+describe("the queue consumer, which no declaration can attach", () => {
   const scriptPath = join(WORKER_DIR, "scripts", "attach-queue-consumer.mjs");
   const workerPackage = JSON.parse(readFileSync(join(WORKER_DIR, "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
@@ -555,25 +555,25 @@ describe("the queue consumer, which no install path attaches", () => {
     }
   });
 
-  it("is deliberately not chained into deploy, and that decision is enforced rather than remembered", () => {
+  it("is attached by `mailda deploy`, and not chained into the worker package's own `deploy` as well", () => {
     /*
-     * Three reasons, and they are here because a future reader will otherwise "fix" this by adding it.
+     * What this guards is the worker package's `deploy` script (`wrangler deploy && pnpm run migrations:apply`),
+     * and only that. It is reached by a bare `pnpm --filter @mailda/worker run deploy`, or by Workers Builds if
+     * its detection ever fell back to this package's script (unmeasured). It is not the install path.
      *
-     * 1. The button's install path never runs this script anyway. Cloudflare runs `npx wrangler deploy`
-     *    directly and never sees `package.json` scripts (measured: deploy-button-install.md), so chaining
-     *    would serve only the CLI path while leaving the case that matters most untouched.
-     * 2. Discovery needs the Worker to already exist and to be the *live* deployment. Ordering after
-     *    `wrangler deploy` satisfies that, but a failure — a token without Queues edit, a gradual
-     *    deployment in flight, a deploy that provisioned no queue — would turn a working install red, and
-     *    an installed Node with no consumer is fully functional except that it observes no delivery
-     *    outcomes. AGENTS.md §6: never trade a working product for unfinished complexity.
-     * 3. Attaching a consumer is a one-time account-level act, and `deploy` runs on every redeploy. Two
-     *    extra API round trips and a new hard-failure surface on every deploy, for a state that does not
-     *    change, is a bad trade.
+     * 1. Every install path runs `mailda deploy`: the CLI does, and so does the Deploy button, whose Workers
+     *    Builds command runs the root `deploy` script, which has been `mailda deploy` since 21 August 2026 (no
+     *    button run since; the 19 August run in deploy-button-install.md ran the root script when it still
+     *    called this package's `deploy`, and on 6 August it ran `npx wrangler deploy` and no script at all).
+     *    `mailda deploy` runs `scripts/attach-queue-consumer.mjs` after a first deploy and after an upgrade's
+     *    promotion, and fails loudly when it fails (`packages/cli/src/verbs/deploy.mjs`).
+     * 2. So chaining it here too would make a second owner of one account-level step, reached only by a deploy
+     *    that bypasses `mailda`'s canary, and the two copies would drift: a fix to one ordering or one
+     *    refusal would not reach the other.
      *
-     * The cost is accepted and made visible instead: doctor's `sending_events_consumer` says the step
-     * exists and cannot be checked from inside a Worker, `delivery_visibility` fails from evidence when the
-     * silence it causes is real, and the README says so where an installer reads it.
+     * The consumer's absence stays visible whichever way a Node was deployed: doctor's
+     * `sending_events_consumer` says the step exists and cannot be checked from inside a Worker, and
+     * `delivery_visibility` fails from evidence when the silence it causes is real.
      */
     // The property, not the exact command: pinning the whole string would fail on any legitimate change to
     // `deploy` with a message that explains nothing. Asserted as a string first, because `undefined` would
@@ -581,9 +581,9 @@ describe("the queue consumer, which no install path attaches", () => {
     expect(scripts.deploy, "no deploy script to check").toBeTypeOf("string");
     expect(
       /attach/.test(scripts.deploy ?? "")
-        ? `deploy now runs the consumer attach: "${scripts.deploy}". If that is deliberate, the argument in `
-          + "this test is what has to change first — a discovery failure inside deploy turns a working "
-          + "install red, and the button's install path does not run deploy at all"
+        ? `the worker package's deploy now runs the consumer attach: "${scripts.deploy}". \`mailda deploy\` `
+          + "already attaches it on every install path; if a second owner here is deliberate, the argument in "
+          + "this test is what has to change first"
         : null,
     ).toBeNull();
   });

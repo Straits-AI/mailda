@@ -2246,6 +2246,9 @@ export interface RoutingRule {
   catchAll: boolean;
   ours: boolean;
   digest: string;
+  /** What the Node would do with the rule if asked; null with `refusal` when the act would refuse. */
+  offer: "take_over" | "put_back" | null;
+  refusal: { code: string; what: string; why: string; fix: string } | null;
 }
 
 export interface RoutingRules {
@@ -2261,6 +2264,8 @@ export interface RoutingRuleOutcome {
   to: string;
   before: { action: string; destinations: string[] };
   after: { action: string; destinations: string[] };
+  /** The mailbox a take-over's address files into; null on a put-back. */
+  mailbox: { id: string; name: string } | null;
 }
 
 export const routingRulesOn = (domain: string) =>

@@ -166,13 +166,17 @@ export async function provider(argv) {
       process.stdout.write(
         `     ${rule.catchAll ? "catch-all" : rule.to}\n`
         + `               ${where}${rule.ours ? "  (this Node)" : ""}${rule.enabled ? "" : "  (disabled)"}\n`
-        + `               id ${rule.id}  digest ${rule.digest}\n`,
+        + `               id ${rule.id}  digest ${rule.digest}\n`
+        + (rule.offer === "take_over"
+          ? `               take over: mailda provider --take-over ${rule.id} --domain ${routing.domain} --confirm ${rule.digest}\n`
+          : rule.offer === "put_back"
+            ? `               put back:  mailda provider --put-back ${rule.id} --domain ${routing.domain}\n`
+            : rule.refusal == null ? "" // a Node from before 30 September 2026 lists no offer
+              : wrapAt(`${rule.refusal.code}: ${rule.refusal.what}; ${rule.refusal.fix}`, 60)
+              .map((line, i) => `               ${i === 0 ? "refused:   " : "           "}${line}\n`).join("")),
       );
     }
-    process.stdout.write(
-      "\n   take one over: mailda provider --take-over <id> --domain "
-      + `${routing.domain} --confirm <digest>\n\n`,
-    );
+    process.stdout.write("\n");
     return;
   }
 
@@ -193,6 +197,8 @@ export async function provider(argv) {
     const said = (one) => `${one.action}${one.destinations.length === 0 ? "" : ` -> ${one.destinations.join(", ")}`}`;
     process.stdout.write(
       `\n   ${outcome.to}\n     was       ${said(outcome.before)}\n     now       ${said(outcome.after)}\n`
+      // Where the address now files: the mailbox of a row already there when none was chosen (30 September 2026).
+      + (outcome.mailbox == null ? "" : `     files     into ${outcome.mailbox.name} (${outcome.mailbox.id})\n`)
       + (takeOver !== null
         ? `\n   put it back: mailda provider --put-back ${outcome.ruleId} --domain ${domain}\n\n`
         : "\n"),

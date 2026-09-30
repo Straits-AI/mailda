@@ -474,9 +474,10 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     const done = answer.value.outcome;
     const said = (one: { action: string; destinations: string[] }) =>
       `${one.action}${one.destinations.length === 0 ? "" : ` → ${one.destinations.join(", ")}`}`;
-    setOutcome(`${done.to}: was ${said(done.before)}, now ${said(done.after)}.`);
     await refresh();
+    // The listing again first, since listing clears the last outcome, which used to wipe this line as it appeared.
     await list();
+    setOutcome(`${done.to}: was ${said(done.before)}, now ${said(done.after)}.${done.mailbox === null ? "" : ` It files into ${done.mailbox.name}.`}`);
   }
 
   return (
@@ -531,13 +532,16 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                     {rule.ours ? "this Node" : `${rule.action}${rule.destinations.length === 0 ? "" : ` → ${rule.destinations.join(", ")}`}`}
                   </td>
                   <td>
-                    {rule.catchAll ? null : arming === rule.id ? (
-                      <button type="button" className="primary" disabled={busy} onClick={() => void act(rule.id, rule.ours ? null : rule.digest)}>
-                        {busy ? "Working…" : rule.ours ? "Yes, put it back" : `Yes, point ${rule.to} here`}
+                    {/* The catch-all is left alone here (see above); every other row offers what the Node says it would do. */}
+                    {rule.catchAll ? null : rule.offer === null ? (
+                      <span className="dim">{rule.refusal === null ? null : `${rule.refusal.what}: ${rule.refusal.fix}`}</span>
+                    ) : arming === rule.id ? (
+                      <button type="button" className="primary" disabled={busy} onClick={() => void act(rule.id, rule.offer === "put_back" ? null : rule.digest)}>
+                        {busy ? "Working…" : rule.offer === "put_back" ? "Yes, put it back" : `Yes, point ${rule.to} here`}
                       </button>
                     ) : (
                       <button type="button" className="quiet" disabled={busy} onClick={() => setArming(rule.id)}>
-                        {rule.ours ? "Put back" : "Point here"}
+                        {rule.offer === "put_back" ? "Put back" : "Point here"}
                       </button>
                     )}
                   </td>

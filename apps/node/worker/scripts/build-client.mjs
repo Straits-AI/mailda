@@ -3,11 +3,12 @@
  *
  * ## Why this runs from wrangler's own config rather than from `pnpm run deploy`
  *
- * A one-click install does not run our scripts. Workers Builds executes `npx wrangler deploy` directly —
- * measured, in `docs/receipts/deploy-button-install.md` — so a bundle that only got built by
- * `pnpm run deploy` would simply be absent on the install path most customers take. `wrangler.jsonc`
- * declares this as `build.command`, which means every route to a deploy runs it: the button, the CLI, and
- * `wrangler dev`.
+ * Which command a one-click install runs is Workers Builds' detection, not ours. On 6 August 2026 it ran
+ * `npx wrangler deploy` and never saw our scripts; on 19 August it ran the root `deploy` script
+ * (`docs/receipts/deploy-button-install.md`), which is `mailda deploy` since 21 August. A detection that moved once can move
+ * again, and a bundle only a script builds would then be absent on the install path most customers take.
+ * `wrangler.jsonc` declares this as `build.command`, which wrangler runs for `deploy`, `versions upload`
+ * (what `mailda deploy` calls) and `dev`, so every route to a deploy runs it.
  *
  * The failure mode if it ever does not run is a **failed deploy**, not a dead Node: `ui.ts` imports the
  * bundle, so a missing file stops wrangler at bundle time. That is the right direction for this to fail

@@ -53,7 +53,7 @@ const PAIRS = [
     declaration: "packages/cli/src/backup.d.mts",
   },
   {
-    what: "wrangler's token file",
+    what: "wrangler's answers about its login",
     module: "packages/cli/src/wrangler-config.mjs",
     declaration: "packages/cli/src/wrangler-config.d.mts",
   },

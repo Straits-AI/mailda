@@ -55,10 +55,24 @@ const CATCH_ALL = {
   actions: [{ type: "forward", value: ["ops@gmail.test"] }],
 };
 
-/** Cloudflare's rules API, holding the rules in memory so a PUT is visible to the next GET. */
-function serving(initial: Array<Record<string, unknown>>) {
+/**
+ * Cloudflare's rules API, holding the rules in memory so a PUT is visible to the next GET.
+ *
+ * `settings` is the zone's Email Routing settings (`null` answers an error); `put` is what a PUT does: applies its
+ * body, answers 200 and changes nothing, is refused, or applies its body and loses the answer.
+ */
+function serving(
+  initial: Array<Record<string, unknown>>,
+  {
+    settings = { enabled: true, status: "ready", support_subaddress: false } as Record<string, unknown> | null,
+    put = "apply" as "apply" | "ignore" | "refuse" | "lose",
+    readBack = "answer" as "answer" | "lost",
+  } = {},
+) {
   const rules = initial.map((one) => ({ ...one }));
   const puts: unknown[] = [];
+  const refused = (code: number, message: string) =>
+    new Response(JSON.stringify({ success: false, errors: [{ code, message }] }), { status: 400 });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
     const method = init?.method ?? "GET";
@@ -67,14 +81,20 @@ function serving(initial: Array<Record<string, unknown>>) {
     });
     if (path.startsWith("/zones?name=example.test")) return ok([{ id: "zone_1", name: "example.test" }]);
     if (path.startsWith("/zones?name=")) return ok([]);
+    if (path === "/zones/zone_1/email/routing") return settings === null ? refused(10000, "Authentication error") : ok(settings);
     const one = /\/email\/routing\/rules\/([^?]+)$/.exec(path);
     if (one !== null) {
+      // The rule read back after a PUT, when the connection that lost the PUT's answer is still down.
+      if (readBack === "lost" && method === "GET" && puts.length > 0) throw new TypeError("network connection lost again");
       const at = rules.findIndex((r) => r.id === one[1]);
       if (at < 0) return new Response(JSON.stringify({ success: false, errors: [{ code: 1, message: "no" }] }), { status: 404 });
       if (method === "PUT") {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         puts.push(body);
-        rules[at] = { ...rules[at], ...body };
+        if (put === "refuse") return refused(2020, "destination address not verified");
+        if (put === "apply" || put === "lose") rules[at] = { ...rules[at], ...body };
+        // Applied, and the answer never arrives: what `cloudflareWrite` reports as refused.
+        if (put === "lose") throw new TypeError("network connection lost");
       }
       return ok(rules[at]);
     }
@@ -82,6 +102,20 @@ function serving(initial: Array<Record<string, unknown>>) {
     return ok(null);
   });
   return { rules, puts };
+}
+
+/** The entries of one action, oldest first. */
+async function entries(action: string) {
+  const { results } = await testEnv.CATALOG.prepare(
+    "SELECT outcome, subject, detail FROM audit_entries WHERE org_id = ? AND action = ? ORDER BY seq",
+  ).bind(ORG, action).all<{ outcome: string; subject: string; detail: string }>();
+  return results.map((one) => ({ ...one, detail: JSON.parse(one.detail) as Record<string, unknown> }));
+}
+
+/** Lists the rules and takes `ruleId` over with the digest shown, as the Setup button does. */
+async function takeOver(ruleId: string, mailboxId: string | null = null) {
+  const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules.find((r) => r.id === ruleId)!;
+  return await takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", ruleId, listed.digest, mailboxId);
 }
 
 describe("listing a zone's routing rules", () => {
@@ -100,6 +134,37 @@ describe("listing a zone's routing rules", () => {
     ]);
     expect(listing.rules.every((r) => r.digest.length === 64)).toBe(true);
   });
+
+  it("offers on each rule what the act would do, and names the refusal where it would refuse (30 September 2026)", async () => {
+    const twin = (id: string) => ({ ...FORWARD, id, name: id, matchers: [{ type: "literal", field: "to", value: "twin@example.test" }] });
+    const literal = (id: string, to: string, over: Record<string, unknown>) =>
+      ({ ...FORWARD, id, name: id, matchers: [{ type: "literal", field: "to", value: to }], ...over });
+    serving([
+      FORWARD, CATCH_ALL, twin("twin_1"), twin("twin_2"),
+      literal("rule_two", "two@example.test", { actions: [{ type: "forward", value: ["a@gmail.test", "b@gmail.test"] }] }),
+      literal("rule_off", "off@example.test", { enabled: false }),
+      // Pointed here by the customer's own hand or written by onboarding: never taken over, so nothing to put back.
+      literal("rule_own", "own@example.test", { actions: [{ type: "worker", value: ["mailda-test"] }] }),
+    ]);
+    await takeOver("rule_hello");
+    const listing = await routingRulesFor(testEnv, atTime(AT + 5000), ORG, "example.test");
+    expect(Object.fromEntries(listing.rules.map((r) => [r.id, [r.offer, r.refusal?.code ?? null]]))).toEqual({
+      rule_hello: ["put_back", null],
+      rule_all: [null, "E_ROUTING_RULE_NOT_AN_ADDRESS"],
+      twin_1: [null, "E_ROUTING_RULE_DUPLICATE"],
+      twin_2: [null, "E_ROUTING_RULE_DUPLICATE"],
+      rule_two: [null, "E_ROUTING_RULE_MANY_DESTINATIONS"],
+      rule_off: [null, "E_ROUTING_RULE_DISABLED"],
+      rule_own: [null, "E_ROUTING_RULE_NEVER_TAKEN"],
+    });
+  });
+
+  it("offers a take-over of a plain forward, and the act agrees", async () => {
+    serving([FORWARD]);
+    const [listed] = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules;
+    expect([listed!.offer, listed!.refusal]).toEqual(["take_over", null]);
+    await expect(takeOver("rule_hello")).resolves.toMatchObject({ to: "hello@example.test" });
+  });
 });
 
 describe("taking a rule over", () => {
@@ -111,6 +176,7 @@ describe("taking a rule over", () => {
     );
     expect(outcome.before).toEqual({ action: "forward", destinations: ["somebody@gmail.test"] });
     expect(outcome.after).toEqual({ action: "worker", destinations: ["mailda-test"] });
+    expect(outcome.mailbox).toEqual({ id: MAILBOX, name: "Enquiries" });
     // The whole rule, because a partial PUT is refused (`2007 matchers: must have matchers`).
     expect(puts).toEqual([{
       name: "hello to gmail", enabled: true, matchers: FORWARD.matchers,
@@ -158,6 +224,8 @@ describe("putting a rule back", () => {
     expect(back.after).toEqual({ action: "forward", destinations: ["somebody@gmail.test"] });
     expect(puts[1]).toMatchObject({ actions: [{ type: "forward", value: ["somebody@gmail.test"] }] });
     expect(rules[0]!.actions).toEqual([{ type: "forward", value: ["somebody@gmail.test"] }]);
+    // The customer's rule comes back enabled, as it was taken: a put-back that disabled it would read back as sent.
+    expect(rules[0]!.enabled).toBe(true);
   });
 
   it("does not overwrite a change somebody made after the take-over", async () => {
@@ -169,5 +237,150 @@ describe("putting a rule back", () => {
     rules[0]!.actions = [{ type: "drop" }];
     await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello"))
       .rejects.toThrow(/E_ROUTING_RULE_NOT_OURS_NOW/);
+  });
+});
+
+describe("a take-over that would route nothing, or not what it says, is refused by name (30 September 2026)", () => {
+  it("refuses a disabled rule, which Cloudflare does not apply, and writes nothing", async () => {
+    const { puts } = serving([{ ...FORWARD, enabled: false }]);
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_DISABLED[\s\S]*enable it in the Cloudflare dashboard/);
+    expect(puts).toEqual([]);
+    expect(await entries("provider.routing_rule_taken_over")).toEqual([]);
+    expect(await testEnv.CATALOG.prepare("SELECT 1 FROM addresses WHERE org_id = ?").bind(ORG).first()).toBeNull();
+  });
+
+  it("says a disabled rule already naming this Node is to be enabled, not that there is nothing to take over", async () => {
+    serving([{ ...FORWARD, enabled: false, actions: [{ type: "worker", value: ["mailda-test"] }] }]);
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_DISABLED[\s\S]*already names this Node/);
+  });
+
+  it("refuses a rule with more than one destination rather than keep only the first", async () => {
+    const { puts } = serving([{ ...FORWARD, actions: [{ type: "forward", value: ["a@gmail.test", "b@gmail.test"] }] }]);
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_MANY_DESTINATIONS[\s\S]*a@gmail.test, b@gmail.test/);
+    expect(puts).toEqual([]);
+  });
+
+  it("refuses either of two rules for one address, since the API does not say which one Cloudflare applies", async () => {
+    const twin = { ...FORWARD, id: "rule_hello_2", name: "hello twin", matchers: [{ type: "literal", field: "to", value: "hello@example.test" }] };
+    const { puts } = serving([FORWARD, twin]);
+    await expect(takeOver("rule_hello_2")).rejects.toThrow(/E_ROUTING_RULE_DUPLICATE[\s\S]*rule_hello_2[\s\S]*rule_hello /);
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_DUPLICATE/);
+    expect(puts).toEqual([]);
+  });
+
+  it("refuses on a zone with subaddressing on, where hello+tag@ would reach this Node and bounce", async () => {
+    const { puts } = serving([FORWARD], { settings: { enabled: true, status: "ready", support_subaddress: true } });
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_SUBADDRESS_UNSERVED[\s\S]*hello\+anything@example.test/);
+    expect(puts).toEqual([]);
+  });
+
+  it("refuses when the zone's settings cannot be read, since subaddressing decides whether mail bounces", async () => {
+    const { puts } = serving([FORWARD], { settings: null });
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_SETTINGS_UNREADABLE[\s\S]*Authentication error/);
+    expect(puts).toEqual([]);
+  });
+});
+
+describe("the address a take-over registers files where its row says (30 September 2026)", () => {
+  const OTHER = "mbx_rules_two";
+  beforeEach(async () => {
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(OTHER, ORG, "Wei Meng", new Date(AT).toISOString()),
+      testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)")
+        .bind("addr_hello_before", ORG, "hello@example.test", OTHER, new Date(AT).toISOString()),
+    ]);
+  });
+
+  it("uses and names the mailbox of a row already there, and records that one, with no mailbox chosen among two", async () => {
+    serving([FORWARD]);
+    const outcome = await takeOver("rule_hello");
+    expect(outcome.mailbox).toEqual({ id: OTHER, name: "Wei Meng" });
+    const [entry] = await entries("provider.routing_rule_taken_over");
+    expect(entry!.detail).toMatchObject({ mailboxId: OTHER, addressExisted: true });
+    const rows = await testEnv.CATALOG.prepare("SELECT mailbox_id FROM addresses WHERE org_id = ?").bind(ORG).all<{ mailbox_id: string }>();
+    expect(rows.results).toEqual([{ mailbox_id: OTHER }]);
+  });
+
+  it("refuses a different mailbox by name rather than record one the address does not file into", async () => {
+    const { puts } = serving([FORWARD]);
+    await expect(takeOver("rule_hello", MAILBOX)).rejects.toThrow(/E_ROUTING_ADDRESS_FILES_ELSEWHERE[\s\S]*"Wei Meng"/);
+    expect(puts).toEqual([]);
+    expect(await entries("provider.routing_rule_taken_over")).toEqual([]);
+  });
+});
+
+describe("what a take-over or put-back's PUT did is recorded after it, read back (30 September 2026)", () => {
+  it("records ok with the rule as read back, beside the intent", async () => {
+    serving([FORWARD]);
+    await takeOver("rule_hello");
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "ok", subject: "rule_hello" });
+    expect(back!.detail).toMatchObject({
+      act: "take_over", readBack: { action: "worker", destinations: ["mailda-test"], enabled: true }, putError: null, readBackError: null,
+    });
+  });
+
+  it("records refused and re-raises when Cloudflare refuses the PUT", async () => {
+    serving([FORWARD], { put: "refuse" });
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_CLOUDFLARE_REFUSED/);
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "refused", subject: "rule_hello" });
+    expect(back!.detail.putError).toContain("destination address not verified");
+    // What Cloudflare holds after the refusal, read rather than assumed.
+    expect(back!.detail.readBack).toEqual({ action: "forward", destinations: ["somebody@gmail.test"], enabled: true });
+  });
+
+  it("records ok and succeeds when the PUT's answer is lost but the rule reads back as sent", async () => {
+    serving([FORWARD], { put: "lose" });
+    const outcome = await takeOver("rule_hello");
+    expect(outcome.after).toEqual({ action: "worker", destinations: ["mailda-test"] });
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "ok" });
+    expect(back!.detail.putError).toContain("E_CLOUDFLARE_REFUSED");
+  });
+
+  it("records failed and says the change may be applied when the PUT's answer is lost and the rule cannot be read back", async () => {
+    const { rules } = serving([FORWARD], { put: "lose", readBack: "lost" });
+    // Both errors in the reason: the PUT's lost answer and the failed read-back.
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_NOT_CONFIRMED[\s\S]*may have applied[\s\S]*why +the PUT: [\s\S]*; the read-back: /);
+    // Cloudflare did apply it: "refused" would have been false.
+    expect(rules[0]!.actions).toEqual([{ type: "worker", value: ["mailda-test"] }]);
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "failed" });
+    expect(back!.detail).toMatchObject({ readBack: null, readBackError: expect.stringContaining("could not be reached") });
+    expect(back!.detail.putError).toContain("E_CLOUDFLARE_REFUSED");
+  });
+
+  it("records failed when the PUT answers 200 and the rule cannot be read back, without claiming either way", async () => {
+    serving([FORWARD], { readBack: "lost" });
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_NOT_CONFIRMED[\s\S]*could not be read back[\s\S]*why +the read-back failed: /);
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "failed" });
+    expect(back!.detail).toMatchObject({ readBack: null, putError: null, readBackError: expect.stringContaining("could not be reached") });
+  });
+
+  it("records failed and refuses by name when the PUT answers 200 and the rule reads back unchanged", async () => {
+    serving([FORWARD], { put: "ignore" });
+    await expect(takeOver("rule_hello")).rejects.toThrow(/E_ROUTING_RULE_NOT_CONFIRMED[\s\S]*reads back as forward → somebody@gmail.test/);
+    const [back] = await entries("provider.routing_rule_read_back");
+    expect(back).toMatchObject({ outcome: "failed" });
+    expect(back!.detail.readBack).toEqual({ action: "forward", destinations: ["somebody@gmail.test"], enabled: true });
+  });
+
+  it("does the same for a put-back, whose PUT used to be trusted", async () => {
+    const { rules } = serving([FORWARD]);
+    await takeOver("rule_hello");
+    // Cloudflare answers the put-back 200 and keeps the rule pointing here.
+    const kept = structuredClone(rules[0]!);
+    vi.stubGlobal("fetch", ((base) => async (url: string, init?: RequestInit) => {
+      const answer = await base(url, init);
+      if ((init?.method ?? "GET") === "PUT") rules[0] = structuredClone(kept);
+      return answer;
+    })(globalThis.fetch));
+    await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello"))
+      .rejects.toThrow(/E_ROUTING_RULE_NOT_CONFIRMED/);
+    const backs = await entries("provider.routing_rule_read_back");
+    expect(backs.map((one) => [one.detail.act, one.outcome])).toEqual([["take_over", "ok"], ["put_back", "failed"]]);
   });
 });

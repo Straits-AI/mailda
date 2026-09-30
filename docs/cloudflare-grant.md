@@ -330,15 +330,42 @@ reports success. Three routes cover that case, all administrator-only and withhe
   address on this Node (the #92 lesson, in the same batch as the audit entry), records the action the rule
   had on that entry, then `PUT`s the rule with `worker → this Node`. A rule holds exactly one action
   (measured, `email-routing-rule-takeover.md`), so this replaces; there is no forward-and-also-here. A
-  stale digest, the catch-all, and a rule already pointing here are refused.
+  stale digest, the catch-all, and a rule already pointing here are refused. So, since 30 September 2026,
+  is every rule a take-over would point here and then receive nothing through, or lose a destination by:
+  a disabled rule (`E_ROUTING_RULE_DISABLED`: Cloudflare applies none, and the take-over keeps `enabled`),
+  a rule listing more than one destination
+  (`E_ROUTING_RULE_MANY_DESTINATIONS`), an address with more than one rule (`E_ROUTING_RULE_DUPLICATE`:
+  Cloudflare applies the one first in its dashboard, and the API does not say which), and a zone with
+  subaddressing on (`E_ROUTING_SUBADDRESS_UNSERVED`: `user+tag@` would match the rule, reach this Node and
+  bounce, because ingress files by the exact address; the zone's settings are read, and unreadable ones are
+  refused too, `E_ROUTING_SETTINGS_UNREADABLE`). An address row already there, added on People or left by a put-back, keeps its mailbox: the
+  take-over uses it and the answer's `mailbox` names it, and a different `mailboxId` is refused
+  (`E_ROUTING_ADDRESS_FILES_ELSEWHERE`) rather than recorded while the row files elsewhere.
+- Each listed rule carries `offer` (`take_over`, `put_back` or null) and, when null, the `refusal` the act would
+  answer (30 September 2026). The listing and the act decide by the same function, so Setup and
+  `mailda provider --routing-rules` never offer an act the Node must refuse: every refusal above except
+  subaddressing, which is a zone setting the listing does not read and the act alone checks. A rule that names
+  this Node offers a put-back only when a take-over of it is on the audit trail; one onboarding wrote, or the
+  customer pointed here by hand, answers `E_ROUTING_RULE_NEVER_TAKEN`. The CLI's `--take-over` prints the
+  mailbox the address now files into, as Setup does.
 - `POST /api/provider/routing-rules/put-back {domain, ruleId}` reads the latest take-over entry for that
-  rule and `PUT`s its previous action back. A rule this Node never took, or one somebody changed since the
-  take-over, is refused rather than overwritten. The address row stays; an address that files and nothing
-  routes is harmless.
-- Removing an address on People whose rule this Node took over, and has not put back, deletes nothing
-  (28 September 2026). The rule reads as this Node's, enabled with a Worker action naming it, but it is the
-  customer's rule with its action replaced; deleting it would lose the action a put-back restores. So the
-  answer is `not_removed`, naming `mailda provider --put-back <id> --domain <domain>`.
+  rule and `PUT`s its previous action back. A rule this Node never took, or one that no longer routes here
+  (somebody changed it, or the take-over did not complete), is refused rather than overwritten. The address
+  row stays; an address that files and nothing routes is harmless.
+- Both write their entry as the intent, before the `PUT`, and then read the rule back and record
+  `provider.routing_rule_read_back` (30 September 2026): `ok` only when it reads back with the action,
+  destinations and enabled state sent, whatever the `PUT` answered; `refused` when the `PUT` threw and the rule
+  reads back as something else; `failed` when the `PUT` answered and the rule reads back otherwise, or when it
+  could not be read back at all, and then the act answers `E_ROUTING_RULE_NOT_CONFIRMED`. The rule is read back
+  after a `PUT` that threw too, since a lost answer is reported as a refusal: one that reads back as sent is
+  `ok`, and one whose read-back also fails is `failed`, with both errors on the entry and "may have applied" in
+  the refusal, never `refused`. The answer's `after` is the read-back.
+- Removing an address on People whose rule this Node ever took over deletes nothing (28 September 2026). The
+  rule reads as this Node's, enabled with a Worker action naming it, but it is the customer's rule with its
+  action replaced; deleting it would lose the action a put-back restores. So the answer is `not_removed`,
+  naming `mailda provider --put-back <id> --domain <domain>`. Any take-over of the rule decides it, not the
+  latest of take-over and put-back (30 September 2026): a put-back Cloudflare refused left the rule routing
+  here with the put-back as the latest entry, and the rule was deleted.
 
 Not built, on purpose: editing forward destinations or deleting rules. Either would make this Node a
 routing-rule editor.
@@ -594,8 +621,11 @@ Worker's binding points at. For `orphaned` that distinction *is* the defect, whi
 as one. But a resource renamed out from under a live binding would read as `orphaned` plus `cannot_adopt`
 rather than as the one thing it is.
 
-**An unread list does not block.** `wrangler workflows list` needs a permission a deploy token may not carry,
-and refusing a plan because a *diagnostic* was unavailable is the wrong direction, the same trade the deploy
-path makes. The plan names it under `not checked` instead. The Worker's own existence is the exception and
+**An unread probe does not block.** The plan asks `wrangler workflows describe <name>`, and refusing a plan
+because a *diagnostic* was unavailable is the wrong direction, the same trade the deploy's #99 guard makes for a
+failed `describe` (a Workflow rides the Workers Scripts permission a deploy already needs,
+`workflow-provisioning.md`). The plan names it under
+`not checked` instead. The deploy refuses one case the plan does not: a `describe` that succeeded and named no
+owner, since that is wrangler's wording moving under the check, not a diagnostic being unavailable. The Worker's own existence is the exception and
 **does** stop the plan: the two deploy paths differ, and being wrong there means skipping the canary on a live
 Node.

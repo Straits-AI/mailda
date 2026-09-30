@@ -4073,3 +4073,56 @@ Latin text: the query bigrams a CJK word the old row holds as one token, so unti
 its CJK text only as a run's first one or two characters, and the text now says so, rollback included. And 0071's
 columns made `message-metadata-bytes.md` stale while no Cloudflare write was allowed to remeasure it, so its three
 shard thresholds are withdrawn until it is, as they were for 0068.
+
+## The CLI reads wrangler's JSON, and a take-over offers only what it would do (30 September 2026)
+
+**The CLI reads wrangler's JSON, not its tables.** `mailda` read the account table and a sign-in sentence out of
+`wrangler whoami`, the login token out of wrangler's config file after running `whoami` for its refresh, the
+canary's id from the first UUID in `versions upload`'s prose, the serving version from the last `(N%)` line of
+`deployments list`, and the workers.dev URL with a regex. The comments said wrangler offered nothing structured;
+the locked 4.118.0 does. It now reads `whoami --json` (signed in, signed out, or unreadable), `auth token --json`,
+`deployments status --json` (the one version holding traffic; a rollout in progress refuses rather than picks),
+and the `WRANGLER_OUTPUT_FILE_PATH` entries `version-upload`, `deploy` and `version-deploy`. The earliest wrangler
+with all of them is 4.65.0, measured from the 4.64.0 and 4.65.0 tarballs
+([receipt](./receipts/wrangler-json-output.md)); the 4.97 floor for Workflow schedules still binds first.
+
+**The token read asks wrangler, and leaves nothing behind.** `auth token --json` applies wrangler's own order, a
+Global API Key before `CLOUDFLARE_API_TOKEN`, so the CLI no longer reads the token variable itself and provisions
+with a credential wrangler did not deploy with; a Global API Key is refused by name. wrangler logs every line it
+prints, the token included, to a debug file kept 30 days: 4.118.0 and 4.90.1 both did, run with a made-up token.
+`WRANGLER_WRITE_LOGS=false` stops it from 4.91.0 and `WRANGLER_LOG_PATH` moves it on older ones, so the read sets
+both, into a private directory removed when wrangler exits. A failed read says what wrangler said instead of "no
+login", and `mailda upgrade` prints that reason rather than a fixed sentence. Every "wrangler said" the CLI prints (the
+token read, an unreadable `whoami`, a failed `workflows list` page, an unread #99 probe) leaves out npm's update notice, which `npx` appends after wrangler exits: an isolated smoke run with a
+made-up token printed "wrangler said: npm notice" until they did. Every answer the CLI reads is asked
+for at wrangler's default log level and without colour: an operator's `WRANGLER_LOG=error` left `auth token`
+printing nothing, `debug` put lines ahead of `whoami`'s JSON, and `FORCE_COLOR` hid `workflows describe`'s
+`Script Name:` behind escape codes, which refused every upgrade with the wrong cause. A relative
+`WRANGLER_OUTPUT_FILE_PATH` or `_DIRECTORY` is resolved where it was set, not inside `apps/node/worker` where
+wrangler runs.
+
+**Three first-page reads now page or ask by name.** The #99 Workflow guard scanned page 1 of `wrangler workflows
+list` and passed silently when the Workflow was on page 2; it asks `wrangler workflows describe <name>` now, and a
+success it cannot read refuses. `existingNodes()` pages `workflows list` until an empty page and says how far it
+got on a failure. `zonesOf` pages on `result_info.total_pages` (it stopped at 50 zones). The CLI starts wrangler
+with `WRANGLER_SEND_METRICS=false` unless the operator set it.
+
+**A routing take-over is refused where it would route nothing or lose a destination.** A disabled rule, a rule
+with more than one destination, an address with more than one rule, and a zone with subaddressing on (where
+`user+tag@` would reach the Node and bounce) are refused by name before anything is written. An address row
+already there keeps its mailbox, which the answer names, in Setup and now in `mailda provider --take-over` too.
+Each listed rule says what the Node would do with it, `take_over`, `put_back` or the refusal, from the same
+function the act refuses by, so neither Setup nor the CLI offers an act the Node must refuse; that includes a
+put-back of a rule this Node wrote but never took over. Take-over and put-back now read the rule back after the
+`PUT` and record `provider.routing_rule_read_back`: a `PUT` whose answer was lost and whose read-back also failed
+is `failed` with "may have applied", never `refused`. `removeAddress` never deletes a rule this Node ever took
+over: a refused put-back had left the rule routing here with the put-back as the latest entry, and it was deleted.
+
+**Layer 0.** The Deploy button runs `mailda deploy` under `CLOUDFLARE_API_TOKEN` with no login. `mailda deploy`
+never reads the token, so the token-read changes do not reach it; the log level, colour and output-path changes
+do, and an operator who sets `WRANGLER_LOG` or `FORCE_COLOR` in the build variables no longer gets a preflight or
+#99 refusal for it. None of this was exercised on a real button run. Seven places still said the button runs `npx wrangler deploy` directly, the reason
+given for hanging the React build off `build.command`. That was true on 6 August; on 19 August it ran the root
+`deploy` script, which has been `mailda deploy` since 21 August. They now say both, and why the decision stands: a
+detection that moved once can move again. The Blueprint carries all of this as dated amendments in §10, §11A and
+ADR 42.

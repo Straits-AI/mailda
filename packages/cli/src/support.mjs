@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, urlRequirement, wranglerVersionFrom } from "./preflight.mjs";
+import { dirname, join, resolve } from "node:path";
+import { atLeast, reportsItsVersion, resolveAccount, urlRequirement, wranglerVersionFrom } from "./preflight.mjs";
+import { whoamiFrom } from "./wrangler-config.mjs";
 import { BUDGETS } from "@mailda/budgets";
 import { path as fillPath, route } from "@mailda/contract/routes";
-import { deriveConfig, workerNameIn } from "./deploy-parse.mjs";
+import { deriveConfig, outputEntries, workerNameIn } from "./deploy-parse.mjs";
 export const here = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -32,30 +35,104 @@ export function fail(message) {
 
 
 /**
- * Runs a command and **captures** its output, for the one step that has to read wrangler's answer.
+ * The environment every command the CLI starts runs in: the operator's own, with wrangler's usage metrics off
+ * unless the operator chose otherwise (30 September 2026).
+ *
+ * wrangler 4.118.0 sends usage metrics by default: `getMetricsConfig` in its bundled source returns `enabled: true`
+ * and records that as a standing permission on first run when neither `WRANGLER_SEND_METRICS` nor a
+ * `send_metrics` setting says otherwise, and it reads no `DO_NOT_TRACK`. AGENTS.md principle 1 says Mailda has
+ * no telemetry endpoint, and a CLI that starts wrangler with it on sends usage data from the customer's machine
+ * on Mailda's behalf. The environment variable is the first thing `getMetricsConfig` reads, so it returns there
+ * and writes no permission. An operator who set the variable either way keeps their answer. One who only ran
+ * `wrangler telemetry enable` is overridden for the processes this CLI starts, and keeps it by setting
+ * `WRANGLER_SEND_METRICS=true`.
+ *
+ * Built per call, not once: `mailda install` sets `CLOUDFLARE_ACCOUNT_ID` part-way through a run. Every child
+ * gets it, so `scripts/attach-queue-consumer.mjs`, started through `run`, passes it on to its own wrangler.
+ */
+export function childEnv(env = process.env, extra = {}) {
+  return { ...env, WRANGLER_SEND_METRICS: env.WRANGLER_SEND_METRICS ?? "false", ...extra };
+}
+
+
+/**
+ * Runs a command and **captures** its output, for a step that has to read what it answered.
  *
  * `run` below keeps the operator's terminal attached, which is right for everything an operator watches. The
- * canary upload is different: its version id is the thing the next two steps act on, so it has to be parsed.
+ * canary upload is different: its version id is the thing the next two steps act on, so it has to be read.
  * The output is echoed as well, because a step whose output vanishes is a step nobody can debug.
+ *
+ * `stdout` and `stderr` are returned apart as well as together: a `--json` answer is read from stdout alone,
+ * since wrangler writes its warnings and errors to stderr, and an error quoted from a call that can print a
+ * credential quotes stderr alone. `env` is added to `childEnv`'s.
+ *
+ * `output: true` also hands back `entries`, what wrangler wrote to its output file during this call
+ * (30 September 2026). wrangler 4.118.0 prints `versions upload`, `deploy` and `versions deploy` as prose with
+ * no `--json`, and writes the same facts as JSON lines (`version-upload` with `version_id`, `deploy` with
+ * `targets`, `version-deploy` with `deployment_id`) to the file `WRANGLER_OUTPUT_FILE_PATH` names. A file the
+ * operator or Workers Builds asked for is honoured rather than redirected: `WRANGLER_OUTPUT_FILE_PATH` set is
+ * read in place, and `WRANGLER_OUTPUT_FILE_DIRECTORY` set gets a file of its own in that directory, kept, and
+ * named as wrangler names the files it writes there.
+ * Only the bytes this call appended are read, so an entry an earlier command left in the same file is never
+ * taken for this one's.
  */
-export function capture(command, args, { cwd = workerDir, quiet = false } = {}) {
-  const outcome = spawnSync(command, args, { cwd, encoding: "utf8", env: process.env });
+export function capture(command, args, { cwd = workerDir, quiet = false, env = {}, output = false } = {}) {
+  // Removing this guard survives the mutants run, and that is fine: the path below is a superset (a scratch file
+  // and `entries` nobody reads); the guard only spares a temporary directory per call.
+  if (!output) return captured(command, args, { cwd, quiet, env });
+  // Absolute against this process's directory, where the operator set it: wrangler runs in `cwd` and would
+  // resolve a relative one there, while this reads it here, and the two differ when `mailda` runs from the root.
+  const given = process.env.WRANGLER_OUTPUT_FILE_PATH ? resolve(process.env.WRANGLER_OUTPUT_FILE_PATH) : null;
+  const directory = given === null && process.env.WRANGLER_OUTPUT_FILE_DIRECTORY
+    ? resolve(process.env.WRANGLER_OUTPUT_FILE_DIRECTORY) : null;
+  // `||` here survives the mutants run: it makes a scratch directory `file` then ignores and `finally` removes.
+  const scratch = given === null && directory === null ? mkdtempSync(join(tmpdir(), "mailda-")) : null;
+  // In their directory, named the way wrangler names its own files there, so whatever reads it finds this too.
+  const file = given
+    ?? (directory !== null
+      ? join(directory, `wrangler-output-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}.json`)
+      : join(scratch, "wrangler-output.json"));
+  const before = existsSync(file) ? statSync(file).size : 0;
+  try {
+    const outcome = captured(command, args, { cwd, quiet, env: { ...env, WRANGLER_OUTPUT_FILE_PATH: file } });
+    const written = existsSync(file) ? readFileSync(file).subarray(before).toString("utf8") : "";
+    return { ...outcome, entries: outputEntries(written) };
+  } finally {
+    if (scratch !== null) rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/*
+ * What a captured call is asked under, whatever the operator's shell says (30 September 2026). Every captured
+ * answer is read by this CLI, and two of the operator's settings change what wrangler 4.118.0 writes:
+ * `WRANGLER_LOG` below `log` silences the `logger.log` lines `whoami --json` and `auth token --json` answer
+ * through (exit 0, empty stdout), and `debug` puts its own lines on stdout ahead of the JSON; `FORCE_COLOR`
+ * turns chalk on through a pipe, so `workflows describe` reads `\x1b[37mScript Name:` and the list's cells
+ * carry escape codes. Nothing is lost by pinning them: wrangler's debug log file takes every level whatever
+ * `WRANGLER_LOG` says, and `run` keeps the operator's own settings for everything they watch.
+ */
+const READABLE = { WRANGLER_LOG: "log", FORCE_COLOR: "0" };
+
+function captured(command, args, { cwd, quiet, env }) {
+  const outcome = spawnSync(command, args, { cwd, encoding: "utf8", env: childEnv(process.env, { ...READABLE, ...env }) });
   if (outcome.error !== undefined) fail(`could not run ${command}: ${outcome.error.message}`);
-  const text = `${outcome.stdout ?? ""}${outcome.stderr ?? ""}`;
+  const stdout = outcome.stdout ?? "";
+  const stderr = outcome.stderr ?? "";
+  const text = `${stdout}${stderr}`;
   /*
-   * `quiet` exists for preflight, which asks `wrangler whoami` a question and then answers it in its own
-   * words. Echoing the raw account table above a summary of that same table is noise an operator has to read
-   * twice — and the deploy steps below still echo, because a step whose output vanishes is a step nobody can
-   * debug. Nothing that *acts* is quiet; only the one call that is purely a question.
+   * `quiet` is for a question the CLI then answers in its own words: `whoami`, a probe, a list. Echoing the
+   * raw answer above a summary of it is noise read twice. And it is required for `wrangler auth token`, whose
+   * answer is the operator's credential: echoed, it would reach the terminal, or the Workers Builds log when the
+   * Deploy button runs `mailda deploy`. Nothing that *acts* is quiet.
    */
   if (!quiet) process.stdout.write(text);
-  return { status: outcome.status ?? 1, text };
+  return { status: outcome.status ?? 1, text, stdout, stderr };
 }
 
 
 /** Runs a command with the operator's terminal attached, so wrangler's prompts and output are theirs. */
 export function run(command, args, { cwd = workerDir } = {}) {
-  const outcome = spawnSync(command, args, { cwd, stdio: "inherit", env: process.env });
+  const outcome = spawnSync(command, args, { cwd, stdio: "inherit", env: childEnv() });
   if (outcome.error !== undefined) fail(`could not run ${command}: ${outcome.error.message}`);
   return outcome.status ?? 1;
 }
@@ -297,6 +374,16 @@ export function useConfig(config) {
 /* ------------------------------------------------------------------ preflight ---------------------- */
 
 /**
+ * Who wrangler says is signed in, and in which accounts: `wrangler whoami --json`, read by `whoamiFrom`.
+ * Quiet, by `capture`'s rule: a question the caller answers in its own words. Under CLOUDFLARE_API_TOKEN it
+ * answers for the token, with the accounts the token may list.
+ */
+export function whoami() {
+  const answer = capture("npx", ["wrangler", "whoami", "--json"], { quiet: true });
+  return whoamiFrom(answer.stdout, answer.status, answer.stderr);
+}
+
+/**
  * Everything a deploy needs, checked before a deploy changes anything (#98).
  *
  * ## The failure that produced this
@@ -308,7 +395,7 @@ export function useConfig(config) {
  * run — and then *"could not tell whether this account already has a Mailda Worker"*, with the actual remedy
  * mentioned in passing at the end of an advice block about something else.
  *
- * One `wrangler whoami` answers it. That is what this does, first, before anything is touched.
+ * One `wrangler whoami --json` answers it. That is what this does, first, before anything is touched.
  *
  * ## Why it reports everything rather than stopping at the first problem
  *
@@ -322,41 +409,62 @@ export async function runPreflight(argv, { announce = true, needsUrl = true } = 
   const problems = [];
   const notes = [];
 
-  const whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
-  const version = wranglerVersionFrom(whoami.text);
-  const floor = BUDGETS["workflow.schedules_min_wrangler"];
+  const who = whoami();
+  const version = wranglerVersionFrom(capture("npx", ["wrangler", "--version"], { quiet: true }).stdout);
 
-  if (!signedIn(whoami.text)) {
+  if (who.state === "signed_out") {
     problems.push({
       what: "wrangler is not signed in",
       why: "every step of a deploy is a wrangler call against your account",
       fix: "run `wrangler login`, or set CLOUDFLARE_API_TOKEN",
     });
   }
+  if (who.state === "unreadable") {
+    problems.push({
+      what: "wrangler could not say who is signed in",
+      why: `\`wrangler whoami --json\` answered ${who.detail}`,
+      fix: "run `npx wrangler whoami` and settle what it says; with CLOUDFLARE_API_TOKEN, the token needs "
+        + "Account Settings: Read to list its accounts",
+    });
+  }
 
   const account = resolveAccount({
-    accounts: accountsFrom(whoami.text),
+    accounts: who.state === "signed_in" ? who.accounts : [],
     chosen: process.env.CLOUDFLARE_ACCOUNT_ID,
   });
-  if (!account.ok) {
-    // Headline, reason and remedy all come from the resolver, because the three cases it distinguishes —
-    // ambiguous, wrong id, not signed in — fail differently and a shared sentence would be wrong for two.
+  if (!account.ok && who.state === "signed_in") {
+    // Headline, reason and remedy all come from the resolver, because the cases it distinguishes — ambiguous,
+    // wrong id, no accounts — fail differently and a shared sentence would be wrong for two. Signed out or
+    // unreadable is already the problem above, and "no accounts" beside it would name a second cause.
     problems.push({ what: account.what, why: account.why, fix: account.fix });
   }
 
-  if (!atLeast(version, floor)) {
-    /*
-     * A floor rather than a preference: below it wrangler **discards** a Workflow's `schedules` block with
-     * exit 0 (`workflow-provisioning.md`), so a deploy appears to succeed and the Butler engine is not what
-     * the config asked for. Compared numerically, because "4.118.0" sorts below "4.97.0" as a string.
-     */
-    problems.push({
-      what: `wrangler ${version ?? "(version unknown)"} is below the measured floor of ${floor}`,
+  /*
+   * Floors rather than preferences, each with its own receipt and its own reason, and each reported on its
+   * own: an operator below both is told both. Compared numerically, because "4.118.0" sorts below "4.97.0" as
+   * a string.
+   */
+  const floors = [
+    {
+      floor: BUDGETS["workflow.schedules_min_wrangler"],
       why: "below it a Workflow's `schedules` block is discarded with exit 0, so the deploy looks fine and "
         + "the Butler engine is not what this config declares (docs/receipts/workflow-provisioning.md)",
+    },
+    {
+      floor: BUDGETS["wrangler.json_output_min_version"],
+      why: "below it wrangler has no `whoami --json` (4.65.0), and older still no `auth token --json` (4.57.0), "
+        + "which this CLI reads instead of wrangler's tables and prose (docs/receipts/wrangler-json-output.md)",
+    },
+  ];
+  for (const { floor, why } of floors) {
+    if (atLeast(version, floor)) continue;
+    problems.push({
+      what: `wrangler ${version ?? "(version unknown)"} is below the measured floor of ${floor}`,
+      why,
       fix: "run `pnpm add -D wrangler@latest` in apps/node/worker, or use `npx wrangler@latest`",
     });
   }
+  const floor = floors.map((one) => one.floor).reduce((high, one) => (atLeast(String(high), one) ? high : one));
 
   const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "") || null;
   const needed = urlRequirement({ origin, needsUrl });

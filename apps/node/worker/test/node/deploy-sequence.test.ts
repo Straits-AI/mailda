@@ -28,8 +28,8 @@ const cli = cliSource()
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
 const {
-  activeVersionFrom, deployExitCode, deriveConfig, doctorExitCode, promotionVerdict, servedVersionOf, versionIdFrom,
-  workerNameIn,
+  activeVersionFrom, deployExitCode, deploymentIdFrom, deriveConfig, doctorExitCode, outputEntries, promotionVerdict,
+  servedVersionOf, versionIdFrom, workerNameIn, workersDevUrlFrom, workflowRowsFrom,
 } = await import("../../../../../packages/cli/src/deploy-parse.mjs");
 
 /**
@@ -150,14 +150,60 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
    * sequence, and getting either wrong is the one failure the "never shift traffic on a bad check" design
    * cannot protect against: promoting a version that was never checked, because its id was misread.
    */
-  it("reads a version id out of wrangler's prose", () => {
-    expect(versionIdFrom("Worker Version ID: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"))
-      .toBe("1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
-    // A bare uuid anywhere in the output, which is the shape wrangler has used in other releases.
-    expect(versionIdFrom("uploaded\n  aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n"))
-      .toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
-    // Nothing to find is `null`, not a guess. The caller refuses on null and says the canary is safe.
-    expect(versionIdFrom("Total Upload: 512 KiB")).toBeNull();
+  it("reads the uploaded version's id from wrangler's output file, never from its prose", () => {
+    /*
+     * The entries are the shape wrangler 4.118.0's `writeOutput` appends, one JSON line each
+     * (`docs/receipts/wrangler-json-output.md`). The id used to come from the prose, falling back to the first
+     * UUID anywhere, which would promote whatever id wrangler printed first if the wording ever moved.
+     */
+    const file = [
+      JSON.stringify({ type: "wrangler-session", version: 1, wrangler_version: "4.118.0" }),
+      JSON.stringify({ type: "version-upload", version: 1, worker_name: "mailda", version_id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", preview_url: "https://1a2b3c4d-mailda.example.workers.dev" }),
+    ].join("\n");
+    expect(versionIdFrom(outputEntries(file))).toBe("1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
+    // The newest upload wins in a file that has two, since the file is appended to.
+    const two = `${file}\n${JSON.stringify({ type: "version-upload", version_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })}\n`;
+    expect(versionIdFrom(outputEntries(two))).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    // A UUID in some other entry is not the version: nothing to find is `null`, and the caller refuses.
+    expect(versionIdFrom(outputEntries(JSON.stringify({ type: "deploy", version_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })))).toBeNull();
+    expect(versionIdFrom([])).toBeNull();
+    expect(versionIdFrom([{ type: "version-upload", version_id: "not-a-uuid" }])).toBeNull();
+    // A line that is not JSON is a fault shown, not "nothing written".
+    expect(() => outputEntries("{\"type\": \"version-upload\"\nWorker Version ID: 1a2b")).toThrow(/not JSON/);
+  });
+
+  it("reads the Node's workers.dev address from the deploy entry's targets, and only that", () => {
+    // 4.118.0 puts `https://` on workers.dev targets only; routes and schedules are in the same list.
+    // A route pattern on a workers.dev host is not the Node's address, and 4.118.0 gives it no `https://`.
+    const deploy = { type: "deploy", targets: ["legacy.acme.workers.dev/api/*", "mail.example.com (custom domain)", "https://mailda.acme.workers.dev", "schedule: */5 * * * *"] };
+    expect(workersDevUrlFrom([deploy])).toBe("https://mailda.acme.workers.dev");
+    expect(workersDevUrlFrom([{ type: "deploy", targets: ["mail.example.com (custom domain)"] }])).toBeNull();
+    expect(workersDevUrlFrom([{ type: "version-upload", preview_url: "https://x-mailda.acme.workers.dev" }])).toBeNull();
+  });
+
+  it("reads the deployment id from a versions deploy entry, whose traffic map 4.118.0 writes as {}", () => {
+    const entry = { type: "version-deploy", worker_name: "mailda", deployment_id: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b", version_traffic: {} };
+    expect(deploymentIdFrom([entry])).toBe("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b");
+    expect(deploymentIdFrom([{ type: "version-upload", deployment_id: "x" }])).toBeNull();
+  });
+
+  it("reads one page of `wrangler workflows list` as rows, and an empty page as none", () => {
+    // 4.118.0's table, as `logger.table` draws it.
+    const page = [
+      "Showing 2 workflows from page 1:",
+      "┌──────────────────────┬─────────────┬────────────┬─────────┬──────────┐",
+      "│ Name                 │ Script name │ Class name │ Created │ Modified │",
+      "├──────────────────────┼─────────────┼────────────┼─────────┼──────────┤",
+      "│ mailda-butler-runs   │ mailda      │ ButlerRun  │ 1/1     │ 1/1      │",
+      "├──────────────────────┼─────────────┼────────────┼─────────┼──────────┤",
+      "│ billing-sync         │ billing     │ SyncFlow   │ 1/1     │ 1/1      │",
+      "└──────────────────────┴─────────────┴────────────┴─────────┴──────────┘",
+    ].join("\n");
+    expect(workflowRowsFrom(page)).toEqual([
+      { name: "mailda-butler-runs", script: "mailda", className: "ButlerRun" },
+      { name: "billing-sync", script: "billing", className: "SyncFlow" },
+    ]);
+    expect(workflowRowsFrom("")).toEqual([]);
   });
 
   it("promotes a canary no worse than what is serving, and blocks a new finding", () => {
@@ -220,32 +266,34 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
     expect(improved.carried).toEqual([]);
   });
 
-  it("reads the serving version as the last one with traffic, not the first named", () => {
+  it("reads the serving version as the one holding traffic in the latest deployment", () => {
     /*
-     * `wrangler deployments list` prints oldest-first, and every block looks alike. Taking the first match
-     * would build the two-version deployment around a version that stopped serving days ago — and publish it,
-     * dropping the one that is actually live. This is the parser whose failure is *not* protected by "a bad
-     * check promotes nothing", because it runs before the check.
+     * `wrangler deployments status --json`: the latest deployment as the API returns it. This replaced taking
+     * the last `(N%)` line of `deployments list` on the belief that it prints oldest first. The parser runs
+     * before the check, so its failure is *not* protected by "a bad check promotes nothing".
      */
-    const listing = [
-      "Created:     2026-08-27T14:52:55.319Z",
-      "Version(s):  (100%) f20aa711-a056-4db5-b03d-2d51b1ee3e7c",
-      "Created:     2026-08-28T09:46:20.695Z",
-      "Version(s):  (100%) d27a228d-384b-45f4-b13c-fdf029ae23a5",
-    ].join("\n");
-    expect(activeVersionFrom(listing)).toBe("d27a228d-384b-45f4-b13c-fdf029ae23a5");
+    const status = (versions: Array<{ version_id: string; percentage: number }>) =>
+      JSON.stringify({ id: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b", source: "wrangler", strategy: "percentage", versions }, null, 2);
+    expect(activeVersionFrom(status([{ version_id: "d27a228d-384b-45f4-b13c-fdf029ae23a5", percentage: 100 }])))
+      .toBe("d27a228d-384b-45f4-b13c-fdf029ae23a5");
 
-    /*
-     * A split deployment, which is the state this command itself creates at 0%. The canary must not be read
-     * back as the incumbent — that would pair a version with itself and leave nothing serving the other half.
-     */
-    const split = [
-      "Version(s):  (0%) aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-      "             (100%) bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
-    ].join("\n");
-    expect(activeVersionFrom(split)).toBe("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
+    // The state this command itself leaves: the canary at 0% is not the incumbent.
+    expect(activeVersionFrom(status([
+      { version_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", percentage: 0 },
+      { version_id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", percentage: 100 },
+    ]))).toBe("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
 
-    expect(activeVersionFrom("no deployments here")).toBeNull();
+    // A rollout in progress has two versions serving and no single incumbent: pairing the canary with either
+    // would drop the other, so it is null and the deploy refuses.
+    expect(activeVersionFrom(status([
+      { version_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", percentage: 10 },
+      { version_id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", percentage: 90 },
+    ]))).toBeNull();
+
+    expect(activeVersionFrom("✘ [ERROR] The Worker mailda has no deployments.")).toBeNull();
+    expect(activeVersionFrom(status([]))).toBeNull();
+    // A serving id that is not a version id is not handed to `versions deploy` as one.
+    expect(activeVersionFrom(status([{ version_id: "latest", percentage: 100 }]))).toBeNull();
   });
 
   it("treats a report that cannot name its version as unable to be checked", () => {
@@ -538,9 +586,9 @@ describe("a second Node is a name, not an edit (`mailda deploy --name`)", () => 
   it("passes the derived config to every wrangler call the deploy makes", () => {
     // Every `wrangler` argument list in the deploy verb spreads WRANGLER_ARGS; a call that took ENV alone
     // would act on `wrangler.jsonc` while the rest of the run acted on the derived file.
-    // Account-level questions (`whoami`, `login`, `workflows list`) take no config: they are about the
-    // account, and the list is read to find which Worker owns a Workflow, whichever config asked.
-    const accountLevel = /"wrangler", "(whoami|login|workflows", "list)"/;
+    // Account-level questions (`whoami`, `login`, `workflows list`, `auth token`) and `--version` take no
+    // config: they are about the account or the tool, whichever config asked.
+    const accountLevel = /"wrangler", "(whoami|login|--version|auth", "token|workflows", "list)"/;
     const calls = (cli.match(/(?:capture|run)\("npx",\s*\[[^\]]*\]/g) ?? []).filter((call) => !accountLevel.test(call));
     expect(calls.length).toBeGreaterThan(5);
     for (const call of calls) expect(call, call).toContain("...WRANGLER_ARGS");

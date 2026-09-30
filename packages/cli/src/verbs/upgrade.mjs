@@ -2,12 +2,12 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
-import { WRANGLER_ARGS, api, capture, choose, configFor, fail, flag, readSecret, run, sessionCookie, useConfig, workerDir } from "../support.mjs";
+import { WRANGLER_ARGS, api, capture, choose, configFor, fail, flag, readSecret, run, sessionCookie, useConfig, workerDir, wrapAt } from "../support.mjs";
 import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenIfAny } from "./provision.mjs";
+import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -173,7 +173,7 @@ export async function upgrade(argv) {
 /**
  * Which recipients are verified destinations, read with the operator's credential on every upgrade: it changes
  * with every send, so a Node set up long ago still needs it read. Handed to the deploy as `beforeReport`. It never
- * exits and never throws on its own account (a missing login is one line, a refused read is printed), and it
+ * exits and never throws on its own account (a token that could not be had is printed with wrangler's reason, a refused read is printed), and it
  * hands on the session and the Node's record so the setup after the verdict does not ask again.
  */
 async function readVerifiedDestinations({ url, accountId }) {
@@ -181,9 +181,12 @@ async function readVerifiedDestinations({ url, accountId }) {
   if (cookie === null) return { cookie, state: null, token: null };
   const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (state?.provisioned === undefined) return { cookie, state, token: null };
-  const token = await wranglerTokenIfAny();
-  if (token === null) process.stdout.write("\n   verified destinations  not read: no wrangler login found (mailda setup reads them later)\n");
-  else await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
+  const { token, error } = wranglerTokenRead();
+  if (token === null) {
+    // Why, in wrangler's terms: a Global API Key, a refused refresh and no login at all each have their own fix.
+    process.stdout.write("\n   verified destinations  not read (mailda setup reads them later):\n");
+    for (const line of wrapAt(error, 70)) process.stdout.write(`                          ${line}\n`);
+  } else await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
   return { cookie, state, token };
 }
 

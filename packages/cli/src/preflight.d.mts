@@ -11,18 +11,12 @@ export interface Account {
   id: string;
 }
 
-/** The accounts a `wrangler whoami` table names. Empty when it named none. */
-export function accountsFrom(whoami: string): Account[];
-
-/** Whether wrangler thinks anybody is signed in. It says so in prose; there is no exit code for it. */
-export function signedIn(whoami: string): boolean;
-
 /** Which account a deploy would use, or why it cannot tell. */
 export function resolveAccount(args: { accounts: Account[]; chosen?: string | undefined }):
   | { ok: true; id: string; name: string }
   | { ok: false; what: string; why: string; fix: string };
 
-/** wrangler's own version, out of its banner. */
+/** wrangler's own version, from `wrangler --version`'s bare answer. */
 export function wranglerVersionFrom(text: string): string | null;
 
 /** Numeric version comparison. String comparison puts 4.118.0 below 4.97.0, which inverts the floor. */
