@@ -1,0 +1,35 @@
+/**
+ * The locales this Node ships a catalog for (ADR 46), as data: the tag, the writing direction, the language's
+ * own name for itself, and whether it is still a preview.
+ *
+ * **The endonym is data, not `Intl.DisplayNames`.** Two fixed strings for a closed list do not need the
+ * runtime's ICU data to be asked, and an answer that could differ between browsers is a worse label than the
+ * one written here.
+ *
+ * **`preview` keeps a locale out of every path a real viewer takes.** Browser negotiation never picks it, a
+ * stored choice naming it is ignored, and Settings does not list it. It is reachable only through the
+ * `?locale=` review flag (`docs/i18n.md`), which applies to one page load and is never stored. So a locale
+ * whose screens are still partly English is never shown to anybody who did not ask for exactly that, and no
+ * real viewer meets a screen in two languages. The flag is deleted when the untranslated ratchet is empty
+ * and the last screen is migrated.
+ */
+export const LOCALES = [
+  { tag: "en", dir: "ltr", endonym: "English", preview: false },
+  { tag: "zh-Hans", dir: "ltr", endonym: "简体中文", preview: true },
+] as const satisfies ReadonlyArray<{ tag: string; dir: "ltr" | "rtl"; endonym: string; preview: boolean }>;
+
+export type Locale = (typeof LOCALES)[number]["tag"];
+
+/** The source locale: its catalog is the type every other locale must match, and it is the last resort. */
+export const SOURCE_LOCALE: Locale = "en";
+
+export function isLocale(value: unknown): value is Locale {
+  return LOCALES.some((entry) => entry.tag === value);
+}
+
+export function localeEntry(tag: Locale): (typeof LOCALES)[number] {
+  return LOCALES.find((entry) => entry.tag === tag)!;
+}
+
+/** The locales a viewer can reach without the review flag: negotiation, a stored choice, Settings. */
+export const OFFERED: readonly Locale[] = LOCALES.filter((entry) => !entry.preview).map((entry) => entry.tag);

@@ -241,11 +241,15 @@ Push back when you see a more obvious way. That includes pushing back on this fi
 blueprint, and on whoever asked. State it once, clearly; if the decision stands, build the
 decided thing properly and note the concern where the next reader will find it.
 
-A specifically Mailda flavour of obvious: **names must not overclaim.** The word in the
-code, the word in the CLI, the word in the API and the word in the UI are the same word, and
-that word is true. A forwarded copy is a `copy`, never a `sync`. A provider-native action is
-`observed`, never `approved`. An AI extraction `returned a result`; it did not `understand`.
-A reader who trusts a name and is wrong has been handed a landmine by the person who named it.
+A specifically Mailda flavour of obvious: **names must not overclaim.** The name in the
+code, the CLI, the API and the UI is the same **concept id**, and every word for it is true. The
+code, CLI and API word is the English one and never varies; the UI says it in the viewer's
+language, and within a locale the code, the UI and the docs use the glossary's one word for it
+(`apps/node/worker/src/i18n/glossary.ts`, held by a check; *amended 30 September 2026 with ADR 46*,
+from "the same word", which stopped being possible once the UI had a second language). A forwarded
+copy is a `copy`, never a `sync`. A provider-native action is `observed`, never `approved`. An AI
+extraction `returned a result`; it did not `understand`. A reader who trusts a name and is wrong
+has been handed a landmine by the person who named it.
 
 ### 5. Architectural decisions are made for the long term
 

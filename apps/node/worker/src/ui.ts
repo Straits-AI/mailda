@@ -2,6 +2,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import appScript from "./client/app.client.js";
 import shellBundle from "../generated/app.bundle.client.js";
+import localeModule from "../generated/locale.bundle.client.js";
 // The webfonts, as ArrayBuffers via wrangler's `Data` rule. Served from this origin and never fetched from
 // anywhere else — `fonts/README.md` records why that is a product rule, and why the brand's Satoshi was never
 // shipped.
@@ -15,6 +16,7 @@ import themeScript from "./client/theme.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
 import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "./outbound/attachment-budget.ts";
 import { MARK_IS_AUTHORED, faviconDataUri, markSvg } from "./brand.ts";
+import { currentTable, servedTables } from "./i18n/served.ts";
 import { SHELL_CSS } from "./shell-css.ts";
 import { frameStylesheet } from "./theme.ts";
 
@@ -191,6 +193,10 @@ const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); 
   // The viewer's theme choice. `app.js` imports it statically and applies it before rendering anything, so
   // without this entry no page boots at all; the React shell imports the same module to read and change it.
   "/app/theme.js": { source: themeScript, type: "text/javascript; charset=utf-8" },
+  // The viewer's language (ADR 46): built from `client/locale.ts` beside the shell, and imported by `app.js`
+  // before it renders anything and by the shell, so it holds the one active table. It carries every locale's
+  // pre-sign-in words; each locale's `app` words are served below `clientAsset()`, at content-tagged URLs.
+  "/app/locale.js": { source: localeModule, type: "text/javascript; charset=utf-8" },
   // A function rather than a string, because this one is generated. Held as the generator instead of its
   // result so there is no module-level value to go stale, and no empty string sitting in this record for a
   // special case elsewhere to fill in.
@@ -224,6 +230,21 @@ export function clientAsset(pathname: string): Response | null {
       },
     });
   }
+
+  // A locale's `app` words, at the URL that names their content (`src/i18n/served.ts`), so a year's cache can
+  // never hand a browser a different table at the same address. An old tag of a known locale is redirected,
+  // uncached, to the current one: a tab open across a deploy still names it, and a 404 failed its whole shell.
+  const table = servedTables().get(pathname) ?? null;
+  if (table !== null) {
+    return new Response(table, {
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  }
+  const now = currentTable(pathname);
+  if (now !== null) return new Response(null, { status: 307, headers: { location: now, "cache-control": "no-store" } });
 
   const asset = CLIENT_ASSETS[pathname] ?? null;
   if (asset === null) return null;

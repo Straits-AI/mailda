@@ -27,6 +27,8 @@
  *
  *   MAILDA_EMAIL=you@example.com MAILDA_PASSWORD=... pnpm --filter @mailda/worker run spacing -- http://127.0.0.1:8787
  *
+ * `--locale zh-Hans` before the origin runs every view under the review flag (`sweep.mjs`, ADR 46).
+ *
  * Screenshots and the report go to `MAILDA_SPACING_OUT`, or a `mailda-spacing` directory under the system's temp
  * directory. It exits 1 on any pair under the minimum and on any view it could not open or that did not load.
  */
@@ -36,9 +38,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { APP_ROUTES } from "../src/app-routes.ts";
-import { NotApplicable, STATES, themed, tracked, unsettled, wholePage } from "./sweep.mjs";
+import { NotApplicable, STATES, address, sweepArgs, themed, tracked, unsettled, wholePage, wordsFor } from "./sweep.mjs";
 
-const origin = process.argv.slice(2).find((arg) => arg !== "--") ?? "http://127.0.0.1:8787";
+// `--locale <tag>` runs every view under the review flag (`sweep.mjs`, ADR 46).
+const { origin, locale } = sweepArgs(process.argv);
+const words = wordsFor(locale);
 const OUT = process.env.MAILDA_SPACING_OUT ?? join(tmpdir(), "mailda-spacing");
 
 /**
@@ -178,7 +182,7 @@ const notApplicable = [];
 /** Opens a route in a page whose requests are counted, and waits for the shell. Null when it never mounted. */
 async function open(browserContext, route) {
   const page = await tracked(browserContext);
-  await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded" });
+  await page.goto(address(origin, route, locale), { waitUntil: "domcontentloaded" });
   if (await page.waitForSelector(".app-shell", { timeout: 15_000 }).then(() => true, () => false)) return page;
   await page.close();
   return null;
@@ -235,7 +239,7 @@ for (const theme of THEMES) {
       try {
         const before = await unsettled(page);
         if (before !== null) throw new Error(`before opening: ${before}`);
-        await reach(page);
+        await reach(page, words);
         await page.waitForTimeout(300);
         const after = await unsettled(page);
         if (after !== null) throw new Error(`once open: ${after}`);

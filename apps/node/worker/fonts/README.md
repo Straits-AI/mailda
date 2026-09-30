@@ -32,6 +32,19 @@ no code reaches. To reproduce or verify the copy:
 Inter is **SIL Open Font License 1.1**, and the licence is beside the files as OFL §2 requires:
 `LICENSE-Inter.txt`.
 
+## Chinese is set in the system's faces, and no CJK face is served (ADR 46)
+
+Under `:root:lang(zh)` the stack is Inter, then the named Simplified Chinese faces every target platform ships
+(PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, Source Han Sans SC, Noto Sans SC), then
+`system-ui` (`src/shell-css.ts`). Inter has no Han, so Latin letters stay Inter and Han falls through to a real SC
+face in real weights. The Inter at the head of that stack is these same four files declared again as
+`"Inter Latin"`, with a `unicode-range` that leaves out the punctuation Chinese shares with Latin (“ ” ‘ ’ — … ·):
+Inter has those glyphs, and under its plain name would set them narrow and on the Latin baseline inside a Chinese
+sentence. The second declaration adds no bytes; the browser's cache already holds the files. Left to `system-ui`, Linux Chromium drew Japanese glyph forms and a faux bold. No CJK webfont is
+served: four weights of Noto Sans SC are about 9.7 MB in about 400 subset files, against faces the platforms
+already have, and both characters of the brand, 淼达, are in GB2312, so every SC face has them.
+`test/node/locale-typography.test.ts` holds the order.
+
 ## Satoshi is in the brand and is deliberately not in this directory
 
 The brand specifies **Satoshi** for headings. It is not here and must not be added.

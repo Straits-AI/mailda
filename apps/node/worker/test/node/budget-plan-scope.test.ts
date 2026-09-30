@@ -833,6 +833,13 @@ const FIGURES: Record<string, Classification> = {
     "shell.font_bytes",
   ),
 
+  // docs/receipts/react-shell-bundle.md — the interface's words (ADR 46)
+  ...mailda(
+    "bytes of this Node's own catalogs and the module that loads them before sign-in. A Cloudflare plan "
+      + "does not change a word",
+    "shell.pre_auth_locale_bytes", "shell.catalog_bytes_en", "shell.catalog_bytes_zh_hans",
+  ),
+
   // docs/receipts/runtime-validator.md
   ...mailda(
     "Mailda's own validator: its bundle and the microseconds it spends on a command",
@@ -866,6 +873,9 @@ const FIGURES: Record<string, Classification> = {
     "test.config_resolution_timeout_ms", "test.uncaught_canary_timeout_ms",
     "test.migration_hook_ms_under_load", "test.slowest_test_ms_ci", "test.headroom_ceiling_percent",
   ),
+
+  // docs/receipts/untranslated-scan-timeout.md
+  ...mailda("how long Mailda's own suite takes to type the client program", "test.untranslated_scan_timeout_ms"),
 
   // docs/receipts/workflow-provisioning.md
   ...bothPlans(

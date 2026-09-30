@@ -4,6 +4,8 @@ import { defineConfig } from "vitest/config";
 
 import { BUDGETS } from "@mailda/budgets";
 
+import { messagePaths } from "./src/i18n/served.ts";
+
 /**
  * The interface, rendered.
  *
@@ -91,8 +93,20 @@ export default defineConfig({
        * screen it mounts is already covered by the `.test.tsx` files.
        */
       "/app/shell.js": fileURLToPath(new URL("./test/client/shell-stub.ts", import.meta.url)),
+      /*
+       * `/app/locale.js`, the viewer's language, is the real source under both names, as the theme is: the shell
+       * imports it absolutely and the framework-free script relatively. `test/client/setup.ts` installs the
+       * English words, so the suite renders what an English viewer sees.
+       */
+      "/app/locale.js": fileURLToPath(new URL("./src/client/locale.ts", import.meta.url)),
+      "./locale.js": fileURLToPath(new URL("./src/client/locale.ts", import.meta.url)),
     },
   },
+  /*
+   * What `scripts/build-client.mjs` writes into `/app/locale.js`, with one difference that is the point: under
+   * test a key missing from the table throws, where a browser logs it and shows the key.
+   */
+  define: { __MAILDA_LOCALE_BUILD__: JSON.stringify({ messages: messagePaths(), strict: true }) },
   test: {
     include: ["test/client/**/*.test.tsx", "test/client/**/*.test.ts"],
     environment: "happy-dom",

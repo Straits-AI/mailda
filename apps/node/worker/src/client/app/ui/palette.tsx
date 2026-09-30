@@ -1,10 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import type { AppRoute } from "../../../app-routes.ts";
-import { ROUTE_LABELS, useStartCompose } from "../chrome.tsx";
+import { t } from "/app/locale.js";
+import { APP_ROUTES } from "../../../app-routes.ts";
+import type { Text } from "../../../i18n/format.ts";
+import { useStartCompose } from "../chrome.tsx";
 import { useCommands, usePendingSearch } from "../shell-context.tsx";
 import { Modal } from "./popover.tsx";
+import { isComposingKey } from "./ime.ts";
 import { shortcutsEnabled } from "./shortcuts.ts";
 
 /**
@@ -26,14 +29,22 @@ import { shortcutsEnabled } from "./shortcuts.ts";
  * An item that has a single key says so (R, A, F, E, Shift+I, C), which is how the palette teaches the
  * keyboard map, and only while single-key shortcuts are on: a hint for a switched-off key names a key that
  * does nothing.
+ *
+ * ## Found by more than its label
+ *
+ * A route is found by its label and by its `palette.alias.*` words (critic L3): a viewer is sent one locale's
+ * words, so a Chinese viewer typing `inbox`, or the pinyin initials `sjx`, finds 收件箱 only because the zh-Hans
+ * aliases carry them. The English aliases are words the English label already contains.
  */
 
 interface Item {
   id: string;
   label: string;
+  /** More words the item is found by, lower case (`palette.alias.*`). */
+  alias?: Text;
   /** The single key that does the same, shown only while single-key shortcuts are on. */
   hint?: string;
-  group: "Message" | "Mail" | "Go to";
+  group: "message" | "mail" | "go";
   run: () => void;
 }
 
@@ -42,7 +53,7 @@ export function CommandPalette() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.isComposing) return;
+      if (isComposingKey(event)) return;
       const apple = /Mac|iP(hone|ad|od)/.test(navigator.platform);
       if (!(apple ? event.metaKey : event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       if (event.key.toLowerCase() !== "k") return;
@@ -69,20 +80,26 @@ function Palette({ onClose }: { onClose: () => void }) {
   const wanted = text.trim().toLowerCase();
   const all: Item[] = [
     ...commands.map((command): Item => ({
-      id: command.id, label: command.label, hint: command.hint, group: "Message", run: command.run,
+      id: command.id, label: command.label, hint: command.hint, group: "message", run: command.run,
     })),
-    { id: "compose", label: "Compose", hint: "C", group: "Mail", run: startCompose },
-    ...(Object.keys(ROUTE_LABELS) as AppRoute[]).map((to): Item => ({
-      id: `go ${to}`, label: `Go to ${ROUTE_LABELS[to]}`, group: "Go to", run: () => void navigate({ to }),
+    {
+      id: "compose", label: t("chrome.compose"), alias: t("palette.alias.compose"), hint: "C", group: "mail", run: startCompose,
+    },
+    ...APP_ROUTES.map((to): Item => ({
+      id: `go ${to}`,
+      label: t("palette.go", { route: t(`route.${to}`) }),
+      alias: t(`palette.alias.${to}`),
+      group: "go",
+      run: () => void navigate({ to }),
     })),
   ];
-  const items = all.filter((item) => item.label.toLowerCase().includes(wanted));
+  const items = all.filter((item) => item.label.toLowerCase().includes(wanted) || (item.alias?.includes(wanted) ?? false));
   if (wanted !== "") {
     items.push({
       id: "search",
       // The words as typed: the Node decides what a search means (#107), not this list.
-      label: `Search mail for “${text}”`,
-      group: "Mail",
+      label: t("palette.search", { term: text }),
+      group: "mail",
       run: () => {
         pending.request(text);
         void navigate({ to: "/" });
@@ -105,15 +122,15 @@ function Palette({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal className="palette" label="Command palette" onClose={onClose}>
+    <Modal className="palette" label={t("palette.label")} onClose={onClose}>
       <input
         className="palette-input"
         role="combobox"
         aria-expanded={true}
         aria-controls="palette-list"
         aria-activedescendant={at < 0 ? undefined : `palette-option-${at}`}
-        aria-label="Go to or do"
-        placeholder="Go to or do…"
+        aria-label={t("palette.input")}
+        placeholder={t("palette.placeholder")}
         autoComplete="off"
         value={text}
         onChange={(event) => {
@@ -121,6 +138,8 @@ function Palette({ onClose }: { onClose: () => void }) {
           setActive(0);
         }}
         onKeyDown={(event) => {
+          // The IME's own Enter and arrows choose a candidate, not a command.
+          if (isComposingKey(event.nativeEvent)) return;
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setActive((at + 1) % Math.max(items.length, 1));
@@ -133,7 +152,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           }
         }}
       />
-      <ul id="palette-list" className="palette-list" role="listbox" aria-label="Commands">
+      <ul id="palette-list" className="palette-list" role="listbox" aria-label={t("palette.list")}>
         {items.map((item, index) => (
           <li
             key={item.id}
@@ -146,7 +165,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           >
             <span>{item.label}</span>
             {hints && item.hint !== undefined ? <kbd className="palette-hint">{item.hint}</kbd> : null}
-            <span className="palette-group">{item.group}</span>
+            <span className="palette-group">{t(`palette.group.${item.group}`)}</span>
           </li>
         ))}
       </ul>

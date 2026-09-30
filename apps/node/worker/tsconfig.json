@@ -11,6 +11,9 @@
   ],
   "exclude": [
     "src/client/app/**",
+    // The viewer's language: reads `document`, `navigator` and `localStorage`, so it belongs to the browser
+    // program with the code that imports it. The pure half it builds on, `src/i18n/`, is checked by both.
+    "src/client/locale.ts",
     // Renders components, so it needs the DOM and JSX this program deliberately refuses. Checked by
     // `src/client/tsconfig.json` instead, alongside the code it mounts.
     "test/client/**"

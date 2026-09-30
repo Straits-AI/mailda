@@ -26,6 +26,6 @@ export const APP_ROUTES = [
 
 export type AppRoute = (typeof APP_ROUTES)[number];
 
-export function isAppRoute(pathname: string): boolean {
+export function isAppRoute(pathname: string): pathname is AppRoute {
   return (APP_ROUTES as readonly string[]).includes(pathname);
 }

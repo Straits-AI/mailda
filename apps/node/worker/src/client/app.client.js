@@ -25,6 +25,7 @@
 import {
   accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, onSessionChange, refresh, start,
 } from "./session.js";
+import { bootLocale, loadApp } from "./locale.js";
 import { bootTheme } from "./theme.js";
 
 // The viewer's theme, before this script renders anything: the claim, the sign-in and a locked-out doctor honour
@@ -33,6 +34,9 @@ import { bootTheme } from "./theme.js";
 // moment before it runs; a render-blocking classic `<script src="/app/theme.js">` in `<head>` is the upgrade
 // if anyone reports it, at the price of a request before every viewer's first paint.
 bootTheme();
+// The viewer's language, in the same place and for the same reason (`locale.ts`, ADR 46): `<html lang>`, the
+// title and the wordmark are named in it before anything renders. It does not throw, even where storage is refused.
+bootLocale();
 
 const app = document.getElementById("app");
 const statusStrip = document.getElementById("status");
@@ -594,6 +598,13 @@ async function handOverToShell() {
   // stayed, so the page carried two wordmarks and the shell sat inside `main`'s 74rem measure.
   document.body.classList.add("shell");
   try {
+    if (shell === null) {
+      // The shell downloads while its words do and runs after them, so a module-scope `t()` in it is safe. Here
+      // and nowhere else (critic M6): a preload anywhere the pre-authentication screens reach would fetch the
+      // bundle before sign-in, the split ADR 30 exists for, and `test/shell-split.test.ts` parses for it.
+      document.head.append(el("link", { rel: "modulepreload", href: "/app/shell.js" }));
+      await loadApp();
+    }
     shell ??= await import("/app/shell.js");
   } catch (error) {
     // A shell that cannot load must say so rather than leave an empty page. The pre-authentication

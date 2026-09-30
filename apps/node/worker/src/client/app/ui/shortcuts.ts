@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { isComposingKey } from "./ime.ts";
+
 /**
  * Single-key shortcuts (C, R, A, F, E, J, K, Shift+I, Z), and the one rule for when a key is not one.
  *
@@ -100,7 +102,7 @@ export function useShortcuts(shortcuts: readonly Shortcut[]): void {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.repeat || event.defaultPrevented || event.isComposing) return;
+      if (event.repeat || event.defaultPrevented || isComposingKey(event)) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
       if (!shortcutsEnabled()) return;

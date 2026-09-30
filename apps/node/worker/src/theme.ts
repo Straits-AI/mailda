@@ -101,6 +101,7 @@ export function declarations(theme: Palette): string {
 /** The shell's properties that are not colours, declared once, in the dark block, since no theme changes them. */
 const NON_COLOUR = `  --body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --track-wordmark: -.02em; --track-hero: -.018em; --track-display: -.01em; --track-caps: .06em; --track-label: .04em;
   --r-button: 7px; --r-input: 8px; --r-card: 10px; --r-chip: 4px;
   --t-hover: 100ms; --t-pop: 120ms; --t-pane: 160ms;
   --sidebar-w: 216px; --list-w: 376px; --reader-min: 520px; --status-h: 28px; --mobile-bar-h: 48px;

@@ -188,6 +188,17 @@ disagree with it.
   measured 4.13:1 there. Both were adjusted before anything shipped with them, and the receipt keeps both as
   recorded defects, so a change back fails a test.
 
+### 淼达: the brand in Chinese (30 September 2026)
+
+In the zh-Hans interface the brand is **淼达** (Miǎodá): the shell's wordmark and the document title,
+`{screen} · 淼达`. It renders in the system Simplified Chinese face, not Inter 700, with no tracking. English shows
+Mailda only, and 淼达 never appears there. The sign-in and claim lockup, 淼达 with a secondary Mailda marked
+`lang="en"` so a new owner connects the name to the `mailda` CLI and `mailda.site`, is built with the
+pre-authentication screens' translation (layer 3), not now. `mailda` stays in every identifier. The name is a
+homophone of 秒达, "arrives in seconds", a delivery slogan: the product says it cannot know delivery (ADR 39), so
+秒达, 必达 and 使命必达 are never-phrases in the glossary, and no copy puns on 达. `src/brand.ts` records it. Still
+the owner's call, and still proposed in the glossary like every other Chinese word (`docs/i18n.md`).
+
 ### Flow Blue is not a text colour on two of the brand's own three grounds
 
 Measured before anything was designed with it: **4.53:1 on white**, which clears AA for normal text by
@@ -581,6 +592,31 @@ sentence once.
 the list by the envelope sender. They are
 deterministic, and none of them wears an AI badge (§4B.4). There is room for an AI result beside them, rendered
 with its label and provenance, and nothing fills it, because no `llm.*` node runs.
+
+## Languages (ADR 46, 30 September 2026)
+
+The interface's words come from a typed catalog per locale (`docs/i18n.md`). English is the only language
+offered; Simplified Chinese is a preview, reachable by `?locale=zh-Hans` and nowhere else, so nobody who did not
+ask sees a screen that is partly English.
+
+- **Settings > Language** sits after Appearance and is built the same way. It lists the offered languages, each
+  in its own words; while English is the only one it says so instead of showing a choice that is not one. It says
+  when the page is in a language only because the address asks for it, and when this browser will not let it read
+  a saved choice. Choosing flushes an open draft, stores the choice in this browser and reloads; a draft the Node
+  will not save stops the reload, in the Node's own words.
+- **`<html lang>` and `dir`** are set by `bootLocale()`, the second call the page's one script makes after the
+  theme, in the step that installs the words; the title and the pre-authentication wordmark follow.
+- **Every signed-in screen has its own title**, "Outbox · Mailda", where every screen was titled "Mailda"
+  (WCAG 2.4.2).
+- **The Node's own English** (an error's message, a doctor finding) renders through `<NodeWords>`, marked
+  `lang="en"` in a non-English interface. A failure's words may instead be this interface's own translated
+  fallback, so `api.ts` carries who wrote them (`fromNode`) and a screen shows a failure with `marked()`, which
+  marks only the Node's.
+- **Chinese type**: Inter's own files under a second name whose range leaves the punctuation Chinese shares with
+  Latin to the SC face, then the named system SC faces, then `system-ui`; tracking zeroed; the rail's labels at
+  12px. No CJK webfont (ADR 30 as amended).
+- **An input method's Enter is not a submit.** Every Enter handler asks `isComposingKey` first; Safari sends the
+  committing Enter after `compositionend`, marked only by `keyCode` 229.
 
 ## Keyboard
 
@@ -1619,6 +1655,9 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
   the run skipped all of them), and refuses to report a run as clean when it checked nothing. The opened states,
   the wait for a view to finish loading and the growth of a page until nothing on it scrolls are in
   `scripts/sweep.mjs`, which the spacing check below walks too, so the two cannot come to open different views.
+  Both take `--locale <tag>` before the origin (30 September 2026, ADR 46): every address then carries the
+  `?locale=` review flag, the only way to reach a preview locale, and a state's locator on a migrated control
+  reads its name from the same catalog the page renders from, so a Chinese run opens the same states.
 
   It **imports `APP_ROUTES`** rather than keeping its own list, and that changed because the copy had
   already drifted: its comment read "kept in step with `src/app-routes.ts` by hand, five paths" above an

@@ -35,6 +35,16 @@
  * (`fonts/README.md`) and, since 21 September 2026, no longer named: the interface is one family. For the
  * lockup that appears in the product this is the right trade; for a logo file handed to a printer it is
  * not, and that file should come from the designer.
+ *
+ * ## The name in Chinese is 淼达, and it is a homophone to keep away from (ADR 46)
+ *
+ * In the zh-Hans interface the wordmark and the title say 淼达 (Miǎodá), from the catalog (`brand.name`), in
+ * the system Simplified Chinese face; English says Mailda, and `mailda` stays in every identifier. 淼达 sounds
+ * exactly like 秒达, "arrives in seconds", a common delivery slogan, and an input method typing `miaoda` may offer
+ * 秒达 first. That slogan claims delivery, which this product says it cannot know (ADR 39, 40), so 秒达, 必达 and
+ * 使命必达 are never-phrases in the glossary (`src/i18n/glossary.ts`) and no copy puns on 达. In Traditional
+ * Chinese, when it is authored, the name is 淼達. No trademark search for 淼达 has been made; one belongs before
+ * anything public uses it.
  */
 
 /**

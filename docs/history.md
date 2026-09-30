@@ -4126,3 +4126,46 @@ given for hanging the React build off `build.command`. That was true on 6 August
 `deploy` script, which has been `mailda deploy` since 21 August. They now say both, and why the decision stands: a
 detection that moved once can move again. The Blueprint carries all of this as dated amendments in §10, §11A and
 ADR 42.
+
+## The interface's languages, layer 1: the mechanism (30 September 2026)
+
+**The interface's words became a catalog, and Chinese is in review rather than on offer.** English is the source
+and its literals are the type, so a translation missing a key, a call with a misspelt key or parameter, or a
+literal where the interface's own words go is a compile error. The runtime is `Intl` and the repository's own
+code, with no library, after four were measured and rejected (ADR 46). Simplified Chinese, 淼达, is a preview:
+reachable by `?locale=zh-Hans`, never by negotiation, a stored choice or Settings. An adversarial review of the plan
+found that a shipped partial locale would put English under `<html lang="zh-Hans">` on the flagship screen, per
+file rather than per route, so the flag replaced exposure rather than patching it.
+
+**The scan that counts what is left uses the checker, not the parser.** The parser-only version found 764 strings
+and, measured, missed about a third of the interface's prose: object values, `??` fallbacks, `string` props,
+returns. The default-deny version flags any literal with a letter whose contextual type is not a token type and
+whose position is not structural, and counted **2,330** across 32 files on the day it landed. That count includes
+API paths and storage keys, which are registered as not words, with a reason, as each file is migrated. It takes
+seconds to type the program, so the file has its own measured hook bound (`untranslated-scan-timeout.md`).
+
+**The bundle drift was measured before the work, so the work is not blamed for it**: +2.7% raw since 27 September
+on the untouched tree, then +0.21% raw and −0.06% gzip for the layer, whose migrated screens moved their words into
+two tables of about 18 KB each, and a 3 KB module before sign-in, which now loads
+the viewer's language and still no framework. Every screen now has its own `<title>`, which closes a WCAG 2.4.2
+gap. Layer 0 is untouched: nothing the Node serves changes for an English viewer except those titles and the
+Language block.
+
+**A review of the layer found what its own checks could not.** A table's content-tagged URL answered an old tag
+with a 404, so a sign-in tab left open across a deploy failed to load the shell; an old tag now redirects, uncached,
+to the current table. `<NodeWords>` marked the interface's own translated fallbacks as English, because a failure
+carried its words and not who wrote them; now it carries both. The scan exempted a component's `name` and `id` by
+the attribute's name, and read everything inside `<NodeWords>` as the Node's; it now does neither. Five Chinese
+words were wrong for the concept (Mine said claimed where a hand-over also holds, Release said sent back), and the
+glossary gained `sentences` so a sentence can be bound to a concept one key at a time.
+
+**The screenshots found what the catalog check could not see.** The palette read 前往Butler: the register's space
+between Han and a Latin word was checked in each template, and `前往{route}` is correct as a template; the glue
+happens only when the route's name is Latin. The runtime now makes that space where a filled value meets a Han
+template, never inside the value and never in an English template, so English output is unchanged and
+`/app/locale.js` grew by 262 bytes. The platform faces were read with the browser's own font report rather than by
+eye: every Han sample was drawn by the Simplified Chinese cut of the system face at a real bold or medium weight,
+none by the Japanese cut, none synthesised. And `scripts/axe.mjs` and `scripts/spacing.mjs` now take
+`--locale <tag>`, so the preview can be swept by the same hand run as English. On a local Node with seven messages,
+both locales: axe found no AA violation in 145 views (English) and 146 (Chinese), and spacing no pair under 8px in 132
+views each.

@@ -19,18 +19,12 @@ import type { DoctorReport } from "./api.ts";
  * `HEALTH_AREA` is keyed by `DoctorCheck`, the contract's list of every name `runDoctor` emits, so a check
  * added to the doctor without a row here is a compile error rather than a finding that silently lands
  * nowhere. The wire stays a string: a newer Node's unknown name goes to "Other checks".
+ *
+ * A row carries its area, never its words: the chrome names it with ``t(`health.area.${area}`)`` when it renders
+ * (ADR 46), so no translated string is kept as data.
  */
 
 export type HealthArea = "inbound" | "outbound" | "worker" | "storage" | "automation" | "access";
-
-export const AREA_LABELS: Record<HealthArea, string> = {
-  inbound: "Inbound routing",
-  outbound: "Outbound delivery",
-  worker: "Worker and keys",
-  storage: "Database and storage",
-  automation: "Automation",
-  access: "Access and recovery",
-};
 
 /** The order the rows render in. */
 const AREAS: readonly HealthArea[] = ["inbound", "outbound", "worker", "storage", "automation", "access"];
@@ -106,7 +100,6 @@ export type HealthStatus = "ok" | "ok-visible" | "degraded" | "refuse" | "report
 
 export interface HealthRow {
   area: HealthArea | "other";
-  label: string;
   status: HealthStatus;
   /** How many of the area's findings are not ok. */
   failing: number;
@@ -142,13 +135,11 @@ export function healthRows(report: DoctorReport): { rows: HealthRow[]; reduced: 
     if (area === null) continue;
     byArea.set(area, [...(byArea.get(area) ?? []), finding]);
   }
-  const row = (area: HealthArea | "other", label: string): HealthRow => {
+  const row = (area: HealthArea | "other"): HealthRow => {
     const findings = byArea.get(area) ?? [];
-    return {
-      area, label, status: statusOf(findings, reduced), failing: findings.filter((finding) => !finding.ok).length,
-    };
+    return { area, status: statusOf(findings, reduced), failing: findings.filter((finding) => !finding.ok).length };
   };
-  const rows = AREAS.map((area) => row(area, AREA_LABELS[area]));
-  if (byArea.has("other")) rows.push(row("other", "Other checks"));
+  const rows = AREAS.map(row);
+  if (byArea.has("other")) rows.push(row("other"));
   return { rows, reduced };
 }

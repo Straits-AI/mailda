@@ -1,21 +1,25 @@
 import { onlineManager, useQueryClient, type QueryCacheNotifyEvent, type QueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { t } from "/app/locale.js";
 import { MARK_IS_AUTHORED } from "../../brand.ts";
+import type { Text } from "../../i18n/format.ts";
 import { Mark } from "./mark.tsx";
 
 import {
   useApprovals, useDoctor, useDrafts, useMailboxes, useMessages, useNotifications, useSends,
   type DoctorReport, type NotificationRow, type SendsResponse,
 } from "./api.ts";
-import type { AppRoute } from "../../app-routes.ts";
-import { healthRows, type HealthStatus } from "./health.ts";
+import { isAppRoute, type AppRoute } from "../../app-routes.ts";
+import { ago, clock } from "./format.ts";
+import { healthRows } from "./health.ts";
 import { SetupUnfinished } from "./onboarding.tsx";
 import { useCompose, useToast, useToastAction } from "./shell-context.tsx";
 import { Icon, type IconName } from "./ui/icons.tsx";
 import { CommandPalette } from "./ui/palette.tsx";
 import { Modal, Popover } from "./ui/popover.tsx";
 import { shortcutsEnabled, useShortcuts, type Shortcut } from "./ui/shortcuts.ts";
+import { marked, sentence } from "./words.tsx";
 
 /**
  * The chrome: a grouped sidebar, the main column, and a status bar along the bottom.
@@ -42,28 +46,6 @@ import { shortcutsEnabled, useShortcuts, type Shortcut } from "./ui/shortcuts.ts
  * Settings and the health popover, the outbound counts to the Outbox row and the popover.
  */
 
-/** Every route's name in the interface. The palette and the narrow layout's title read it. */
-export const ROUTE_LABELS: Record<AppRoute, string> = {
-  "/": "Inbox",
-  "/queue": "Queue",
-  "/approvals": "Approvals",
-  "/rules": "Rules",
-  "/people": "People",
-  "/matters": "Matters",
-  "/butlers": "Butlers",
-  "/agents": "Agents",
-  "/limits": "Limits",
-  "/outbox": "Outbox",
-  "/audit": "Audit",
-  "/log": "Log",
-  "/doctor": "Doctor",
-  "/setup": "Setup",
-  "/drafts": "Drafts",
-  "/archive": "Archive",
-  "/trash": "Trash",
-  "/settings": "Settings",
-};
-
 /**
  * Where each route lives in the sidebar, in the order the rows render. `{ tabOf }` is a route reached by a
  * section tab on another route's screen rather than by a row of its own: Rules is a tab beside Butlers,
@@ -85,16 +67,19 @@ export const SIDEBAR_HOME: Record<AppRoute, "mail" | "workspace" | "automate" | 
  * The section tabs over a route's screen: the route itself, then every route whose home is `{ tabOf: it }`.
  * Derived, so a route given a `tabOf` home gets its tab without a second list to remember.
  */
-export function tabsOf(parent: AppRoute): Array<{ to: AppRoute; label: string }> {
+export function tabsOf(parent: AppRoute): Array<{ to: AppRoute; label: Text }> {
   const children = (Object.keys(SIDEBAR_HOME) as AppRoute[]).filter((route) => {
     const home = SIDEBAR_HOME[route];
     return typeof home === "object" && home.tabOf === parent;
   });
-  return [parent, ...children].map((to) => ({ to, label: ROUTE_LABELS[to] }));
+  return [parent, ...children].map((to) => ({ to, label: t(`route.${to}`) }));
 }
 
-/** The one row whose sidebar name differs from its route's: the group's word, over Butlers and Rules. */
-const SIDEBAR_LABEL: Partial<Record<AppRoute, string>> = { "/butlers": "Automations" };
+/**
+ * A route's name in the sidebar: the route's own (`route.*`), except the one row whose name differs, the group's
+ * word over Butlers and Rules (D2: "Automations", which Chinese keeps apart from the group's "Automate").
+ */
+const sidebarName = (route: AppRoute): Text => (route === "/butlers" ? t("chrome.row.automations") : t(`route.${route}`));
 
 const ROUTE_ICONS: Record<AppRoute, IconName> = {
   "/": "inbox", "/queue": "queue", "/approvals": "approvals", "/rules": "automations", "/people": "people",
@@ -110,7 +95,7 @@ function routesIn(group: Group): AppRoute[] {
 }
 
 /** The views that are the mail layout (list and reader) rather than a ledger screen. */
-const MAIL_ROUTES: ReadonlySet<string> = new Set(["/", "/archive", "/trash"]);
+const MAIL_ROUTES: ReadonlySet<AppRoute> = new Set<AppRoute>(["/", "/archive", "/trash"]);
 
 /**
  * Below 1120px the sidebar becomes a drawer. The same breakpoint as the stylesheet's `data-layout` rules,
@@ -140,8 +125,8 @@ export function useStartCompose(): () => void {
   const toast = useToast();
   return () => {
     if (mailboxes.isSuccess) compose.start(mailboxes.data.mailboxes);
-    else if (mailboxes.isError) toast({ tone: "alert", text: mailboxes.error.message });
-    else toast({ text: "Still reading which mailboxes you can send from." });
+    else if (mailboxes.isError) toast({ tone: "alert", text: marked(mailboxes.error) });
+    else toast({ text: t("chrome.compose.reading") });
   };
 }
 
@@ -163,13 +148,13 @@ export function ComposeButton({ compact = false }: { compact?: boolean }) {
       className={compact ? "primary compose-button compact" : "primary compose-button"}
       // The key is named only while it works: with single-key shortcuts off, "(C)" names a key that does nothing.
       // Read at render, like every hint that names a key; the switch applies from the next render.
-      title={shortcutsEnabled() ? "Compose (C)" : "Compose"}
-      aria-label={compact ? "Compose" : undefined}
+      title={shortcutsEnabled() ? t("chrome.compose.key") : t("chrome.compose")}
+      aria-label={compact ? t("chrome.compose") : undefined}
       aria-haspopup={rows.length > 1 ? "dialog" : undefined}
       onClick={() => compose.start(rows)}
     >
       <Icon name="compose" />
-      {compact ? null : <span>Compose</span>}
+      {compact ? null : <span>{t("chrome.compose")}</span>}
     </button>
   );
 }
@@ -273,12 +258,12 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
 
   const row = (route: AppRoute) => (
     <li key={route}>
-      <Row to={route} name={SIDEBAR_LABEL[route] ?? ROUTE_LABELS[route]} count={count(route)} onNavigate={onNavigate} />
+      <Row to={route} name={sidebarName(route)} count={count(route)} onNavigate={onNavigate} />
     </li>
   );
 
   return (
-    <nav className="rail" aria-label="Navigation">
+    <nav className="rail" aria-label={t("chrome.nav")}>
       {/*
         * The brand's primary lockup: symbol then word (#128). The word is real text, not a path: selectable,
         * translatable, and read aloud as a name. The symbol is gated on `MARK_IS_AUTHORED`, which has been
@@ -287,12 +272,12 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
         */}
       <p className="wordmark">
         {MARK_IS_AUTHORED ? <Mark size={20} /> : null}
-        <span>Mailda</span>
+        <span>{t("brand.name")}</span>
       </p>
       {/* In the drawer the narrow layout's bar holds the one Compose, so the drawer's rail has none. */}
       {onNavigate === undefined ? <ComposeButton /> : null}
 
-      <p className="rail-heading" id="rail-mail">Mail</p>
+      <p className="rail-heading" id="rail-mail">{t("chrome.group.mail")}</p>
       <ul className="rail-list" aria-labelledby="rail-mail">
         {routesIn("mail").flatMap((route) => route === "/" && unparsed > 0
           ? [
@@ -300,13 +285,13 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
             // Accepted but not parsed: listed, and counted here, so "accepted but absent" never happens
             // quietly (Blueprint §24).
             <li key="unparsed" className="rail-note">
-              <span className="state state-outcome_unknown">{unparsed} unparsed</span>
+              <span className="state state-outcome_unknown">{t("chrome.rail.unparsed", { n: unparsed })}</span>
             </li>,
           ]
           : [row(route)])}
       </ul>
 
-      <p className="rail-heading" id="rail-workspace">Workspace</p>
+      <p className="rail-heading" id="rail-workspace">{t("chrome.group.workspace")}</p>
       <ul className="rail-list" aria-labelledby="rail-workspace">
         {/*
           The queues, one row per mailbox, with the count of **unclaimed** work: what the sidebar was chosen
@@ -319,7 +304,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
               to="/queue"
               className="rail-row rail-mailbox"
               activeProps={{ className: "rail-row rail-mailbox" }}
-              title={`${box.unclaimed} unclaimed, ${box.claimed} in progress, ${box.mine} mine`}
+              title={t("chrome.rail.mailbox", { unclaimed: box.unclaimed, claimed: box.claimed, mine: box.mine })}
               onClick={() => onNavigate?.()}
             >
               <Icon name="mailbox" />
@@ -328,7 +313,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
                 {box.unclaimed}
                 {/* Hair spaces about the dot: with ordinary ones a ten-letter name gave up three pixels to "· 1 mine"
                     at the rail's width and lost its last letters (measured in Chromium: 10px against 6px). */}
-                {box.mine > 0 ? <span className="rail-mine">{"\u200A·\u200A"}{box.mine} mine</span> : null}
+                {box.mine > 0 ? <span className="rail-mine">{"\u200A·\u200A"}{t("chrome.rail.mine", { n: box.mine })}</span> : null}
               </span>
             </Link>
           </li>
@@ -336,7 +321,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
         {routesIn("workspace").map(row)}
       </ul>
 
-      <p className="rail-heading" id="rail-automate">Automate</p>
+      <p className="rail-heading" id="rail-automate">{t("chrome.group.automate")}</p>
       <ul className="rail-list" aria-labelledby="rail-automate">
         {routesIn("automate").map((route) => {
           // On a route that is a tab of this row's screen (Rules under Automations), the row is the current
@@ -349,7 +334,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
             <li key={route}>
               <Row
                 to={route}
-                name={SIDEBAR_LABEL[route] ?? ROUTE_LABELS[route]}
+                name={sidebarName(route)}
                 current={tabHere}
                 onNavigate={onNavigate}
               />
@@ -366,7 +351,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
         aria-controls="rail-admin"
         onClick={() => setAdminOpen((open) => !open)}
       >
-        <span>Admin</span>
+        <span>{t("chrome.group.admin")}</span>
         <Icon name={adminOpen ? "chevron-down" : "chevron-right"} />
       </button>
       {adminOpen ? (
@@ -419,7 +404,9 @@ function subscribeOnline(onChange: () => void): () => void {
   return onlineManager.subscribe(onChange);
 }
 
-export function useConnection(): { state: "connected" | "offline" | "unreachable" | "checking"; word: string } {
+type Connection = "connected" | "offline" | "unreachable" | "checking";
+
+export function useConnection(): { state: Connection; word: Text } {
   const client = useQueryClient();
   const [reach, setReach] = useState<Reach | null>(() => settledReach(client));
   const online = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline());
@@ -430,28 +417,8 @@ export function useConnection(): { state: "connected" | "offline" | "unreachable
     if (next !== null) setReach(next);
   }), [client]);
 
-  if (!online) return { state: "offline", word: "Offline" };
-  if (reach === null) return { state: "checking", word: "Checking…" };
-  if (reach === "unreachable") return { state: "unreachable", word: "Unreachable" };
-  return { state: "connected", word: "Connected" };
-}
-
-const STATUS_WORDS: Record<HealthStatus, string> = {
-  ok: "ok",
-  "ok-visible": "ok in your checks",
-  degraded: "degraded",
-  refuse: "refuse",
-  report: "report",
-  absent: "not in your report",
-  none: "no checks",
-};
-
-function ago(at: string): string {
-  const seconds = Math.round((Date.parse(at) - Date.now()) / 1000);
-  const words = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  if (Math.abs(seconds) < 60) return words.format(seconds, "second");
-  if (Math.abs(seconds) < 3_600) return words.format(Math.round(seconds / 60), "minute");
-  return words.format(Math.round(seconds / 3_600), "hour");
+  const state: Connection = !online ? "offline" : reach === null ? "checking" : reach === "unreachable" ? "unreachable" : "connected";
+  return { state, word: t(`chrome.connection.${state}`) };
 }
 
 /**
@@ -474,22 +441,26 @@ export function HealthPopover({ open, onClose, anchor, report, error }: {
   const health = report === undefined ? null : healthRows(report);
 
   return (
-    <Popover open={open} onClose={onClose} label="Health" className="health-popover popover-up popover-end" anchor={anchor}>
+    <Popover open={open} onClose={onClose} label={t("chrome.health.title")} className="health-popover popover-up popover-end" anchor={anchor}>
       <h2 className="health-title">
-        Health{report === undefined ? null : <> <span className={`state verdict-${report.verdict}`}>{report.verdict}</span></>}
+        {report === undefined ? t("chrome.health.title") : sentence("chrome.health.heading", {
+          verdict: <span className={`state verdict-${report.verdict}`}>{t(`health.status.${report.verdict}`)}</span>,
+        })}
       </h2>
-      {error !== null ? <p className="bad" role="alert">{error.message}</p> : null}
+      {error !== null ? <p className="bad" role="alert">{marked(error)}</p> : null}
       {health === null ? (error === null ? <Nothing kind="loading" /> : null) : (
         <>
           <ul className="health-rows">
             {health.rows.map((row) => (
               <li key={row.area} className="health-row">
-                <span className="health-area">{row.label}</span>
+                <span className="health-area">{t(`health.area.${row.area}`)}</span>
                 {row.status === "absent" || row.status === "none"
-                  ? <span className="health-absent">{STATUS_WORDS[row.status]}</span>
+                  ? <span className="health-absent">{t(`health.status.${row.status}`)}</span>
                   : (
                     <span className={`state verdict-${row.status === "ok-visible" ? "ok" : row.status}`}>
-                      {STATUS_WORDS[row.status]}{row.failing > 0 ? ` · ${row.failing} failing` : ""}
+                      {row.failing > 0
+                        ? t("health.failing", { status: t(`health.status.${row.status}`), n: row.failing })
+                        : t(`health.status.${row.status}`)}
                     </span>
                   )}
               </li>
@@ -497,18 +468,16 @@ export function HealthPopover({ open, onClose, anchor, report, error }: {
           </ul>
           {sends === undefined ? null : <OutboundCounts sends={sends} />}
           {health.reduced ? (
-            <p className="health-note">
-              Some checks describe this organisation's mail and are for administrators. The verdict counts them too.
-            </p>
+            <p className="health-note">{t("health.reduced")}</p>
           ) : null}
           <p className="health-meta">
-            Last health check {new Date(report!.at).toLocaleTimeString(undefined, { hour12: false })} · {ago(report!.at)}
+            {t("health.checked", { at: clock(report!.at), ago: ago(report!.at) })}
             <br />
-            This Node {location.host}
+            {t("health.node", { host: location.host })}
           </p>
         </>
       )}
-      <Link to="/doctor" className="health-open" onClick={onClose}>Open Doctor</Link>
+      <Link to="/doctor" className="health-open" onClick={onClose}>{t("health.open")}</Link>
     </Popover>
   );
 }
@@ -524,7 +493,7 @@ function OutboundCounts({ sends }: { sends: SendsResponse }) {
   const awaiting = sends.sends.filter((send) => send.state === "awaiting").length;
   return (
     <p className="health-meta">
-      Outbound: handed over today {sends.daily.handedOver} · held {held}{plus} · awaiting {awaiting}{plus}
+      {t("health.outbound", { handedOver: sends.daily.handedOver, held, awaiting, plus })}
     </p>
   );
 }
@@ -542,7 +511,7 @@ export function StatusBar() {
   const button = useRef<HTMLButtonElement>(null);
 
   return (
-    <footer className="status-bar" aria-label="Node status">
+    <footer className="status-bar" aria-label={t("chrome.status")}>
       {/* A polite live region, always mounted: the word changes rarely, and a change is news (WCAG 4.1.3). */}
       <span className="connection" role="status">
         <span className={`dot dot-${connection.state}`} />
@@ -557,10 +526,11 @@ export function StatusBar() {
           aria-expanded={open}
           onClick={() => setOpen((was) => !was)}
         >
-          Health:{" "}
           {doctor.isSuccess
-            ? <span className={`state verdict-${doctor.data.verdict}`}>{doctor.data.verdict}</span>
-            : doctor.isError ? "could not be read" : "checking…"}
+            ? sentence("chrome.health.bar", {
+              verdict: <span className={`state verdict-${doctor.data.verdict}`}>{t(`health.status.${doctor.data.verdict}`)}</span>,
+            })
+            : doctor.isError ? t("chrome.health.bar.failed") : t("chrome.health.bar.checking")}
         </button>
         <HealthPopover
           open={open}
@@ -599,8 +569,8 @@ export function Shell() {
     setDrawerOpen(false);
   }, [path, narrow]);
 
-  const shortcuts: Shortcut[] = [{ key: "c", description: "Compose", run: startCompose }];
-  if (undo !== null) shortcuts.push({ key: "z", description: "Undo", run: undo });
+  const shortcuts: Shortcut[] = [{ key: "c", description: t("chrome.compose"), run: startCompose }];
+  if (undo !== null) shortcuts.push({ key: "z", description: t("shortcuts.undo"), run: undo });
   useShortcuts(shortcuts);
 
   const closeDrawer = () => setDrawerOpen(false);
@@ -610,21 +580,21 @@ export function Shell() {
       {narrow ? null : <Rail />}
       {/* A div, not a `main`: the mount point is `<main id="app">`, and a second `main` landmark inside it is
           the structural defect axe exists to catch. */}
-      <div className={MAIL_ROUTES.has(path) ? "app-main mail" : "app-main"}>
+      <div className={isAppRoute(path) && MAIL_ROUTES.has(path) ? "app-main mail" : "app-main"}>
         {narrow ? (
           <header className="mobile-bar">
             <button
               ref={menuButton}
               type="button"
               className="btn btn-icon menu-button"
-              aria-label="Open navigation"
+              aria-label={t("chrome.drawer.open")}
               aria-haspopup="dialog"
               aria-expanded={drawerOpen}
               onClick={() => setDrawerOpen(true)}
             >
               <Icon name="menu" />
             </button>
-            <span className="mobile-title">{ROUTE_LABELS[path as AppRoute] ?? "Mailda"}</span>
+            <span className="mobile-title">{isAppRoute(path) ? t(`route.${path}`) : t("brand.name")}</span>
             <ComposeButton compact />
           </header>
         ) : null}
@@ -636,7 +606,7 @@ export function Shell() {
       {narrow && drawerOpen ? (
         <Modal
           className="drawer"
-          label="Navigation"
+          label={t("chrome.nav")}
           onClose={closeDrawer}
           returnTo={menuButton}
           // A click on the backdrop lands on the dialog itself; one on the rail lands inside it.
@@ -645,7 +615,7 @@ export function Shell() {
           <Rail onNavigate={closeDrawer} />
           {/* After the rail, so focus opens on its first link; a way out that a touch screen reader can find,
               where Escape and the backdrop are not. */}
-          <button type="button" className="btn btn-icon drawer-close" aria-label="Close navigation" onClick={closeDrawer}>
+          <button type="button" className="btn btn-icon drawer-close" aria-label={t("chrome.drawer.close")} onClick={closeDrawer}>
             <Icon name="close" />
           </button>
         </Modal>
@@ -702,7 +672,7 @@ export function Copyable({ text, label }: { text: string; label: string }) {
           );
         }}
       >
-        {copied ? "Copied" : `Copy ${label}`}
+        {copied ? t("chrome.copied") : t("chrome.copy", { what: label })}
       </button>
     </span>
   );
@@ -721,13 +691,14 @@ export function Scroller({ label, children }: { label: string; children: React.R
 
 export function Truncated({ when, shown, noun }: { when: boolean; shown: number; noun: string }) {
   if (!when) return null;
-  return <p className="notice dim">Showing the newest {shown} {noun}. Older ones exist and are not listed.</p>;
+  return <p className="notice dim">{t("chrome.truncated", { shown, noun })}</p>;
 }
 
 export function Nothing(
   { kind, detail, unfiltered = false, action }: {
     kind: "empty" | "failed" | "loading";
-    detail?: string;
+    /** The failure's words, already `marked()` when they may be the Node's. */
+    detail?: React.ReactNode;
     /** Only pass this when the underlying query is not narrowed by authorization. It rarely is. */
     unfiltered?: boolean;
     /**
@@ -742,19 +713,19 @@ export function Nothing(
     action?: { to: AppRoute; label: string };
   },
 ) {
-  if (kind === "loading") return <p className="notice dim">Reading…</p>;
+  if (kind === "loading") return <p className="notice dim">{t("chrome.nothing.loading")}</p>;
   if (kind === "failed") {
     return (
       <p className="notice bad" role="alert">
-        {detail ?? "This could not be read. That is different from it being empty."}
+        {detail ?? t("chrome.nothing.failed")}
       </p>
     );
   }
   return (
     <p className="notice">
-      {detail ?? "Nothing here yet."}
+      {detail ?? t("chrome.nothing.empty")}
       {unfiltered
-        ? <> <span className="dim">An empty ledger. Not a filtered one: nothing has been hidden from you.</span></>
+        ? <> <span className="dim">{t("chrome.nothing.unfiltered")}</span></>
         : null}
       {action === undefined
         ? null
@@ -784,32 +755,57 @@ export function Nothing(
  * Absent fields render as absent rather than as a guess. A notice delivered by an older Node carries an older
  * shape, and "an unrecorded instant" is a truthful thing to print where a fabricated one is not.
  */
+/** The facts a notice may carry, each one possibly absent or of another shape on an older Node's notice. */
+interface NoticeBody {
+  readonly subjectKind?: unknown; readonly approvalId?: unknown; readonly requestedBy?: unknown; readonly requestedAt?: unknown;
+  readonly readerEmail?: unknown; readonly readerId?: unknown; readonly mailboxName?: unknown; readonly mailboxId?: unknown;
+  readonly scope?: unknown; readonly grantedAt?: unknown; readonly expiresAt?: unknown; readonly matterId?: unknown;
+  readonly matterType?: unknown; readonly grantId?: unknown;
+  readonly acts?: { readonly queries?: unknown; readonly listed?: unknown; readonly opened?: unknown; readonly attachments?: unknown };
+}
+
+const fact = (value: unknown): string | null => typeof value === "string" ? value : null;
+const tally = (value: unknown): number => typeof value === "number" ? value : 0;
+
+/**
+ * A notice as a headline sentence and a line of facts. The line is a list, each item its own message, joined by
+ * a middle dot; a fact the Node did not record is passed as the words that say so, never left out or guessed.
+ */
 function noticeText(notice: NotificationRow): { headline: string; meta: string } {
-  const body = (notice.body ?? {}) as Record<string, unknown>;
-  const text = (key: string): string | null => typeof body[key] === "string" ? body[key] : null;
+  const body = (notice.body ?? {}) as NoticeBody;
+  const unrecorded = t("chrome.notice.unrecorded");
 
   if (notice.kind === "approval_request") {
     return {
-      headline: `You were asked to decide an approval (${text("subjectKind") ?? "an act"}).`,
-      meta: `request ${text("approvalId") ?? notice.subjectId} · asked by ${text("requestedBy") ?? "somebody"}`
-        + ` · ${text("requestedAt") ?? "an unrecorded instant"}`,
+      headline: t("chrome.notice.approval", { kind: fact(body.subjectKind) ?? t("chrome.notice.an_act") }),
+      meta: [
+        t("chrome.notice.request", { id: fact(body.approvalId) ?? notice.subjectId }),
+        t("chrome.notice.asked_by", { who: fact(body.requestedBy) ?? t("chrome.notice.somebody") }),
+        fact(body.requestedAt) ?? unrecorded,
+      ].join(" · "),
     };
   }
 
-  const acts = (body.acts ?? {}) as Record<string, number>;
-  const count = (key: string): number => typeof acts[key] === "number" ? acts[key] : 0;
-  const reader = text("readerEmail") ?? text("readerId") ?? "somebody";
-  const mailbox = text("mailboxName") ?? text("mailboxId") ?? "a mailbox";
+  const acts = body.acts ?? {};
+  const matter = fact(body.matterId) ?? t("chrome.notice.none_cited");
+  const type = fact(body.matterType);
   return {
-    headline: `${reader} was granted a supervised ${text("scope") ?? "read"} of ${mailbox}, `
-      + `${text("grantedAt") ?? "at an unrecorded instant"} to ${text("expiresAt") ?? "an unrecorded instant"}.`,
+    headline: t("chrome.notice.supervised", {
+      reader: fact(body.readerEmail) ?? fact(body.readerId) ?? t("chrome.notice.somebody"),
+      scope: fact(body.scope) ?? t("chrome.notice.read"),
+      mailbox: fact(body.mailboxName) ?? fact(body.mailboxId) ?? t("chrome.notice.a_mailbox"),
+      from: fact(body.grantedAt) ?? t("chrome.notice.unrecorded_at"),
+      to: fact(body.expiresAt) ?? unrecorded,
+    }),
     // The counts are the part that makes this actionable rather than ceremonial: the difference between a
     // grant nobody used and one under which everything was opened.
-    meta: `${count("queries")} quer${count("queries") === 1 ? "y" : "ies"} listing ${count("listed")} `
-      + `message(s) · ${count("opened")} opened · ${count("attachments")} raw message(s) read`
-      + ` · matter ${text("matterId") ?? "none cited"}`
-      + `${text("matterType") === null ? "" : ` (${text("matterType")})`}`
-      + ` · grant ${text("grantId") ?? notice.subjectId}`,
+    meta: [
+      t("chrome.notice.queries", { n: tally(acts.queries), listed: tally(acts.listed) }),
+      t("chrome.notice.opened", { n: tally(acts.opened) }),
+      t("chrome.notice.raw", { n: tally(acts.attachments) }),
+      type === null ? t("chrome.notice.matter", { matter }) : t("chrome.notice.matter.typed", { matter, type }),
+      t("chrome.notice.grant", { grant: fact(body.grantId) ?? notice.subjectId }),
+    ].join(" · "),
   };
 }
 
@@ -823,8 +819,8 @@ export function Notices() {
   return (
     // Focusable, so a keyboard can scroll it: the stylesheet bounds its height, and fifty non-dismissible
     // notices must never squeeze the screen below them to nothing.
-    <section className="notices" aria-label="Notifications" tabIndex={0}>
-      <Truncated when={notices.data.truncated} shown={notices.data.notifications.length} noun="notices" />
+    <section className="notices" aria-label={t("chrome.notices")} tabIndex={0}>
+      <Truncated when={notices.data.truncated} shown={notices.data.notifications.length} noun={t("chrome.notices.noun")} />
       {notices.data.notifications.map((notice) => {
         const { headline, meta } = noticeText(notice);
         return (

@@ -42,6 +42,16 @@ describe("the pre-authentication surface loads no bundle (ADR 30)", () => {
     expect(source).not.toMatch(/^import .*\/app\/shell\.js/m);
     expect(source).toContain('await import("/app/shell.js")');
   });
+
+  it("loads the viewer's words before sign-in from /app/locale.js, which is not the bundle (ADR 46)", async () => {
+    // The framework-free script now imports one more module statically: the language, with every locale's
+    // pre-sign-in words and no React. Where it may preload the shell (only when handing it the page) is a
+    // question about the script's structure, so `test/node/shell-preload.test.ts` answers it with the parser.
+    const source = await clientAsset("/app/app.js")!.text();
+    expect(source).toMatch(/^import \{[^}]*\bbootLocale\b[^}]*\} from "\.\/locale\.js";$/m);
+    const locale = await clientAsset("/app/locale.js")!.text();
+    expect(locale).not.toContain("/app/shell.js");
+  });
 });
 
 /**
