@@ -556,7 +556,9 @@ export const AUDIT_ACTIONS = {
   /** An address added to a mailbox outside the provisioning acts, and whether the same act routed it. */
   "address.added": {
     says: "An administrator added an address to a mailbox. Whether mail for it reaches this Node is on the "
-      + "entry: the catch-all already routes it, a rule was written, or nothing could be written and why.",
+      + "entry, read from the zone's rules: the catch-all routes it here; a rule routes it here, written now or "
+      + "kept; a rule of its own sends it elsewhere, or is disabled, and was left; it could not be confirmed; or "
+      + "nothing could be written and why.",
   },
   /** The mirror of `address.added`: the row gone, and whether the rule that routed it went with it. */
   "address.removed": {
@@ -944,6 +946,17 @@ export const AUDIT_ACTIONS = {
   "provider.receiving_onboarded": {
     says: "An administrator pointed a subdomain at this Node to receive mail, and this Node wrote the MX "
       + "records Cloudflare's Email Routing requires.",
+  },
+  /**
+   * The routing outcome of a receiving onboard, for its first address, written after the act (28 September
+   * 2026). Its own entry because `receiving_onboarded` is the intent, recorded before Cloudflare is asked
+   * anything; a Setup progress or a re-run that read the intent alone called an address set up that went to
+   * another Worker. `refused` when the address does not reach this Node.
+   */
+  "provider.receiving_routed": {
+    says: "A receiving onboard ended, and how its first address is routed is on the entry, in the words adding "
+      + "an address uses: routed here, sent elsewhere or disabled by a rule of its own, not confirmed, or not "
+      + "written and why.",
   },
 } as const;
 

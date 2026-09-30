@@ -6,7 +6,7 @@ import { dirname, resolve } from "node:path";
 import { accountsFrom, signedIn } from "../preflight.mjs";
 import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir, wrapAt } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
-import { printNext, provisionNode, wranglerToken, zonesOf } from "./provision.mjs";
+import { printNext, provisionNode, signInLine, wranglerToken, zonesOf } from "./provision.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -132,7 +132,7 @@ export async function install(argv) {
   );
   const setUp = await provisionNode({
     origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    token: await wranglerToken(), yes, ask,
+    token: await wranglerToken(), yes, ask, signInEmail: claimed.email,
   });
 
   // 7. The Node's own Cloudflare token, optional.
@@ -141,8 +141,8 @@ export async function install(argv) {
   process.stdout.write(
     "\n== done\n"
     + `   your Node   ${url}\n`
-    + `   signed in   ${claimed.email}\n`
     + `   token       ${held === null ? "not held: the Setup screen offers the field, or `mailda provider --token`" : "held"}\n`
+    + `\n   ${signInLine(claimed.email, setUp)}\n`
     + "\n",
   );
   printNext(url, setUp);
@@ -154,7 +154,13 @@ export async function install(argv) {
  * email and a password typed twice with echo off; a password the Node calls weak is explained in the Node's
  * words and asked again, because the claim is the irreversible step and a wrong answer must not spend it.
  */
-async function claim(origin, secret, yes) {
+export async function claim(origin, secret, yes) {
+  /*
+   * The claim form's sentence, before the email is asked (28 September 2026): the founder claimed as `admin@`
+   * and only later found replies went out as the mailbox's `hello@`. The two are different identities, and the
+   * terminal is where most claims happen.
+   */
+  process.stdout.write("   You sign in with this email. Mail goes out from a mailbox's address, which setup chooses.\n");
   const email = yes ? process.env.MAILDA_EMAIL : (await ask("   administrator email: ")).trim();
   const organization = yes ? (process.env.MAILDA_ORGANIZATION ?? "Mailda")
     : ((await ask("   organization name [Mailda]: ")).trim() || "Mailda");

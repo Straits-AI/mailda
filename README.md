@@ -32,8 +32,10 @@ the Worker with its D1, R2 and queue, attaches the hostname, and applies the sch
 first administrator's email and password, and the ten recovery codes are printed once. Then it asks one more
 question, which domain this Node should receive mail at, and with the same Cloudflare sign-in you already
 gave it enables routing on that subdomain, writes the rule to the Node, onboards the domain for sending,
-subscribes delivery events to the Node's queue, and reads each back. The Node receives when the install
-ends. No dashboard, no API token, no OAuth client ([receipt](./docs/receipts/wrangler-login-reach.md)).
+subscribes delivery events to the Node's queue, and reads each back. The mailbox's first address is asked as the
+part before `@domain`, and defaults to the local part of the email you signed in with when that email is on the
+domain and no Email Routing rule of its own sends it elsewhere; the install's last line says which address you
+sign in as and which one mail goes out as. The Node receives when the install ends. No dashboard, no API token, no OAuth client ([receipt](./docs/receipts/wrangler-login-reach.md)).
 Decline a question and the Node's own screens do the same thing later. Nothing in your account changes
 before it asks. Giving the Node a Cloudflare credential of its own, an API token pasted once on *Setup*, is
 optional and only for changing that setup from the browser later; the OAuth client it replaced is gone
@@ -49,13 +51,21 @@ chose: it appears in the inbox, and that is the proof.
 **Adding people.** On *People*, mint an invitation for the person's sign-in address: the link is shown to
 you once and not mailed, you hand it over however you already trust, and the person opens it and chooses
 a password. They hold nothing until you grant them a relation on a mailbox, on the same screen, where each
-relation is written as what it lets them do. To receive at an address of their own, say
+relation is written as what it lets them do. Tick *Also give them a mailbox at* to make a mailbox for them at
+an address on your domain as you invite them; it is granted to nobody but you, as the creator of any mailbox
+is, and they hold nothing on it. Once they have an account with that address and hold nothing on it directly,
+*People* asks whether to give it to them, naming the two relations it grants, and never asks again about a
+mailbox from which you withdrew a relation of theirs. Address fields there
+take the part before the `@`, with your domain beside it. To receive at an address of their own, say
 `user1@example.com`, add that address to a mailbox they hold (*People* → *Add an address*); on a domain
-whose catch-all points at the Node nothing else is needed, and on a subdomain the Node writes the routing
-rule in the same act, or says exactly what to run if it could not. Each mailbox lists its addresses there,
-with *remove* beside each: the rule goes with it when this Node wrote it, and an address that has received
-mail stays, by name, because every message under it is filed through that address. Mailboxes and teams are
-renamed on the same screen.
+whose catch-all points at the Node nothing else is needed, unless the address has an Email Routing rule of
+its own sending it elsewhere or disabled, which the screen names; on a subdomain the Node writes the routing
+rule in the same act, or says exactly what to run if it could not. The composer shows the address a message
+goes out from, the mailbox's and never the email you sign in with, and says so when it cannot read it. Each
+mailbox lists its addresses there, with *remove* beside each: the rule goes with it when this Node wrote it
+(one it took over is left, and the screen names the put-back), and an address that has received mail stays,
+by name, because every message under it is filed through that address. Mailboxes and teams are renamed on
+the same screen.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
 below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
@@ -89,8 +99,10 @@ login, or the Setup screen with a token carrying the optional Email Routing Addr
 point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
 previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
 addresses are left alone. On a zone's own name the receiving step offers the **catch-all** instead: one
-rule pointing the whole domain here, its previous target kept for a put-back, and every address from then
-on managed on People inside the Node; on a subdomain Cloudflare allows literal rules only, so adding an
+rule pointing the domain's unmatched mail here, its previous target kept for a put-back, and every address
+without a rule of its own from then on managed on People inside the Node. An enabled rule of an address's own
+outranks the catch-all (of a disabled one Cloudflare does not say), so `mailda install`, `mailda setup`, `mailda provider --onboard-receiving` and the Setup screen
+list each such address and where it goes before the choice, and never change those rules; on a subdomain Cloudflare allows literal rules only, so adding an
 address on People writes its rule in the same act. `mailda provider --routing-rules <domain>` is the same
 from the CLI.
 
@@ -162,7 +174,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md): how decisions get made and what counts as done |
 | **Decisions taken** | Recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues?q=is%3Aissue) |
 | **Measurements** | The receipts in [`docs/receipts/`](./docs/receipts/), generating every constant in `packages/budgets`, which is itself generated and never hand-edited |
-| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual. Its last run, on 27 September 2026 after the fourth round of the redesign's review, covered 146 views (per theme, the sign-in page, the invitation form, a refused sign-in, the eighteen routes at 1280, 1024 and 390 px wide, each grown until nothing on it scrolls vertically, fifteen opened states and the first-run gate, each audited only once it had loaded; the Butler resume form had no paused Butler to open) with 0 AA violations. The opened states are audited at one size and not grown, the pages before sign-in at 1280 px wide only; the contrast it could not decide under an overlay is computed from the tokens instead ([`docs/application-shell.md`](./docs/application-shell.md), *Accessibility*). |
+| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual. Its last run, on 27 September 2026 after the fourth round of the redesign's review, covered 146 views (per theme, the sign-in page, the invitation form, a refused sign-in, the eighteen routes at 1280, 1024 and 390 px wide, each grown until nothing on it scrolls vertically, fifteen opened states and the first-run gate, each audited only once it had loaded; the Butler resume form had no paused Butler to open) with 0 AA violations. The opened states are audited at one size and not grown, the pages before sign-in at 1280 px wide only; the contrast it could not decide under an overlay is computed from the tokens instead ([`docs/application-shell.md`](./docs/application-shell.md), *Accessibility*). The spacing check is manual too: every route and opened state at 1440 and 390 px, both themes, every pair of controls under 8px apart; its last run, on 29 September 2026, measured 132 views with none (*Spacing*, same document). |
 | **Licence** | [Apache-2.0](./LICENSE). Security reports go to [`SECURITY.md`](./SECURITY.md), privately. |
 
 ## What's distinctive about how it's built
@@ -342,7 +354,7 @@ apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, se
 apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate,
                                        recipient derivation, the latched pause and its two write acts
 apps/node/worker/src/client            browser scripts, served as real .js files
-apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
+apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe, spacing
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made: the report, the
                                        meter and the verdict; the checks themselves are in src/doctor/
 apps/site                              mailda.site: Astro + Starlight, static; the docs are rendered from this

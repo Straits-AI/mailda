@@ -146,7 +146,10 @@ function renderClaim() {
   const submit = el("button", { class: "primary", type: "submit", text: "Claim this Node" });
 
   const form = el("form", { novalidate: "novalidate" }, [
-    org.node, email.node, password.node,
+    org.node, email.node,
+    // The two identities people conflate: an owner who claimed as admin@ was surprised to reply as hello@.
+    el("p", { class: "hint", text: "You sign in with this email. Mail goes out from a mailbox's address, which setup chooses." }),
+    password.node,
     el("p", { class: "hint", text: "At least 12 characters. No character-class rules — length is what resists guessing." }),
     secret.node,
     el("p", { class: "hint", text: "Shown once, by `mailda claim-secret`." }),

@@ -1144,6 +1144,8 @@ describe("provisioned facts from the audit trail", () => {
     const facts = await provisionedFacts(testEnv, ORG);
     expect(facts.receiving).toEqual({
       domain: "mail.example.test", at: new Date(SEPTEMBER_3 + 1000).toISOString(), authority: "operator", address: "hello@mail.example.test", observed: false,
+      // An entry from before outcomes were recorded has none, and reads as the record it always was.
+      routing: null,
     });
     // An entry written before `authority` existed says so rather than guessing.
     expect(facts.sending?.authority).toBe("unknown");

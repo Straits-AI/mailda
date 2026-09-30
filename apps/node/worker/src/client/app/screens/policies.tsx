@@ -343,17 +343,18 @@ export function Policies() {
                   <td className="dim">draft</td>
                   <td className="mono">{when(row.created_at)}</td>
                   <td>
-                    <button type="button" className="primary" onClick={() => void publish(row.policy_id)}>
-                      Publish
-                    </button>
-                    {" "}
-                    <button
-                      type="button"
-                      className="linkish"
-                      onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
-                    >
-                      Open
-                    </button>
+                    <span className="inline-actions">
+                      <button type="button" className="primary" onClick={() => void publish(row.policy_id)}>
+                        Publish
+                      </button>
+                      <button
+                        type="button"
+                        className="linkish"
+                        onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
+                      >
+                        Open
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}

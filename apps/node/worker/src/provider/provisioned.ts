@@ -1,3 +1,5 @@
+import { type AddressRouting, addressRouting } from "@mailda/contract/schemas";
+
 /**
  * What this Node's Cloudflare setup has been observed to do, from the audit trail (25 September 2026).
  *
@@ -26,6 +28,13 @@ export interface ProvisionedAct {
   address: string | null;
   /** True when this Node did not do it: Cloudflare reported it in place already, and the entry records the sighting. */
   observed: boolean;
+  /**
+   * Receiving only: how `address` was routed when the act ended, from the `provider.receiving_routed` entry
+   * written after it (28 September 2026). The intent entry is written before Cloudflare is asked anything, so on
+   * its own it called an address set up that a rule of its own sent to another Worker. Null for sending and
+   * outcomes, and for an onboard from before that date, which recorded no outcome and reads as it always did.
+   */
+  routing: AddressRouting | null;
 }
 
 export interface Provisioned {
@@ -35,24 +44,39 @@ export interface Provisioned {
 }
 
 export async function provisionedFacts(env: Env, orgId: string): Promise<Provisioned> {
-  const actions = Object.values(ACTIONS).flat();
+  const actions = [...Object.values(ACTIONS).flat(), "provider.receiving_routed"];
   const rows = await env.CATALOG.prepare(
     `SELECT action, subject, at, detail FROM audit_entries WHERE org_id = ? AND action IN (${actions.map(() => "?").join(", ")}) `
     + "ORDER BY seq DESC",
   ).bind(orgId, ...actions)
     .all<{ action: string; subject: string | null; at: string; detail: string | null }>();
 
+  const parse = (text: string | null): Record<string, unknown> => {
+    try { return JSON.parse(text ?? "{}") as Record<string, unknown>; } catch { return {}; }
+  };
   const latest = (of: readonly string[]): ProvisionedAct | null => {
-    const row = rows.results.find((one) => of.includes(one.action));
+    const at = rows.results.findIndex((one) => of.includes(one.action));
+    const row = rows.results[at];
     if (row === undefined || row.subject === null) return null;
-    let detail: Record<string, unknown> = {};
-    try { detail = JSON.parse(row.detail ?? "{}") as Record<string, unknown>; } catch { detail = {}; }
+    const detail = parse(row.detail);
     const authority = detail.authority === "token" || detail.authority === "grant" || detail.authority === "operator" ? detail.authority : "unknown";
-    return {
-      domain: row.subject, at: row.at, authority,
-      address: typeof detail.address === "string" ? detail.address : null,
-      observed: row.action.endsWith("_observed"),
-    };
+    const address = typeof detail.address === "string" ? detail.address : null;
+    /*
+     * The outcome of this act is the routing entry newer than it, on its domain. An intent entry that promised
+     * one (`routingFollows`) and has none stopped part-way, and is not confirmed; one from before outcomes were
+     * recorded has none to find.
+     */
+    const outcome = row.action === "provider.receiving_onboarded"
+      ? rows.results.slice(0, at).filter((one) => one.action === "provider.receiving_routed" && one.subject === row.subject).at(-1)
+      : undefined;
+    const said = outcome === undefined ? null : parse(outcome.detail);
+    const recorded = said === null ? null : addressRouting.safeParse({ state: said.routing, detail: said.routingDetail });
+    const routing: AddressRouting | null = recorded?.success === true
+      ? recorded.data
+      : detail.routingFollows === true
+        ? { state: "unconfirmed", detail: `the onboarding of ${address ?? row.subject} recorded no routing outcome, so it may have stopped part-way; \`mailda setup\` shows where it stands` }
+        : null;
+    return { domain: row.subject, at: row.at, authority, address, observed: row.action.endsWith("_observed"), routing };
   };
   return {
     receiving: latest(ACTIONS.receiving),

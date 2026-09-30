@@ -7,6 +7,8 @@ import {
 import { holdToken } from "./support/provider-token.ts";
 import { addAddress, onboardReceiving, receivingProposalFor, removeAddress } from "../src/provider/receiving.ts";
 import { putBackRule } from "../src/provider/routing-rules.ts";
+import { provisionedFacts } from "../src/provider/provisioned.ts";
+import { auditedBatch } from "../src/audit.ts";
 
 /**
  * Pointing a subdomain at this Node to receive (#163 L2), and the inert rule it exists to prevent.
@@ -262,7 +264,11 @@ describe("proposing to receive on a subdomain", () => {
   it("keeps a rule that already routes the address rather than asking Cloudflare for a duplicate", async () => {
     // The #92 drill's third run: Cloudflare answers `2014 Duplicated Zone rule` to a second identical rule.
     const calls = serving({
-      rules: [{ name: "mailda mail.example.test", matchers: [{ field: "to", value: "Inbox@mail.example.test" }] }],
+      rules: [{
+        name: "mailda mail.example.test", enabled: true,
+        matchers: [{ type: "literal", field: "to", value: "Inbox@mail.example.test" }],
+        actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }],
+      }],
       existingMx: [{ content: "route1.mx.cloudflare.net." }],
     });
     const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
@@ -272,6 +278,23 @@ describe("proposing to receive on a subdomain", () => {
     expect(posted(calls, "/email/routing/rules")).toHaveLength(0);
     expect(outcome.rule).toBe("mailda mail.example.test");
     expect(outcome.note).toContain("kept rather than duplicated");
+  });
+
+  it("keeps only a rule that delivers here: one that forwards the address elsewhere is named, not kept and not rewritten", async () => {
+    // A rule matching the address is not "already routed here" unless it is enabled and names this Worker.
+    const calls = serving({
+      rules: [{ id: "rule_inbox", name: "to gmail", enabled: true, matchers: [{ type: "literal", field: "to", value: "inbox@mail.example.test" }], actions: [{ type: "forward", value: ["somebody@gmail.test"] }] }],
+      existingMx: [{ content: "route1.mx.cloudflare.net." }],
+    });
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    const outcome = await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+    );
+    // Null: no rule routes the address here, which is what the CLI's summary is built from.
+    expect(outcome.rule).toBeNull();
+    expect(outcome.note).toContain("forward to somebody@gmail.test");
+    expect(outcome.note).toContain("mailda provider --take-over rule_inbox --domain mail.example.test");
+    expect(calls.filter((one) => one.url.includes("/email/routing/rules") && one.method !== "GET")).toEqual([]);
   });
 
   it("refuses to choose a mailbox when there are several, and an address off the subdomain", async () => {
@@ -449,6 +472,37 @@ describe("onboarding it", () => {
     )).rejects.toThrow(/E_RECEIVING_ZONE_STILL_OFF/);
     expect(posted(calls, "/email/routing/dns")).toEqual([]);
     expect(posted(calls, "/email/routing/rules")).toEqual([]);
+    // The intent was recorded before Cloudflare was asked; so is the stop, and the record is not "set up".
+    const facts = await provisionedFacts(testEnv, ORG);
+    expect(facts.receiving?.routing?.state).toBe("not_written");
+    expect(facts.receiving?.routing?.detail).toContain("E_RECEIVING_ZONE_STILL_OFF");
+  });
+
+  it("records how the address is routed after the act, beside the intent and never on it", async () => {
+    // 28 September 2026: the intent alone read as set up on every run after the first, whatever the act found.
+    serving();
+    const digest = await digestFor();
+    serving();
+    const outcome = await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test");
+    expect(outcome.routing).toEqual({ state: "rule_written", detail: "a rule now routes restore@mail.example.test to this Node" });
+    const entries = await testEnv.CATALOG.prepare("SELECT action, detail FROM audit_entries WHERE org_id = ? ORDER BY seq").bind(ORG).all<{ action: string; detail: string }>();
+    const actions = entries.results.map((one) => one.action);
+    expect(actions.indexOf("provider.receiving_routed")).toBeGreaterThan(actions.indexOf("provider.receiving_onboarded"));
+    expect(JSON.parse(entries.results.find((one) => one.action === "provider.receiving_routed")!.detail))
+      .toMatchObject({ address: "restore@mail.example.test", routing: "rule_written" });
+    expect((await provisionedFacts(testEnv, ORG)).receiving?.routing?.state).toBe("rule_written");
+  });
+
+  it("reads an onboarding with no recorded outcome by when it was written: before outcomes, as it was; after, as unconfirmed", async () => {
+    const record = async (at: number, detail: Record<string, unknown>) => await auditedBatch(testEnv, atTime(at), ORG, {
+      action: "provider.receiving_onboarded", outcome: "ok", actorUserId: ADMIN, subject: "mail.example.test", detail,
+    }, (entry) => [entry]);
+    await record(AT + 1000, { address: "old@mail.example.test", authority: "operator" });
+    expect((await provisionedFacts(testEnv, ORG)).receiving?.routing).toBeNull();
+    await record(AT + 2000, { address: "new@mail.example.test", authority: "operator", routingFollows: true });
+    const stopped = (await provisionedFacts(testEnv, ORG)).receiving?.routing;
+    expect(stopped?.state).toBe("unconfirmed");
+    expect(stopped?.detail).toContain("recorded no routing outcome");
   });
 
   it("writes nothing when the proposal refuses", async () => {
@@ -521,6 +575,81 @@ describe("the apex catch-all", () => {
     expect(sub.catchAll).toBeNull();
   });
 
+  /*
+   * The addresses a take-over does not reach (28 September 2026). A literal rule outranks the catch-all, and the
+   * prompt offering "every address" read as literally all on a zone where sales@, contact@ and info@ went to another
+   * Worker. Classified by `classifyAddress`; a subdomain's rule is not the apex's; unread is an error, never none.
+   */
+  it("lists every address on the domain with a rule of its own, classified, and where it goes", async () => {
+    const literal = (id: string, to: string, action: { type: string; value?: string[] }, enabled = true) =>
+      ({ id, name: id, enabled, matchers: [{ type: "literal", field: "to", value: to }], actions: [action] });
+    serving({
+      existingMx: [],
+      rules: [
+        { id: "catch_all_id", name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "drop" }] },
+        literal("r1", "Sales@example.test", { type: "worker", value: ["info-worker"] }),
+        literal("r2", "weimeng@example.test", { type: "forward", value: ["weimeng@gmail.test"] }),
+        literal("r3", "hello@example.test", { type: "worker", value: [testEnv.WORKER_NAME] }),
+        literal("r4", "old@example.test", { type: "forward", value: ["old@gmail.test"] }, false),
+        literal("r5", "a@mail.example.test", { type: "worker", value: ["info-worker"] }),
+      ],
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules).toEqual({
+      error: null,
+      addresses: [
+        { address: "hello@example.test", state: "rule_written", where: `worker to ${testEnv.WORKER_NAME}` },
+        { address: "old@example.test", state: "rule_disabled", where: "forward to old@gmail.test" },
+        { address: "sales@example.test", state: "routed_elsewhere", where: "worker to info-worker" },
+        { address: "weimeng@example.test", state: "routed_elsewhere", where: "forward to weimeng@gmail.test" },
+      ],
+    });
+    const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    expect(sub.ownRules.addresses.map((one) => one.address)).toEqual(["a@mail.example.test"]);
+  });
+
+  it("says the list could not be read, rather than empty, when the rules cannot be listed", async () => {
+    serving({ existingMx: [] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (/\/email\/routing\/rules(\?|$)/.test(String(url).replace("https://api.cloudflare.com/client/v4", ""))) {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules.addresses).toEqual([]);
+    expect(apex.ownRules.error).toContain("Authentication error");
+    // A proposal that stopped before reading the rules says so, with the reason it stopped.
+    const nowhere = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "elsewhere.test");
+    expect(nowhere.ownRules).toEqual({ addresses: [], error: "not read: no zone in this account carries elsewhere.test" });
+  });
+
+  it("says which rules route here is unknown, rather than calling this Node's rule elsewhere, without a Worker name", async () => {
+    serving({ existingMx: [], rules: [{ id: "r3", name: "hello", enabled: true, matchers: [{ type: "literal", field: "to", value: "hello@example.test" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] }] });
+    const nameless = { ...testEnv, WORKER_NAME: undefined } as unknown as Env;
+    const apex = await receivingProposalFor(nameless, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.ownRules).toEqual({ addresses: [], error: expect.stringContaining("does not know its own Worker name") });
+  });
+
+  it("refuses a confirmation as stale when a rule of an address's own changed after the proposal was shown", async () => {
+    // One rule already there, so the proposal's `rule` (the first rule on the domain) is the same before and after.
+    const rules: unknown[] = [{ id: "r0", name: "sales", enabled: true, matchers: [{ type: "literal", field: "to", value: "sales@example.test" }], actions: [{ type: "worker", value: ["info-worker"] }] }];
+    servingApex({ action: "drop", enabled: false });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (/\/email\/routing\/rules(\?|$)/.test(path) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: true, result: rules }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    rules.push({ id: "r1", name: "info", enabled: true, matchers: [{ type: "literal", field: "to", value: "info@example.test" }], actions: [{ type: "worker", value: ["info-worker"] }] });
+    await expect(onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true))
+      .rejects.toThrow(/E_RECEIVING_STALE/);
+  });
+
   it("refuses catchAll on a subdomain, by name", async () => {
     servingApex({ action: "drop", enabled: false });
     const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
@@ -533,6 +662,8 @@ describe("the apex catch-all", () => {
     const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
     const outcome = await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
     expect(outcome.rule).toBe("catch-all");
+    // The listing here carries no catch-all row (it may lag the PUT): the read-back is what says it covers hello@.
+    expect(outcome.routing.state).toBe("catch_all");
     expect(outcome.catchAll?.before).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
     expect(outcome.catchAll?.after.destinations).toEqual([testEnv.WORKER_NAME]);
     expect(outcome.confirmed).toEqual([`catch-all → ${testEnv.WORKER_NAME}`]);
@@ -551,6 +682,48 @@ describe("the apex catch-all", () => {
     expect(JSON.parse(taken!.detail).before).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
     const onboarded = entries.results.find((one) => one.action === "provider.receiving_onboarded");
     expect(JSON.parse(onboarded!.detail).catchAll).toBe(true);
+  });
+
+  it("says when the first address has a rule of its own, which the catch-all it just took cannot reach", async () => {
+    const { calls } = servingApex({ action: "drop", enabled: false });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (/\/email\/routing\/rules(\?|$)/.test(path) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: true, result: [{ id: "rule_admin", name: "info", enabled: true, matchers: [{ type: "literal", field: "to", value: "admin@example.test" }], actions: [{ type: "worker", value: ["info-worker"] }] }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    const outcome = await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "admin@example.test", null, true);
+    expect(outcome.catchAll?.after.destinations).toEqual([testEnv.WORKER_NAME]);
+    expect(outcome.rule).toBe("catch-all");
+    expect(outcome.routing.state).toBe("routed_elsewhere");
+    expect(outcome.routing.detail).toContain("worker to info-worker");
+    expect(outcome.note).toContain("worker to info-worker");
+    expect(calls.filter((one) => /\/email\/routing\/rules\/rule_admin/.test(one.url))).toEqual([]);
+    // Recorded after the act, so a re-run and the Setup progress read it rather than the intent (IR-1).
+    const recorded = (await provisionedFacts(testEnv, ORG)).receiving;
+    expect(recorded?.address).toBe("admin@example.test");
+    expect(recorded?.routing?.state).toBe("routed_elsewhere");
+  });
+
+  it("says unconfirmed, not routed, when the rules cannot be read after taking the catch-all", async () => {
+    servingApex({ action: "drop", enabled: false });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (/\/email\/routing\/rules(\?|$)/.test(path) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    const outcome = await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    expect(outcome.rule).toBe("catch-all");
+    expect(outcome.routing.state).toBe("unconfirmed");
+    expect(outcome.routing.detail).toContain("could not check whether hello@example.test has an Email Routing rule of its own");
+    expect(outcome.note).toContain("could not check");
   });
 
   it("puts the catch-all back to what the take-over recorded, through the catch-all's own endpoint", async () => {
@@ -580,26 +753,135 @@ describe("the apex catch-all", () => {
 });
 
 describe("adding an address routes it in the same act", () => {
-  it("writes nothing under a domain whose catch-all was taken over, and says so", async () => {
-    const { calls } = (() => {
-      const calls = serving({ existingMx: [] });
-      const base = globalThis.fetch;
-      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
-        const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
-        if (path.endsWith("/rules/catch_all")) return new Response(JSON.stringify({ success: true, result: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] } }), { status: 200, headers: { "content-type": "application/json" } });
-        return base(url, init);
-      });
-      return { calls };
-    })();
+  /** The zone's catch-all as the rules listing carries it (`email-routing-rule-takeover.md`), pointing here. */
+  const CATCH_ALL_HERE = { id: "catch_all_id", name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] };
+  const writes = (calls: Array<{ url: string; method: string }>) => calls.filter((one) => one.method !== "GET");
+
+  /** Onboards example.test with its catch-all taken over, so this Node's own history says the catch-all is its. */
+  async function tookOverCatchAll(rules: unknown[]) {
+    const calls = serving({ existingMx: [], rules });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (path.endsWith("/rules/catch_all")) return new Response(JSON.stringify({ success: true, result: CATCH_ALL_HERE }), { status: 200, headers: { "content-type": "application/json" } });
+      return base(url, init);
+    });
     const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
     await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    return calls;
+  }
+
+  it("writes nothing under a domain whose catch-all points here, read live, and says so", async () => {
+    const calls = await tookOverCatchAll([CATCH_ALL_HERE]);
     const before = calls.length;
     const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "Sales@Example.test", null);
     expect(added.routing.state).toBe("catch_all");
     expect(added.address.address).toBe("sales@example.test");
-    expect(calls.length).toBe(before);
+    expect(writes(calls.slice(before))).toEqual([]);
     const rows = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ? ORDER BY address").bind(ORG).all<{ address: string }>();
     expect(rows.results.map((one) => one.address)).toEqual(["hello@example.test", "sales@example.test"]);
+  });
+
+  it("never reads the catch-all among the rules as an address's own rule, whatever its matcher", async () => {
+    // The live listing carried a row with no matcher at all pointing at the Node: the catch-all, not a literal match.
+    const bare = { ...CATCH_ALL_HERE, matchers: [] };
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [bare] });
+    const apex = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@example.test", null);
+    expect(apex.routing.state).toBe("catch_all");
+    expect(writes(calls)).toEqual([]);
+    // A subdomain is not the catch-all's to route (apex only), so it still gets its own rule.
+    const sub = await addAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(sub.routing.state).toBe("rule_written");
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
+  });
+
+  it("does not read another address's rule to this Node as a catch-all", async () => {
+    const hello = { id: "rule_hello", name: "mailda example.test", enabled: true, matchers: [{ type: "literal", field: "to", value: "hello@example.test" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] };
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [hello] });
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@example.test", null);
+    expect(added.routing.state).toBe("rule_written");
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
+  });
+
+  it("names a rule of the address's own that sends it to another Worker, under a catch-all that points here, and changes nothing", async () => {
+    // The live case of 28 September 2026: admin@ had a literal rule to another Worker, which outranks the catch-all.
+    const theirs = { id: "rule_admin", name: "info", enabled: true, matchers: [{ type: "literal", field: "to", value: "admin@example.test" }], actions: [{ type: "worker", value: ["info-worker-example"] }] };
+    const calls = await tookOverCatchAll([CATCH_ALL_HERE, theirs]);
+    const before = calls.length;
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "admin@example.test", null);
+    expect(added.routing.state).toBe("routed_elsewhere");
+    expect(added.routing.detail).toContain("worker to info-worker-example");
+    // The two steps that work: the listing prints the digest, and a take-over without `--confirm` is refused.
+    expect(added.routing.detail).toContain("mailda provider --routing-rules example.test");
+    expect(added.routing.detail).toContain("mailda provider --take-over rule_admin --domain example.test --confirm <digest>");
+    expect(writes(calls.slice(before))).toEqual([]);
+    const entry = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'address.added'").bind(ORG).first<{ detail: string }>();
+    expect(JSON.parse(entry!.detail).routing).toBe("routed_elsewhere");
+  });
+
+  it("says unconfirmed, never catch_all, when a catch-all this Node took over cannot be read to check", async () => {
+    await tookOverCatchAll([CATCH_ALL_HERE]);
+    await testEnv.CATALOG.prepare("DELETE FROM provider_token").run();
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "admin@example.test", null);
+    expect(added.routing.state).toBe("unconfirmed");
+    expect(added.routing.detail).toContain("could not check whether admin@example.test has an Email Routing rule of its own");
+    expect(added.routing.detail).toContain("holds no Cloudflare token");
+  });
+
+  it("reads whether this Node holds the catch-all from the catch-all's own entries, not from the latest onboard", async () => {
+    // The recommended way to route one more address on an apex is an onboard without the catch-all; that does not
+    // give the catch-all back, so an unread answer after it is still `unconfirmed`, and after a put-back it is not.
+    await tookOverCatchAll([CATCH_ALL_HERE]);
+    await testEnv.CATALOG.prepare("DELETE FROM provider_token").run();
+    const entry = async (at: number, action: "provider.receiving_onboarded" | "provider.catch_all_put_back", detail: Record<string, unknown>) =>
+      await auditedBatch(testEnv, atTime(at), ORG, { action, outcome: "ok", actorUserId: ADMIN, subject: "example.test", detail }, (one) => [one]);
+    await entry(AT + 4500, "provider.receiving_onboarded", { address: "sales@example.test", catchAll: false });
+    expect((await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "ops@example.test", null)).routing.state).toBe("unconfirmed");
+    await entry(AT + 5500, "provider.catch_all_put_back", {});
+    expect((await addAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "info@example.test", null)).routing.state).toBe("not_written");
+  });
+
+  it("writes no rule when the rules cannot be read, since one may already route the address", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (/\/email\/routing\/rules(\?|$)/.test(String(url).replace("https://api.cloudflare.com/client/v4", "")) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(added.routing.state).toBe("not_written");
+    expect(added.routing.detail).toContain("10000 Authentication error");
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(0);
+  });
+
+  it("names a forward or a disabled rule on the address, and writes no second rule over it", async () => {
+    const forward = { id: "rule_sales", name: "to gmail", enabled: true, matchers: [{ type: "literal", field: "to", value: "sales@mail.example.test" }], actions: [{ type: "forward", value: ["somebody@gmail.test"] }] };
+    const disabled = { id: "rule_ops", name: "mailda mail.example.test", enabled: false, matchers: [{ type: "literal", field: "to", value: "ops@mail.example.test" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] };
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [forward, disabled] });
+    const sales = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(sales.routing.state).toBe("routed_elsewhere");
+    expect(sales.routing.detail).toContain("forward to somebody@gmail.test");
+    const ops = await addAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "ops@mail.example.test", null);
+    expect(ops.routing.state).toBe("rule_disabled");
+    // It names this Node, so enabling it is the step; take-over would keep it disabled and refuses one naming us.
+    expect(ops.routing.detail).toContain("which is disabled");
+    expect(ops.routing.detail).toContain("enable it in the Cloudflare dashboard");
+    expect(ops.routing.detail).not.toContain("--take-over");
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it("never reads a disabled rule of the address's own as the catch-all's, or as elsewhere", async () => {
+    // Cloudflare does not say whether a disabled rule leaves the address to the catch-all, so neither is claimed.
+    const disabled = { id: "rule_admin", name: "info", enabled: false, matchers: [{ type: "literal", field: "to", value: "admin@example.test" }], actions: [{ type: "worker", value: ["info-worker-example"] }] };
+    const calls = await tookOverCatchAll([CATCH_ALL_HERE, disabled]);
+    const before = calls.length;
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "admin@example.test", null);
+    expect(added.routing.state).toBe("rule_disabled");
+    expect(added.routing.detail).toContain("enabled, it would be worker to info-worker-example");
+    expect(added.routing.detail).toContain("delete it in the Cloudflare dashboard");
+    expect(writes(calls.slice(before))).toEqual([]);
   });
 
   it("writes a literal rule on a subdomain routed by rules, and keeps an existing one", async () => {
@@ -675,6 +957,44 @@ describe("removing an address undoes its routing", () => {
     expect(row).toBeNull();
   });
 
+  it("leaves a disabled rule, even one naming this Worker: only a rule that delivers here is this Node's to delete", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [{ ...OURS, enabled: false }] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test");
+    expect(gone.routing.state).toBe("not_removed");
+    expect(gone.routing.detail).toContain("is disabled");
+    expect(gone.routing.detail).not.toContain("not this Node");
+    expect(deleted(calls)).toEqual([]);
+  });
+
+  it("puts nothing it took over in the bin: a taken-over rule is left and its put-back named", async () => {
+    // The rule reads as this Node's (enabled, a Worker action naming it), but the customer wrote it and this
+    // Node only replaced its action; deleting it would lose where it went before, and the put-back with it.
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    await auditedBatch(testEnv, atTime(AT + 5500), ORG, {
+      action: "provider.routing_rule_taken_over", outcome: "ok", actorUserId: ADMIN, subject: "rule_sales",
+      detail: { zone: "example.test", to: "sales@mail.example.test", name: OURS.name, before: { action: "forward", destinations: ["sales@gmail.test"] }, after: { action: "worker", destinations: [testEnv.WORKER_NAME] } },
+    }, (entry) => [entry]);
+    const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test");
+    expect(deleted(calls)).toEqual([]);
+    expect(gone.routing.state).toBe("not_removed");
+    expect(gone.routing.detail).toContain("taken over by this Node from forward to sales@gmail.test");
+    expect(gone.routing.detail).toContain("mailda provider --put-back rule_sales --domain mail.example.test");
+    expect(gone.routing.detail).not.toContain("delete the rule in the Cloudflare dashboard");
+  });
+
+  it("deletes a rule it put back and then routed again by its own hand, since the latest record is the put-back", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
+    await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    for (const [at, action] of [[AT + 5100, "provider.routing_rule_taken_over"], [AT + 5200, "provider.routing_rule_put_back"]] as const) {
+      await auditedBatch(testEnv, atTime(at), ORG, { action, outcome: "ok", actorUserId: ADMIN, subject: "rule_sales", detail: {} }, (entry) => [entry]);
+    }
+    const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test");
+    expect(gone.routing.state).toBe("rule_removed");
+    expect(deleted(calls)).toEqual(["/zones/zone_1/email/routing/rules/rule_sales"]);
+  });
+
   it("refuses an address that has received mail, before touching the rule, because the row files every message under it", async () => {
     const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
     await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
@@ -689,8 +1009,8 @@ describe("removing an address undoes its routing", () => {
     await testEnv.CATALOG.prepare("DELETE FROM ingress_receipts WHERE org_id = ?").bind(ORG).run();
   });
 
-  it("writes nothing under a domain whose catch-all was taken over, and refuses an address it does not hold", async () => {
-    const calls = serving({ existingMx: [] });
+  it("writes nothing under a domain whose catch-all points here, and refuses an address it does not hold", async () => {
+    const calls = serving({ existingMx: [], rules: [{ id: "catch_all_id", name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] }] });
     const base = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (String(url).endsWith("/rules/catch_all")) return new Response(JSON.stringify({ success: true, result: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] } }), { status: 200, headers: { "content-type": "application/json" } });
@@ -701,7 +1021,7 @@ describe("removing an address undoes its routing", () => {
     const before = calls.length;
     const gone = await removeAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "hello@example.test");
     expect(gone.routing.state).toBe("catch_all");
-    expect(calls.length).toBe(before);
+    expect(deleted(calls.slice(before))).toEqual([]);
     await expect(removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "hello@example.test")).rejects.toThrow(/E_NO_SUCH_ADDRESS/);
   });
 });

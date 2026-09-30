@@ -205,17 +205,20 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
      * deliberately left no routing rule — a rule pointing at records that are not there is a rule that says
      * a domain receives mail when nothing reaches Cloudflare at all.
      */
+    // Whether the address itself reaches this Node is `routing`, whichever path was taken: a rule of its own
+    // outranks the catch-all, and a check that could not be made is said, never read as fine (28 September 2026).
+    const here = done.routing.state === "catch_all" || done.routing.state === "rule_written";
     setOutcome(
       done.catchAll !== null
         ? `The catch-all on ${done.domain} now routes to this Node (before: ${done.catchAll.before.action}`
           + `${done.catchAll.before.destinations.length === 0 ? "" : ` → ${done.catchAll.before.destinations.join(", ")}`}`
-          + `${done.catchAll.before.enabled ? "" : ", disabled"}). Addresses are managed on this Node from here; `
-          + "put it back from Routing rules."
+          + `${done.catchAll.before.enabled ? "" : ", disabled"}). Addresses without a rule of their own are managed on this `
+          + `Node from here; put it back from Routing rules.${here ? "" : ` ${done.routing.detail}`}`
         : done.confirmed.length === 0
           ? `Nothing was confirmed in DNS for ${done.domain}, so no routing rule was made.`
             + `${done.note === null ? "" : ` ${done.note}`}`
           : `${done.domain} now has ${done.confirmed.length} confirmed record(s)`
-            + `${done.rule === null ? " and no rule" : ` and mail is routed to ${done.rule}`}.`,
+            + `${here ? ` and mail is routed to ${done.rule ?? "?"}.` : ` and no rule routes the address here. ${done.routing.detail}`}`,
     );
     await refresh();
   }
@@ -355,15 +358,15 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
                   id="setup-receive-catch-all" type="checkbox" checked={catchAll}
                   onChange={(event) => setCatchAll(event.target.checked)}
                 />
-                <span>Route every address at {plan.domain} to this Node (catch-all)</span>
+                <span>Route every address at {plan.domain} without a rule of its own to this Node (catch-all)</span>
               </label>
               <p className="dim">
                 {plan.catchAll === null
                   ? "No catch-all is set on this zone today."
                   : `Currently: ${plan.catchAll.action}${plan.catchAll.destinations.length === 0 ? "" : ` → ${plan.catchAll.destinations.join(", ")}`}, ${plan.catchAll.enabled ? "enabled" : "disabled"}.`}
-                {" "}Addresses are then managed on this Node, an address it does not know bounces, and rules
-                already on the zone for single addresses keep priority.
+                {" "}Addresses are then managed on this Node, and an address it does not know bounces.
               </p>
+              <OwnRules domain={plan.domain} rules={plan.ownRules} />
             </div>
           ) : (
             <p className="dim">
@@ -387,6 +390,46 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
 
       <ExistingRules boxes={boxes} refresh={refresh} />
     </section>
+  );
+}
+
+/**
+ * The addresses with a routing rule of their own (28 September 2026). An enabled literal rule outranks the
+ * catch-all, so "every address" read as literally all while `sales@` and `info@` went on to another Worker. Named
+ * with where each goes, from the Node's classification; the take-over never touches them. A disabled rule's row
+ * says Cloudflare does not say whether the catch-all then applies, so the heading claims only enabled ones.
+ * Unread is said, never "none".
+ */
+function OwnRules({ domain, rules }: { domain: string; rules: ReceivingProposal["ownRules"] }) {
+  if (rules.error !== null) {
+    return (
+      <p className="notice bad" role="alert">
+        Which addresses at {domain} have a routing rule of their own could not be read, so what the catch-all
+        would not reach is unknown: {rules.error}
+      </p>
+    );
+  }
+  if (rules.addresses.length === 0) return <p className="dim">No address at {domain} has a routing rule of its own.</p>;
+  return (
+    <>
+      <p>
+        Addresses at {domain} with a routing rule of their own ({rules.addresses.length}). An enabled rule
+        outranks the catch-all, so the catch-all does not reach that address; this Node leaves every one of these
+        rules as it is.
+      </p>
+      <ul>
+        {rules.addresses.map((one) => (
+          <li key={one.address}>
+            <span className="mono">{one.address}</span>:{" "}
+            {one.state === "rule_written"
+              ? "this Node"
+              : one.state === "rule_disabled"
+                ? `disabled (enabled, it would be ${one.where}); Cloudflare does not say whether the catch-all then applies`
+                : one.where}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

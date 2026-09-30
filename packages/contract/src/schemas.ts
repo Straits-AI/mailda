@@ -233,6 +233,22 @@ export const providerStateResponse = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * How one address is routed, read live from its zone's Email Routing rules (28 September 2026). `catch_all` when
+ * the apex's catch-all points here and the address has no rule of its own; `rule_written` when a literal rule
+ * routing it here was written in this act or already existed and was kept; `routed_elsewhere` when an enabled rule
+ * of its own sends it somewhere else (a forward, another Worker, a drop), named in `detail` and left as it is;
+ * `rule_disabled` when its own rule is disabled, named and left, since Cloudflare does not say whether the
+ * catch-all then applies; `unconfirmed` when this Node could not check (it took the domain's catch-all over but
+ * could not read the rules, or an onboarding recorded no outcome); `not_written` with the reason and the next
+ * step, because an address the Node knows and Cloudflare does not route is silent. Only the first two route here.
+ */
+export const addressRouting = z.object({
+  state: z.enum(["catch_all", "rule_written", "routed_elsewhere", "rule_disabled", "unconfirmed", "not_written"]),
+  detail: z.string().min(1),
+}).strict();
+export type AddressRouting = z.infer<typeof addressRouting>;
+
 /** One provisioning act as the audit trail recorded it: the domain, when, and which credential acted. */
 export const provisionedAct = z.object({
   domain: z.string().min(1),
@@ -242,6 +258,11 @@ export const provisionedAct = z.object({
   address: z.string().nullable(),
   /** True when the entry records a sighting, not an act: Cloudflare had it in place before this Node asked. */
   observed: z.boolean(),
+  /**
+   * Receiving only: how `address` was routed when the act ended, recorded after it (28 September 2026). Null for
+   * sending and outcomes, and for a receiving act from before that date, which recorded no outcome.
+   */
+  routing: addressRouting.nullable(),
 }).strict();
 
 export const providerResponse = z.object({
@@ -593,8 +614,23 @@ export const providerReceivingProposalResponse = z.object({
     apex: z.boolean(),
     /** The zone's current catch-all rule, read when `apex`; null otherwise. What a take-over replaces. */
     catchAll: catchAllRule.nullable(),
+    /**
+     * Every address on `domain` with an Email Routing rule of its own (28 September 2026), in `addressRouting`'s
+     * words, and where the rule sends it in Cloudflare's (`forward to a@b`, `worker to other`). A literal rule
+     * outranks the catch-all, so these are the addresses a take-over does not reach; this Node never rewrites
+     * them. `error` when the rules could not be read, and then the list is unknown, not empty.
+     */
+    ownRules: z.object({
+      addresses: z.array(z.object({
+        address: z.string().min(3),
+        state: addressRouting.shape.state.extract(["rule_written", "routed_elsewhere", "rule_disabled"]),
+        where: z.string().min(1),
+      }).strict()),
+      error: z.string().nullable(),
+    }).strict(),
   }).strict(),
 }).strict();
+export type ProviderReceivingProposal = z.infer<typeof providerReceivingProposalResponse>["proposal"];
 
 /** `confirmed` is read back from Cloudflare — a write that answered 200 is not a record in DNS. */
 export const providerReceivingOutcomeResponse = z.object({
@@ -602,7 +638,14 @@ export const providerReceivingOutcomeResponse = z.object({
     domain: z.string().min(1),
     written: z.array(z.string()),
     confirmed: z.array(z.string()),
+    /**
+     * What this act wrote or kept: `catch-all` when it took the catch-all over, the literal rule's name when one
+     * routing the address here was written or kept, null when neither. Whether the address reaches this Node is
+     * `routing`, since a rule of its own outranks the catch-all.
+     */
     rule: z.string().nullable(),
+    /** How the address named in the request is routed now, in `POST /api/addresses`'s words. */
+    routing: addressRouting,
     note: z.string().nullable(),
     /** Set when the catch-all was taken over: what it pointed at before, and what it points at now. */
     catchAll: z.object({ before: catchAllRule, after: catchAllRule }).strict().nullable(),
@@ -636,15 +679,8 @@ export const addressCreatedResponse = z.object({
     address: z.string().min(3),
     mailboxId: z.string().min(1),
   }).strict(),
-  /**
-   * Whether mail for it reaches this Node: `catch_all` when the domain's catch-all already routes here;
-   * `rule_written` when a literal rule was written and read back in this act; `not_written` with the
-   * reason and the next step, because an address the Node knows and Cloudflare does not route is silent.
-   */
-  routing: z.object({
-    state: z.enum(["catch_all", "rule_written", "not_written"]),
-    detail: z.string().min(1),
-  }).strict(),
+  /** Whether mail for it reaches this Node, read live from the zone's rules; see `addressRouting`. */
+  routing: addressRouting,
 }).strict();
 
 /** The mirror of adding (26 September 2026): the address named, and the rule `POST /api/addresses` wrote for it. */
@@ -659,15 +695,18 @@ export const addressRemovedResponse = z.object({
     mailboxId: z.string().min(1),
   }).strict(),
   /**
-   * What became of the routing: `catch_all` when the domain's catch-all routes here and no rule of its own
-   * existed; `rule_removed` when the literal rule naming this Worker was deleted in this act; `not_removed`
-   * with the reason and where to delete it, because a rule routing an unknown recipient here bounces mail.
+   * What became of the routing, read live from the zone's rules: `catch_all` when the apex's catch-all routes
+   * here and no rule of its own existed; `rule_removed` when its own rule, enabled and naming this Worker, was
+   * deleted in this act; `not_removed` with the reason and where to delete it, because a rule routing an
+   * unknown recipient here bounces mail. A rule that does not deliver here is never deleted, and nor is one this
+   * Node took over and has not put back: that answer names `mailda provider --put-back`.
    */
   routing: z.object({
     state: z.enum(["catch_all", "rule_removed", "not_removed"]),
     detail: z.string().min(1),
   }).strict(),
 }).strict();
+export type AddressRemoval = z.infer<typeof addressRemovedResponse>["routing"];
 
 /** The routing rules already on a zone (#258): what routes where, and whether each already names this Worker. */
 export const providerRoutingRulesResponse = z.object({

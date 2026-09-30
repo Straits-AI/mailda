@@ -1,6 +1,6 @@
 import { api, choose, fail, flag, readSecret, sessionCookie } from "../support.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
 
 /**
  * `mailda setup`: receiving, sending and delivery outcomes for a Node that is already deployed and claimed,
@@ -53,15 +53,18 @@ export async function setup(argv) {
       + "           the update runs this setup itself once the Node is current");
   }
   const said = (act, noun) => act === null ? "not set up" : `${act.domain}${noun}, ${act.at.slice(0, 10)}`;
+  // A receiving record whose address its recorded outcome says is not routed here is not set up (28 September 2026).
+  const unrouted = state.provisioned.receiving !== null && receivingOf(state.provisioned.receiving).receiving === null;
   process.stdout.write(
-    `\n   receiving   ${said(state.provisioned.receiving, state.provisioned.receiving?.address ? ` (${state.provisioned.receiving.address})` : "")}\n`
+    `\n   receiving   ${said(state.provisioned.receiving, state.provisioned.receiving?.address ? ` (${state.provisioned.receiving.address})` : "")}`
+    + `${unrouted ? "; its address is not routed here" : ""}\n`
     + `   sending     ${said(state.provisioned.sending, "")}\n`
     + `   outcomes    ${said(state.provisioned.deliveryEvents, "")}\n`,
   );
 
   process.stdout.write("\n== setting up\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
   const token = await wranglerToken();
-  const setUp = await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned });
+  const setUp = await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned, signInEmail: process.env.MAILDA_EMAIL });
   // After the three steps, always: which recipients are verified destinations changes with every send, so a
   // setup that found everything in place still reads it.
   await verifiedDestinationsStep({ origin: url, cookie, accountId, token });

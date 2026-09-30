@@ -754,13 +754,23 @@ screens already knew: `matters.tsx` writes *"No matters, or you do not hold org.
 contradicted it two words later on the same line. The reassurance is now opt-in via `unfiltered`, and a
 caller may only assert it where the query is not narrowed by a relation.
 
-## The composer's From selector, and why the words live outside React
+## The composer's From, and why the words live outside React
 
 A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1`, the
 oldest, so adding `billing@` to a support mailbox sent billing replies as `support@` with nothing saying so.
 The Node now refuses a send from a multi-address mailbox that does not name which address, listing them, and
-the composer renders a **From selector when and only when there is a choice**: a select with one option is
-furniture, and almost every mailbox has one address.
+the composer renders a **From selector when there is a choice**, starting from *Choose an address…* so the
+choice is never made for anybody (#94).
+
+**With one address From is a line, not nothing** (28 September 2026, Blueprint §4B.3: sender identity stays
+visible). It used to render no From at all, since a select with one option is furniture, and a founder who
+claimed the Node as `admin@` replied for days as the mailbox's `hello@` without the screen saying so. The line
+is the address and the mailbox's name, and under it a hint that an administrator adds more addresses on
+People. With no address the line says so, because the send will be refused with `E_MAILBOX_HAS_NO_ADDRESS`;
+while the mailboxes load it renders nothing rather than a wrong answer for a moment, and a list that failed, or
+that lacks this mailbox, is said on the line, because the Node still sends as the mailbox's address. The claim
+screen and `mailda install`'s claim say the same from the other end: the email signs you in, and mail goes out
+from a mailbox's address, which setup chooses.
 
 Two things about it were wrong on first render and were found by opening the composer rather than by the
 suite. It sat **below the message body**, so somebody wrote the whole reply and only then met a required
@@ -1180,10 +1190,19 @@ hashes the same. A button that posted a bare "yes" would mean *apply whatever th
 zone somebody has edited since is a different act from the one that was read.
 
 **Apex or subdomain** (25 September 2026). When the domain typed is a zone's own name the proposal says so and
-offers the catch-all: one rule pointing the whole domain here, the zone's current catch-all shown beside it
-(where it goes today, and that a put-back restores it), and every address thereafter managed on People with
-no further act in Cloudflare. On a subdomain Cloudflare allows literal rules only, and the screen says that
-each address gets its own rule, written when the address is added.
+offers the catch-all: one rule pointing the domain's unmatched mail here, the zone's current catch-all shown
+beside it (where it goes today, and that a put-back restores it), and every address without a rule of its own
+thereafter managed on People. An enabled literal rule outranks the catch-all, so an address with an Email Routing
+rule of its own keeps going where that rule sends it; of a disabled one Cloudflare does not say whether the
+catch-all then applies, and the list's row says so rather than the heading claiming it. The box says "without a rule of its own", and beneath it the
+proposal's `ownRules` lists every such address with where it goes (28 September 2026: on the live zone `sales@`,
+`contact@` and `info@` went to another Worker and one more address was forwarded, and "every address" read as
+all of them); rules that could not be read are said to leave the catch-all's reach unknown, never shown as none.
+The outcome and People both say the same of the address being added, from the zone's rules read live. On a subdomain
+Cloudflare allows literal rules only, and the screen says that each address gets its own rule, written when
+the address is added. The outcome's `routing` says whether the address itself reaches this Node, in People's
+words, and when it does not (a rule of its own elsewhere or disabled, nothing written, or its rules unreadable
+after the catch-all was taken) its detail is shown whole, on either path.
 
 Three things the screen must not round off, each with a test:
 
@@ -1320,12 +1339,38 @@ the outcome beside the address: routed, already routed by the catch-all, or `not
 that writes it. The last is said in those words: an address that files and nothing routes is the state the
 receiving step exists to prevent, and a green row over it would be the lie.
 
+**Which of those it is comes from the zone's rules, read live** (28 September 2026). It used to come from this
+Node's own record of taking the catch-all over, which cannot see a rule somebody else wrote: `admin@` had a
+literal rule to another Worker, which outranks the catch-all, and adding it said *routed by the domain's
+catch-all*. A rule on the address counts as routing here only when it is enabled and its action is a Worker
+action naming this Worker; a forward, another Worker or a drop is `routed_elsewhere`, rendered whole with where
+it goes and the two commands that would change it (`mailda provider --routing-rules`, which prints the digest,
+then `--take-over <id> --confirm <digest>`), and never rewritten. A disabled rule is `rule_disabled`: Cloudflare
+does not say whether the catch-all then applies, so the detail claims neither and names enabling or deleting it
+in the dashboard, since a take-over keeps a rule disabled. When
+the rules cannot be read nothing is written, since one may already route the address; on a domain whose
+catch-all this Node took over that answer is `unconfirmed` and says what it could not check, never the
+catch-all's *nothing to do in Cloudflare*. The catch-all itself is the listed row with no literal matcher,
+which never reads as an address's own rule.
+
+**The address is typed as its local part, with the domain fixed beside it** (28 September 2026), because a whole
+address typed into a blank field was one letter from a domain the Node does not receive for. The domains are the
+ones this Node receives for as far as the screen's own reads say: the receiving domain the install or Setup
+provisioned (`GET /api/provider`'s `provisioned.receiving`, an audit-trail read) and the domain of every address
+on a mailbox listed, both, since the mailbox list is only the caller's own. One is shown as a fixed `@domain`
+suffix the field is described by; several are a picker, the provisioned one first; none leaves the whole-address
+field as it was. A value typed with its own `@` is sent as typed and the suffix steps aside, so what is on screen
+is what is sent. The pure part is `apps/node/worker/src/client/app/screens/people-derive.ts`. The install's
+first-address prompt asks the same way: the part before `@domain`, blank being `hello`.
+
 **Each mailbox lists its addresses, with a remove beside each** (26 September 2026, `DELETE /api/addresses`).
 The list is the `addresses` column `GET /api/mailboxes` has always carried for the composer's From choice.
 Removing is adding's mirror and answers in the same three words: `catch_all` (no rule of its own existed),
 `rule_removed` (the literal rule naming this Worker was deleted), or `not_removed` with the reason and where
-the rule still is, because a rule routing a recipient this Node no longer knows is mail arriving to bounce. A
-rule somebody has since pointed elsewhere is theirs and is left alone.
+the rule still is, because a rule routing a recipient this Node no longer knows is mail arriving to bounce. It
+reads the rules the way adding does, so a rule somebody has since pointed elsewhere, or disabled, is theirs
+and is left alone; and a rule this Node took over is the customer's too, so it is left and the answer names
+`mailda provider --put-back`, which restores where it went before.
 
 **An address that has received mail is refused** (`E_ADDRESS_HAS_MAIL`), and the refusal is the feature. The
 `addresses` row is the join every read makes from a receipt's `envelope_to` to its mailbox, so deleting it
@@ -1348,7 +1393,8 @@ once and is not mailed, the administrator delivers it however they already trust
 chooses a password (`POST /api/invitations/redeem`, the one public route here); they then hold nothing
 until an administrator grants a relation on a mailbox below. To receive at an address of their own, the
 address is added to a mailbox they hold (*Add an address*), which under an apex catch-all is the whole act;
-it is listed under that mailbox from then on, with *remove* beside it.
+it is listed under that mailbox from then on, with *remove* beside it. Or tick *Also give them a mailbox at*
+when inviting, and grant it when People asks, once they have an account (below).
 
 The screen used to say it could not create a person, which was honest and not a resting state. A Node had
 exactly one account and nothing else wrote to `users`, so Layer 3's whole premise had one person to exercise
@@ -1375,6 +1421,34 @@ An invitation carries **an address and nothing else**: no relations, no mailbox,
 redeems one holds exactly nothing until an administrator grants access above, where the consequence of each
 relation is written beside it. Pre-loading grants would mean authority arriving with an account nobody had
 looked at yet, and would put one decision in two places.
+
+**A mailbox can be made beside the invitation, and the invitee holds nothing on it** (28 September 2026). *Also give them a
+mailbox at* takes a local part on one of the Node's domains, defaulting to the invitee's own when their address
+is on one, and minting then runs three existing acts in order: the invitation, a mailbox named for the person
+(their email, `POST /api/mailboxes`), and the address on it (`POST /api/addresses`), whose routing is said in the
+Node's words beside it, a rule of its own sending it elsewhere included. The order is the refusal story: a
+refused invitation leaves no mailbox, and a refused mailbox or address is said on its own line beside a secret
+that still works. No route was added and the invitation still carries nothing: the administrator who makes the
+mailbox may read and send from it, as the creator of any mailbox may, and the invitee holds nothing on it.
+
+**Once they have an account, People asks** (28 September 2026): a person whose email is an address on a mailbox
+they hold nothing on directly is shown as *bob@example.com has an account and holds nothing directly on the
+mailbox at that address. Give them the mailbox bob@example.com?*, with one button that names what it grants,
+`mailbox.content.read` and `send.propose` (what a mailbox's creator is given), through the same `POST /api/access`
+as the table, one relation per call; a refusal names the relation it stopped at. It is derived from
+`GET /api/people` and `GET /api/mailboxes`, nothing the invitation kept, so a mailbox at an address other than the
+person's email is not matched and is granted in the table like any other. The sentence claims what those reads
+show and no more: nothing observes an arrival, and a relation held through a team is filed under the team, so
+"directly".
+
+It first said *has arrived*, and an administrator's revocation brought it back (29 September 2026). Departure
+is revocation here (no deactivation flag), so a person whose access to their own mailbox was withdrawn holds
+nothing on it again, and was offered it back in one click. When somebody is to be asked about, People also reads
+`GET /api/audit?action=access.revoked` and asks about nobody on a mailbox where a relation of theirs was
+withdrawn; a revocation in the table reads it again, before the people list that would make the person a
+candidate. That read failing, or an entry naming no person or object,
+withholds every prompt and says why; its older entries unseen (the trail answers the newest `AUDIT_LIST_CAP`, in
+`apps/node/worker/src/routes/node.ts`) is said beside the prompts.
 
 Redemption lives in `app.client.js` beside sign-in and the claim, framework-free, because it is the screen a
 person meets **before they have an account**. It cannot sit behind a bundle the shell loads after sign-in.
@@ -1538,7 +1612,9 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
   route and every opened state twice, with the theme stored as Dark and as Light (System is one of the two by
   definition), signs in with `MAILDA_AXE_EMAIL` / `MAILDA_AXE_PASSWORD`, sets the first-run gate's per-tab
   override before it navigates (without it a harness Node that is not routed shows every route as the gate, and
-  the run skipped all of them), and refuses to report a run as clean when it checked nothing.
+  the run skipped all of them), and refuses to report a run as clean when it checked nothing. The opened states,
+  the wait for a view to finish loading and the growth of a page until nothing on it scrolls are in
+  `scripts/sweep.mjs`, which the spacing check below walks too, so the two cannot come to open different views.
 
   It **imports `APP_ROUTES`** rather than keeping its own list, and that changed because the copy had
   already drifted: its comment read "kept in step with `src/app-routes.ts` by hand, five paths" above an
@@ -1569,6 +1645,55 @@ Audited a third time after #87's dry-run panel landed in the same editor: **30 v
 advisories**. The panel's own accessibility decision is that it says why it is unusable rather than showing a
 disabled control. A Butler that has never run has no delivery to test against, and *"why can I not test
 this"* is a question a `disabled` attribute cannot answer.
+
+### Spacing (28 September 2026)
+
+*"The Add the address button is sticking to the text field."* It was 4px under it: `.field-row`'s gap is the
+distance from a caption to its field, and every control placed after the field in the same row sat at that
+distance too. Two checks came of it, neither of which replaces the other.
+
+- **The measurement is `scripts/spacing.mjs`, by hand, not in CI**, for the reason axe is not: it needs a real
+  browser and a running Node with content on it. It signs in with the CLI's `MAILDA_EMAIL` / `MAILDA_PASSWORD`;
+  axe keeps its own pair.
+  `MAILDA_EMAIL=… MAILDA_PASSWORD=… pnpm --filter @mailda/worker run spacing -- <origin>` visits every route in
+  `APP_ROUTES` and every opened state in `scripts/sweep.mjs`, at 1440x900 and 390x844, in Dark and Light, grows
+  each view until nothing scrolls where it can (a view that still scrolls, as the reader on a phone does, says so
+  on its line), and for every pair of visible controls (a button, an `a.btn` or `a.primary`, an
+  input, a select, a textarea, a summary) that share a row or a column, measures the gap between their boxes. A
+  pair under 8px, or overlapping, is printed with the view, both controls and the gap, and shot with both outlined
+  (`MAILDA_SPACING_OUT`, or a temp directory). It exits 1 on any such pair and on any view it could not open or
+  load, and a view with no control in it counts as unmeasured rather than clean. It does not judge a pair on
+  different layers (a popover over the page), a corner, or the items of one composite control, and that last is
+  the one judgement it makes, written beside the list it keeps (`JOINED`): a search field and its magnifier,
+  a chip's own buttons, a tablist's tabs, a menu's items, and list rows that are each one full-width control.
+- **CI holds the rules, not the layout.** `test/node/control-spacing.test.ts` reads the served sheet and asserts
+  that the shared rules the sweep was brought to zero with are there at 8px: the field row's second control
+  (`.field-row`'s 4px plus the 4px margin the control after a field takes), the rows of controls
+  (`.row-actions` and the two screens' rows that are the same row under their own names, `.inline-actions` for a
+  sentence or a table cell, the reader's actions, Next steps, Hand to), the address field's wrapped rows, the @'s
+  8px from the local-part field and from the domain picker (text the sweep does not measure, but the sheet's focus
+  ring reaches 4px out from a control, and at 4px it touched the @), and a queue row's stacked actions. It measures no layout and says so: a more specific rule can beat any of them, and
+  a screen can place two controls with no rule at all, which only the sweep sees.
+
+The first run, against the local harness Node seeded with a second domain, three mailboxes and an arrived
+invitee, before either the exemption or the growth existed, found 37 distinct pairs in 128 views. Beside the
+field rows: the reader's actions and Next steps at 6px, a rule's Save draft and Cancel a text space apart (about 4px), the Cc / Bcc link 4px under To and at
+the start of the row although its rule said the end (`.field-row > button` outranked it), the address field's
+picker 4px under its field on a phone with its @ left behind, and the last message 3px above the Health button
+on a phone with the list scrolled to its end. The rest were the message rows, the inbox tabs, the search field
+and its magnifier and the overflow menu's items, which are the composite controls above, and two the sweep made
+itself: a field below a pane's fold measured as overlapping the status bar, because a box a scroller clips still
+reports where it would be, which growing the page first ended. After the fixes: **132 views, 0 pairs under 8px**, the Butler
+resume form not applicable (no paused Butler). A rule's Publish and Open, a resend's reason and its two answers,
+and an approval's Approve and Deny had the same text-space gap and were fixed by reading: the first was then
+measured on a seeded draft rule, the other two need a send whose outcome is unknown and an approval waiting, which
+a local Node does not have, so they were not measured. Doctor's *Verify a batch* and *Continue from where it
+stopped* were a text space apart too, and the sweep missed them, because the second button renders only when a
+verdict says more is left to verify: found by a review reading every control pair with the TypeScript parser, put
+in `.inline-actions`, and measured with `POST /api/evidence/verify` answered by a stubbed verdict in the browser,
+8px at 1440 and 390 (0px with the class taken off, since the text space went with it). Setup's catch-all box and its list of the addresses with a
+rule of their own need a Cloudflare connection; they were measured once with those two reads answered by fixtures
+in the browser, 0 pairs at both widths, which is evidence about layout and nothing else.
 
 ### Signing the harness in, when nobody knows a password
 

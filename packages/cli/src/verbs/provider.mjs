@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
-import { catchAllLine } from "./provision.mjs";
+import { catchAllLine, outcomeRoutesHere, ownRulesLines } from "./provision.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -226,6 +226,8 @@ export async function provider(argv) {
       // A zone's own name may take a catch-all (apex only); what it routes today is the thing to know first.
       if (proposal.apex === true) {
         process.stdout.write(`     apex      yes; catch-all today: ${catchAllLine(proposal.catchAll ?? null)}\n`);
+        // Every address with a rule of its own: an enabled one outranks --catch-all, which then does not reach it.
+        for (const line of ownRulesLines(proposal.ownRules, proposal.domain)) process.stdout.write(`               ${line}\n`);
       }
       /*
        * An existing rule is printed **with what it is worth**, not as a tick. A rule whose subdomain has no
@@ -252,16 +254,18 @@ export async function provider(argv) {
           `     writes    MX ${one.name} -> ${one.content} (priority ${one.priority})\n`,
         );
       }
+      // The ternary is parenthesised: without it the confirm lines below bound to its second branch only, and a
+      // zone already routing, the usual case, printed no confirm command at all (found 28 September 2026).
       process.stdout.write(
-        proposal.enablesZone === null
+        (proposal.enablesZone === null
           ? `\n   these are the records Cloudflare says ${proposal.zone} needs — copied onto the subdomain,\n`
             + `   not invented here\n`
           : `\n   the records will be whatever Cloudflare requires once ${proposal.zone} is routing —\n`
-            + `   read from it, not invented here\n`
+            + `   read from it, not invented here\n`)
         + `\n   confirm: mailda provider --onboard-receiving ${proposal.domain} \\\n`
         + `              --address <you>@${proposal.domain} --confirm ${proposal.digest}\n`
         + (proposal.apex === true
-          ? "   add --catch-all to route every address at it here instead of one rule per address\n\n"
+          ? "   add --catch-all to route every address at it without a rule of its own here, instead of one rule per address\n\n"
           : "\n"),
       );
       return;
@@ -286,8 +290,16 @@ export async function provider(argv) {
       process.stdout.write("\n");
       for (const line of wrapAt(outcome.note, 72)) process.stdout.write(`   ${line}\n`);
     }
-    process.stdout.write("\n   DNS takes a little while to propagate. Send a message from OUTSIDE this\n"
-      + "   Cloudflare account — a same-account send is accepted and never delivered.\n\n");
+    /*
+     * The test message only when the address reaches this Node (28 September 2026): it used to be printed after
+     * every onboard, including one whose address a rule of its own sends to another Worker, which is the
+     * instruction `mailda setup` had just stopped giving for the same outcome.
+     */
+    process.stdout.write(outcomeRoutesHere(outcome)
+      ? "\n   DNS takes a little while to propagate. Send a message from OUTSIDE this\n"
+        + "   Cloudflare account — a same-account send is accepted and never delivered.\n\n"
+      : `\n   ${address} is not routed here, or could not be confirmed, for the reason above: a test message\n`
+        + "   to it would not show this Node receiving.\n\n");
     return;
   }
 

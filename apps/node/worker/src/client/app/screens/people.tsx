@@ -6,10 +6,11 @@ import {
   GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam,
   revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
-  useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
+  useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
   type PersonRow, type TeamRow,
   type AddressRemoval, type AddressRouting, type MailboxQueue,
 } from "../api.ts";
+import { addressFrom, arrivals, nodeDomains, ownAddressOn } from "./people-derive.ts";
 
 /**
  * Who works here and what each of them may reach (#39, #73, #81).
@@ -65,6 +66,16 @@ function relationsFor(person: PersonRow, objectId: string): Set<string> {
  *
  * It does not grant anything. Somebody who redeems an invitation holds exactly nothing until an
  * administrator grants access below, where the consequence of each relation is written next to it.
+ *
+ * ## The mailbox beside it (28 September 2026)
+ *
+ * "Also give them a mailbox at" is three existing acts in a row, and no fourth: the invitation, then a mailbox
+ * named for the person (`POST /api/mailboxes`), then the address on it (`POST /api/addresses`), whose routing is
+ * said in the Node's words. In that order so a refused invitation leaves no mailbox behind, and a refused
+ * mailbox or address is said on its own line beside a secret that still works. The invitee is granted nothing:
+ * the invitation still carries no authority (`src/invitations.ts`), and the mailbox is theirs only once somebody
+ * grants it, which People offers when they have an account and hold nothing on it (`Arrivals`, below). The
+ * administrator who creates it may read and send from it, as the creator of any mailbox may.
  */
 /**
  * A second mailbox. Here rather than on Setup because a mailbox is a thing people are given access to, and
@@ -116,30 +127,88 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
  * An address on a mailbox, in one act (25 September 2026). The Node writes the routing rule in the same
  * request when it can, and says so; when it cannot, the address still exists and the notice names the
  * command that finishes it. Nothing here claims mail arrives: `rule_written` means a rule was read back.
+ * A state with no words of its own renders the Node's detail whole: `routed_elsewhere` names the rule that
+ * sends the address somewhere else, `rule_disabled` the disabled rule this Node left alone, and `unconfirmed`
+ * says what could not be checked, never that all is well.
  */
 const ROUTING_WORDS: Record<AddressRouting["state"], string | null> = {
   catch_all: "routed by the domain's catch-all; nothing to do in Cloudflare",
   rule_written: "routing rule written",
+  routed_elsewhere: null,
+  rule_disabled: null,
+  unconfirmed: null,
   not_written: null,
 };
 
-function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => Promise<void> }) {
-  const [address, setAddress] = useState("");
+/** An address's routing in the Node's words: the state's own when it has one, the Node's detail whole otherwise. */
+const routingSaid = (routing: AddressRouting) => ROUTING_WORDS[routing.state] ?? routing.detail;
+
+/**
+ * An address typed as its local part, with the domain fixed beside it (28 September 2026): shown when this Node
+ * receives for one domain, chosen when it receives for several (`nodeDomains`). A whole address typed with its
+ * own `@` is taken as typed and the domain steps aside, so what is shown is what is sent; with no domain known
+ * the field is a whole-address field, as it was.
+ */
+function AddressField({
+  id, label, domains, local, domain, disabled = false, onLocal, onDomain,
+}: {
+  id: string;
+  /** For a field no visible `<label>` names. */
+  label?: string;
+  domains: readonly string[];
+  local: string;
+  domain: string | undefined;
+  disabled?: boolean;
+  onLocal: (local: string) => void;
+  onDomain: (domain: string) => void;
+}) {
+  const whole = domains.length === 0 || local.includes("@");
+  return (
+    <span className="address-field">
+      <input
+        id={id}
+        className="mono"
+        value={local}
+        disabled={disabled}
+        aria-label={label}
+        aria-describedby={whole || domains.length > 1 ? undefined : `${id}-domain`}
+        placeholder={domains.length === 0 ? "hello@example.com" : "hello"}
+        onChange={(event) => onLocal(event.target.value)}
+      />
+      {whole ? null : domains.length === 1
+        ? <span id={`${id}-domain`} className="mono address-domain">@{domains[0]}</span>
+        : (
+          <span className="address-pick">
+            <span className="mono address-domain" aria-hidden="true">@</span>
+            <select aria-label={label === undefined ? "Domain" : `${label}: domain`} value={domain} disabled={disabled} onChange={(event) => onDomain(event.target.value)}>
+              {domains.map((one) => <option key={one} value={one}>{one}</option>)}
+            </select>
+          </span>
+        )}
+    </span>
+  );
+}
+
+function NewAddress({ boxes, domains, onAdded }: { boxes: MailboxQueue[]; domains: string[]; onAdded: () => Promise<void> }) {
+  const [local, setLocal] = useState("");
+  const [picked, setPicked] = useState("");
   const [mailboxId, setMailboxId] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [routing, setRouting] = useState<{ address: string; routing: AddressRouting } | null>(null);
   const [busy, setBusy] = useState(false);
+  // A domain picked before the list changed stays picked only while it is still on the list.
+  const domain = domains.includes(picked) ? picked : domains[0];
 
   async function add() {
     setBusy(true);
     setProblem(null);
     setRouting(null);
     const chosen = mailboxId !== "" ? mailboxId : boxes.length === 1 ? boxes[0]!.id : undefined;
-    const outcome = await addAddress(address.trim(), chosen);
+    const outcome = await addAddress(addressFrom(local, domain), chosen);
     setBusy(false);
     if (!outcome.ok) { setProblem(outcome.message); return; }
     setRouting({ address: outcome.value.address.address, routing: outcome.value.routing });
-    setAddress("");
+    setLocal("");
     await onAdded();
   }
 
@@ -149,13 +218,13 @@ function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => 
       {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
       {routing === null ? null : (
         <p className="notice" role="status">
-          {routing.address}: {ROUTING_WORDS[routing.routing.state] ?? routing.routing.detail}
+          {routing.address}: {routingSaid(routing.routing)}
         </p>
       )}
       <p className="field-row">
         <label htmlFor="new-address">Address</label>
         {" "}
-        <input id="new-address" className="mono" value={address} placeholder="hello@example.com" onChange={(event) => setAddress(event.target.value)} />
+        <AddressField id="new-address" domains={domains} local={local} domain={domain} onLocal={setLocal} onDomain={setPicked} />
         {" "}
         {boxes.length > 1 ? (
           <select aria-label="Mailbox" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
@@ -164,7 +233,7 @@ function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => 
           </select>
         ) : null}
         {" "}
-        <button className="quiet" type="button" onClick={() => void add()} disabled={busy || address.trim() === "" || (boxes.length > 1 && mailboxId === "")}>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy || local.trim() === "" || (boxes.length > 1 && mailboxId === "")}>
           Add the address
         </button>
       </p>
@@ -245,12 +314,43 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
   );
 }
 
-function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
+/** What became of the mailbox beside an invitation: made with its address and routing, or where it stopped. */
+type Beside = { ok: boolean; said: string };
+
+/**
+ * The invite bundle's second and third acts. Each refusal comes back as a sentence saying what did happen before
+ * it, never dropped: the invitation above it stands either way.
+ */
+async function mailboxBeside(email: string, address: string): Promise<Beside> {
+  const made = await createMailbox(email);
+  if (!made.ok) return { ok: false, said: `No mailbox was made: ${made.message}` };
+  const added = await addAddress(address, made.mailboxId);
+  if (!added.ok) return { ok: false, said: `The mailbox ${email} was made, and has no address: ${added.message}` };
+  // The Node's detail ends in its own full stop; the words of a state with words of their own do not.
+  const routed = routingSaid(added.value.routing).replace(/\.$/, "");
+  return {
+    ok: true,
+    said: `The mailbox ${email} was made, at ${added.value.address.address}: ${routed}. `
+      + `${email} holds nothing on it until they arrive and you grant it; you may read and send from it, as its creator.`,
+  };
+}
+
+function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Promise<void> }) {
   const invitations = useInvitations();
   const [email, setEmail] = useState("");
+  const [also, setAlso] = useState(false);
+  // null follows the invitee's own address while it is on one of this Node's domains; typing takes over.
+  const [local, setLocal] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [minted, setMinted] = useState<{ secret: string; email: string; expiresAt: string } | null>(null);
+  const [beside, setBeside] = useState<Beside | null>(null);
   const [busy, setBusy] = useState(false);
+  const own = ownAddressOn(email, domains);
+  const mailboxLocal = local ?? own?.local ?? "";
+  const mailboxDomain = picked !== null && domains.includes(picked) ? picked : own?.domain ?? domains[0];
+  // With no domain known the field is a whole address, and one without an @ would make a mailbox and then be refused.
+  const mailboxAddress = addressFrom(mailboxLocal, mailboxDomain);
 
   async function withdraw(id: string) {
     setProblem(null);
@@ -263,11 +363,17 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
     setBusy(true);
     setProblem(null);
     setMinted(null);
+    setBeside(null);
+    const address = also ? mailboxAddress : null;
     const outcome = await invite(email.trim());
-    setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setEmail("");
+    if (!outcome.ok) { setBusy(false); setProblem(outcome.message); return; }
     setMinted({ secret: outcome.secret, email: outcome.email, expiresAt: outcome.expiresAt });
+    if (address !== null) setBeside(await mailboxBeside(outcome.email, address));
+    setBusy(false);
+    setEmail("");
+    setAlso(false);
+    setLocal(null);
+    setPicked(null);
     await onInvited();
   }
 
@@ -290,11 +396,38 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
+      </p>
+      <p className="field-row">
+        <label htmlFor="invite-mailbox">
+          <input id="invite-mailbox" type="checkbox" checked={also} onChange={(event) => setAlso(event.target.checked)} />
+          {" "}Also give them a mailbox at
+        </label>
         {" "}
-        <button className="quiet" type="button" onClick={() => void send()} disabled={busy || email.trim() === ""}>
+        <AddressField
+          id="invite-mailbox-address"
+          label="Their mailbox's address"
+          domains={domains}
+          local={mailboxLocal}
+          domain={mailboxDomain}
+          disabled={!also}
+          onLocal={setLocal}
+          onDomain={setPicked}
+        />
+      </p>
+      <p>
+        <button
+          className="quiet"
+          type="button"
+          onClick={() => void send()}
+          disabled={busy || email.trim() === "" || (also && !mailboxAddress.includes("@"))}
+        >
           Mint an invitation
         </button>
       </p>
+
+      {beside === null ? null : beside.ok
+        ? <p className="notice" role="status">{beside.said}</p>
+        : <pre className="notice bad butler-findings" role="alert">{beside.said}</pre>}
 
       {minted === null ? null : (
         <div className="notice invite-secret" role="status">
@@ -340,6 +473,92 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
         </Scroller>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The relations a person needs to read a mailbox and send from it: the pair `createMailbox` gives its creator
+ * (`src/mailboxes.ts`). Typed against the grantable list, so a relation the screen cannot grant does not compile.
+ */
+const READ_AND_SEND = ["mailbox.content.read", "send.propose"] as const satisfies
+  ReadonlyArray<(typeof GRANTABLE_RELATIONS)[number]["relation"]>;
+
+/**
+ * A mailbox at somebody's own address that they hold nothing on directly (`arrivals`): what the invite bundle
+ * leaves behind once the person has an account. The prompt says only that, since nothing observes an arrival, and
+ * a relation withdrawn on the mailbox, read from the audit trail only when there is somebody to ask about, is not
+ * offered back (29 September 2026: an administrator's revocation brought the prompt back with a one-click re-grant).
+ * That read failing withholds every prompt and says why; its older entries unseen is said beside the prompts.
+ *
+ * The grant is one click and names both relations it confers, through the same `POST /api/access` the table below
+ * uses, one relation per call; a refusal says which relation it stopped at, and what was granted before it stays.
+ * The refusal is held here rather than beside the prompt, because a grant that half-succeeded ends the prompt.
+ */
+function Arrivals({ people, boxes, onChanged }: {
+  people: PersonRow[]; boxes: MailboxQueue[]; onChanged: () => Promise<void>;
+}) {
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const asked = arrivals(people, boxes, new Set()).length > 0;
+  const withdrawals = useWithdrawals(asked);
+
+  async function give(person: PersonRow, box: MailboxQueue) {
+    setBusy(true);
+    setProblem(null);
+    for (const relation of READ_AND_SEND) {
+      const outcome = await grant(person.id, relation, box.id);
+      if (!outcome.ok) { setProblem(`${relation} on ${box.name} was not granted to ${person.email}: ${outcome.message}`); break; }
+    }
+    setBusy(false);
+    await onChanged();
+  }
+
+  const refused = problem === null ? null : <p className="notice bad" role="alert">{problem}</p>;
+  if (!asked || withdrawals.isPending) return refused;
+  if (withdrawals.isError) {
+    return (
+      <>
+        {refused}
+        <p className="notice bad" role="alert">
+          People offers nobody the mailbox at their own address while the withdrawals of access cannot be read, so
+          as not to offer back one an administrator took away: {withdrawals.error.message}
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {refused}
+      {withdrawals.data.truncated ? (
+        <p className="dim">
+          Only the newest withdrawals of access were read; a mailbox withdrawn from somebody before those may be
+          offered below again.
+        </p>
+      ) : null}
+      {arrivals(people, boxes, withdrawals.data.withdrawn).map(({ person, box, address }) => (
+        <div key={`${person.id}-${box.id}`} className="notice">
+          <p>
+            <span className="mono">{person.email}</span> has an account and holds nothing directly on the mailbox at
+            that address. Give them the mailbox <span className="mono">{address}</span>?
+          </p>
+          <ul className="grant-list">
+            {READ_AND_SEND.map((relation) => (
+              <li key={relation}>
+                <span className="mono">{relation}</span>
+                {" — "}
+                <span className="dim">{GRANTABLE_RELATIONS.find((entry) => entry.relation === relation)?.what}</span>
+              </li>
+            ))}
+          </ul>
+          <p>
+            <button className="quiet" type="button" onClick={() => void give(person, box)} disabled={busy}>
+              Grant {READ_AND_SEND.join(" and ")} on {box.name}
+            </button>
+          </p>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -651,9 +870,14 @@ export function People() {
   const people = usePeople();
   const mailboxes = useMailboxes();
   const me = useMe();
+  // The provisioned receiving domain, for the address fields' fixed suffix: an audit-trail read, no Cloudflare call.
+  const provider = useProvider();
   const queryClient = useQueryClient();
 
   async function refresh() {
+    // First, and awaited: a revocation in the table below is a withdrawal the arrival prompt must hold before the
+    // people list that makes the person a candidate again arrives, or it offers the mailbox back until it does.
+    await queryClient.invalidateQueries({ queryKey: ["audit"] });
     await queryClient.invalidateQueries({ queryKey: ["people"] });
     await queryClient.invalidateQueries({ queryKey: ["invitations"] });
     // Access decides what the rest of the interface can see, so a grant that did not refresh the rail would
@@ -683,6 +907,7 @@ export function People() {
 
   const rows = people.data.people;
   const boxes = mailboxes.data?.mailboxes ?? [];
+  const domains = nodeDomains(provider.data?.provisioned.receiving?.domain, boxes);
   const mailboxRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "mailbox");
   const orgRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "organization");
   const orgId = me.data?.organizationId ?? "";
@@ -691,6 +916,8 @@ export function People() {
     <>
       {heading}
       <p className="dim">Everybody with an account on this Node.</p>
+
+      <Arrivals people={rows} boxes={boxes} onChanged={refresh} />
 
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
@@ -749,9 +976,9 @@ export function People() {
         </Scroller>
       </section>
 
-      <Invite onInvited={refresh} />
+      <Invite domains={domains} onInvited={refresh} />
       <NewMailbox onCreated={refresh} />
-      <NewAddress boxes={boxes} onAdded={refresh} />
+      <NewAddress boxes={boxes} domains={domains} onAdded={refresh} />
 
       <Teams people={rows} />
     </>

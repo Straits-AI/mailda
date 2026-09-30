@@ -18,6 +18,9 @@ const BOX = { id: "mbx_test", name: "Support", unclaimed: 0, claimed: 0, mine: 0
 
 function mount(opts: { removal?: { state: string; detail: string }; box?: typeof BOX; teams?: Array<{ id: string; name: string; createdAt: string; memberCount: number }> } = {}) {
   answerWith((call) => {
+    if (call.path === "/api/provider") {
+      return Response.json({ provider: { state: "no_token" }, permissions: [], note: "", provisioned: { receiving: null, sending: null, deliveryEvents: null } });
+    }
     if (call.path === "/api/addresses" && call.method === "DELETE") {
       return Response.json({ address: { id: "addr_1", address: (call.body as { address: string }).address, mailboxId: "mbx_test" }, routing: opts.removal ?? { state: "catch_all", detail: "" } });
     }

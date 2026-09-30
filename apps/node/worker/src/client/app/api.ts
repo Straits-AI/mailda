@@ -1,6 +1,7 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
-import type { ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+import type { AddressRemoval, AddressRouting, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+export type { AddressRemoval, AddressRouting };
 import {
   EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
   type HttpMethod, type PathFor,
@@ -540,6 +541,34 @@ export function useAudit(): UseQueryResult<{ entries: AuditRow[]; truncated: boo
   });
 }
 
+/** One withdrawn relation's person and object, as `withdrawals` keys it. */
+export const withdrawalKey = (subjectId: string, objectId: string): string => `${subjectId} ${objectId}`;
+
+/**
+ * The person and object of every relation an administrator withdrew, from the newest `access.revoked` entries
+ * (`GET /api/audit?action=access.revoked`, 29 September 2026), so People does not offer back what somebody took
+ * away. `truncated` when older entries exist that this read did not see. An entry without its subject or object is
+ * this Node's own fault and fails the read, which the screen shows, rather than being passed over.
+ */
+export function useWithdrawals(enabled: boolean): UseQueryResult<{ withdrawn: Set<string>; truncated: boolean }, Error> {
+  return useQuery({
+    queryKey: ["audit", "access.revoked"],
+    queryFn: async () => {
+      const { entries, truncated } = await read<{ entries: AuditRow[]; truncated: boolean }>(`${GET("/api/audit")}?action=access.revoked`);
+      const withdrawn = entries.map((entry) => {
+        const objectId = (JSON.parse(entry.detail) as { objectId?: unknown }).objectId;
+        if (entry.subject === null || typeof objectId !== "string") {
+          throw new Error(`The access.revoked entry ${entry.id} names no person or no object: ${entry.detail}`);
+        }
+        return withdrawalKey(entry.subject, objectId);
+      });
+      return { withdrawn: new Set(withdrawn), truncated };
+    },
+    enabled,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useLogs(): UseQueryResult<{ entries: LogRow[]; truncated: boolean; counts: Array<{ level: string; n: number }> }, Error> {
   return useQuery({
     queryKey: ["logs"],
@@ -725,25 +754,17 @@ export async function setResponseTarget(
  * An address on a mailbox, and whether mail for it reaches this Node (`POST /api/addresses`).
  *
  * `routing` is the half a screen must not drop: an address the Node knows and Cloudflare does not route is
- * silent, and `not_written` carries the reason and the command that finishes it.
+ * silent, and `not_written` carries the reason and the command that finishes it. Its type is the contract's.
  */
-export interface AddressRouting {
-  state: "catch_all" | "rule_written" | "not_written";
-  detail: string;
-}
 export const addAddress = (address: string, mailboxId?: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRouting }>(
     at("POST", "/api/addresses"), "POST", { address, ...(mailboxId === undefined ? {} : { mailboxId }) },
   );
 
 /**
- * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still named this
- * Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
+ * The mirror of `addAddress`: the row gone, and the rule that routed it deleted when it still delivered to
+ * this Node. `routing` is again the half not to drop, because `not_removed` names what still routes here.
  */
-export interface AddressRemoval {
-  state: "catch_all" | "rule_removed" | "not_removed";
-  detail: string;
-}
 export const removeAddress = (address: string) =>
   act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }>(
     at("DELETE", "/api/addresses"), "DELETE", { address },
@@ -2024,6 +2045,8 @@ export interface ProvisionedAct {
   address: string | null;
   /** A sighting, not an act: Cloudflare had it in place before this Node asked, and the entry says so. */
   observed: boolean;
+  /** Receiving only: how its address was routed when the act ended; null before 28 September 2026 and for the others. */
+  routing: AddressRouting | null;
 }
 export interface Provisioned {
   receiving: ProvisionedAct | null;
@@ -2138,6 +2161,15 @@ export interface ReceivingProposal {
   apex: boolean;
   /** The zone's current catch-all rule, when apex; null otherwise. Shown so a take-over names what it replaces. */
   catchAll: CatchAllRule | null;
+  /**
+   * Every address on `domain` with a routing rule of its own, and where it goes. A literal rule outranks the
+   * catch-all, so a take-over does not reach these. `error` when the rules could not be read: the list is then
+   * unknown, never empty.
+   */
+  ownRules: {
+    addresses: Array<{ address: string; state: "rule_written" | "routed_elsewhere" | "rule_disabled"; where: string }>;
+    error: string | null;
+  };
 }
 
 export interface CatchAllRule { action: string; destinations: string[]; enabled: boolean }
@@ -2147,8 +2179,13 @@ export interface ReceivingOutcome {
   written: string[];
   /** Read back from Cloudflare. A write that answered 200 is not yet a record in DNS. */
   confirmed: string[];
-  /** The rule's name, or "catch-all" when the zone's catch-all was taken over. */
+  /**
+   * What the act wrote or kept: "catch-all" when it took the zone's catch-all over, the literal rule's name when
+   * one routing the address here was written or kept, null when neither.
+   */
   rule: string | null;
+  /** Whether the address itself reaches this Node: a rule of its own outranks the catch-all. */
+  routing: AddressRouting;
   note: string | null;
   /** What the catch-all was and is now, when it was taken over; null otherwise. */
   catchAll: { before: CatchAllRule; after: CatchAllRule } | null;

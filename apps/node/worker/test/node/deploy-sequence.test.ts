@@ -324,7 +324,8 @@ describe("what an exit code says, which the two commands answer differently", ()
      * final doctor, which was right for `mailda deploy` alone and ended `mailda upgrade` before the setup of
      * receiving ran — the first real upgrade promoted, printed doctor, and stopped. The dispatcher exits.
      */
-    const deployBody = cli.slice(cli.indexOf("export async function deploy(argv)"), cli.indexOf("export async function preflight(argv)"));
+    // `deploy` and the `closingReport` it ends in, which sit together before `preflight`.
+    const deployBody = cli.slice(cli.indexOf("export async function deploy(argv"), cli.indexOf("export async function preflight(argv)"));
     expect(deployBody).toContain("return deployExitCode(after)");
     expect(deployBody.slice(deployBody.indexOf("asking the live Node how it is"))).not.toContain("process.exit");
     expect(cli).toContain("process.exit(await deploy(rest))");

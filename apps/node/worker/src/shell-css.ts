@@ -365,8 +365,27 @@ form { display: grid; gap: 1rem; }
 /* A field and its label, one above the other. */
 .field-row { display: grid; gap: 4px; }
 .field-row > span { font: 500 12px/1.4 var(--body); color: var(--text-secondary); }
-/* A grid item stretches, so a button in a field row was a bar across the column (People's Rename). */
-.field-row > button { justify-self: start; }
+/* A grid item stretches, so a button in a field row was a bar across the column (People's Rename), and so was the
+   Mailbox picker after an address. */
+.field-row > button, .field-row > .address-field + select { justify-self: start; }
+/* The 4px above is a caption's distance from its field. A second control after the field (Add the address, Rename,
+   Create, the Mailbox picker, the Cc / Bcc link) stood at that distance too and read as stuck to it, so it takes 4px
+   more: 8px, the gap every row of controls in this sheet keeps. The field rows laid out as flex (Setup's catch-all)
+   hold one control each, so this never fires in a row. test/node/control-spacing.test.ts holds the sum. */
+.field-row > :is(input, select, textarea, .address-field) + :is(input, select, textarea, button, .btn, .address-field) { margin-top: 4px; }
+/* An address typed as its local part, the domain fixed or picked beside it (People): one grid item, wrapping on a phone.
+   8px across and down, like any two controls. At 4px the @ sat inside the focus ring: the sheet's ring is drawn
+   2px out from a control and 2px wide, so a focused local-part field's ring touched it (29 September 2026). */
+.address-field { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+/* It is a span in a field row, whose spans are its 12px captions; the suffix reads at the input's own size. */
+.field-row > .address-field { font: 400 14px/1.4 var(--body); color: var(--text-primary); }
+.address-field > input { flex: 0 1 14rem; min-width: 8rem; }
+.address-domain { color: var(--text-secondary); overflow-wrap: anywhere; }
+/* The @ and the domain picker, one item, so they wrap together on a phone rather than leaving the @ behind; 8px
+   apart for the same ring, the picker's this time. */
+.address-pick { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+/* Beats .field-row select's 18rem, so the pair fits beside a short local part. */
+.field-row .address-pick > select { min-width: 0; }
 
 .hint { font-size: 12px; line-height: 1.5; color: var(--text-secondary); margin: 6px 0 0; }
 /* A hint that reports a limit already crossed: two classes, so the danger tone beats .hint's own colour. */
@@ -922,7 +941,9 @@ body:has(.composer-dock) .toast-region {
   font-size: 12px;
   color: var(--text-secondary);
 }
-.list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+/* 8px of room after the last row, so a list scrolled to its end does not set that row against the status bar's
+   Health button (3px apart on a phone, where both span the width). */
+.list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
 .message-list { list-style: none; margin: 0; padding: 0; }
 
 /* A row: three lines, no box and no line between rows. The selected row's fill is 1.38:1 against the list,
@@ -1095,13 +1116,14 @@ body:has(.composer-dock) .toast-region {
   border-radius: var(--r-card);
 }
 
-.reader-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
+/* 8px, a row of controls' gap: at 6px Reply, Reply all and Forward read as one strip. */
+.reader-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px; }
 .reader-note { margin: 0 0 10px; font-size: 12px; color: var(--text-secondary); }
 .collision { margin: 0 0 12px; }
 .reader-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .label-add { width: 160px; min-height: 28px; padding: 2px 8px; }
 
-.next-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
+.next-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
 .next-steps-label { margin-right: 4px; font: 600 12px/1 var(--body); color: var(--text-muted); }
 /* Reserved for a model's output, and deliberately unlike any deterministic control: an edge, a persistent
    "AI" label in --warning and the provenance beside it. */
@@ -1254,11 +1276,20 @@ body:has(.composer-dock) .toast-region {
 .draft-phase { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .draft-phase.failed { color: var(--danger); }
 .dock-actions { margin-left: auto; display: inline-flex; gap: 14px; }
-/* The fold that opens Cc and Bcc: a link at the end of the To row, gone once opened. */
-.composer-copies { justify-self: end; font-size: 12px; }
+/* The fold that opens Cc and Bcc: a link at the end of the To row, gone once opened. Through .field-row, because
+   .field-row > button starts every button in a field row and had put this one at the start, under the field. */
+.composer-copies { font-size: 12px; }
+.field-row > .composer-copies { justify-self: end; }
 .composer-held { margin: 0; padding: 6px 12px; color: var(--text-primary); border-left: 2px solid var(--danger); }
 
-.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; }
+/* A row of actions: the controls a block ends in. Flex, so two controls never stand a text space apart (about 4px,
+   which is how a rule's Save draft came to touch its Cancel). .policy-actions and .approval-actions are this row
+   under their screens' names; each sets its own margin. */
+.row-actions, .policy-actions, .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.row-actions { margin: 12px 0 4px; }
+/* The same inside a sentence or a table cell, where a block row would break the line or the cell (display: flex on a
+   td replaces its table-cell box): a rule's Publish and Open, a resend's reason and its two answers. */
+.inline-actions { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 
 /* ---- ledgers ------------------------------------------------------------------------------ */
 
@@ -1556,8 +1587,8 @@ tr.detail dd { margin: 0; word-break: break-all; }
 /* Stacked, right-aligned, with block buttons rather than a flex cell: display: flex on a td replaces its
    table-cell box, and the row rule stopped short of the last column. */
 .case-actions { text-align: right; white-space: nowrap; }
-.case-actions button { display: flex; margin-left: auto; margin-bottom: 4px; }
-.hand-to { display: inline-flex; gap: 6px; align-items: baseline; }
+.case-actions button { display: flex; margin-left: auto; margin-bottom: 8px; }
+.hand-to { display: inline-flex; gap: 8px; align-items: baseline; }
 .hand-to input { width: 11rem; min-height: 28px; padding: 2px 6px; font-size: 12px; }
 .resend-reason { width: 16rem; min-height: 28px; padding: 2px 6px; font-size: 12px; }
 .hand-to button { display: inline-flex; margin: 0; }

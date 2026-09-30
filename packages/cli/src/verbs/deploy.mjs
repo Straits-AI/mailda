@@ -270,7 +270,12 @@ let deployConfig = null;
 /** The URL wrangler printed on a first install, for `mailda install` to hand on. Null until one happens. */
 export let installedUrl = null;
 
-export async function deploy(argv) {
+/**
+ * `beforeReport` runs after promotion and before the closing report, on the canary path only (a first install
+ * has no Node to read yet, and its report comes from the claim onward). `mailda upgrade` passes its read of
+ * verified destinations there, so the report it ends on is not one its own read has already outdated.
+ */
+export async function deploy(argv, { beforeReport = async () => {} } = {}) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
   deployConfig = configFor(argv);
   useConfig(deployConfig);
@@ -634,6 +639,28 @@ export async function deploy(argv) {
     await hostnameLive(host);
   }
 
+  return await closingReport(origin, serving, beforeReport);
+}
+
+/**
+ * The deploy's last word: the caller's read, then the live Node's report, so the report is the last thing
+ * printed and nothing the caller read can have outdated it. Observed live on 28 September 2026: `mailda upgrade`
+ * printed this report ("2 of 5 … observed", no snapshot) and only then read the verified destinations that
+ * changed it. Exported so that order is tested by running it (`test/node/closing-report.test.ts`).
+ *
+ * The step runs before `refuse` is known, so it must be one a refusing Node costs nothing: `mailda upgrade`
+ * passes a read, and keeps its writes for after the verdict. And it cannot take the report with it: a step that
+ * throws is printed, the report and the rollback below still follow, and the error is then re-raised, because
+ * the version that was serving before is the one value a person cannot look up mid-incident.
+ */
+export async function closingReport(origin, serving, beforeReport = async () => {}) {
+  let stopped = null;
+  try {
+    await beforeReport();
+  } catch (error) {
+    stopped = error;
+    process.stderr.write(`\n  the step after promotion stopped: ${error?.message ?? error}\n  the live Node's report follows regardless.\n`);
+  }
   /*
    * Unconditional now, where it used to depend on `--url` being passed. The canary path refuses without an
    * origin long before this line, so there is no branch left in which it could be absent — and this run is
@@ -669,6 +696,7 @@ export async function deploy(argv) {
    * step never ran and the operator opened an inbox on a Node with no address. The dispatcher turns the
    * code into the exit; a caller in the middle of a sequence reads it and goes on.
    */
+  if (stopped !== null) throw stopped;
   return deployExitCode(after);
 }
 
