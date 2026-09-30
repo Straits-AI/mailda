@@ -4177,8 +4177,7 @@ views each.
 form in zh-Hans; the CLI noun `butler` stays Latin), and Trash is **回收站** (废纸篓 joined `NEVER`, so no sentence
 keeps it). 79 of 81 rows carry the owner's confirmation (`CONFIRMED` in `glossary.ts`); the flags adopted changed the
 rail's count to 由你处理, Health's outbound area to "Outbound mail" / 出站邮件, and named the holds `org.admin` governs.
-**Two rows are held, not confirmed.** passkey: the owner asked for 密钥, which already names cryptographic keys here
-(密钥恢复副本, the key vault) where Apple and Google say 通行密钥, so it stays 通行密钥 and proposed while the owner
-is asked once; its two keys are now bound, so a released zh-Hans cannot ship until it is answered. Move to Trash:
-confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, which the owner has not seen; it rides on
-the same question. `docs/i18n.md` has the detail.
+**Two rows were held and answered the next day.** passkey: the owner asked for 密钥, which already names
+cryptographic keys here (密钥恢复副本, the key vault) where Apple and Google say 通行密钥; asked once, the owner chose
+通行密钥 on 1 October. Move to Trash: confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, and the
+owner confirmed that too. Every row is now confirmed. `docs/i18n.md` has the detail.

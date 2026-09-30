@@ -142,12 +142,13 @@ describe("the glossary", () => {
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
     const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
-    // Since the owner's review of 30 September 2026 two rows are still proposed: passkey, held on a question, and
-    // place.delete, whose phrase followed the owner's new Trash word and has not been shown to the owner.
-    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([
+    // Every row is confirmed since the owner answered the two held ones on 1 October 2026.
+    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
+    // Put back to proposed, passkey is reported on both keys it governs.
+    const heldAgain = CONCEPTS.map((concept) => (concept.id === "passkey" ? { ...concept, status: "proposed" as const } : concept));
+    expect(confirmedBeforeShipping(released(heldAgain))).toEqual([
       "zh-Hans api.passkey.unsupported: passkey is proposed, not confirmed",
       "zh-Hans api.passkey.none: passkey is proposed, not confirmed",
-      "zh-Hans inbox.act.trash: place.delete is proposed, not confirmed",
     ]);
     // A row put back to proposed is reported on every key it governs, its own and a prose concept's alike.
     const unconfirmed = CONCEPTS.map((concept) => (concept.id === "brand" ? { ...concept, status: "proposed" as const } : concept));
@@ -158,9 +159,9 @@ describe("the glossary", () => {
     expect(confirmedBeforeShipping(released(confirmed))).toEqual([]);
   });
 
-  it("records the owner's review against rows that exist, and leaves passkey and place.delete unconfirmed", () => {
+  it("records the owner's review against rows that exist, and leaves no row proposed", () => {
     const ids = new Set(CONCEPTS.map((concept) => concept.id));
     expect([...CONFIRMED].filter((id) => !ids.has(id))).toEqual([]);
-    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual(["passkey", "place.delete"]);
+    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual([]);
   });
 });

@@ -56,13 +56,24 @@ const proposed = "proposed" as const;
 /**
  * The owner's review of 30 September 2026: every row and every reviewer flag answered on the review page, one
  * recorded decision each, by the owner's account. 79 rows confirmed, three of them with the word the owner chose
- * there (butler and route.butlers 管家, route.trash 回收站). Two are not here, and each note says why: `passkey`,
- * held on a question, and `place.delete`, whose phrase changed after the owner confirmed it.
+ * there (butler and route.butlers 管家, route.trash 回收站). Two were held and answered the next day
+ * (`OWNER_ANSWER` below): `passkey`, asked whether 密钥 or 通行密钥, and `place.delete`, whose phrase changed
+ * after the owner confirmed it.
  */
 const OWNER_REVIEW = {
   confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
   record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, decisions recorded 30 September 2026",
 } as const;
+/**
+ * The two rows held on 30 September, answered by the owner on 1 October 2026 in the working session ("passkey use
+ * 通行密钥, move to trash ok") and recorded on the same review page: passkey stays 通行密钥, and 移到回收站 is
+ * confirmed as the phrase for Move to Trash.
+ */
+const OWNER_ANSWER = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, answered 1 October 2026 in the working session",
+} as const;
+const ANSWERED: ReadonlySet<string> = new Set(["passkey", "place.delete"]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -113,7 +124,7 @@ export const CONCEPTS: readonly Concept[] = [
   row("recovery-codes", "recovery codes", "恢复码", { avoid: { "zh-Hans": ["备用码"] } }),
   row("passkey", "passkey", "通行密钥", {
     sentences: ["api.passkey.unsupported", "api.passkey.none"], avoid: { "zh-Hans": ["通行证"] },
-    note: "proposed, pending one question: the owner's review (30 Sep 2026) asked for 密钥, which is held because 密钥 already names cryptographic keys here (escrow is 密钥恢复副本, and the key vault) and Apple and Google localize passkey as 通行密钥; the owner has been asked once",
+    note: "not 密钥, which already names cryptographic keys here (escrow is 密钥恢复副本, and the key vault); 通行密钥 is how Apple and Google localize passkey. The owner first chose 密钥 (30 Sep 2026), was asked once, and confirmed 通行密钥 (1 Oct 2026)",
   }),
   row("claim", "claim", "认领", { avoid: { "zh-Hans": ["注册", "激活"] } }),
   row("claim-secret", "claim secret", "认领码", { avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
@@ -220,9 +231,10 @@ export const CONCEPTS: readonly Concept[] = [
   row("seal", "seal", "定稿", { avoid: { "zh-Hans": ["封存"] } }),
   row("place.delete", "Move to Trash", "移到回收站", {
     keys: ["inbox.act.trash"], avoid: { "zh-Hans": ["删除"] },
-    note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). Proposed: the owner's review (30 Sep 2026) confirmed 移到废纸篓, then renamed Trash 回收站, so this phrase follows a word the owner has not yet seen here; asked with passkey's question",
+    note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). The owner confirmed 移到废纸篓 (30 Sep 2026), renamed Trash 回收站, and confirmed 移到回收站 (1 Oct 2026)",
   }),
-].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW } : concept));
+].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
+  : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only
