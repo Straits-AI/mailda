@@ -79,9 +79,10 @@ import { statementsOf } from "./sql-statements.ts";
  * ## Why this exists at all
  *
  * `wrangler deploy` provisions the D1 database and does not migrate it. A real Deploy to Cloudflare
- * install therefore finished with a green build, one table, and every request answering 500 — because
- * Cloudflare ran `npx wrangler deploy` rather than this repository's `deploy` script (receipt:
- * `deploy-button-install.md`). Depending on somebody else's script detection to produce a working mail
+ * install on 6 August 2026 therefore finished with a green build, one table, and every request answering
+ * 500 — because Cloudflare ran `npx wrangler deploy` rather than this repository's `deploy` script (receipt:
+ * `deploy-button-install.md`). It ran the `deploy` script on 19 August, which shows the detection
+ * moves without notice rather than that it can be relied on. Depending on somebody else's script detection to produce a working mail
  * server is not a design; it is a hope with a 500 attached.
  *
  * The alternatives were a documented post-install command — which turns §5A's one resumable setup state

@@ -42,6 +42,17 @@ optional and only for changing that setup from the browser later; the OAuth clie
 ([ADR 42](./Mailda-Full-Engineering-Blueprint.md), amended 26 September 2026). From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
 without a bash, run that in PowerShell.
 
+**What the CLI asks wrangler, and how.** It reuses wrangler's login through `wrangler auth token --json`, so a
+login kept in the OS keychain or under a wrangler profile works, and the token never reaches the terminal or
+wrangler's own debug log. A Global API Key (`CLOUDFLARE_API_KEY` with `CLOUDFLARE_EMAIL`) is refused, since
+wrangler would deploy with it and the Node takes a Bearer token; set `CLOUDFLARE_API_TOKEN` instead. Every
+wrangler it starts runs with `WRANGLER_SEND_METRICS=false` unless you set that variable yourself, because
+wrangler sends usage metrics by default; wrangler's own npm update check is not turned off. The answers it reads
+are asked for as JSON at wrangler's default log level and without colour, whatever `WRANGLER_LOG` or
+`FORCE_COLOR` your shell sets. It needs wrangler 4.97 or later
+([receipt](./docs/receipts/workflow-provisioning.md)); the JSON answers alone arrived in 4.65
+([receipt](./docs/receipts/wrangler-json-output.md)).
+
 **After the install.** Open the Node. Until it has an address and mail routed to it, it shows the next
 setup step and nothing else, with the command that does it; once it has both, the inbox. A Node claimed
 before the install could set it up finishes with `pnpm mailda setup` from the clone, which does the same
@@ -104,7 +115,12 @@ without a rule of its own from then on managed on People inside the Node. An ena
 outranks the catch-all (of a disabled one Cloudflare does not say), so `mailda install`, `mailda setup`, `mailda provider --onboard-receiving` and the Setup screen
 list each such address and where it goes before the choice, and never change those rules; on a subdomain Cloudflare allows literal rules only, so adding an
 address on People writes its rule in the same act. `mailda provider --routing-rules <domain>` is the same
-from the CLI.
+from the CLI. Setup and the CLI offer a take-over or a put-back only where the Node would do it: a disabled
+rule, a rule with more than one destination, an address with more than one rule, and a rule this Node never
+took over are listed with the refusal instead, by name, and a zone with subaddressing on is refused when you
+act. An address already on People keeps its mailbox, and the take-over names it. Each take-over and put-back
+reads the rule back and says so when Cloudflare holds something other than what was sent, including when a
+lost answer means the change may have been applied.
 
 **A second Node in the same account.** Give the installer a new name; `mailda deploy --name <worker>` is
 the same from a script. Either derives the Worker, the Workflow and every other resource from that name
@@ -124,8 +140,8 @@ pending migration by phase, *expand* (adds, safe for the running version) or *co
 refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as
 `mailda deploy`. A Node that was never set up to receive is offered the install's setup step afterwards,
 with the same sign-in. Whenever it can sign in to the Node, it then reads, with the same login, which of the
-Node's recipients are verified destinations of the account, and prints how many; with no wrangler login found it
-says so in one line and goes on. It never creates a Node; `mailda install` with an existing name still upgrades too, but
+Node's recipients are verified destinations of the account, and prints how many; when wrangler gives it no token
+it prints why, in wrangler's words, and goes on. It never creates a Node; `mailda install` with an existing name still upgrades too, but
 with whatever code the clone has, which is why the verb exists.
 
 The button clones without history and without a remote. The upgrade handles that on its first run: it adds

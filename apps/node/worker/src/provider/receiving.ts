@@ -725,12 +725,17 @@ export async function removeAddress(
      * A rule this Node took over is the customer's rule with its action replaced, not one this Node wrote
      * (28 September 2026). Deleting it would destroy their routing and the put-back with it, so it is left, and
      * the answer names the put-back, which restores the action the take-over recorded.
+     *
+     * Any take-over of this rule id decides it, not the latest of take-over and put-back (30 September 2026): a
+     * put-back entry is written before its PUT, so a put-back Cloudflare refused left a rule still routing here
+     * whose latest entry was the put-back, and this deleted it. A rule id this Node took over was never written by
+     * it, whatever happened since; after a put-back it routes here again only by a person's hand.
      */
     const taken = await env.CATALOG.prepare(
-      "SELECT action, detail FROM audit_entries WHERE org_id = ? AND subject = ? "
-      + "AND action IN ('provider.routing_rule_taken_over', 'provider.routing_rule_put_back') ORDER BY seq DESC LIMIT 1",
-    ).bind(orgId, own.rule.id ?? "").first<{ action: string; detail: string | null }>();
-    if (taken?.action === "provider.routing_rule_taken_over") {
+      "SELECT detail FROM audit_entries WHERE org_id = ? AND subject = ? "
+      + "AND action = 'provider.routing_rule_taken_over' ORDER BY seq DESC LIMIT 1",
+    ).bind(orgId, own.rule.id ?? "").first<{ detail: string | null }>();
+    if (taken !== null) {
       takenOver = true;
       const was = (JSON.parse(taken.detail ?? "{}") as { before?: { action?: string; destinations?: string[] } }).before;
       return {

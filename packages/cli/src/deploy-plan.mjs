@@ -206,6 +206,22 @@ export function ownerFrom(outcome) {
 }
 
 /**
+ * What `mailda deploy`'s #99 guard does with `wrangler workflows describe <name>` (30 September 2026).
+ *
+ * `absent`: wrangler's own not-found marker, nothing to take. `own`: this Worker owns it. `stolen`: another
+ * does, and the deploy refuses. `unread`: the call failed some other way, which the deploy names in a note.
+ * `unparsed`: the call **succeeded** and no owner could be read, which the deploy refuses, because passing
+ * there would be the silent pass the per-name probe replaced.
+ */
+export function workflowGuard(outcome, workerName) {
+  if (presenceFrom("workflow", outcome) === false) return { state: "absent" };
+  if (outcome === null || outcome === undefined || outcome.status !== 0) return { state: "unread" };
+  const owner = ownerFrom(outcome);
+  if (owner === null) return { state: "unparsed" };
+  return owner === workerName ? { state: "own" } : { state: "stolen", owner };
+}
+
+/**
  * The five dispositions a resource can be in, and what each one costs an operator who is told the wrong one.
  *
  * | disposition | the account | what a deploy does |

@@ -1017,9 +1017,12 @@ writing, and it is at most one per send from a held mailbox, inside the same siz
 ## The build
 
 React needs a build step, and it hangs off `wrangler.jsonc`'s `build.command` rather than our `deploy`
-script, because a one-click install runs `npx wrangler deploy` directly (measured:
-`deploy-button-install.md`), so anything hung off `pnpm run deploy` is absent on the install path most
-customers take. Declared in wrangler's own config, the button, the CLI and `wrangler dev` all run it.
+script, because which command a one-click install runs is Cloudflare's detection: `npx wrangler deploy`
+on 6 August 2026, the root `deploy` script on 19 August (`deploy-button-install.md`), which is `mailda deploy`
+since 21 August.
+A build hung off a script is one detection change from absent on the install path most customers take.
+Declared in wrangler's own config, the button, the CLI, a bare `wrangler deploy` and `wrangler dev` all
+run it.
 
 The output is `apps/node/worker/generated/` and is **not committed**; `react-shell-bundle.md` records both
 why and what it costs. It lives outside `src/` with `watch_dir` set to `src`, because an artifact inside
@@ -1347,7 +1350,8 @@ action naming this Worker; a forward, another Worker or a drop is `routed_elsewh
 it goes and the two commands that would change it (`mailda provider --routing-rules`, which prints the digest,
 then `--take-over <id> --confirm <digest>`), and never rewritten. A disabled rule is `rule_disabled`: Cloudflare
 does not say whether the catch-all then applies, so the detail claims neither and names enabling or deleting it
-in the dashboard, since a take-over keeps a rule disabled. When
+in the dashboard, since a take-over keeps a rule disabled and so refuses one (`E_ROUTING_RULE_DISABLED`, 30
+September 2026; Setup's rules table and `mailda provider --routing-rules` show that refusal in place of an act, from the rule's `offer`). When
 the rules cannot be read nothing is written, since one may already route the address; on a domain whose
 catch-all this Node took over that answer is `unconfirmed` and says what it could not check, never the
 catch-all's *nothing to do in Cloudflare*. The catch-all itself is the listed row with no literal matcher,

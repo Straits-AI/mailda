@@ -266,7 +266,7 @@ reading Cloudflare's **OAuth Clients API** (IAM → OAuth Clients), which did no
   made-up sibling path answered 7000 *No route for that URI*. An expired token answered 401 with the same
   code. So a token without the permission is refused as an authentication failure, and `mailda install` says
   which permission rather than repeating the code.
-- **wrangler's login cannot call it.** `wrangler login --scopes-list` names 24 scopes and none governs OAuth
+- **wrangler's login cannot call it.** `wrangler login --scopes-list` names 25 scopes on 4.90.1 (recorded as 24 on 25 September; rerun 30 September 2026) and 28 on 4.118.0 and none governs OAuth
   clients, so no flag widens the login to cover it. The governing permission group, read from
   `GET /accounts/{account_id}/iam/permission_groups`, is **OAuth App Registrations Write**
   (`358d00a81412422280b0055618c81d59`; Read is `c00d4085a8774a6daf8365c054ca6803`). An API token is the

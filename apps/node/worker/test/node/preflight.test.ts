@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { cliSource } from "./support/cli-source.ts";
@@ -5,7 +9,8 @@ import { cliSource } from "./support/cli-source.ts";
 import { BUDGETS } from "@mailda/budgets";
 
 const preflight = await import("../../../../../packages/cli/src/preflight.mjs");
-const { accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom } = preflight;
+const { atLeast, reportsItsVersion, resolveAccount, wranglerVersionFrom } = preflight;
+const { whoamiFrom } = await import("../../../../../packages/cli/src/wrangler-config.mjs");
 
 /**
  * What a deploy needs, checked before it changes anything (#98).
@@ -18,60 +23,82 @@ const { accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wran
  * note and returned. #99's protection against one Node stealing another's Butler engine silently did not run,
  * in exactly the situation where nothing else worked either.
  *
- * ## Why the fixture is real output
+ * ## Where the fixtures come from
  *
- * `WHOAMI` below is what `wrangler whoami` actually printed on the machine that hit this, box-drawing and
- * all. A parser tested against a fixture somebody wrote from memory is a parser tested against the author's
- * belief about the format — and the format is the whole difficulty here, since wrangler offers no structured
- * way to ask.
+ * Since 30 September 2026 preflight reads `wrangler whoami --json`, not the box-drawn table
+ * (`docs/receipts/wrangler-json-output.md`). The signed-out answer below is what wrangler 4.118.0 printed in an
+ * isolated HOME, exit 1. The signed-in one is its shape from `whoami()` in 4.118.0's bundled source, not a signed-in
+ * run: `accounts` are the API's account objects, and the two below are the accounts the table fixture this
+ * replaced was captured with, on the machine that hit the failure.
  */
 
-/** Real `wrangler whoami` output, 4.118.0, from the account that produced the failure. */
-const WHOAMI = [
-  " ⛅️ wrangler 4.118.0 (update available 4.127.1)",
-  "───────────────────────────────────────────────",
-  "Getting User settings...",
-  "👋 You are logged in with an OAuth Token, associated with the email someone@example.test.",
-  "┌───────────────────────────────────┬──────────────────────────────────┐",
-  "│ Account Name                      │ Account ID                       │",
-  "├───────────────────────────────────┼──────────────────────────────────┤",
-  "│ Ops@alpha.example's Account       │ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │",
-  "├───────────────────────────────────┼──────────────────────────────────┤",
-  "│ Ops@beta.example's Account        │ f9e8d7c6b5a493827160f5e4d3c2b1a0 │",
-  "└───────────────────────────────────┴──────────────────────────────────┘",
-].join("\n");
+/** `wrangler whoami --json`, signed in with an OAuth login that sees two accounts. Shape from 4.118.0's source. */
+const WHOAMI = JSON.stringify({
+  loggedIn: true,
+  authType: "OAuth Token",
+  email: "someone@example.test",
+  accounts: [
+    { id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9", name: "Ops@alpha.example's Account", type: "standard" },
+    { id: "f9e8d7c6b5a493827160f5e4d3c2b1a0", name: "Ops@beta.example's Account", type: "standard" },
+  ],
+  tokenPermissions: ["account:read", "user:read"],
+}, null, 2);
+
+/** Signed out, as 4.118.0 printed it: a blank line, then the JSON, on stdout, with exit 1. */
+const SIGNED_OUT = '\n{"loggedIn":false}\n';
 
 describe("reading what wrangler will do before it does it", () => {
-  it("finds every account in the table, and not the header row", () => {
-    const accounts = accountsFrom(WHOAMI);
-    expect(accounts).toEqual([
-      { name: "Ops@alpha.example's Account", id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9" },
-      { name: "Ops@beta.example's Account", id: "f9e8d7c6b5a493827160f5e4d3c2b1a0" },
-    ]);
+  it("finds every account wrangler lists, by name and id", () => {
+    const who = whoamiFrom(WHOAMI, 0);
+    expect(who).toEqual({
+      state: "signed_in",
+      authType: "OAuth Token",
+      accounts: [
+        { name: "Ops@alpha.example's Account", id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9" },
+        { name: "Ops@beta.example's Account", id: "f9e8d7c6b5a493827160f5e4d3c2b1a0" },
+      ],
+    });
   });
 
-  it("takes the id by its shape, not by its column", () => {
-    /*
-     * The id is matched as 32 hex characters rather than "the second cell". A column swap would otherwise
-     * yield account **names** as ids, which fails later as a permissions error against an account that does
-     * not exist — the failure furthest from its cause.
-     */
-    const swapped = WHOAMI
-      .replace("│ Ops@alpha.example's Account       │ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │",
-        "│ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │ Ops@alpha.example's Account       │");
-    const [first] = accountsFrom(swapped);
-    expect(first?.id).toBe("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
-    expect(first?.name).toBe("Ops@alpha.example's Account");
+  it("reads an API token's answer, which has no permissions list and may have no email", () => {
+    // Under CLOUDFLARE_API_TOKEN (the Deploy button's Workers Builds), `tokenPermissions` is the OAuth scope
+    // list and is undefined, so it drops out of the JSON; nothing here may depend on it.
+    const token = JSON.stringify({
+      loggedIn: true, authType: "Account API Token",
+      accounts: [{ id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9", name: "Ops@alpha.example's Account" }],
+    });
+    const who = whoamiFrom(token, 0);
+    expect(who.state).toBe("signed_in");
+    expect(who.state === "signed_in" && who.accounts.map((one) => one.id)).toEqual(["0a1b2c3d4e5f60718293a4b5c6d7e8f9"]);
   });
 
-  it("knows a signed-out wrangler from a signed-in one", () => {
-    expect(signedIn(WHOAMI)).toBe(true);
-    expect(signedIn("You are not authenticated. Please run `wrangler login`.")).toBe(false);
+  it("tells signed out from unreadable, which send an operator to different places", () => {
+    expect(whoamiFrom(SIGNED_OUT, 1)).toEqual({ state: "signed_out" });
+    // A token that cannot list its accounts: exit 1, nothing on stdout, wrangler's reason on stderr.
+    const failed = whoamiFrom("", 1, "✘ [ERROR] Failed to automatically retrieve account IDs for the logged in user.");
+    expect(failed.state).toBe("unreadable");
+    expect(failed.state === "unreadable" && failed.detail).toContain("Failed to automatically retrieve account IDs");
+    // npm's update notice, which npx appends after wrangler exits, is not wrangler's reason (measured 30 Sep 2026).
+    const behind = whoamiFrom("", 1, "✘ [ERROR] A request to the Cloudflare API (/accounts) failed.\n\nnpm notice\nnpm notice New major version\nnpm notice\nnpm notice\n");
+    expect(behind.state === "unreadable" && behind.detail).toBe("exit 1: ✘ [ERROR] A request to the Cloudflare API (/accounts) failed.");
+    // The table this replaced is not JSON, and is not read as a sign-in either way.
+    expect(whoamiFrom("You are logged in with an OAuth Token", 0).state).toBe("unreadable");
+    // A failed call is not a sign-in, whatever it printed.
+    expect(whoamiFrom(WHOAMI, 1).state).toBe("unreadable");
+    // A success that lost its accounts is not "no accounts".
+    expect(whoamiFrom(JSON.stringify({ loggedIn: true, authType: "OAuth Token" }), 0).state).toBe("unreadable");
+  });
+
+  it("keeps only ids that are account ids", () => {
+    const odd = JSON.stringify({ loggedIn: true, accounts: [{ id: "not-an-id", name: "x" }, { id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9" }] });
+    const who = whoamiFrom(odd, 0);
+    expect(who.state === "signed_in" && who.accounts).toEqual([{ name: "(unnamed)", id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9" }]);
   });
 });
 
 describe("choosing the account, which is the failure this was built from", () => {
-  const accounts = accountsFrom(WHOAMI);
+  const who = whoamiFrom(WHOAMI, 0);
+  const accounts = who.state === "signed_in" ? who.accounts : [];
 
   it("refuses when the token sees several and nothing chose", () => {
     const chosen = resolveAccount({ accounts, chosen: undefined });
@@ -139,17 +166,92 @@ describe("the wrangler floor, which a string comparison gets backwards", () => {
     expect(atLeast(null, "4.97")).toBe(false);
   });
 
-  it("reads the version out of wrangler's banner", () => {
-    expect(wranglerVersionFrom(WHOAMI)).toBe("4.118.0");
-    expect(wranglerVersionFrom("no banner here")).toBeNull();
+  it("reads the version out of `wrangler --version`, which prints it bare", () => {
+    // What 4.118.0 printed. `whoami --json` has no banner, which is why the version is asked for separately.
+    expect(wranglerVersionFrom("4.118.0\n")).toBe("4.118.0");
+    expect(wranglerVersionFrom(WHOAMI)).toBeNull();
+    expect(wranglerVersionFrom("no version here")).toBeNull();
   });
 
-  it("checks against the measured floor rather than a number typed here", () => {
-    // The floor is `workflow.schedules_min_wrangler`: below it a Workflow's `schedules` block is discarded
-    // with exit 0, so the deploy looks fine and the Butler engine is not what the config declares.
-    const floor = BUDGETS["workflow.schedules_min_wrangler"];
-    expect(floor).toBeGreaterThan(0);
-    expect(atLeast("4.118.0", floor)).toBe(true);
+  it("checks against the measured floors rather than numbers typed here", () => {
+    // `workflow.schedules_min_wrangler`: below it a Workflow's `schedules` block is discarded with exit 0.
+    // `wrangler.json_output_min_version`: below it there is no `whoami --json` (and below 4.57.0 no `auth token --json`).
+    for (const name of ["workflow.schedules_min_wrangler", "wrangler.json_output_min_version"] as const) {
+      const floor = BUDGETS[name];
+      expect(floor, name).toBeGreaterThan(0);
+      expect(atLeast("4.118.0", floor), name).toBe(true);
+    }
+    // 4.64.0 had `auth token --json` and not `whoami --json`: the receipt's measured boundary.
+    expect(atLeast("4.64.0", BUDGETS["wrangler.json_output_min_version"])).toBe(false);
+    expect(atLeast("4.65.0", BUDGETS["wrangler.json_output_min_version"])).toBe(true);
+  });
+});
+
+/**
+ * `runPreflight` run for real against a stub `npx` on PATH that answers `wrangler --version` and
+ * `wrangler whoami --json` the way 4.118.0 does. 4.64.0 is below both floors (4.65 and 4.97), so both are
+ * named, each with its own reason.
+ */
+describe("preflight, run against a wrangler that answers", () => {
+  const SUPPORT = resolve(import.meta.dirname, "../../../../../packages/cli/src/support.mjs");
+
+  function preflightWith(version: string, whoamiJson: string, whoamiExit: number, env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "mailda-npx-"));
+    try {
+      writeFileSync(join(dir, "npx"), [
+        "#!/bin/sh",
+        `case "$2" in`,
+        `  --version) echo "${version}" ;;`,
+        `  whoami) printf '%s\n' '${whoamiJson}'; exit ${whoamiExit} ;;`,
+        "  *) echo unexpected >&2; exit 9 ;;",
+        "esac",
+      ].join("\n"));
+      chmodSync(join(dir, "npx"), 0o755);
+      const script = `const m = await import(${JSON.stringify(SUPPORT)});`
+        + " const r = await m.runPreflight([], { announce: false, needsUrl: false });"
+        + " process.stderr.write(JSON.stringify(r));";
+      const base = { ...process.env };
+      for (const name of ["CLOUDFLARE_ACCOUNT_ID", "MAILDA_URL", "CLOUDFLARE_API_TOKEN"]) delete base[name];
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        encoding: "utf8", env: { ...base, PATH: `${dir}:${process.env.PATH}`, ...env },
+      });
+      return JSON.parse(child.stderr) as { ok: boolean; accountId: string | null; report: string | null };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("names a signed-out wrangler and each floor it is below, and nothing else", () => {
+    const outcome = preflightWith("4.64.0", '{"loggedIn":false}', 1);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.report).toContain("wrangler is not signed in");
+    expect(outcome.report).toContain(`below the measured floor of ${BUDGETS["wrangler.json_output_min_version"]}`);
+    expect(outcome.report).toContain(`below the measured floor of ${BUDGETS["workflow.schedules_min_wrangler"]}`);
+    // Signed out is the one problem about the login; "no accounts" beside it would name a second cause.
+    expect(outcome.report).not.toContain("wrangler named no accounts");
+  });
+
+  it("passes a signed-in wrangler with one account at the locked version, under an API token too", () => {
+    const one = JSON.stringify({ loggedIn: true, authType: "Account API Token",
+      accounts: [{ id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9", name: "Ops" }] });
+    const outcome = preflightWith("4.118.0", one, 0, { CLOUDFLARE_API_TOKEN: "fake-not-a-token" });
+    expect(outcome.report).toBeNull();
+    expect(outcome.ok).toBe(true);
+    expect(outcome.accountId).toBe("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
+  });
+
+  it("refuses a sign-in that sees two accounts when none is chosen, rather than deploying into either", () => {
+    const two = JSON.stringify({ loggedIn: true, authType: "User API Token", accounts: [
+      { id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9", name: "Ops" }, { id: "9f8e7d6c5b4a39281706f5e4d3c2b1a0", name: "Lab" }] });
+    const outcome = preflightWith("4.118.0", two, 0);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.report).toContain("the Cloudflare account is ambiguous");
+  });
+
+  it("says wrangler could not answer, rather than that nobody is signed in", () => {
+    const outcome = preflightWith("4.118.0", "", 1);
+    expect(outcome.report).toContain("wrangler could not say who is signed in");
+    expect(outcome.report).not.toContain("wrangler is not signed in");
   });
 });
 

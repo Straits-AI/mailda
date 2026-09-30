@@ -931,6 +931,17 @@ export const AUDIT_ACTIONS = {
     says: "An administrator restored a routing rule to the action it had before this Node took it over.",
   },
   /**
+   * What a take-over or put-back's PUT did, read back from Cloudflare afterwards (30 September 2026). The two
+   * entries above are the intent, written before the PUT for `receiving_onboarded`'s reason, and until this
+   * existed they were the only record and said `ok` before Cloudflare answered. `detail.act` names which act.
+   */
+  "provider.routing_rule_read_back": {
+    says: "A take-over or put-back of a routing rule ended, and the rule as Cloudflare read it back is on the entry: "
+      + "ok when it matches what was sent, refused when the change was refused and the rule reads back without it, "
+      + "failed when it reads back otherwise after an accepted change or could not be read back, in which case the "
+      + "change may have been applied.",
+  },
+  /**
    * The zone's catch-all pointed at this Node (25 September 2026). Its own entry beside `receiving_onboarded`
    * because it is a different size of act: every address on the apex that no literal rule names now
    * reaches this Node, which files the ones it knows and bounces the rest. What it pointed at before is on

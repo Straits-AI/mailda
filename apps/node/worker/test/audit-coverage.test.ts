@@ -242,6 +242,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.receiving_routed",
       "provider.routing_rule_taken_over",
       "provider.routing_rule_put_back",
+      // What either act's PUT did, read back from Cloudflare after it (30 September 2026).
+      "provider.routing_rule_read_back",
       "provider.catch_all_taken_over",
       "provider.catch_all_put_back",
     ],

@@ -984,15 +984,18 @@ describe("removing an address undoes its routing", () => {
     expect(gone.routing.detail).not.toContain("delete the rule in the Cloudflare dashboard");
   });
 
-  it("deletes a rule it put back and then routed again by its own hand, since the latest record is the put-back", async () => {
+  it("never deletes a rule it once took over, even after a put-back: a refused put-back leaves it routing here", async () => {
+    // The put-back entry is the intent, written before its PUT; a PUT Cloudflare refused leaves the rule
+    // pointing here with the put-back as the latest entry, and this used to delete the customer's rule.
     const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }], rules: [OURS] });
     await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
     for (const [at, action] of [[AT + 5100, "provider.routing_rule_taken_over"], [AT + 5200, "provider.routing_rule_put_back"]] as const) {
       await auditedBatch(testEnv, atTime(at), ORG, { action, outcome: "ok", actorUserId: ADMIN, subject: "rule_sales", detail: {} }, (entry) => [entry]);
     }
     const gone = await removeAddress(testEnv, atTime(AT + 6000), ORG, ADMIN, "sales@mail.example.test");
-    expect(gone.routing.state).toBe("rule_removed");
-    expect(deleted(calls)).toEqual(["/zones/zone_1/email/routing/rules/rule_sales"]);
+    expect(gone.routing.state).toBe("not_removed");
+    expect(gone.routing.detail).toContain("mailda provider --put-back rule_sales");
+    expect(deleted(calls)).toEqual([]);
   });
 
   it("refuses an address that has received mail, before touching the rule, because the row files every message under it", async () => {

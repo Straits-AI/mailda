@@ -181,9 +181,12 @@
   ],
 
   // The authenticated application is React and therefore needs a build (ADR 30). This belongs to
-  // wrangler rather than to `pnpm run deploy`, because a one-click install runs `npx wrangler deploy`
-  // directly and never sees our scripts — measured in `deploy-button-install.md`. Declared here, every
-  // route to a running Node builds it: the button, the CLI, and `wrangler dev`.
+  // wrangler rather than to a `package.json` script, because which command the one-click install runs is
+  // Cloudflare's detection, not ours: it ran `npx wrangler deploy` on 6 August 2026 and the root `deploy`
+  // script on 19 August (`deploy-button-install.md`), a script that is `mailda deploy`, which calls wrangler,
+  // since 21 August.
+  // Declared here, every route to a running Node builds it: the button, the CLI, a bare `wrangler deploy`
+  // and `wrangler dev`.
   //
   // Carries no account-specific value, so ADR 24's byte-identical fork is untouched.
   // `watch_dir` is the source tree only. The build writes to `generated/`, outside it — an artifact inside

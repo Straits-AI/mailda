@@ -194,9 +194,12 @@ this bundle, the split has quietly stopped existing and this receipt is stale, w
 The output is `apps/node/worker/generated/app.bundle.client.js`, produced by `wrangler.jsonc`'s
 `build.command` and **not committed**. Two facts decided that:
 
-- **A one-click install runs `npx wrangler deploy` directly** (measured, `deploy-button-install.md`),
-  so a build hung off `pnpm run deploy` would be absent on the install path most customers take.
-  Declaring it as wrangler's own build command means the button, the CLI and `wrangler dev` all run it.
+- **A one-click install ran `npx wrangler deploy` directly** (measured 6 August 2026,
+  `deploy-button-install.md`), so a build hung off `pnpm run deploy` would have been absent on the install
+  path most customers take. Declaring it as wrangler's own build command means the button, the CLI and
+  `wrangler dev` all run it. *Corrected 30 September 2026:* on 19 August the button ran the root
+  `deploy` script, which is `mailda deploy` since 21 August; the decision stands, because that detection
+  moved once without notice and `mailda deploy` reaches the build through wrangler either way.
 - Committing it was the other candidate and it works. `packages/budgets/src/generated.ts` does exactly
   that, with CI failing on a regeneration diff. It loses on review: this file changes on *every*
   interface commit, so each one would carry a hundred kilobytes of minified diff that no reviewer can

@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { accountsFrom, signedIn } from "../preflight.mjs";
-import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir, wrapAt } from "../support.mjs";
+import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, whoami, workerDir, wrapAt } from "../support.mjs";
+import { workflowRowsFrom } from "../deploy-parse.mjs";
+import { wranglerSaid } from "../wrangler-config.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 import { printNext, provisionNode, signInLine, wranglerToken, zonesOf } from "./provision.mjs";
 
@@ -109,7 +110,7 @@ export async function install(argv) {
   if (!claimHere) {
     process.stdout.write(
       "\n== done\n"
-      + `   your Node   ${url ?? "(wrangler did not print the URL; `wrangler deployments list` shows it)"}\n`
+      + `   your Node   ${url ?? "(wrangler reported no workers.dev address for this Worker)"}\n`
       + `   secret      ${secret}\n\n`
       + "   Open the URL, paste the secret, and choose the first administrator's email and password.\n"
       + "   The secret is shown here once and only its hash is stored. Ten recovery codes follow the claim;\n"
@@ -254,15 +255,26 @@ export async function hostnameQuestion(argv) {
  * not about this clone.
  */
 export async function signInAndChooseAccount() {
-  let whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
-  if (!signedIn(whoami.text)) {
+  let who = whoami();
+  if (who.state !== "signed_in") {
+    /*
+     * Unreadable signs in too. A stored login whose refresh fails (revoked, or its refresh token expired) is
+     * not `{"loggedIn":false}` in wrangler 4.118.0: `whoami` finds the stored token, the refresh throws "Not
+     * logged in", and the answer is exit 1 with nothing on stdout. A new login is the remedy for that, so it is
+     * offered, and what wrangler said is shown first in case it is something else.
+     */
+    if (who.state === "unreadable") process.stdout.write(`\n   note: wrangler could not say who is signed in (${who.detail}).\n`);
     process.stdout.write("\n== signing in to Cloudflare\n   A browser opens. Approve wrangler there, then come back here.\n\n");
     if (run("npx", ["wrangler", "login"]) !== 0) fail("wrangler could not sign in.");
-    whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
-    if (!signedIn(whoami.text)) fail("still not signed in after `wrangler login`.");
+    who = whoami();
+    if (who.state === "signed_out") fail("still not signed in after `wrangler login`.");
+    if (who.state === "unreadable") {
+      fail(`wrangler could not say who is signed in: \`wrangler whoami --json\` answered ${who.detail}\n\n`
+        + "  fix      run `npx wrangler whoami` and settle what it says, then re-run");
+    }
   }
 
-  const accounts = accountsFrom(whoami.text);
+  const accounts = who.accounts;
   const chosen = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
   if (chosen === "" && accounts.length > 1) {
     process.env.CLOUDFLARE_ACCOUNT_ID = await choose(
@@ -279,16 +291,35 @@ export async function signInAndChooseAccount() {
 
 /**
  * The Mailda Nodes this account holds: the script name of every Workflow whose class is `ButlerRun`, which
- * every Node registers under its own name. Empty when the list cannot be read; the per-name probe that
- * follows still decides, so an unreadable list costs a suggestion and not a wrong path.
+ * every Node registers under its own name.
+ *
+ * Every page (30 September 2026). `wrangler workflows list` prints one page, and this read only the first, so
+ * a Node on page two was not offered and nothing said so. It asks page after page until one comes back empty,
+ * which wrangler 4.118.0 answers past the last page ("No Workflows found on page N"). A page that fails, or one
+ * that repeats the page before it (a wrangler that ignored `--page` would never end), stops the listing with a
+ * note saying how far it got; the Nodes read so far are still offered, and the per-name probe that follows
+ * still decides, so a short list costs a suggestion and never a wrong path.
  */
 export function existingNodes() {
-  const listed = capture("npx", ["wrangler", "workflows", "list"], { quiet: true });
-  if (listed.status !== 0) return [];
-  return listed.text.split("\n")
-    .map((line) => line.split("│").map((cell) => cell.trim()).filter(Boolean))
-    .filter((cells) => cells[2] === "ButlerRun")
-    .map((cells) => cells[1])
+  const rows = [];
+  let previous = null;
+  for (let page = 1; ; page += 1) {
+    const listed = capture("npx", ["wrangler", "workflows", "list", "--page", String(page)], { quiet: true });
+    const found = listed.status === 0 ? workflowRowsFrom(listed.stdout) : [];
+    const same = previous !== null && JSON.stringify(found) === previous;
+    if (listed.status !== 0 || same) {
+      process.stdout.write(`\n   note: this account's Workflows could not be listed${page === 1 ? "" : ` past page ${page - 1}`}`
+        + ` (${listed.status !== 0 ? `wrangler exited ${listed.status}: ${wranglerSaid(listed.stderr, 1)[0] ?? ""}` : "the page repeated"}),`
+        + " so a Node there is not offered below. Type its name.\n");
+      break;
+    }
+    if (found.length === 0) break;
+    rows.push(...found);
+    previous = JSON.stringify(found);
+  }
+  return rows
+    .filter((row) => row.className === "ButlerRun")
+    .map((row) => row.script)
     .filter((one, i, all) => typeof one === "string" && all.indexOf(one) === i)
     .sort();
 }

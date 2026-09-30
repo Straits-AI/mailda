@@ -10,10 +10,11 @@ import worker from "../src/index.ts";
 /**
  * The state a Deploy to Cloudflare install actually leaves behind.
  *
- * `wrangler deploy` provisions the D1 database but does not migrate it, and the build's deploy command
- * was `npx wrangler deploy` rather than this repository's `deploy` script — so a real button install
- * finished with a green build, an empty catalog, and every request answering HTTP 500. Measured on one
- * (receipt: `deploy-button-install.md`).
+ * `wrangler deploy` provisions the D1 database but does not migrate it, and on 6 August 2026 the build's
+ * deploy command was `npx wrangler deploy` rather than this repository's `deploy` script — so a real button
+ * install finished with a green build, an empty catalog, and every request answering HTTP 500. Measured on
+ * one (receipt: `deploy-button-install.md`, which also records the button running the `deploy` script on
+ * 19 August; a detection that moved once is no guarantee).
  *
  * The worst part was not the missing schema. It was that `doctor` — the one tool whose job is to say
  * what is wrong — was among the things returning 500, so the Node could not report the most likely way

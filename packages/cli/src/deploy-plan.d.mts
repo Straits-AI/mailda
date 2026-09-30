@@ -100,6 +100,11 @@ export function presenceFrom(
 /** Which script owns a Workflow, from `wrangler workflows describe`. `null` when it cannot be established. */
 export function ownerFrom(outcome: ProbeOutcome | null | undefined): string | null;
 
+/** What the deploy's #99 guard does with `wrangler workflows describe`: pass, note, or refuse. */
+export function workflowGuard(outcome: ProbeOutcome | null | undefined, workerName: string):
+  | { state: "absent" | "own" | "unread" | "unparsed" }
+  | { state: "stolen"; owner: string };
+
 export function dispositionOf(args: {
   resource: Resource;
   installed: boolean | null;

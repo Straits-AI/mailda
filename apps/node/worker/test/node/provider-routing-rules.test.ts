@@ -1,0 +1,62 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// A computed specifier, as `catch-all-reach.test.ts` imports it: provider.mjs has no declaration file.
+const { provider } = await import(`${import.meta.dirname}/../../../../../packages/cli/src/verbs/provider.mjs`) as { provider: (argv: string[]) => Promise<void> };
+
+/**
+ * `mailda provider --routing-rules` and `--take-over` against a stubbed Node (30 September 2026). The CLI says
+ * what Setup says: which rule the Node would take over or put back and which it would refuse, by the Node's own
+ * `offer`, and where a taken-over address now files, since a take-over with no `--mailbox` uses the mailbox of an
+ * address row already there and the operator chose none.
+ */
+const rule = (over: Record<string, unknown>) => ({
+  id: "r1", name: "hello to gmail", enabled: true, to: "hello@example.com", action: "forward",
+  destinations: ["someone@gmail.test"], catchAll: false, ours: false, digest: "e".repeat(64),
+  offer: "take_over", refusal: null, ...over,
+});
+
+function node(answers: Record<string, unknown>) {
+  vi.stubEnv("MAILDA_EMAIL", "admin@example.com");
+  vi.stubEnv("MAILDA_PASSWORD", "a long enough password");
+  vi.stubGlobal("fetch", async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path === "/api/auth/login") return new Response("{}", { status: 200, headers: { "set-cookie": "session=s; Path=/" } });
+    return path in answers ? Response.json(answers[path]) : new Response("no route", { status: 404 });
+  });
+  const out: string[] = [];
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { out.push(String(chunk)); return true; });
+  return out;
+}
+
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("the CLI's routing rules", () => {
+  it("names the mailbox a taken-over address now files into", async () => {
+    const out = node({ "/api/provider/routing-rules/take-over": { outcome: {
+      ruleId: "r1", to: "hello@example.com", before: { action: "forward", destinations: ["someone@gmail.test"] },
+      after: { action: "worker", destinations: ["mailda"] }, mailbox: { id: "mbx_1", name: "Wei Meng" },
+    } } });
+    await provider(["--take-over", "r1", "--domain", "example.com", "--confirm", "e".repeat(64), "--url", "https://node.test"]);
+    expect(out.join("")).toContain("     now       worker -> mailda\n     files     into Wei Meng (mbx_1)\n");
+  });
+
+  it("offers per rule what the Node says it would do, and names the refusal where it would refuse", async () => {
+    const out = node({ "/api/provider/routing-rules": { routing: { domain: "example.com", zone: "example.com", zoneId: "z1", error: null, rules: [
+      rule({}),
+      rule({ id: "r2", to: "two@example.com", destinations: ["a@gmail.test", "b@gmail.test"], offer: null,
+        refusal: { code: "E_ROUTING_RULE_MANY_DESTINATIONS", what: "the rule for two@example.com forwards to 2 destinations", why: "w", fix: "edit it to one destination" } }),
+      rule({ id: "r3", to: "in@example.com", action: "worker", destinations: ["mailda"], ours: true, offer: "put_back" }),
+      // This Node's own, never taken over: nothing to put back.
+      rule({ id: "r4", to: "own@example.com", action: "worker", destinations: ["mailda"], ours: true, offer: null,
+        refusal: { code: "E_ROUTING_RULE_NEVER_TAKEN", what: "this Node never took over rule r4", why: "w", fix: "f" } }),
+    ] } } });
+    await provider(["--routing-rules", "example.com", "--url", "https://node.test"]);
+    const said = out.join("");
+    expect(said).toContain(`take over: mailda provider --take-over r1 --domain example.com --confirm ${"e".repeat(64)}\n`);
+    expect(said).toContain("refused:   E_ROUTING_RULE_MANY_DESTINATIONS: the rule for");
+    expect(said).not.toContain("--take-over r2");
+    expect(said).toContain("put back:  mailda provider --put-back r3 --domain example.com\n");
+    expect(said).not.toContain("--put-back r4");
+    expect(said).toContain("refused:   E_ROUTING_RULE_NEVER_TAKEN");
+  });
+});

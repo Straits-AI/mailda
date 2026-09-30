@@ -3,7 +3,9 @@ id: wrangler-login-reach
 kind: platform-limit
 measured_on: 2026-09-25
 stale_when: >
-  wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record);
+  wrangler's login scope list changes (28 scopes on 4.118.0, remeasured 30 September 2026; 25 on 4.90.1 when
+  rerun that day, recorded as 24 on 25 September;
+  `wrangler login --scopes-list` is the record);
   Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or
   the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar
   or raw DNS endpoints start answering an `email_routing:write`-shaped token; or GET
@@ -22,10 +24,11 @@ values:
 **The question.** Whether `mailda install` can set a Node up to receive, send and observe delivery outcomes
 with the consent the operator already gave to wrangler, so the Node's own grant (ADR 42) stops being on the
 critical path. The grant asks for eight scopes; wrangler's login carries `zone:read`, `email_routing:write`,
-`email_sending:write` and `queues:write` among its 24, and the Node's provisioning code reaches Cloudflare
+`email_sending:write` and `queues:write` among the 24 then recorded (25 when 4.90.1 was rerun, and 28 on wrangler 4.118.0; below), and the Node's provisioning code reaches Cloudflare
 through exactly those permission groups for everything but two endpoints.
 
-**Measured** on 25 September 2026 with wrangler 4.90.1's login token (refreshed by `wrangler whoami`), in
+**Measured** on 25 September 2026 with wrangler 4.90.1's login token (then read from wrangler's config file after
+`wrangler whoami` refreshed it; since 30 September 2026 the CLI asks `wrangler auth token --json`), in
 account `1e0170…`, on the zone `mailda.site`. Reads first, then writes on the throwaway subdomain
 `probe.mailda.site`, then cleanup.
 
@@ -140,3 +143,30 @@ operator already gave wrangler, and the Node's token does not need the permissio
 found none verified; the Node's first read with its own token settles it. Also not recorded yet: the exact shape
 of one `verified` string (format only), which the Node normalizes through `Date.parse` because it was never
 printed.
+
+## The scope list, remeasured on wrangler 4.118.0 (30 September 2026)
+
+This receipt's `stale_when` named the scope count, and the locked wrangler had moved from 4.90.1 to 4.118.0.
+`wrangler login --scopes-list` (read-only: it prints the list and signs nobody in), run in an isolated
+`HOME` with no login, names **28** scopes:
+
+```text
+account:read  user:read  workers:write  workers_kv:write  workers_routes:write  workers_scripts:write
+workers_tail:read  d1:write  pages:write  zone:read  ssl_certs:write  ai:write  ai-search:write
+ai-search:run  websearch.run  agent-memory:write  queues:write  pipelines:write  secrets_store:write
+artifacts:write  flagship:write  containers:write  cloudchamber:write  connectivity:admin
+email_routing:write  email_sending:write  browser:write  challenge-widgets.write
+```
+
+The four the values above rest on are all still there: `zone:read`, `email_routing:write`,
+`email_sending:write` and `queues:write`. Still none reaches raw DNS records or the registrar
+(`dns_records:*` and `registrar:*` are absent), so `wrangler.login_reaches_raw_dns_records` and
+`wrangler.login_reaches_registrar` stay 0 on the same grounds.
+
+What changed since 4.90.1, from its own `--scopes-list` rerun the same day (the copy in nvm's global modules,
+the same isolated `HOME`): it names **25**, not the 24 this receipt recorded on 25 September, whose list was not
+kept, so that count is not reproduced. The three in 4.118.0 and not in 4.90.1 are `agent-memory:write`,
+`challenge-widgets.write` and `websearch.run`; none was removed. None of the three touches anything the values
+describe. **Not remeasured:** the endpoint answers in the tables above, which need a
+signed-in run; the scope list is the part of this receipt a change in wrangler alone could invalidate, and
+it has not.

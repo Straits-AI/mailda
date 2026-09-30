@@ -3,11 +3,13 @@
  * compared against the module's real exports by `test/node/declaration-drift.test.ts`.
  */
 
-/** wrangler's login token, from the environment or its config file; fails naming the paths looked at. */
+/** wrangler's login token: CLOUDFLARE_API_TOKEN, else `wrangler auth token --json`; fails saying why there is none. */
 export function wranglerToken(): Promise<string>;
 
-/** wrangler's login token as `wranglerToken` finds it, or null where that one fails for want of a login. */
-export function wranglerTokenIfAny(): Promise<string | null>;
+/** The token wrangler would act with, or why there is none, from `wrangler auth token --json`; never exits. */
+export function wranglerTokenRead():
+  | { token: string; error: null }
+  | { token: null; error: string };
 
 /**
  * `POST /api/provider/verified-destinations`'s `destinations`: counts only, never an address. Taken from the
@@ -28,8 +30,8 @@ export function catchAllLine(catchAll: { action: string; destinations: string[];
 /** The rows of the domain picker: every zone, then a typed subdomain, then an explicit skip. */
 export function domainChoices(zones: ReadonlyArray<{ name: string }>): Array<{ label: string; value: string }>;
 
-/** The zones an account holds, as wrangler's token sees them; an unreachable API reads as none. */
-export function zonesOf(accountId: string, token: string): Promise<Array<{ name: string }>>;
+/** Every page of the zones an account holds, as the token sees them; a failed page is printed as a note. */
+export function zonesOf(accountId: string, token: string, fetchImpl?: typeof fetch): Promise<Array<{ name: string }>>;
 
 /** How an address is routed, in the contract's words. */
 export type AddressRouting = import("@mailda/contract/schemas").AddressRouting;

@@ -9,8 +9,8 @@ const { verifiedDestinationLines, verifiedDestinationsStep } = await import("../
  * printed as a count, which turns could not read into none verified; the operator's credential not sent, so the
  * Node answers with its own or refuses; a refusal that ends the run after the deploy already happened.
  *
- * Not unit-tested: `wranglerTokenIfAny`, which spawns wrangler; the live `mailda setup` run the receipts are
- * owed reaches it through `wranglerToken`. `mailda upgrade`'s own branch (the gate on `state.provisioned`, the
+ * `wranglerTokenRead` is run against a stub wrangler in `wrangler-config.test.ts` (the token returned, never
+ * printed); the live `mailda setup` run the receipts are owed reaches it through `wranglerToken`. `mailda upgrade`'s own branch (the gate on `state.provisioned`, the
  * `token ??=` reuse, and the one line printed without a login) is not tested anywhere.
  */
 

@@ -80,6 +80,9 @@ function mount(
     tokenAnswers?: Array<{ status: number; body: unknown }>;
     /** What `POST /api/provider/verified-destinations` answers. */
     verified?: { status: number; body: unknown };
+    /** What `GET /api/provider/routing-rules` and its take-over answer. */
+    rules?: unknown;
+    takenOver?: unknown;
   } = {},
 ) {
   let tokenCall = 0;
@@ -88,6 +91,8 @@ function mount(
     if (call.path === "/api/provider/verified-destinations" && call.method === "POST" && parts.verified !== undefined) {
       return Response.json(parts.verified.body, { status: parts.verified.status });
     }
+    if (call.path.startsWith("/api/provider/routing-rules?") && call.method === "GET") return Response.json(parts.rules);
+    if (call.path === "/api/provider/routing-rules/take-over" && call.method === "POST") return Response.json(parts.takenOver);
     if (call.path.startsWith("/api/provider/receiving") && call.method === "GET") {
       return Response.json(parts.receiving);
     }
@@ -544,5 +549,55 @@ describe("reading which recipients are verified destinations", () => {
     mount({ verified: { status: 200, body: read({ recipients: 0, verified: 0 }) } });
     await press();
     expect((await screen.findByRole("status")).textContent).toContain("has handed mail to nobody yet");
+  });
+});
+
+describe("the rules already on a zone", () => {
+  const rule = (over: Record<string, unknown>) => ({
+    id: "r1", name: "hello to gmail", enabled: true, to: "hello@example.com", action: "forward",
+    destinations: ["someone@gmail.test"], catchAll: false, ours: false, digest: "e".repeat(64),
+    offer: "take_over", refusal: null, ...over,
+  });
+  const refused = (code: string, what: string, fix: string) => ({ offer: null, refusal: { code, what, why: "w", fix } });
+  const listing = (rules: unknown[]) => ({ routing: { domain: "example.com", zone: "example.com", zoneId: "z1", rules, error: null } });
+  async function list() {
+    await screen.findByText("List the rules on this zone");
+    fireEvent.change(document.getElementById("setup-rules-domain")!, { target: { value: "example.com" } });
+    fireEvent.click(screen.getByText("List the rules on this zone"));
+  }
+
+  it("offers no act on a row the Node says it would refuse, and says the Node's reason instead", async () => {
+    mount({ rules: listing([
+      rule({ id: "off", to: "off@example.com", enabled: false, ...refused("E_ROUTING_RULE_DISABLED", "the rule for off@example.com is disabled", "enable it in the Cloudflare dashboard") }),
+      rule({ id: "two", to: "two@example.com", ...refused("E_ROUTING_RULE_MANY_DESTINATIONS", "it forwards to 2 destinations", "edit it to one destination") }),
+      rule({ id: "own", to: "own@example.com", ours: true, ...refused("E_ROUTING_RULE_NEVER_TAKEN", "this Node never took over rule own", "edit it in the dashboard") }),
+      rule({ id: "back", to: "back@example.com", ours: true, offer: "put_back" }),
+      rule({}),
+    ]) });
+    await list();
+    const off = (await screen.findByText("off@example.com")).closest("tr")!;
+    expect(off.textContent).toContain("the rule for off@example.com is disabled: enable it in the Cloudflare dashboard");
+    expect(off.querySelector("button")).toBeNull();
+    // A row the listing itself cannot tell is refused (a rule with two destinations), and this Node's own rule it never took.
+    expect(screen.getByText("two@example.com").closest("tr")!.querySelector("button")).toBeNull();
+    expect(screen.getByText("own@example.com").closest("tr")!.querySelector("button")).toBeNull();
+    expect(screen.getByText("back@example.com").closest("tr")!.querySelector("button")?.textContent).toBe("Put back");
+    // The enabled rule beside it still offers one, so the absence above is about the row, not the table.
+    expect(screen.getByText("hello@example.com").closest("tr")!.querySelector("button")?.textContent).toBe("Point here");
+  });
+
+  it("names the mailbox the address files into after a take-over", async () => {
+    mount({
+      rules: listing([rule({})]),
+      takenOver: { outcome: {
+        ruleId: "r1", to: "hello@example.com", before: { action: "forward", destinations: ["someone@gmail.test"] },
+        after: { action: "worker", destinations: ["mailda"] }, mailbox: { id: "mbx_1", name: "Enquiries" },
+      } },
+    });
+    await list();
+    fireEvent.click(await screen.findByText("Point here"));
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
+      .toBe("hello@example.com: was forward → someone@gmail.test, now worker → mailda. It files into Enquiries.");
   });
 });

@@ -76,8 +76,8 @@ export function classifyAddress(
   /*
    * Disabled is its own answer. Cloudflare says a disabled rule "will not forward emails to a destination address
    * or Worker", and does not say whether the address then falls to the catch-all, so this Node does not claim
-   * either. Take-over is not the next step: it keeps `enabled` as it is, and refuses a rule already naming this
-   * Worker.
+   * either. Take-over is not the next step: it keeps `enabled` as it is, so it refuses a disabled rule
+   * (`E_ROUTING_RULE_DISABLED`, 30 September 2026).
    */
   if (own.enabled !== true) {
     const ours = (own.actions?.[0]?.value ?? []).includes(worker) && own.actions?.[0]?.type === "worker";

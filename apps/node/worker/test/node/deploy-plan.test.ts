@@ -6,7 +6,7 @@ const ROOT = join(import.meta.dirname, "../../../../..");
 
 const {
   ABSENT_MARKERS, COMMAND_FOR, DISPOSITION_SAYS, dispositionOf, ownerFrom, planFor, presenceFrom,
-  renderPlan, resourcesFrom, UNWIND_ORDER, unwindFor,
+  renderPlan, resourcesFrom, UNWIND_ORDER, unwindFor, workflowGuard,
 } = await import("../../../../../packages/cli/src/deploy-plan.mjs");
 import type {
   Disposition, Plan, PlannedResource, ProbeOutcome, Resource, ResourceKind,
@@ -236,6 +236,32 @@ describe("asking about one resource, which replaced scanning a list", () => {
   });
 });
 
+describe("the deploy's #99 guard, asked by name (30 September 2026)", () => {
+  /*
+   * `mailda deploy` used to scan page 1 of `wrangler workflows list`, and a Workflow on page 2 left the owner
+   * unknown and the guard passing without a word. It asks `wrangler workflows describe <name>` now, and these
+   * are the five answers it can get, each with what the deploy does.
+   */
+  const described = (owner: string) => ({ status: 0, text: `Name:         mailda-butler-runs\nScript Name:  ${owner}\nClass Name:   ButlerRun\n` });
+
+  it("proceeds when the Workflow is absent by wrangler's own words, or is this Worker's", () => {
+    expect(workflowGuard(NOT_FOUND.workflow!, "mailda")).toEqual({ state: "absent" });
+    expect(workflowGuard(described("mailda"), "mailda")).toEqual({ state: "own" });
+  });
+
+  it("refuses another Worker's", () => {
+    expect(workflowGuard(described("mailda2"), "mailda")).toEqual({ state: "stolen", owner: "mailda2" });
+  });
+
+  it("names a failed call, and refuses a success it cannot read, which used to be the silent pass", () => {
+    // A failure that is not the not-found marker is a note: nothing was established either way.
+    expect(workflowGuard({ status: 1, text: "fetch failed" }, "mailda")).toEqual({ state: "unread" });
+    expect(workflowGuard(null, "mailda")).toEqual({ state: "unread" });
+    // A success with no `Script Name:` is wrangler's wording moving under the parse.
+    expect(workflowGuard({ status: 0, text: "Name: mailda-butler-runs\nOwner: mailda2\n" }, "mailda")).toEqual({ state: "unparsed" });
+  });
+});
+
 describe("the five dispositions, and what each one costs when the plan says the wrong one", () => {
   const d1: Resource = { kind: "d1", name: "mailda-catalog", binding: "CATALOG", derived: true };
 
@@ -433,9 +459,9 @@ describe("the plan's verdict", () => {
 
   it("does not block on an unread list, and names what went unchecked", () => {
     /*
-     * The same trade `refuseIfWorkflowBelongsElsewhere` makes: `wrangler workflows list` needs a permission a
-     * deploy token may not carry, and refusing every plan because a *diagnostic* was unavailable is the wrong
-     * direction. What is right is naming it, which `unread` is for.
+     * The same trade `refuseIfWorkflowBelongsElsewhere` makes for a failed `workflows describe`: refusing every
+     * plan because a *diagnostic* was unavailable is the wrong direction. What is right is naming it, which
+     * `unread` is for.
      */
     const plan = planFor({
       configText: CONFIG,

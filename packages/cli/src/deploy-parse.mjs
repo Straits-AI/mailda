@@ -20,39 +20,94 @@ import { resolve } from "node:path";
  * rather than a lexical guard.
  */
 
-/** A version id, out of wrangler's prose. `null` rather than a guess: the caller refuses on null. */
-export function versionIdFrom(text) {
-  const match = /Worker Version ID:\s*([0-9a-f-]{36})/i.exec(text)
-    ?? /Version ID:\s*([0-9a-f-]{36})/i.exec(text)
-    ?? /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.exec(text);
-  return match?.[1] ?? null;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The entries of wrangler's output file (`WRANGLER_OUTPUT_FILE_PATH`), one JSON object per line, in the order
+ * written (30 September 2026). A line that is not JSON throws with the line: the file is wrangler's structured
+ * answer, and one that cannot be read is a fault to show, never an answer of "nothing written".
+ */
+export function outputEntries(text) {
+  return text.split("\n").filter((line) => line.trim() !== "").map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch (cause) {
+      throw new Error(`wrangler's output file holds a line that is not JSON (${String(cause)}): ${line.slice(0, 200)}`);
+    }
+  });
+}
+
+/** The last entry of one `type`, or null. The file is appended to, so the last is the newest. */
+function lastOf(entries, type) {
+  return entries.filter((entry) => entry?.type === type).at(-1) ?? null;
 }
 
 /**
- * The version currently serving, out of `wrangler deployments list`.
+ * The id of the version `wrangler versions upload` created: the `version_id` of its `version-upload` entry in
+ * the output file. `null` rather than a guess, and the caller refuses on null.
  *
- * ## Why this replaced a preview-URL parser
+ * It replaced a read of wrangler's prose that fell back to the first UUID anywhere in the output, which would
+ * have promoted whatever id wrangler happened to print first (a binding's, a previous version's) if the
+ * `Worker Version ID:` line ever changed wording.
+ */
+export function versionIdFrom(entries) {
+  const id = lastOf(entries, "version-upload")?.version_id;
+  return typeof id === "string" && UUID.test(id) ? id : null;
+}
+
+/**
+ * The Node's workers.dev address, from the `targets` of the `deploy` entry a first `wrangler deploy` writes.
+ * wrangler 4.118.0 prefixes `https://` onto workers.dev targets only; the others are routes, custom domains and
+ * `schedule: …` lines, which are not the Node's workers.dev address. `null` when the deploy published none.
+ */
+export function workersDevUrlFrom(entries) {
+  const targets = lastOf(entries, "deploy")?.targets;
+  if (!Array.isArray(targets)) return null;
+  return targets.find((target) => typeof target === "string" && /^https:\/\/[a-z0-9.-]+\.workers\.dev$/i.test(target)) ?? null;
+}
+
+/**
+ * The deployment `wrangler versions deploy` created, from its `version-deploy` entry, or null.
+ *
+ * Only the id. The same entry carries `version_traffic`, which in wrangler 4.118.0 is a `Map` passed to
+ * `JSON.stringify` and so is always written as `{}`: it cannot confirm which versions hold which share.
+ */
+export function deploymentIdFrom(entries) {
+  const id = lastOf(entries, "version-deploy")?.deployment_id;
+  return typeof id === "string" && id !== "" ? id : null;
+}
+
+/**
+ * The version serving now, from `wrangler deployments status --json`: the one version in the latest
+ * deployment that holds traffic. `null` when that cannot be said, and the caller refuses on null.
+ *
+ * ## Why this replaced reading `deployments list`
  *
  * The gate used to check the canary at `canary-mailda.<subdomain>.workers.dev`, and that hostname **404s and
- * always will**. Measured against the live account: the script's subdomain settings read
- * `{"enabled": true, "previews_enabled": true}`, the alias is recorded on every version, and no preview
- * hostname routes at all. The cause is a platform limitation — Cloudflare does not generate preview URLs for
- * Workers that implement a Durable Object, and this one has `KEY_VAULT` and `OUTBOX_SWEEPER`. Two rounds of
- * the deploy drill blamed an account setting, which is why the receipt records the API response rather than
- * the conclusion.
+ * always will**: Cloudflare does not generate preview URLs for Workers that implement a Durable Object, and
+ * this one has `KEY_VAULT` and `OUTBOX_SWEEPER`. So the canary is checked on the **production** hostname
+ * through a version override, which needs the serving version's id to build a two-version deployment.
  *
- * So the canary is checked on the **production** hostname through a version override, which needs the
- * currently-serving version id to build a two-version deployment. Cloudflare serves at most two versions in
- * one deployment, so this is the other half of that pair.
+ * That id was read from `wrangler deployments list` as the last `(N%) <uuid>` line, on the observation that the
+ * list prints oldest first: a row-order assumption with nothing behind it but one reading. `deployments status
+ * --json` is the latest deployment as the API returns it, `versions: [{version_id, percentage}]`, so no order
+ * is assumed.
  *
- * `wrangler deployments list` prints deployments oldest-first, so the **last** percentage line is the active
- * one. Taking the first would build a deployment around a version that stopped serving days ago and drop the
- * one that is — which is why this reads the last match rather than the first.
+ * The canary this command itself leaves at 0% is not serving. Two versions both holding traffic (a gradual
+ * rollout somebody else started) has no single incumbent: pairing the canary with either would publish a
+ * deployment that drops the other, so that is `null` too.
  */
-export function activeVersionFrom(text) {
-  const all = [...text.matchAll(/\((\d{1,3})%\)\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)];
-  const serving = all.filter((one) => Number(one[1]) > 0);
-  return serving.at(-1)?.[2] ?? null;
+export function activeVersionFrom(statusJson) {
+  let deployment;
+  try {
+    deployment = JSON.parse(statusJson);
+  } catch {
+    return null; // not JSON: the caller refuses, quoting what wrangler said
+  }
+  const serving = (Array.isArray(deployment?.versions) ? deployment.versions : [])
+    .filter((one) => typeof one?.percentage === "number" && one.percentage > 0);
+  const id = serving.length === 1 ? serving[0].version_id : null;
+  return typeof id === "string" && UUID.test(id) ? id : null;
 }
 
 /**
@@ -72,9 +127,7 @@ export function activeVersionFrom(text) {
  */
 export function servedVersionOf(report) {
   const id = report?.version;
-  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-    ? id
-    : null;
+  return typeof id === "string" && UUID.test(id) ? id : null;
 }
 
 /**
@@ -229,4 +282,18 @@ export function hostnameIn(config) {
 /** The Worker's name as the config states it. */
 export function workerNameIn(config) {
   return /"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
+}
+
+/**
+ * The Workflows one page of `wrangler workflows list` shows, as `[{name, script, className}]` (30 September
+ * 2026). wrangler 4.118.0 has no `--json` for it and prints a box-drawn table, `Name │ Script name │ Class name
+ * │ Created │ Modified`; the header row is dropped by its own words. An empty page, or wrangler's "No Workflows
+ * found on page N" past the last one, is `[]`, which is how a caller knows the listing has ended.
+ */
+export function workflowRowsFrom(text) {
+  return text.split("\n")
+    .filter((line) => line.includes("│"))
+    .map((line) => line.split("│").map((cell) => cell.trim()).filter(Boolean))
+    .filter((cells) => cells.length >= 3 && !(cells[0] === "Name" && /^Script name$/i.test(cells[1])))
+    .map(([name, script, className]) => ({ name, script, className }));
 }

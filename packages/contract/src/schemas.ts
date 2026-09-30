@@ -726,6 +726,10 @@ export const providerRoutingRulesResponse = z.object({
       ours: z.boolean(),
       /** Over the rule as listed; a take-over quotes it so a rule edited since is refused as stale. */
       digest: z.string().length(64),
+      /** What the Node would do with the rule if asked, by the checks the act makes; null when it would refuse. */
+      offer: z.enum(["take_over", "put_back"]).nullable(),
+      /** The refusal the act would answer when nothing is offered. A zone setting the listing does not read can still refuse. */
+      refusal: z.object({ code: z.string(), what: z.string(), why: z.string(), fix: z.string() }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),
   }).strict(),
@@ -739,7 +743,10 @@ export const providerRoutingRuleOutcomeResponse = z.object({
     ruleId: z.string(),
     to: z.string(),
     before: routingRuleAction,
+    /** As Cloudflare read the rule back after the change, never as sent. */
     after: routingRuleAction,
+    /** The mailbox the address files into after a take-over: the address row's own when it already existed. Null on a put-back. */
+    mailbox: z.object({ id: z.string(), name: z.string() }).strict().nullable(),
   }).strict(),
 }).strict();
 

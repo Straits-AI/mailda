@@ -10,16 +10,33 @@
  * real answers. A declaration nobody calls would be the dangerous kind.
  */
 
-/** A version id out of wrangler's prose, or `null` — never a guess. */
-export function versionIdFrom(text: string): string | null;
+/** One entry of wrangler's output file (`WRANGLER_OUTPUT_FILE_PATH`): `type` and whatever that type carries. */
+export interface OutputEntry {
+  type?: string;
+  [field: string]: unknown;
+}
+
+/** The entries of wrangler's output file, one JSON object per line. Throws on a line that is not JSON. */
+export function outputEntries(text: string): OutputEntry[];
+
+/** The uploaded version's id, from the last `version-upload` entry, or `null` — never a guess. */
+export function versionIdFrom(entries: OutputEntry[]): string | null;
+
+/** The Node's workers.dev address, from the last `deploy` entry's `targets`, or null. */
+export function workersDevUrlFrom(entries: OutputEntry[]): string | null;
+
+/** The deployment id from the last `version-deploy` entry, or null. Its `version_traffic` is `{}` in 4.118.0. */
+export function deploymentIdFrom(entries: OutputEntry[]): string | null;
 
 /**
- * The version currently serving, out of `wrangler deployments list` — the last one holding traffic.
+ * The version serving now, from `wrangler deployments status --json`: the one version holding traffic, or
+ * `null` when there is not exactly one (or the answer is not JSON).
  *
- * Replaced `previewUrlFrom`, which parsed a hostname that can never exist: Cloudflare does not generate
- * preview URLs for Workers implementing a Durable Object.
+ * Replaced a read of `deployments list` that took the last `(N%) <uuid>` line on a row-order assumption, which
+ * itself replaced `previewUrlFrom`: Cloudflare does not generate preview URLs for Workers implementing a
+ * Durable Object.
  */
-export function activeVersionFrom(text: string): string | null;
+export function activeVersionFrom(statusJson: string): string | null;
 
 /**
  * The version id a doctor report says answered, or `null` if it did not say so in a form worth trusting.
@@ -67,3 +84,6 @@ export function hostnameIn(config: string): string | null;
 
 /** The Worker's name as the config states it, or null when the config names none. */
 export function workerNameIn(config: string): string | null;
+
+/** The Workflows one page of `wrangler workflows list` shows. `[]` for an empty page or one past the last. */
+export function workflowRowsFrom(text: string): Array<{ name: string; script: string; className: string }>;
