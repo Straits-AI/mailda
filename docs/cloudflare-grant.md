@@ -328,7 +328,17 @@ reports success. Three routes cover that case, all administrator-only and withhe
   rule as listed. `/setup` → receiving shows the table; `mailda provider --routing-rules <domain>` prints it.
 - `POST /api/provider/routing-rules/take-over {domain, ruleId, digest, mailboxId?}` registers the rule's
   address on this Node (the #92 lesson, in the same batch as the audit entry), records the action the rule
-  had on that entry, then `PUT`s the rule with `worker → this Node`. A rule holds exactly one action
+  had on that entry, then `PUT`s the rule with `worker → this Node`, renamed
+  `mailda <worker> (was <action>[ <destination>], repointed <YYYY-MM-DD>)` (1 October 2026, critic H1): the
+  audit entry lives on the Node, and a deleted Node took the only record of where the address went with it.
+  The name is Cloudflare's to keep; the entry records both names, and the answer's `nameRecorded` says whether
+  the rule read back with the name as written (false: only this Node's put-back can restore it). A rule that
+  already routes to the Worker its name records (another Node's take-over) keeps that record: the new name
+  carries the earlier `was …` forward, and the offer says so, so the forward it replaced is never recorded only
+  in the second Node's audit trail. The catch-all's take-over (the receiving step) writes no name. A forward rule whose address has no row here
+  is refused without a `mailboxId` (`E_ROUTING_FORWARD_NEEDS_MAILBOX`, critic M4): a forwarded address is
+  usually one person's mail, and the organization's only mailbox is not a default for it. A rule whose action
+  is not forward, worker or drop is refused (`E_ROUTING_RULE_ACTION_UNKNOWN`). A rule holds exactly one action
   (measured, `email-routing-rule-takeover.md`), so this replaces; there is no forward-and-also-here. A
   stale digest, the catch-all, and a rule already pointing here are refused. So, since 30 September 2026,
   is every rule a take-over would point here and then receive nothing through, or lose a destination by:
@@ -343,13 +353,24 @@ reports success. Three routes cover that case, all administrator-only and withhe
   (`E_ROUTING_ADDRESS_FILES_ELSEWHERE`) rather than recorded while the row files elsewhere.
 - Each listed rule carries `offer` (`take_over`, `put_back` or null) and, when null, the `refusal` the act would
   answer (30 September 2026). The listing and the act decide by the same function, so Setup and
-  `mailda provider --routing-rules` never offer an act the Node must refuse: every refusal above except
-  subaddressing, which is a zone setting the listing does not read and the act alone checks. A rule that names
-  this Node offers a put-back only when a take-over of it is on the audit trail; one onboarding wrote, or the
-  customer pointed here by hand, answers `E_ROUTING_RULE_NEVER_TAKEN`. The CLI's `--take-over` prints the
+  `mailda provider --routing-rules` never offer an act the Node must refuse: every refusal above, subaddressing
+  included since 1 October 2026 (the listing reads the zone's settings once). An offered rule also carries
+  `takeOver`: the one choice besides leaving it (`receive here only` for a forward, `receive here` for a Worker
+  or a drop), what it changes in one sentence, the mailbox an existing address row files into, and whether a
+  mailbox must be chosen. The setup step, the Setup screen and the CLI listing print those words rather than
+  each keeping its own. A rule that names
+  this Node offers a put-back only when a take-over of it is on the audit trail, or its name records one by this
+  Worker (a reinstalled Node); one onboarding wrote, or the customer pointed here by hand, answers
+  `E_ROUTING_RULE_NEVER_TAKEN`. The CLI's `--take-over` prints the
   mailbox the address now files into, as Setup does.
 - `POST /api/provider/routing-rules/put-back {domain, ruleId}` reads the latest take-over entry for that
-  rule and `PUT`s its previous action back. A rule this Node never took, or one that no longer routes here
+  rule and `PUT`s its previous action back, with the name it had while the take-over's name is still on it (a
+  rule renamed since keeps its new name). With no entry, it restores from the name's record, clears the name,
+  and says `restoredFrom: "name"` on its own entry. With no Node to ask, `mailda provider --put-back <rule id> --domain
+  <domain> --without-node` reads the action from the rule's name with the operator's wrangler login, restores
+  it, clears the name and reads it back; it writes no audit entry, and refuses a name with no record in it (the
+  catch-all's, and any rule taken over before 1 October 2026) or a rule that no longer routes to the Worker the
+  name says. A rule this Node never took, or one that no longer routes here
   (somebody changed it, or the take-over did not complete), is refused rather than overwritten. The address
   row stays; an address that files and nothing routes is harmless.
 - Both write their entry as the intent, before the `PUT`, and then read the rule back and record
@@ -367,8 +388,18 @@ reports success. Three routes cover that case, all administrator-only and withhe
   latest of take-over and put-back (30 September 2026): a put-back Cloudflare refused left the rule routing
   here with the put-back as the latest entry, and the rule was deleted.
 
+**The setup step** (1 October 2026). `mailda install` (once the first address exists), `mailda setup` and every
+`mailda upgrade` list the rules on the name the Node receives at, through the listing above
+(`packages/cli/src/verbs/routing-step.mjs`). It asks one y/N only when a rule is offered, then "leave it" (the
+default) or the rule's `takeOver.label` per rule, then a mailbox where the Node leaves it open (for a forward: a
+new mailbox named after the address, first), then shows the plan and asks again before any take-over. A refusal
+is printed under its row and the others go ahead; the step never ends the run. `--yes`, or no terminal, prints
+the list and each `--take-over` command and changes nothing. Rules on other names are a count line. The Setup
+screen offers the same choice with the same words.
+
 Not built, on purpose: editing forward destinations or deleting rules. Either would make this Node a
-routing-rule editor.
+routing-rule editor. Keeping a rule's forward while receiving here (`message.forward()`) is not built and not
+decided; the step offers "receive here only" for a forward.
 
 **The catch-all, built 25 September 2026, through the receiving step only.** This paragraph used to refuse
 it on the ground that every address without its own rule would be rejected here as an unknown recipient.

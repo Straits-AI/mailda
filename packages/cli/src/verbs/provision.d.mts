@@ -54,6 +54,12 @@ export interface ProvisionOutcome {
  */
 export interface ProvisionedAct { domain: string; at: string; address: string | null; observed: boolean; routing?: AddressRouting | null }
 
+/** The name the Node receives at: the one on record, else the one this run's first address is on, else null. Pure. */
+export function receivingDomain(
+  provisioned: { receiving: ProvisionedAct | null } | null | undefined,
+  setUp: { address: string | null } | null | undefined,
+): string | null;
+
 /** Whether a receiving outcome's address reaches this Node: its `routing`, or its `rule` from a Node older than that. */
 export function outcomeRoutesHere(outcome: { rule: string | null; routing?: AddressRouting | null }): boolean;
 
@@ -66,8 +72,11 @@ export function firstAddress(typed: string | undefined, domain: string, defaultL
 /** `GET /api/provider/receiving`'s `ownRules`: the addresses on the domain with a routing rule of their own. From the contract. */
 export type OwnRules = import("@mailda/contract/schemas").ProviderReceivingProposal["ownRules"];
 
-/** Those addresses and where each goes, as lines to print (unindented); unread, or a Node too old to list them, is said. Pure. */
-export function ownRulesLines(ownRules: OwnRules | null | undefined, domain: string): string[];
+/**
+ * Those addresses and where each goes, as lines to print (unindented); unread, or a Node too old to list them, is said.
+ * `below`: the routing step follows, and may change them. Pure.
+ */
+export function ownRulesLines(ownRules: OwnRules | null | undefined, domain: string, options?: { below?: boolean }): string[];
 
 /** The first address's default local part: the sign-in address's own when it is on `domain` and not routed elsewhere; else `hello`, with why. Pure. */
 export function defaultLocalFor(signInEmail: string | null | undefined, domain: string, ownRules: OwnRules | null | undefined): { local: string; said: string | null };

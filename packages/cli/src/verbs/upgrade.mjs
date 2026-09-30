@@ -7,7 +7,8 @@ import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, 
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
+import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
+import { routingRulesStep } from "./routing-step.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -159,6 +160,15 @@ export async function upgrade(argv) {
     process.exit(2);
   }
   const setUp = await setUpNode({ url, accountId, yes, ...session });
+  /*
+   * The routing rules, on every upgrade and outside `setUpNode`'s missing-step branch (1 October 2026): a Node set
+   * up long ago never saw its zone's rules again, and they change in the dashboard, not here. It asks only when a
+   * rule can be offered, and under --yes it prints and changes nothing.
+   */
+  await routingRulesStep({
+    origin: url, cookie: session.cookie, accountId, token: session.token, yes, ask,
+    domain: receivingDomain(session.state?.provisioned, setUp),
+  });
   process.stdout.write(
     `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
     + `   receiving   ${setUp.receiving === null

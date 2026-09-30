@@ -6,6 +6,7 @@ import { language } from "./language.ts";
 import { palette } from "./palette.ts";
 import { preauth } from "./preauth.ts";
 import { settings } from "./settings.ts";
+import { setup } from "./setup.ts";
 import { shell } from "./shell.ts";
 
 /**
@@ -15,6 +16,6 @@ import { shell } from "./shell.ts";
 export { preauth };
 
 /** Every `app` area, by name, so `test/node/catalog.test.ts` can check that none of them shadowed another. */
-export const APP_AREAS = { common, language, chrome, palette, shell, inbox, settings, api } as const;
+export const APP_AREAS = { common, language, chrome, palette, shell, inbox, settings, setup, api } as const;
 
-export const app = { ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...api } as const;
+export const app = { ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...setup, ...api } as const;

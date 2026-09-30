@@ -20,6 +20,7 @@ export const AREAS = {
   shell: ["shell", "shortcuts"],
   inbox: ["inbox"],
   settings: ["settings"],
+  setup: ["setup"],
   api: ["api"],
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 

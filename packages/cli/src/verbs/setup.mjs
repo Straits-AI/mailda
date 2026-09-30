@@ -1,6 +1,7 @@
 import { api, choose, fail, flag, readSecret, sessionCookie } from "../support.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, receivingOf, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
+import { routingRulesStep } from "./routing-step.mjs";
 
 /**
  * `mailda setup`: receiving, sending and delivery outcomes for a Node that is already deployed and claimed,
@@ -68,5 +69,7 @@ export async function setup(argv) {
   // After the three steps, always: which recipients are verified destinations changes with every send, so a
   // setup that found everything in place still reads it.
   await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
+  // The rules that keep addresses from reaching this Node, on every run: they change in the dashboard, not here.
+  await routingRulesStep({ origin: url, cookie, accountId, token, yes, ask, domain: receivingDomain(state.provisioned, setUp) });
   printNext(url, setUp);
 }

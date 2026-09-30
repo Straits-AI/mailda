@@ -30,6 +30,7 @@
     "./capability": "./src/capability.ts",
     "./relations": "./src/relations.ts",
     "./authority": "./src/authority.ts",
-    "./naming": "./src/naming.ts"
+    "./naming": "./src/naming.ts",
+    "./routing-rule-name": "./src/routing-rule-name.ts"
   }
 }

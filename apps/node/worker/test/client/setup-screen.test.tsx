@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerWith, calls, reset } from "./session-stub.ts";
+import { answerMailboxes, answerWith, calls, reset } from "./session-stub.ts";
 
 /**
  * Setting a Node up without opening the Cloudflare dashboard (#210).
@@ -83,6 +83,8 @@ function mount(
     /** What `GET /api/provider/routing-rules` and its take-over answer. */
     rules?: unknown;
     takenOver?: unknown;
+    /** What the take-over answers instead, as a refusal. */
+    takeOverRefused?: { status: number; body: unknown };
   } = {},
 ) {
   let tokenCall = 0;
@@ -92,7 +94,15 @@ function mount(
       return Response.json(parts.verified.body, { status: parts.verified.status });
     }
     if (call.path.startsWith("/api/provider/routing-rules?") && call.method === "GET") return Response.json(parts.rules);
-    if (call.path === "/api/provider/routing-rules/take-over" && call.method === "POST") return Response.json(parts.takenOver);
+    if (call.path === "/api/provider/routing-rules/take-over" && call.method === "POST") {
+      return parts.takeOverRefused === undefined ? Response.json(parts.takenOver) : Response.json(parts.takeOverRefused.body, { status: parts.takeOverRefused.status });
+    }
+    if (call.path === "/api/mailboxes" && call.method === "POST") {
+      // Made, so listed from now on, as the Node would.
+      const name = (call.body as { name: string }).name;
+      answerMailboxes([{ id: "mbx_test", name: "Support", addresses: "support@example.test" }, { id: "mbx_new", name, addresses: null }]);
+      return Response.json({ mailboxId: "mbx_new", name });
+    }
     if (call.path.startsWith("/api/provider/receiving") && call.method === "GET") {
       return Response.json(parts.receiving);
     }
@@ -553,10 +563,13 @@ describe("reading which recipients are verified destinations", () => {
 });
 
 describe("the rules already on a zone", () => {
+  const FORWARD_OFFER = {
+    label: "receive here only", says: "someone@gmail.test gets nothing more for hello@example.com", filesInto: null, asksMailbox: true,
+  };
   const rule = (over: Record<string, unknown>) => ({
     id: "r1", name: "hello to gmail", enabled: true, to: "hello@example.com", action: "forward",
     destinations: ["someone@gmail.test"], catchAll: false, ours: false, digest: "e".repeat(64),
-    offer: "take_over", refusal: null, ...over,
+    offer: "take_over", refusal: null, takeOver: FORWARD_OFFER, ...over,
   });
   const refused = (code: string, what: string, fix: string) => ({ offer: null, refusal: { code, what, why: "w", fix } });
   const listing = (rules: unknown[]) => ({ routing: { domain: "example.com", zone: "example.com", zoneId: "z1", rules, error: null } });
@@ -583,7 +596,7 @@ describe("the rules already on a zone", () => {
     expect(screen.getByText("own@example.com").closest("tr")!.querySelector("button")).toBeNull();
     expect(screen.getByText("back@example.com").closest("tr")!.querySelector("button")?.textContent).toBe("Put back");
     // The enabled rule beside it still offers one, so the absence above is about the row, not the table.
-    expect(screen.getByText("hello@example.com").closest("tr")!.querySelector("button")?.textContent).toBe("Point here");
+    expect(screen.getByText("hello@example.com").closest("tr")!.querySelector("button")?.textContent).toBe("receive here only");
   });
 
   it("names the mailbox the address files into after a take-over", async () => {
@@ -595,9 +608,109 @@ describe("the rules already on a zone", () => {
       } },
     });
     await list();
-    fireEvent.click(await screen.findByText("Point here"));
+    fireEvent.click(await screen.findByText("receive here only"));
     fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
     expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
       .toBe("hello@example.com: was forward → someone@gmail.test, now worker → mailda. It files into Enquiries.");
+  });
+
+  /*
+   * The same choice and words as `mailda setup` (1 October 2026): the Node's `takeOver`, and for a forward a
+   * mailbox chosen for it, a new one named after the address first, never the only one by default (critic M4).
+   */
+  const TAKEN = { outcome: {
+    ruleId: "r1", to: "hello@example.com", before: { action: "forward", destinations: [] },
+    after: { action: "worker", destinations: ["mailda"] }, mailbox: { id: "mbx_new", name: "hello@example.com" },
+  } };
+  const posted = () => calls.filter((one) => one.method === "POST").map((one) => [one.path, one.body]);
+
+  it("says what a forward's take-over changes, and files it into a new mailbox named after it unless another is chosen", async () => {
+    mount({ rules: listing([rule({})]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    expect(screen.getByText("someone@gmail.test gets nothing more for hello@example.com.")).toBeTruthy();
+    const select = screen.getByLabelText("Into mailbox") as HTMLSelectElement;
+    expect([...select.options].map((one) => one.textContent)).toEqual(["a new mailbox named hello@example.com", "Support"]);
+    expect(select.value).toBe("new");
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await screen.findByText(/hello@example.com: was forward/);
+    expect(posted()).toEqual([
+      ["/api/mailboxes", { name: "hello@example.com" }],
+      ["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), mailboxId: "mbx_new" }],
+    ]);
+  });
+
+  it("asks no mailbox for a Worker rule when there is one, and sends that one", async () => {
+    const worker = rule({ action: "worker", destinations: ["info-worker"], takeOver: { label: "receive here", says: "info-worker stops receiving mail", filesInto: null, asksMailbox: false } });
+    mount({ rules: listing([worker]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here"));
+    expect(screen.queryByLabelText("Into mailbox")).toBeNull();
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await screen.findByText(/hello@example.com: was forward/);
+    expect(posted()).toEqual([
+      ["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), mailboxId: "mbx_test" }],
+    ]);
+  });
+
+  it("sends no mailbox for an address that already files somewhere, which the take-over keeps", async () => {
+    mount({ rules: listing([rule({ takeOver: { ...FORWARD_OFFER, filesInto: { id: "mbx_me", name: "Me" }, asksMailbox: false } })]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    expect(screen.queryByLabelText("Into mailbox")).toBeNull();
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await screen.findByText(/hello@example.com: was forward/);
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64) }]]);
+  });
+
+  // Review, 1 October 2026: what the screen said, and offered, around a mailbox it made for a take-over refused after.
+  it("says the mailbox it made stays when the take-over is refused, and offers that one, not a second, next time", async () => {
+    mount({ rules: listing([rule({})]), takeOverRefused: { status: 409, body: { error: "E_ROUTING_RULE_STALE", message: "E_ROUTING_RULE_STALE  the rule changed" } } });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/E_ROUTING_RULE_STALE/)).textContent).toContain("The mailbox hello@example.com was made for it and stays.");
+    fireEvent.click(await screen.findByText("receive here only"));
+    // By id: with two mailboxes the receiving form has an "Into mailbox" of its own.
+    const select = await waitFor(() => document.getElementById("setup-rules-mailbox-r1") as HTMLSelectElement);
+    await waitFor(() => expect([...select.options].map((one) => one.textContent)).toEqual(["hello@example.com", "Support"]));
+    expect(select.value).toBe("mbx_new");
+    // What is sent, not only shown: a select whose state matched no option would display the first and send none.
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await waitFor(() => expect(posted().filter(([path]) => path === "/api/provider/routing-rules/take-over")).toHaveLength(2));
+    expect(posted()).toEqual([
+      ["/api/mailboxes", { name: "hello@example.com" }],
+      ["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), mailboxId: "mbx_new" }],
+      ["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), mailboxId: "mbx_new" }],
+    ]);
+  });
+
+  it("offers no new mailbox for an address longer than a mailbox name may be", async () => {
+    const long = `${"a".repeat(50)}@example.com`;
+    mount({ rules: listing([rule({ to: long })]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    const select = screen.getByLabelText("Into mailbox") as HTMLSelectElement;
+    expect([...select.options].map((one) => one.textContent)).toEqual(["choose a mailbox…", "Support"]);
+    expect(select.value).toBe("");
+  });
+
+  it("names the mailbox before the confirm wherever it asks none", async () => {
+    const worker = rule({ action: "worker", destinations: ["info-worker"], takeOver: { label: "receive here", says: "info-worker stops receiving mail", filesInto: null, asksMailbox: false } });
+    mount({ rules: listing([worker, rule({ id: "r2", to: "me@example.com", takeOver: { ...FORWARD_OFFER, filesInto: { id: "mbx_me", name: "Me" }, asksMailbox: false } })]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here"));
+    expect(screen.getByText("Files into Support.")).toBeTruthy();
+    fireEvent.click(screen.getByText("receive here only"));
+    expect(screen.getByText("Files into Me.")).toBeTruthy();
+  });
+
+  it("says when the rule's name does not record where it went", async () => {
+    mount({ rules: listing([rule({})]), takenOver: { outcome: { ...TAKEN.outcome, nameRecorded: false } } });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
+      .toContain("Its name does not record where it went, so only this Node can put it back: do that before the Node is ever deleted.");
   });
 });

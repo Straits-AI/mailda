@@ -38,7 +38,7 @@ export const UNMIGRATED: Readonly<Record<string, number>> = {
   "src/client/app/screens/policies.tsx": 73,
   "src/client/app/screens/queue.tsx": 114,
   "src/client/app/screens/reader.tsx": 137,
-  "src/client/app/screens/setup.tsx": 186,
+  "src/client/app/screens/setup.tsx": 185,
   "src/client/app/ui/menu.tsx": 2,
   "src/client/app/ui/popover.tsx": 6,
   "src/client/app/ui/section-tabs.tsx": 1,
@@ -138,7 +138,10 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   "src/client/app/screens/policies.tsx": [],
   "src/client/app/screens/queue.tsx": [],
   "src/client/app/screens/reader.tsx": [],
-  "src/client/app/screens/setup.tsx": [],
+  "src/client/app/screens/setup.tsx": [
+    { text: "new", reason: "a select's value meaning a new mailbox named after the address, never shown; never a mailbox id" },
+    { text: "mailboxes", reason: "a react-query key, invalidated after a take-over made a mailbox" },
+  ],
   "src/client/app/shell-context.tsx": [
     { text: "commands", reason: "a Symbol's description, seen only in a debugger" },
     { text: "outside ShellProvider", reason: "a programming error thrown when a hook is used outside its provider; never reaches a viewer" },

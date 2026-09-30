@@ -57,7 +57,11 @@ const USAGE = `mailda — operate a Mailda Node
                                               (addresses then live in the Node; the proposal lists the ones with rules)
   mailda provider --routing-rules <domain>     the routing rules already on its zone, and which point here
   mailda provider --take-over <rule id> --domain <domain>  point that rule at this Node; --confirm <digest> to do it
+                                                         (a forward rule also needs --mailbox <id>)
   mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced
+  mailda provider --put-back <rule id> --domain <domain> --without-node
+                                                         the same from the rule's own name, with your wrangler
+                                                         login, when the Node is gone (no audit entry)
   mailda provider --ownership       who owns this installation, and where each answer came from
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
   mailda provider --domains <keyword>          cached domain suggestions with indicative prices
@@ -70,15 +74,21 @@ const USAGE = `mailda — operate a Mailda Node
                                      up to receive, send and observe outcomes with wrangler's own login, then
                                      (optional) hold an API token for it. --yes reads MAILDA_EMAIL,
                                      MAILDA_PASSWORD, MAILDA_HOSTNAME, MAILDA_DOMAIN, MAILDA_ADDRESS,
-                                     MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN
+                                     MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN.
+                                     Then lists the Email Routing rules on the name it receives at and
+                                     offers to point each here; --yes or no terminal changes none.
   mailda upgrade [--name <worker>] [--url <origin>] [--hostname <host>] [--yes] [--contract]
                                      pull the release, back the Node up, list what its schema will do to
                                      the catalog, deploy through the canary, attach --hostname if given, and
-                                     finish a Node's setup if it was never set up to receive
+                                     finish a Node's setup if it was never set up to receive.
+                                     Then lists the Email Routing rules on the name it receives at and
+                                     offers to point each here; --yes or no terminal changes none.
   mailda setup [--name <worker>] [--url <origin>] [--yes]
                                      receiving, sending and delivery outcomes for a Node already deployed
                                      and claimed, with the consent wrangler has; no deploy. --yes reads
-                                     MAILDA_DOMAIN, MAILDA_ADDRESS and MAILDA_CATCH_ALL=1
+                                     MAILDA_DOMAIN, MAILDA_ADDRESS and MAILDA_CATCH_ALL=1.
+                                     Then lists the Email Routing rules on the name it receives at and
+                                     offers to point each here; --yes or no terminal changes none.
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
