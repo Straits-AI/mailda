@@ -171,7 +171,7 @@ export async function rostersOf(
  * Every person holding `org.admin` on the organization, resolved through teams and de-duplicated.
  *
  * The **second source for an eligible set** that migration 0021 said a subject kind with no mailbox would have
- * to bring, and #66's domain pause is that kind: a pause stops every mailbox sending from a domain, so no
+ * to bring, and #66's domain pause is that kind: a pause covers every mailbox sending from a domain, so no
  * single mailbox's `approval.decide` holders have authority over it and naming one would be picking an
  * arbitrary mailbox to decide something about all of them.
  *

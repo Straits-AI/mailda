@@ -1362,9 +1362,9 @@ The breaker's sentence ships **with** the reading rather than being written agai
 `RATE_BREAKERS` carries one per breaker, used by the refusal a person sees when their message is stopped, and
 a second copy here would drift from it.
 
-Domain pauses sit below, with the asymmetry stated: stopping a domain takes three administrators, restarting
-one takes a single administrator alone, because a mistake in the cautious direction should be easy to undo.
-The request says "asked", never "stopped". Two others have to agree first, and claiming otherwise is the one
+Domain pauses sit below, with the asymmetry stated: pausing a domain takes two administrators besides whoever asks,
+and lifting the pause takes a single administrator alone, because a mistake in the cautious direction should be easy to undo.
+The request says "asked", never "paused". Two others have to agree first, and claiming otherwise is the one
 place §5C's distinction would make somebody stop watching.
 
 ### `/people` (#39, #73, #81)
@@ -1566,7 +1566,7 @@ mechanism exists to guarantee; `E_APPROVER_IS_ACTOR` is rendered verbatim if one
 
 **Five subject kinds, shown as what they are.** A send, a hold lift, a supervised read, an e-discovery export
 and a domain pause are not the same decision. Approving a supervised read lets somebody read a colleague's
-mail; approving a domain pause stops a customer's. Identical rows with an id would make the gravest and the
+mail; approving a domain pause pauses a customer's. Identical rows with an id would make the gravest and the
 most routine look the same, so each says what approving it does, and carries the requester's own words where
 the subject kind has any.
 

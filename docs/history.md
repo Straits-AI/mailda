@@ -4357,3 +4357,17 @@ only when no mode is offered: an offered mode carries its `proof` (`retry-effect
 `.strict()`, so a listing with a retryable send did not satisfy it, and no test had listed one. `retry` is now the
 union the Node sends (`RetryOffer` in `packages/contract/src/schemas.ts`), `apps/node/worker/test/contract-responses.test.ts` lists a
 refused send, and the title is gone: the state beside the button already says what the proof would.
+
+**The API says a domain is paused and a pause is lifted (G6).** The screens moved to pause and lift in layer 2b
+(D3); the Node's own English kept stop and restart, so an agent read "Mail from acme.example has been stopped …
+Any one administrator can restart the domain" beside a screen that said paused. The refusals, the withheld send's
+sentence, doctor's `domain_paused` finding, the audit vocabulary's `domain.pause_placed` and the `/api/domain-pauses`
+summaries (and so the SDK's comments, the Agent Skill's table and MCP's tool descriptions) now say pause and lift,
+as does the Skill's reason for withholding the two acts from agents (`packages/contract/src/agent.ts`), and the
+audit vocabulary says a pause is lifted, not released, which is a held send's verb.
+**For an agent:** every error code and field name is byte-identical (`E_DOMAIN_ALREADY_PAUSED`, `domain_paused`,
+`pauseId` and the rest), so matching on codes is unaffected; text matched on the old words ("stopped since",
+"restart the domain", "Stop sending to a domain") no longer appears in new answers. A send withheld before this
+change keeps the sentence it was given in `last_error`, which is a record, not rewritten. Two of the summaries were
+wrong beyond the verb: they said sending **to** a domain, where a pause holds mail **from** one, and that a lift
+"takes more than one person", where one administrator lifts alone.

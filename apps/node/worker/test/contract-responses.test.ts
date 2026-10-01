@@ -789,7 +789,7 @@ describe("the governance reads answer what the contract says they do", () => {
     /*
      * **Dual control makes this row unproducible here, and that is the feature working.**
      *
-     * #66 requires two distinct administrators to stop a domain's mail and excludes whoever asked, so on a
+     * #66 requires two distinct administrators to pause a domain's mail and excludes whoever asked, so on a
      * Node with one admin the refusal is `E_DOMAIN_PAUSE_UNSATISFIABLE` — which this test met on its first
      * run and which is the correct answer, not an obstacle to route around. Seeding the row directly would
      * have produced a pause no governance path can create.

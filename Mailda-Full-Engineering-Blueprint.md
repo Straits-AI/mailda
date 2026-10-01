@@ -2286,7 +2286,7 @@ sweep admits it for **rate-gate reasons only** — the one family of reasons tha
 Policy gates stay closed, and a rate gate is never written over one.
 
 **A domain pause inverts §22's hold asymmetry, for the same reason it holds there.** Placing a hold only
-preserves, so it is one administrator; placing a domain pause **stops a customer's mail**, so it takes **two**
+preserves, so it is one administrator; placing a domain pause **pauses a customer's mail**, so it takes **two**
 administrators and a mandatory reason, and **one** administrator lifts it alone — because the harm of a
 wrongly-paused domain grows every minute it stands. It is the fifth approval subject and the first with no
 mailbox: its eligible set is `org.admin` on the organization, and `approvals.scope_id` is named for the object

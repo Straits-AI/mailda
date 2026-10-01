@@ -597,8 +597,8 @@ export const ROUTES = [
     summary: "The rate breakers, with the readings behind them",
     response: S.breakerListResponse,
   },
-  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "member" }, response: S.domainPauseListResponse },
-  { method: "POST", path: "/api/domain-pauses", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
+  { method: "GET", path: "/api/domain-pauses", summary: "The domains paused now, each with its reason; nothing is sent from them", authority: { scope: "member" }, response: S.domainPauseListResponse },
+  { method: "POST", path: "/api/domain-pauses", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Ask two other administrators to pause every send from a domain", response: S.domainPauseRequestedResponse },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/suppressions",
@@ -611,7 +611,7 @@ export const ROUTES = [
     summary: "Vouch for a suppressed recipient, with a reason, so the Node sends to it again",
     response: S.suppressionLiftedResponse,
   },
-  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
+  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Lift a domain's pause, which one administrator may do alone", response: S.domainPauseLiftedResponse },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
   { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerListResponse },

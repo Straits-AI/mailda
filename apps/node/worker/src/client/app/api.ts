@@ -1659,11 +1659,11 @@ export function useDomainPauses(): UseQueryResult<{ pauses: DomainPauseRow[] }, 
 }
 
 
-/** Asks for a domain to be stopped. Two **other** administrators have to agree before it takes effect. */
+/** Asks for a domain to be paused. Two **other** administrators have to agree before it takes effect. */
 export const requestDomainPause = (domain: string, reason: string) =>
   act(at("POST", "/api/domain-pauses"), "POST", { domain, reason });
 
-/** Restarts a domain's mail. One administrator, alone — the asymmetry is deliberate (#66). */
+/** Lifts a domain's pause. One administrator, alone — the asymmetry is deliberate (#66). */
 export const liftDomainPause = (id: string) =>
   act(at("POST", "/api/domain-pauses/:pauseId/lift", { pauseId: id }));
 

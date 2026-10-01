@@ -703,7 +703,7 @@ export const AUDIT_ACTIONS = {
    *
    * `domain.pause_placed` exists beside `approval.decided` for the reason `hold.lifted` and
    * `supervised.granted` do: `approval.decided` says two people agreed and structurally cannot say *what they
-   * agreed to*. Somebody reading the trail to answer "why did this domain's mail stop" must not have to join
+   * agreed to*. Somebody reading the trail to answer "why was this domain's mail paused" must not have to join
    * `approvals` to `domain_pauses` to learn the domain or the reason.
    *
    * There is deliberately **no** `domain.pause_requested`, for `hold.lift_requested`'s reason: requesting a
@@ -717,11 +717,11 @@ export const AUDIT_ACTIONS = {
       + "window clears. Nothing else records this, because the breaker keeps no state.",
   },
   "domain.pause_placed": {
-    says: "Two distinct administrators stopped every send from a domain; the domain and the reason they "
+    says: "Two distinct administrators paused every send from a domain; the domain and the reason they "
       + "were given are recorded with it.",
   },
   "domain.pause_lifted": {
-    says: "One administrator released a domain pause, alone — the harm of a wrongly paused domain grows "
+    says: "One administrator lifted a domain pause, alone — the harm of a wrongly paused domain grows "
       + "every minute it stands.",
   },
 
