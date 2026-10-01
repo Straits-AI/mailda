@@ -12,6 +12,7 @@ import { preauth } from "./preauth.ts";
 import { queue } from "./queue.ts";
 import { reader } from "./reader.ts";
 import { settings } from "./settings.ts";
+import { setup } from "./setup.ts";
 import { shell } from "./shell.ts";
 
 /**
@@ -22,10 +23,10 @@ export { preauth };
 
 /** Every `app` area, by name, so `test/node/catalog.test.ts` can check that none of them shadowed another. */
 export const APP_AREAS = {
-  common, language, chrome, palette, shell, inbox, settings, api, reader, composer, drafts, queue, ledgers, delivery,
+  common, language, chrome, palette, shell, inbox, settings, setup, api, reader, composer, drafts, queue, ledgers, delivery,
 } as const;
 
 export const app = {
-  ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...api,
+  ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...setup, ...api,
   ...reader, ...composer, ...drafts, ...queue, ...ledgers, ...delivery,
 } as const;

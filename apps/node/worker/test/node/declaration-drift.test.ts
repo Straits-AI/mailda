@@ -62,6 +62,11 @@ const PAIRS = [
     module: "packages/cli/src/verbs/provision.mjs",
     declaration: "packages/cli/src/verbs/provision.d.mts",
   },
+  {
+    what: "the setup step's routing rules",
+    module: "packages/cli/src/verbs/routing-step.mjs",
+    declaration: "packages/cli/src/verbs/routing-step.d.mts",
+  },
 ] as const;
 
 describe("hand-written declarations match their modules", () => {

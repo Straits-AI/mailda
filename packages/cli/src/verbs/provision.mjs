@@ -190,6 +190,14 @@ export function receivingOf(act) {
 }
 
 /**
+ * The name the Node receives at, for the routing step (1 October 2026): the one on record, else the one this run's
+ * receiving step put its first address on, else null (no step).
+ */
+export function receivingDomain(provisioned, setUp) {
+  return provisioned?.receiving?.domain ?? setUp?.address?.split("@")[1] ?? null;
+}
+
+/**
  * Whether a receiving outcome's address reaches this Node: its `routing`, since a rule of its own outranks the
  * catch-all and a check that could not be made is not a yes. An answer from a Node older than `routing` has only
  * `rule`, which stands in as it always did.
@@ -218,7 +226,7 @@ export function firstAddress(typed, domain, defaultLocal = "hello") {
  * Cloudflare does not say whether the catch-all then applies. Unread is said, and so is a Node too old to list
  * them; neither is "none".
  */
-export function ownRulesLines(ownRules, domain) {
+export function ownRulesLines(ownRules, domain, { below = false } = {}) {
   if (ownRules === undefined || ownRules === null) {
     return wrapAt(`this Node does not list which addresses at ${domain} have an Email Routing rule of their own (it predates `
       + `the list); \`mailda provider --routing-rules ${domain}\` shows every rule on the zone`, 70);
@@ -232,7 +240,8 @@ export function ownRulesLines(ownRules, domain) {
   return [
     ...wrapAt(`addresses at ${domain} with an Email Routing rule of their own (${ownRules.addresses.length}). An enabled `
       + "rule outranks the catch-all, so the catch-all does not reach that address; this Node leaves every one of "
-      + "these rules as it is:", 70),
+      // The routing step follows the receiving step in install, setup and upgrade (1 October 2026).
+      + `these rules as it is${below ? " unless you choose otherwise below" : ""}:`, 70),
     ...ownRules.addresses.map((one) => `  ${one.address.padEnd(width)}  ${one.state === "rule_written"
       ? "this Node"
       : one.state === "rule_disabled" ? `disabled (enabled, it would be ${one.where})` : one.where}`),
@@ -389,7 +398,7 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
       if (proposal.apex === true) {
         // Printed before the choice, not in its prompt, which is redrawn on every arrow press; and under --yes too.
         process.stdout.write(`\n     ${domain} is a zone's own name. Its catch-all today: ${catchAllLine(proposal.catchAll ?? null)}.\n`);
-        for (const line of ownRulesLines(proposal.ownRules, domain)) process.stdout.write(`     ${line}\n`);
+        for (const line of ownRulesLines(proposal.ownRules, domain, { below: true })) process.stdout.write(`     ${line}\n`);
         catchAll = yes
           ? process.env.MAILDA_CATCH_ALL === "1"
           : await choose(

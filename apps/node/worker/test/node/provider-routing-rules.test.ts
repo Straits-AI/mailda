@@ -41,7 +41,7 @@ describe("the CLI's routing rules", () => {
   });
 
   it("offers per rule what the Node says it would do, and names the refusal where it would refuse", async () => {
-    const out = node({ "/api/provider/routing-rules": { routing: { domain: "example.com", zone: "example.com", zoneId: "z1", error: null, rules: [
+    const out = node({ "/api/mailboxes": { mailboxes: [{ id: "mbx_1", name: "Shared" }] }, "/api/provider/routing-rules": { routing: { domain: "example.com", zone: "example.com", zoneId: "z1", error: null, rules: [
       rule({}),
       rule({ id: "r2", to: "two@example.com", destinations: ["a@gmail.test", "b@gmail.test"], offer: null,
         refusal: { code: "E_ROUTING_RULE_MANY_DESTINATIONS", what: "the rule for two@example.com forwards to 2 destinations", why: "w", fix: "edit it to one destination" } }),
@@ -58,5 +58,29 @@ describe("the CLI's routing rules", () => {
     expect(said).toContain("put back:  mailda provider --put-back r3 --domain example.com\n");
     expect(said).not.toContain("--put-back r4");
     expect(said).toContain("refused:   E_ROUTING_RULE_NEVER_TAKEN");
+  });
+
+  it("prints what a take-over changes in the Node's words, and asks for a mailbox where the Node requires one (1 October 2026)", async () => {
+    const out = node({ "/api/provider/routing-rules": { routing: { domain: "example.com", zone: "example.com", zoneId: "z1", error: null, rules: [
+      rule({ takeOver: { label: "receive here only", says: "someone@gmail.test gets nothing more for hello@example.com", filesInto: null, asksMailbox: true } }),
+    ] } } });
+    await provider(["--routing-rules", "example.com", "--url", "https://node.test"]);
+    const said = out.join("").replace(/\s+/g, " ");
+    expect(said).toContain(`--confirm ${"e".repeat(64)} --mailbox <mailbox id> receive here only: someone@gmail.test gets nothing more for hello@example.com`);
+  });
+
+  it("names --mailbox for any rule the Node would refuse without one, and lists the mailboxes (review, 1 October 2026)", async () => {
+    const worker = { label: "receive here", says: "info-worker stops receiving mail for sales@example.com", filesInto: null, asksMailbox: false };
+    const listing = { routing: { domain: "example.com", zone: "example.com", zoneId: "z1", error: null, rules: [
+      rule({ id: "r5", to: "sales@example.com", action: "worker", destinations: ["info-worker"], takeOver: worker }),
+    ] } };
+    const out = node({ "/api/mailboxes": { mailboxes: [{ id: "mbx_a", name: "A" }, { id: "mbx_b", name: "B" }] }, "/api/provider/routing-rules": listing });
+    await provider(["--routing-rules", "example.com", "--url", "https://node.test"]);
+    expect(out.join("")).toContain(`--take-over r5 --domain example.com --confirm ${"e".repeat(64)} --mailbox <mailbox id>\n`);
+    expect(out.join("")).toMatch(/mbx_a +A\n.*mbx_b +B\n/);
+    // One mailbox: the Node files into it, so the command needs none.
+    const one = node({ "/api/mailboxes": { mailboxes: [{ id: "mbx_a", name: "A" }] }, "/api/provider/routing-rules": listing });
+    await provider(["--routing-rules", "example.com", "--url", "https://node.test"]);
+    expect(one.join("")).toContain(`--take-over r5 --domain example.com --confirm ${"e".repeat(64)}\n`);
   });
 });

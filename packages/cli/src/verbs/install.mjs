@@ -7,7 +7,8 @@ import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig
 import { workflowRowsFrom } from "../deploy-parse.mjs";
 import { wranglerSaid } from "../wrangler-config.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
-import { printNext, provisionNode, signInLine, wranglerToken, zonesOf } from "./provision.mjs";
+import { printNext, provisionNode, receivingDomain, signInLine, wranglerToken, zonesOf } from "./provision.mjs";
+import { routingRulesStep } from "./routing-step.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -131,10 +132,18 @@ export async function install(argv) {
     "\n== setting up receiving, sending and delivery outcomes\n"
     + "   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n",
   );
+  const token = await wranglerToken();
   const setUp = await provisionNode({
     origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    token: await wranglerToken(), yes, ask, signInEmail: claimed.email,
+    token, yes, ask, signInEmail: claimed.email,
   });
+  // Once the first address exists, so a mailbox does (1 October 2026): the rules that keep other addresses away.
+  if (setUp.address !== null) {
+    await routingRulesStep({
+      origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "", token, yes, ask,
+      domain: receivingDomain(null, setUp),
+    });
+  }
 
   // 7. The Node's own Cloudflare token, optional.
   const held = await tokenStep(url, claimed.cookie, yes);

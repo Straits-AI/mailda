@@ -1282,7 +1282,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, one with more than one destination, an address with more than one rule, and a zone with subaddressing on
+   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry and in the rule's own name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, an action other than forward, worker or drop, one with more than one destination, an address with more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it
    *
    * `POST /api/provider/routing-rules/take-over`
    */
@@ -1291,7 +1291,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Restore a rule this Node took over to the action the take-over recorded, then read it back. Refuses a rule this Node never took, or one that no longer routes here
+   * Restore a rule this Node took over to the action and name the take-over recorded, then read it back. Refuses a rule this Node never took, or one that no longer routes here
    *
    * `POST /api/provider/routing-rules/put-back`
    */

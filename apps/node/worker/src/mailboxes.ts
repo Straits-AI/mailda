@@ -1,10 +1,11 @@
+import { MAX_MAILBOX_NAME_CHARS } from "@mailda/contract/schemas";
 import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
 import { auditedBatch } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
 
-/**
+/*
  * A second mailbox (17 September 2026). Until now the only mailbox a Node ever had was the one `claim.ts`
  * created — a product pitched on shared inboxes could not have `invoices@` beside `support@` without a hand
  * in D1, which the 17 September coverage audit named as the largest gap in the product.
@@ -15,7 +16,6 @@ import { unprocessable } from "./errors.ts";
  * Addresses are added to it on the same screen, `POST /api/addresses` with this id, which writes the routing
  * rule in the same act. There is no delete: a mailbox with mail in it is evidence, and one without is harmless.
  */
-export const MAX_MAILBOX_NAME_CHARS = 60;
 
 /**
  * A usable mailbox name, or the refusal that says why not. Shared by creating and renaming, because a name

@@ -108,8 +108,38 @@ login, or the Setup screen with a token carrying the optional Email Routing Addr
 
 **A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
 point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
-previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
-addresses are left alone. On a zone's own name the receiving step offers the **catch-all** instead: one
+previous destination is kept on the audit trail and written into the rule's own name, and *put back* restores
+it. Every rule can be pointed back; mail that arrived here meanwhile stays here. Existing rules for other
+addresses are left alone.
+
+`mailda install`, `mailda setup` and every `mailda upgrade` end with the same list for the name the Node
+receives at: each address with a rule of its own, where it goes, and the one change the Node offers for it.
+These are the defaults, and how to change each:
+
+- **One y/N, only when a rule can be offered.** On a zone whose rules you keep on purpose, it asks on every
+  upgrade; nothing remembers a "no". Answer N, or run with `--yes`.
+- **Each rule defaults to "leave it".** A forward (often someone's personal mail) offers *receive here only*:
+  the destination gets nothing more, and replies sent from there are not seen here. A rule to another Worker
+  offers *receive here*: that Worker stops receiving the address, and this Node cannot see what it did. A drop
+  offers *receive here*: mail Cloudflare was discarding is kept from now on. Keeping a forward while
+  receiving here is not built.
+- **A forward goes only into a mailbox you choose**, a new one named after the address offered first (or the
+  mailbox already named after it, never a second), never into the only mailbox by default (the API refuses it,
+  `E_ROUTING_FORWARD_NEEDS_MAILBOX`).
+- **Rules on names the Node does not receive for** (another subdomain) are a count line with
+  `mailda provider --routing-rules <name>` to list them.
+- **`--yes`, or no terminal, changes no rule**: it prints the list and the exact `mailda provider --take-over`
+  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen.
+- Disabled rules, rules with several destinations, duplicate rules and zones with subaddressing on are listed
+  with the reason and never offered.
+
+**Before deleting a Node, put back every rule it took over**
+(`mailda provider --routing-rules <domain>` shows each with its put-back). If it is already gone, a rule taken
+over from 1 October 2026 records in its name where it went, and `mailda provider --put-back <rule id> --domain
+<domain> --without-node` restores it with your own wrangler login, without the Node and without an audit entry.
+Two kinds record nothing in their name and can only be put back through the Node, so do it before deleting it:
+the **catch-all** (the receiving step's take-over), and any rule taken over before 1 October 2026. The step
+also says so for any rule whose name did not read back as written. On a zone's own name the receiving step offers the **catch-all** instead: one
 rule pointing the domain's unmatched mail here, its previous target kept for a put-back, and every address
 without a rule of its own from then on managed on People inside the Node. An enabled rule of an address's own
 outranks the catch-all (of a disabled one Cloudflare does not say), so `mailda install`, `mailda setup`, `mailda provider --onboard-receiving` and the Setup screen

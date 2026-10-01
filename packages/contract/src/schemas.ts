@@ -728,12 +728,25 @@ export const providerRoutingRulesResponse = z.object({
       digest: z.string().length(64),
       /** What the Node would do with the rule if asked, by the checks the act makes; null when it would refuse. */
       offer: z.enum(["take_over", "put_back"]).nullable(),
-      /** The refusal the act would answer when nothing is offered. A zone setting the listing does not read can still refuse. */
+      /** The refusal the act would answer when nothing is offered, the zone's subaddressing setting included. */
       refusal: z.object({ code: z.string(), what: z.string(), why: z.string(), fix: z.string() }).strict().nullable(),
+      /**
+       * What taking the rule over changes, in the words every channel shows (the setup step, the Setup screen, the
+       * CLI listing): the one choice besides leaving it, and its consequence. Null unless `offer` is `take_over`.
+       * `asksMailbox`: a forward rule's address files only into a mailbox chosen for it (`E_ROUTING_FORWARD_NEEDS_MAILBOX`).
+       */
+      takeOver: z.object({
+        label: z.string().min(1),
+        says: z.string().min(1),
+        filesInto: z.object({ id: z.string(), name: z.string() }).strict().nullable(),
+        asksMailbox: z.boolean(),
+      }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),
   }).strict(),
 }).strict();
+
+export type ProviderRoutingRules = z.infer<typeof providerRoutingRulesResponse>["routing"];
 
 const routingRuleAction = z.object({ action: z.string(), destinations: z.array(z.string()) }).strict();
 
@@ -747,6 +760,12 @@ export const providerRoutingRuleOutcomeResponse = z.object({
     after: routingRuleAction,
     /** The mailbox the address files into after a take-over: the address row's own when it already existed. Null on a put-back. */
     mailbox: z.object({ id: z.string(), name: z.string() }).strict().nullable(),
+    /**
+     * Whether the rule read back with the name the take-over wrote into it: false means the name does not record
+     * where the address went, so `mailda provider --put-back --without-node` cannot restore it and only this Node's
+     * put-back can. Null on a put-back.
+     */
+    nameRecorded: z.boolean().nullable(),
   }).strict(),
 }).strict();
 
@@ -754,7 +773,10 @@ export const providerRoutingRuleTakeOverRequest = z.object({
   domain: z.string().min(3).max(253),
   ruleId: z.string().min(1).max(64),
   digest: z.string().length(64),
-  /** The mailbox the address files into. Optional when the organization has exactly one. */
+  /**
+   * The mailbox the address files into. Optional when the address is already here (its own mailbox is kept) or the
+   * organization has exactly one, except on a forward rule, which is refused without it (`E_ROUTING_FORWARD_NEEDS_MAILBOX`).
+   */
   mailboxId: z.string().min(1).max(64).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
@@ -925,6 +947,13 @@ export const mailboxRow = z.object({
 }).strict();
 
 export const mailboxListResponse = z.object({ mailboxes: z.array(mailboxRow) }).strict();
+
+/**
+ * The longest mailbox name the Node accepts (`E_MAILBOX_NAME_INVALID` past it), here so the channels that offer a name
+ * (the routing step's "a new mailbox named <address>") offer only one the Node will take. A presentation bound: the
+ * rail and the queue show the name.
+ */
+export const MAX_MAILBOX_NAME_CHARS = 60;
 
 /** One field, closed: a misspelled `name` would create a mailbox called "" and be refused for that instead. */
 export const createMailboxRequest = z.object({ name: z.string() }).strict().meta({ refusal: "E_MAILBOX_FIELD_UNKNOWN" });

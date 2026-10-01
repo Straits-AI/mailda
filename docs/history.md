@@ -4195,6 +4195,42 @@ cryptographic keys here (密钥恢复副本, the key vault) where Apple and Goog
 通行密钥 on 1 October. Move to Trash: confirmed as 移到废纸篓, its phrase became 移到回收站 with the new word, and the
 owner confirmed that too. Every row is now confirmed. `docs/i18n.md` has the detail.
 
+## Setup and upgrade hand routing rules to this Node, and a take-over survives the Node (1 October 2026)
+
+**The owner asked (29 September) for the setup and upgrade to show the zone's existing routing rules, warn about
+them, and let him choose which to hand over to this Node.** A rule for one address outranks the catch-all, so on
+whymelabs.com eight addresses went to another Worker and two to personal inboxes, and after the first install
+nothing said so again. `mailda install` (once the first address exists), `mailda setup` and every `mailda upgrade`
+now end with the list for the name the Node receives at (`packages/cli/src/verbs/routing-step.mjs`): each address,
+where it goes, and the Node's one change for it, "leave it" being the default. One y/N, only when a rule can be
+offered; `--yes` or no terminal prints each `--take-over` command and changes nothing. Rules on other names are a
+count line. The Setup screen offers the same choice with the same words, because both print the Node's own
+(`takeOver` on the listing), not a table each.
+
+**Only the step, not "keep forwarding".** Taking over a forward ends it; the Node calling `message.forward()`
+after storing the message is designed and not decided. The owner's other defaults were adopted as stated in the
+README: a forward (often someone else's personal mail) is offered with "leave it" first and, if taken, files only
+into a mailbox chosen for it, a new one named after the address offered first, and the API refuses it without one
+(`E_ROUTING_FORWARD_NEEDS_MAILBOX`); a rule to another Worker says that Worker stops receiving and this Node cannot
+see what it did.
+
+**The review's H1: a take-over used to be recorded only on the Node.** A Node deleted after a take-over took the
+only record of where the address went, and left a rule naming a Worker that was gone. The take-over now also
+writes the replaced action into the rule's name, `mailda <worker> (was <action>[ <destination>], repointed
+<date>)`, following the name the live admin@ rule was given by hand on 28 September; a put-back restores the
+rule's own name, and `mailda provider --put-back <id> --domain <d> --without-node` restores the action from the
+name with the operator's login, writing no audit entry because the Node that keeps them is gone. The README says
+to put rules back before deleting a Node. The listing also reads the zone's subaddressing setting now, so the step
+never offers a rule the act refuses, and a rule with an action other than forward, worker or drop is refused.
+
+**The review of the step (1 October 2026).** A take-over now reports `nameRecorded`, whether the rule read back
+with the name that records where it went, and the step prints the `--without-node` line only after one that did. A
+rule already carrying another Mailda Worker's record keeps it on a second take-over, and a Node whose audit entry is
+gone puts back from the name. An outcome the Node could not confirm is printed as possibly applied, never "not
+taken over"; `--yes` names `--mailbox` wherever the Node would refuse without it; a mailbox already named after an
+address is offered instead of making a second; and the README says the catch-all, whose take-over writes no name,
+is put back through the Node before the Node is deleted.
+
 ## The interface's languages, layer 2a: the reader, the composer, the Queue and the ledgers (1 October 2026)
 
 **The screens where mail is read, written and accounted for now speak from the catalog.** The reader, the
