@@ -5,7 +5,8 @@ import { LOCALES, OFFERED } from "../../src/i18n/locales.ts";
 
 /**
  * The pure half of the message runtime (ADR 46): which locale a viewer gets, and how a message is filled. The
- * browser half, which reads storage and the URL and sets `<html lang>`, is `test/client/locale-boot.test.tsx`.
+ * browser half, which reads storage and the URL and sets `<html lang>`, is `test/client/locale-boot.test.tsx`; the
+ * preview mechanism, which no real locale is in now, is `test/node/locale-preview.test.ts`.
  */
 
 describe("negotiation over the browser's list", () => {
@@ -27,26 +28,37 @@ describe("negotiation over the browser's list", () => {
 });
 
 describe("the boot decision", () => {
-  it("never offers a preview locale: Chinese is not offered while it is one", () => {
-    const previews = LOCALES.filter(({ preview }) => preview).map(({ tag }) => tag);
-    expect(previews.length).toBeGreaterThan(0);
-    for (const tag of previews) expect(OFFERED).not.toContain(tag);
+  it("offers every locale it lists: none is a preview since zh-Hans left preview on 2 October 2026", () => {
+    expect(OFFERED).toEqual(LOCALES.map(({ tag }) => tag));
+    expect(OFFERED).toContain("zh-Hans");
   });
 
-  it("does not let a Chinese browser pick a preview", () => {
-    expect(resolveLocale({ flag: null, stored: null, languages: ["zh-CN", "zh"] }))
-      .toEqual({ locale: "en", formatLocale: undefined, source: "default" });
+  it.each([
+    [["zh"], "zh"], [["zh-CN"], "zh-CN"], [["zh-SG"], "zh-SG"], [["zh-MY"], "zh-MY"], [["zh-Hans-HK", "en"], "zh-Hans-HK"],
+  ])("gives a Simplified Chinese browser %j zh-Hans, formatted as %s", (languages, formatLocale) => {
+    expect(resolveLocale({ flag: null, stored: null, languages })).toEqual({ locale: "zh-Hans", formatLocale, source: "browser" });
   });
 
-  it("does not honour a stored preview tag: the flag cannot become a choice by writing storage by hand", () => {
-    expect(resolveLocale({ flag: null, stored: "zh-Hans", languages: [] }).locale).toBe("en");
+  it.each([["zh-TW"], ["zh-HK"], ["zh-MO"]])("does not give %s zh-Hans: Traditional continues down the list", (tag) => {
+    expect(resolveLocale({ flag: null, stored: null, languages: [tag, "en-GB"] }))
+      .toEqual({ locale: "en", formatLocale: undefined, source: "browser" });
+    expect(resolveLocale({ flag: null, stored: null, languages: [tag, "zh-CN"] }).locale).toBe("zh-Hans");
+    expect(resolveLocale({ flag: null, stored: null, languages: [tag] }).source).toBe("default");
   });
 
-  it("reaches a preview through the review flag, and formats for the viewer's own tag for it", () => {
+  it("honours a stored choice over the browser, either way", () => {
+    expect(resolveLocale({ flag: null, stored: "zh-Hans", languages: ["en-GB"] }))
+      .toEqual({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "stored" });
+    expect(resolveLocale({ flag: null, stored: "en", languages: ["zh-CN"] }))
+      .toEqual({ locale: "en", formatLocale: undefined, source: "stored" });
+  });
+
+  it("puts the review flag above a stored choice, and formats for the viewer's own tag for it", () => {
     expect(resolveLocale({ flag: "zh-Hans", stored: null, languages: ["zh-MY", "en"] }))
       .toEqual({ locale: "zh-Hans", formatLocale: "zh-MY", source: "flag" });
     expect(resolveLocale({ flag: "zh-Hans", stored: "en", languages: ["en-GB"] }))
       .toEqual({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" });
+    expect(resolveLocale({ flag: "en", stored: "zh-Hans", languages: ["zh-CN"] }).source).toBe("flag");
   });
 
   it("ignores a flag that names no locale, and a stored value that names none", () => {

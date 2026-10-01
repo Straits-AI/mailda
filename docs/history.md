@@ -4410,3 +4410,16 @@ bootstrap, a later change), and a Butler run's state is keyed, stopped as 已终
 pause row's avoided word. Five questions older than or beside this layer (a supervised headline, the lockout's plural, a
 text-only body's problem, a failed read shown as "not an administrator", CLI commands in `<code>`) are accepted
 follow-ups, each its own change, in `docs/i18n.md`. Ending the preview is not one of them yet.
+
+## Simplified Chinese is on offer (2 October 2026)
+
+**zh-Hans left preview.** The owner asked for the interface's languages to be completed and merged "once things are
+ready", and every glossary row was confirmed in rounds one to four. The four conditions ADR 46 sets were run before the
+flag changed, not read off a status line: `UNMIGRATED` is empty (T3 green), the pseudo-locale render of every route
+and every page before sign-in finds no bare English (T4, 101 tests), the Node's own words are marked wherever they
+show (T4 and the goldens), and none of the glossary's 130 rows is proposed (T2 with zh-Hans released). A browser
+asking for `zh`, `zh-CN`, `zh-SG` or `zh-MY` now gets 简体中文; `zh-TW`, `zh-HK` and `zh-MO` are Traditional and
+continue down the viewer's list. A stored choice is honoured, Settings > Language lists both, and the switch before
+sign-in shows for an English reader too, which is the one change to the English pages' goldens. `?locale=` works as it
+did. The preview mechanism stays for the next locale, tested in a registry that has a preview in it, since against the
+real one its every line is now unreachable (`docs/i18n.md`, The preview flag).

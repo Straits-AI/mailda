@@ -158,8 +158,8 @@ describe("the glossary", () => {
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
     const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
-    // Rounds one to four confirmed every row there is, so released today zh-Hans would ship no proposed word: the
-    // glossary no longer holds the preview on.
+    // zh-Hans is released (since 2 October 2026), so the line above is the live gate. Rounds one to four confirmed
+    // every row there is; `released` keeps the cases below released whatever the registry says.
     expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
     // Put back to proposed, a row is reported on every key it governs, so the empty list above is the check finding
     // nothing, not a check that cannot find anything.

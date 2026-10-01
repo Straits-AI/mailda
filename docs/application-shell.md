@@ -597,12 +597,14 @@ with its label and provenance, and nothing fills it, because no `llm.*` node run
 
 ## Languages (ADR 46, 30 September 2026)
 
-The interface's words come from a typed catalog per locale (`docs/i18n.md`). English is the only language
-offered; Simplified Chinese is a preview, reachable by `?locale=zh-Hans` and nowhere else, so nobody who did not
-ask sees a screen that is partly English.
+The interface's words come from a typed catalog per locale (`docs/i18n.md`). English and Simplified Chinese
+(简体中文, since 2 October 2026) are offered: a browser that asks for Simplified Chinese gets it, and `?locale=` picks
+either for one page load. A locale still being migrated is a preview, reachable by `?locale=` and nowhere else, so
+nobody who did not ask sees a screen that is partly English; none is one now.
 
 - **Settings > Language** sits after Appearance and is built the same way. It lists the offered languages, each
-  in its own words; while English is the only one it says so instead of showing a choice that is not one. It says
+  in its own words (English, 简体中文); were English the only one it would say so instead of showing a choice that
+  is not one. It says
   when the page is in a language only because the address asks for it, and when this browser will not let it read
   a saved choice. Choosing flushes an open draft, stores the choice in this browser and reloads; a draft the Node
   will not save stops the reload, in the Node's own words.

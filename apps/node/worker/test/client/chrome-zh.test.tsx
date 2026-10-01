@@ -7,7 +7,7 @@ import { CATALOGS } from "../../src/i18n/catalog.ts";
 import { answer, answerWith, reset } from "./session-stub.ts";
 
 /**
- * The chrome under the zh-Hans preview (`?locale=zh-Hans`, ADR 46).
+ * The chrome under zh-Hans (ADR 46), installed as `?locale=zh-Hans` or a Chinese browser installs it.
  *
  * What would render plausibly and be wrong: a palette a Chinese viewer can only search in Chinese characters,
  * because the English labels it used to match are never sent to them (critic L3); the doctor's `refuse`
