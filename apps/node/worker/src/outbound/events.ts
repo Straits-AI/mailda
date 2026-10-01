@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { DeliveryState } from "@mailda/contract/schemas";
 
 import { log } from "../audit.ts";
 
@@ -89,7 +90,7 @@ export interface SendingEvent {
  * `complained` sets **no** delivery state: it is a fact about reputation, not about arrival, and the
  * message did arrive. The event is still stored.
  */
-const DELIVERY_STATE: Record<string, string | null> = {
+const DELIVERY_STATE: Record<string, DeliveryState | null> = {
   "cf.email.sending.message.delivered": "accepted",
   "cf.email.sending.message.bounced": "bounced",
   "cf.email.sending.message.failed": "failed",

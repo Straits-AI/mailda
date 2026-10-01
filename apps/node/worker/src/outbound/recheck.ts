@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { SendReason } from "@mailda/contract/schemas";
 
 import { type ApprovalState, approvalOfManifest, decisionsOfApproval } from "../approvals.ts";
 import {
@@ -85,15 +86,15 @@ import type { TransportAdapter } from "./transport.ts";
  *
  * `authority_lost` is ADR 39's, written before this module existed and still written by `dispatchOne` on both
  * paths. It is declared here anyway, because the list of things that can withhold a send has to be *one* list:
- * the words for all seven live in `src/client/delivery.client.js` and `test/outbound-recheck.test.ts` reads
- * this against the exact bytes a browser is served, so an eighth reason with no sentence fails a test rather
- * than showing somebody a raw token.
+ * each key is typed `SendReason`, so an eighth must first be declared in the contract, whose list keys the
+ * words (`src/i18n/en/delivery.ts`), and an eighth reason with no sentence fails to compile rather than showing
+ * somebody a raw token.
  *
  * `domain_paused` is #66's, and it is the second member of this list that neither the approved path nor even
  * *dispatch* owns exclusively: it is written at the **seal** as well, by `sealManifest`, because a pause in
  * force must stop a send at the moment it is composed rather than a hold window later. It lives here anyway,
  * for `authority_lost`'s reason — one list, or the vocabulary has two homes and the closed-world test over the
- * served sentences can only see one of them. This module's name is about where most of these are decided, not
+ * minted tokens can only see one of them. This module's name is about where most of these are decided, not
  * about who may declare one.
  *
  * `satisfies` rather than an annotation, so the keys stay literal and `DispatchReason` below is the closed set
@@ -140,7 +141,7 @@ export const WITHHOLDING = {
     raises: false,
     sentence: "Sending from this domain is paused: two administrators stopped it, and one can restart it.",
   },
-} as const satisfies Record<string, { raises: boolean; sentence: string }>;
+} as const satisfies Partial<Record<SendReason, { raises: boolean; sentence: string }>>;
 
 /** The seven, as a type. An eighth has to be declared above before it can be written anywhere. */
 export type DispatchReason = keyof typeof WITHHOLDING;

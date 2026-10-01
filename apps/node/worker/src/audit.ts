@@ -1,5 +1,6 @@
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
+import type { LogLevel } from "@mailda/contract/schemas";
 
 import { sponsorOf } from "./delegation.ts";
 import { unavailable } from "./errors.ts";
@@ -1601,7 +1602,7 @@ const LOG_RETAINED = BUDGETS["log.retained_entries"];
 const LOG_TRIM_BATCH = BUDGETS["log.trim_batch"];
 
 export interface LogEvent {
-  level: "error" | "warn" | "info";
+  level: LogLevel;
   event: string;
   message: string;
   orgId?: string | null;

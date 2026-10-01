@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { BODY_SCRIPTS } from "@mailda/contract/schemas";
+
 import { SHELL_CSS } from "../../src/shell-css.ts";
+import { scriptFamily } from "../../src/theme.ts";
 import { cssRules } from "./support/theme-blocks.ts";
 
 /**
@@ -96,5 +99,21 @@ describe("the Simplified Chinese type", () => {
     expect(property(`${ZH} .rail-heading`, "font-size")).toBe("12px");
     expect(property(`${ZH} .rail-group-toggle`, "font-size")).toBe("12px");
     expect(Number(property(`${ZH} .rail-group-toggle`, "line-height"))).toBeGreaterThanOrEqual(1.3);
+  });
+
+  it("keeps a column header's Han together under Chinese, as a Latin header's word is", () => {
+    expect(property(`${ZH} thead th`, "word-break")).toBe("keep-all");
+  });
+});
+
+describe("a plain-text body's type", () => {
+  it("is the message's script, the frame's own families, over the interface's stack (critic M9)", () => {
+    // The `<pre>` sits in the shell, under `:root:lang(zh)` when the interface is Chinese; its `data-script` is the
+    // message's, and a rule nothing matched would leave a Japanese message in the SC faces.
+    for (const script of BODY_SCRIPTS) {
+      const family = rules.filter((rule) => rule.selectors.includes(`.message-text[data-script="${script}"]`))
+        .flatMap((rule) => rule.declarations).find((one) => one.property === "font-family")?.value;
+      expect(family, script).toBe(scriptFamily(script));
+    }
   });
 });

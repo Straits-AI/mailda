@@ -1,0 +1,15 @@
+no case: <p>This message has no case yet, so it cannot be assigned. It predates the queue.</p>
+
+closed: <p>This case is closed.</p>
+
+held: <p class="assign-holder">Held by x@example.test since [full]. <button type="button" class="linkish">Take it anyway</button>
+</p>
+
+held, unnamed, unrecorded: <p class="assign-holder">Held by a colleague since an unrecorded time. <button type="button" class="linkish">Take it anyway</button>
+</p>
+
+open: <form>
+<label for="assign-email">Colleague's sign-in address</label>
+<input id="assign-email" required="" type="email" value="">
+<button type="submit" class="primary">Hand over</button>
+</form>

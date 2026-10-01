@@ -205,9 +205,9 @@ export interface SealedManifest {
   /**
    * The machine token behind a gated or refused state, and NULL when `held`.
    *
-   * A token rather than a sentence, deliberately: the words for every send state and reason live in
-   * `src/client/delivery.client.js`, which is the one place with a test over them. Two copies of the same
-   * sentence is how the authoritative one becomes whichever file the reader opened.
+   * A token rather than a sentence, deliberately: the words for every send state and reason live in the
+   * catalog (`src/i18n/en/delivery.ts`), keyed by the contract's lists. Two copies of the same sentence is how
+   * the authoritative one becomes whichever file the reader opened.
    */
   stateReason: string | null;
   /**
@@ -739,7 +739,7 @@ export async function sealManifest(
      * Butler as actor, which outranks this.
      *
      * No `last_error`: there is nothing wrong. `state_reason` is the whole answer and the words for it live
-     * in `src/client/delivery.client.js` with every other send reason.
+     * in the catalog (`src/i18n/en/delivery.ts`) with every other send reason.
      */
     sealedState = "awaiting";
     stateReason = BUTLER_RELEASE_REASON;

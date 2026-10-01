@@ -1,11 +1,18 @@
 import { api } from "./api.ts";
 import { chrome } from "./chrome.ts";
 import { common } from "./common.ts";
+import { composer } from "./composer.ts";
+import { delivery } from "./delivery.ts";
+import { drafts } from "./drafts.ts";
 import { inbox } from "./inbox.ts";
 import { language } from "./language.ts";
+import { ledgers } from "./ledgers.ts";
 import { palette } from "./palette.ts";
 import { preauth } from "./preauth.ts";
+import { queue } from "./queue.ts";
+import { reader } from "./reader.ts";
 import { settings } from "./settings.ts";
+import { setup } from "./setup.ts";
 import { shell } from "./shell.ts";
 
 /**
@@ -15,6 +22,11 @@ import { shell } from "./shell.ts";
 export { preauth };
 
 /** Every `app` area, by name, so `test/node/catalog.test.ts` can check that none of them shadowed another. */
-export const APP_AREAS = { common, language, chrome, palette, shell, inbox, settings, api } as const;
+export const APP_AREAS = {
+  common, language, chrome, palette, shell, inbox, settings, setup, api, reader, composer, drafts, queue, ledgers, delivery,
+} as const;
 
-export const app = { ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...api } as const;
+export const app = {
+  ...common, ...language, ...chrome, ...palette, ...shell, ...inbox, ...settings, ...setup, ...api,
+  ...reader, ...composer, ...drafts, ...queue, ...ledgers, ...delivery,
+} as const;

@@ -12,7 +12,19 @@ vi.mock("@tanstack/react-router", () => ({
 
 const { Inbox } = await import("../../src/client/app/screens/inbox.tsx");
 const { ShellProvider } = await import("../../src/client/app/shell-context.tsx");
-const { fullTime } = await import("../../src/client/app/screens/reader.tsx");
+const { fullTime } = await import("../../src/client/app/format.ts");
+
+/**
+ * This machine's zone as the quote line names it, `GMT+08:00`, worked out without `Intl`: what the quote line must end
+ * its date with. At a zero offset some ICU builds print a bare `GMT`, so either form is accepted there.
+ */
+function zone(at: string): RegExp {
+  const minutes = -new Date(at).getTimezoneOffset();
+  const abs = Math.abs(minutes);
+  const offset = `${minutes < 0 ? "-" : "+"}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  const time = fullTime(at).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  return new RegExp(`\\n\\nOn ${time} ${minutes === 0 ? "GMT(?:\\+00:00)?" : `GMT\\${offset}`}, alice@outside\\.example wrote:\\n> Where`);
+}
 
 /**
  * Reply quotes the message's own text from the body the pane fetched; reply-all addresses the sender and
@@ -102,15 +114,16 @@ describe("replying from the reading pane", () => {
     expect(quoted).not.toContain("<p>");
   });
 
-  it("names the message it answers in the dock's head, and dates the quote on the reader's 24-hour clock", async () => {
+  it("names the message it answers in the dock's head, and dates the quote on the reader's 24-hour clock with its offset", async () => {
     await open();
     await act(async () => { screen.getByRole("button", { name: "Reply" }).click(); });
     const dock = await screen.findByRole("region", { name: "Reply" });
     // The dock covers the reader, so it says what the reply is about.
     expect(dock.querySelector(".dock-context")?.textContent).toBe("Replying to: Invoice");
     const body = (dock.querySelector("#composer-body") as HTMLTextAreaElement).value;
-    // The same instant as the details' Received, in the same form; 09:00 UTC is never "AM" or "PM" here.
-    expect(body).toContain(`On ${fullTime(ROW.accepted_at)}, alice@outside.example wrote:`);
+    // The same instant as the details' Received, in the same form; 09:00 UTC is never "AM" or "PM" here. Then the
+    // offset, because the line leaves for a correspondent whose clock may be another zone's (critic L5).
+    expect(body).toMatch(zone(ROW.accepted_at));
     expect(body).not.toMatch(/\b[AP]M\b/);
   });
 

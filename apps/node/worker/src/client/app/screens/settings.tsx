@@ -8,7 +8,7 @@ import { signOutEverywhere, useMe, type Said } from "../api.ts";
 import { Nothing } from "../chrome.tsx";
 import { useCompose } from "../shell-context.tsx";
 import { setShortcutsEnabled, shortcutsEnabled, storedShortcuts } from "../ui/shortcuts.ts";
-import { marked, NodeWords, sentence } from "../words.tsx";
+import { marked, sentence } from "../words.tsx";
 import { Language } from "./language.tsx";
 import { Passkeys } from "./people.tsx";
 
@@ -60,13 +60,9 @@ type SignOut = "sign_out" | "sign_out_everywhere";
 
 /**
  * What stopped a sign-out: a draft that would not save (framed by this page's sentence), or the revocation the
- * Node refused, with who wrote its words (`Said`). Kept as text and a kind, never as a rendered sentence.
- *
- * ponytail: the draft's words are `compose.save()`'s, English today because the composer is not migrated
- * (layer 2a), so they go inside `<NodeWords>`. When the composer migrates, `save()` returns a `Said` and this
- * becomes `marked()` like the revocation.
+ * Node refused, each with who wrote its words (`Said`). Kept as text and a kind, never as a rendered sentence.
  */
-type Problem = { kind: "draft"; said: string } | { kind: "revocation"; said: Said };
+type Problem = { kind: "draft" | "revocation"; said: Said };
 
 function Account() {
   const me = useMe();
@@ -124,7 +120,7 @@ function Account() {
       {problem === null ? null : (
         <p className="bad" role="alert">
           {problem.kind === "draft"
-            ? sentence("settings.account.draft", { problem: <NodeWords>{problem.said}</NodeWords> })
+            ? sentence("settings.account.draft", { problem: marked(problem.said) })
             : marked(problem.said)}
         </p>
       )}

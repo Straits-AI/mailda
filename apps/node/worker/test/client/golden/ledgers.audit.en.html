@@ -1,0 +1,52 @@
+<section class="ledger" aria-label="Audit trail">
+<header class="ledger-head">
+<h1>Audit</h1>
+<button type="button" class="linkish">Verify chain</button>
+</header>
+<p class="notice mono">3 entries checked, chain intact.</p>
+<p class="notice dim">Showing the newest 3 entries. Older ones exist and are not listed.</p>
+<table>
+<thead>
+<tr>
+<th scope="col" class="num">Seq</th>
+<th scope="col">Action</th>
+<th scope="col">Actor</th>
+<th scope="col">Outcome</th>
+<th scope="col">Subject</th>
+<th scope="col" class="num">At</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="num mono dim">1</td>
+<td class="mono">send.sealed</td>
+<td class="mono dim">usr_ana</td>
+<td>
+<span class="state state-audit-ok">ok</span>
+</td>
+<td class="mono dim">rcpt_1</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+<tr>
+<td class="num mono dim">2</td>
+<td class="mono">send.sealed</td>
+<td class="mono dim">agt_bot for usr_ana</td>
+<td>
+<span class="state state-audit-refused">refused</span>
+</td>
+<td class="mono dim">—</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+<tr>
+<td class="num mono dim">3</td>
+<td class="mono">send.sealed</td>
+<td class="mono dim">node</td>
+<td>
+<span class="state state-audit-failed">failed</span>
+</td>
+<td class="mono dim">snd_1</td>
+<td class="num mono dim">[clock]</td>
+</tr>
+</tbody>
+</table>
+</section>

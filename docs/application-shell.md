@@ -85,8 +85,9 @@ replaced the shape around it:
   a region named for its table and in the Tab order, so a keyboard can reach and scroll what is past the edge.
   The name is a required prop, so a new site cannot leave it out. Until the third convergence round these were
   unnamed `div`s no keyboard could scroll, which axe found once it audited a phone's width (*Accessibility*,
-  below). The ledger sections scroll sideways too and are left as they are: each holds controls of its own, and
-  the 390 px sweep found nothing in them.
+  below). The ledger sections scroll sideways too and are left as they are: each holds controls of its own. The
+  Log holds none, so its table is in a `Scroller`: the 390 px sweep found it on 1 October 2026, the first time
+  the swept Node had a log entry wide enough to scroll.
 - **A status bar with two things in it**: whether the Node is answering, and the doctor's verdict.
   *Connected* is derived from the outcome of every query the shell makes (a request that got no answer reads
   *Unreachable*, an offline browser *Offline*); it replaced a green dot with *listening* written beside it,
@@ -618,6 +619,18 @@ ask sees a screen that is partly English.
   12px. No CJK webfont (ADR 30 as amended).
 - **An input method's Enter is not a submit.** Every Enter handler asks `isComposingKey` first; Safari sends the
   committing Enter after `compositionend`, marked only by `keyCode` 229.
+- **A message keeps its own language** (layer 2a, 1 October 2026). The body frame never takes the interface's
+  `lang`; its root carries `data-script` (`sc`, `tc`, `jp`) from the message's charset, then its
+  `Content-Language`, then its HTML's own `lang`, and only then the viewer's locale, and `/app/frame.css` puts that
+  script's Han faces first. A plain-text body is drawn in the shell's document, so its `<pre>` carries `lang=""`
+  and the same attribute. A GB2312 message in an English interface is drawn in Simplified forms; a UTF-8 one that
+  says nothing gets the platform's choice. `docs/i18n.md` has the order and why.
+- **A reply's quote line is in its author's language** and carries the offset from UTC ("On 8/21/2026, 17:00:00
+  GMT+08:00, alice@… wrote:" / "…，alice@… 写道："); `Re:` and `Fwd:` stay English on the wire and are not added
+  after `回复：`, `答复：` or `转发：`.
+- **Times in a list** are `format.ts`'s: `15:09` today, `26 Sep` this year, `26 Sep 2025` before, from a written-out
+  English table; `9月26日` and `2025/9/26` from `Intl` in Chinese. A time that leaves the list (a Queue deadline's
+  title, a quarantine's time, a conflict) is the viewer's full local time, never a raw UTC instant.
 
 ## Keyboard
 
@@ -709,8 +722,9 @@ press Tab until focus leaves it, to use them.
 ## The honesty rules live outside React
 
 `delivery.client.js` is DOM-free, served at `/app/delivery.js`, and imported by the shell **at runtime
-rather than bundled**. It holds the delivery vocabulary and one rule: never suppress an outcome because
-the recipients agree, because they agree when everything bounced too.
+rather than bundled**. It decides which state, reason and outcome a reader is shown, and returns tokens whose
+words are the catalog's (`apps/node/worker/src/i18n/en/delivery.ts`, looked up by `src/client/app/delivery-words.ts`).
+Its rule: never suppress an outcome because the recipients agree, because they agree when everything bounced too.
 
 It is a separate module because that rule was previously inside `app.client.js`, which touches `document`
 at load and therefore cannot be imported by any test, and the rule was wrong for months. A send whose
@@ -852,8 +866,8 @@ second copy of the rule). A dangerous one gets a warning under it naming what it
 the verdict, and that a receiving server may refuse it. The seal then carries `allowDangerousAttachments: true`,
 only while that warning is on screen. `docs/mail-security.md` has the reasoning and what the trail records.
 
-**The send-state words live in `delivery.client.js`, not in the React screen**, and that placement earns its
-keep. They were a literal map in `ledgers.tsx` keyed on `state` alone, which made `outcome_unknown` read *"We
+**The send-state reading lives in `delivery.client.js`, not in the React screen**, and that placement earns its
+keep; the words it names are the catalog's `send.state.*` (ADR 46). They were a literal map in `ledgers.tsx` keyed on `state` alone, which made `outcome_unknown` read *"We
 do not know whether it left"* even in the one case where the Node can prove otherwise: on the authored path
 the submitted bytes are stored **before** the transport is asked, so a terminal authored send with no
 submitted key never reached it. That is a reading of three fields rather than a lookup on one, and it belongs
@@ -874,8 +888,8 @@ attributed to, because the chip's note would be false for that very row. The sen
 and a send whose every recipient is a verified destination gets that one chip rather than none, because it adds a
 fact: do not wait. The words say what was measured and no more: nothing is expected, the silence is not a fault
 in this Node, and it says nothing about whether the message arrived. The contract's `DELIVERY_REASONS` is the
-closed list, and `test/node/delivery-summary.test.ts` fails when a token has no words here or words exist for a
-token the contract does not name. **Who sees it:** whoever may read the send, because the reason rides on
+closed list, and the catalog's `delivery.reason.*` keys are typed by it, so a token with no words, or words for a
+token the contract does not name, does not compile. **Who sees it:** whoever may read the send, because the reason rides on
 `GET /api/sends`, which is bounded by `mailbox.content.read`; it tells that reader the recipient was a verified
 destination of the account when handed over. That disclosure is accepted, because the alternative is telling
 the reader to wait for an answer that cannot come.
@@ -900,18 +914,17 @@ not have.
   was still being checked (repaired by the next release's re-run; the 0073 header has the detail). The chip
   renders whatever the row carries, and the fix for a stale token is the row, not a state guard in one channel.
 
-**The reason words live in `delivery.client.js`, not in `policy.ts` and not in `ledgers.tsx`**, which is the
-same placement rule the send-state words follow and for the same reason: `src/policy.ts` mints the token, one
-client module owns the prose, and a test evaluates that module rather than a copy of it. Two copies of one
-sentence means the authoritative one is whichever file the reader opened.
+**The reason words live in the catalog, not in `policy.ts` and not in `ledgers.tsx`**, which is the same
+placement rule the send-state words follow and for the same reason: `src/policy.ts` mints the token, one module
+owns the prose (`apps/node/worker/src/i18n/en/delivery.ts` and its twins, ADR 46). Two copies of one sentence
+means the authoritative one is whichever file the reader opened.
 
 The split is **enforced in both directions**, because a placement rule nothing checks is a placement rule that
-drifts on the first token somebody adds. `test/node/delivery-summary.test.ts` evaluates the served module and
-fails if any send *state* has no words; `test/policy.test.ts` reads the same bytes and fails if any *reason*
-this Node can write has none, driven off `POLICY_REASONS`, which is derived from the outcome-to-state mapping
-rather than written out, so a renamed or added token arrives at the check without anybody remembering to bring
-it. Without that second check the outbox would fall back to rendering `policy_approval_required` at a person,
-which is the failure the first check exists to prevent, reached through the other column.
+drifts on the first token somebody adds. The contract declares `SEND_STATES` and `SEND_REASONS` (the wire stays
+`z.string()`); every module that writes `state_reason` types its tokens with `SendReason`, so it cannot write one
+the contract lacks; the catalog's keys are typed by the same lists, so a declared token without words does not
+compile; and `test/outbound-recheck.test.ts` fails when the contract declares a reason no module mints. Without
+those, the outbox would fall back to rendering `policy_approval_required` at a person.
 
 **The outbox reads itself again when a hold ends.** A `held` send leaves on its own, so the outbox and the
 sidebar's Outbox count re-read five seconds after the earliest `release_at` on the page, and every five seconds

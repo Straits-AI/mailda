@@ -1,7 +1,7 @@
 ---
 id: react-shell-bundle
 kind: measured-tripwire
-measured_on: 2026-09-30
+measured_on: 2026-10-01
 stale_when: >
   react, react-dom, @tanstack/react-router or @tanstack/react-query change major version; the esbuild
   target moves below es2022; a fourth runtime dependency is added to the authenticated application; the
@@ -13,18 +13,42 @@ stale_when: >
   until the interface is migrated; or `/app/locale.js` starts carrying an `app` table, which
   `test/catalog-served.test.ts` refuses
 values:
-  shell.bundle_bytes: 759600
-  shell.bundle_gzip_bytes: 220486
+  shell.bundle_bytes: 761502
+  shell.bundle_gzip_bytes: 219307
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
-  shell.pre_auth_locale_bytes: 3347
-  shell.catalog_bytes_en: 17707
-  shell.catalog_bytes_zh_hans: 18374
+  shell.pre_auth_locale_bytes: 3348
+  shell.catalog_bytes_en: 49074
+  shell.catalog_bytes_zh_hans: 49428
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
 composer and nobody had priced either half.
 
+
+## Re-measured 1 October 2026: the interface's languages, layer 2a
+
+Layer 2a migrated the reader, the composer and Drafts, the Queue, the Outbox, Audit, Log and Doctor, and the
+sending vocabulary that `/app/delivery.js` used to hold, 669 of the untranslated scan's findings. `pnpm build:client`
+(the build step `wrangler deploy --dry-run` runs) printed, on branch `i18n-l2a` from `ee9bec5`, after the layer's
+last catalog change:
+
+| | 30 September | 1 October | delta |
+|:--|--:|--:|--:|
+| shell bundle | 759,600 raw / 220,486 gzip | **761,502 / 219,307** | +1,902 (+0.25%) / −1,179 (−0.53%) |
+| `/app/locale.js` | 3,347 / 1,655 | **3,348 / 1,657** | +1: a content tag one character longer |
+| the `en` app table | 17,707 / 4,891 | **49,074 / 13,559** | +31,367 (2.8×) |
+| the `zh-Hans` app table | 18,374 / 5,976 | **49,428 / 15,778** | +31,054 (2.7×) |
+
+Both tables moved past the 10% clause, as every migrated screen was expected to make them; the shell did not move
+past it. The words left the bundle and its gzip fell, while the code the migration added (`delivery-words.ts`, the
+`format.ts` functions, the `Said` plumbing) kept its raw size about level. Nothing new loads before sign-in.
+
+**The projection above is low.** 1,140 findings remain in `UNMIGRATED`. At this layer's rate, about 47 raw bytes of
+English table per finding, the whole interface's English table would be near 100 KB raw and 28 KB gzip, not the
+60 KB and 19 KB projected on 30 September. That is a provisional extrapolation, not a value here: findings include
+non-words registered in `NOT_PROSE`, and the screens left differ in how wordy they are. A viewer still downloads one
+table, once per content tag.
 
 ## Re-measured 30 September 2026, later: the owner's review of the Chinese words
 

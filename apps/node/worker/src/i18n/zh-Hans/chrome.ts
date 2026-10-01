@@ -30,14 +30,14 @@ export const chrome: Twin<typeof source> = {
 
   "chrome.copied": "已复制",
   "chrome.copy": "复制{what}",
-  "chrome.truncated": "仅显示最新的 {shown} 条{noun}。更早的仍然存在，但未列出。",
+  "chrome.truncated": "仅显示最新的 {shown} {noun}。更早的仍然存在，但未列出。",
   "chrome.nothing.loading": "读取中…",
   "chrome.nothing.failed": "无法读取。这与内容为空不是一回事。",
   "chrome.nothing.empty": "这里还没有内容。",
   "chrome.nothing.unfiltered": "这是一份空记录，而不是筛选后的结果：没有任何内容对你隐藏。",
 
   "chrome.notices": "通知",
-  "chrome.notices.noun": "通知",
+  "chrome.notices.noun": "条通知",
   "chrome.notice.approval": "你收到一项审批请求（{kind}）。",
   "chrome.notice.an_act": "某项操作",
   "chrome.notice.request": "请求 {id}",

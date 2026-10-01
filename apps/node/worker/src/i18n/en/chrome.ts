@@ -43,7 +43,11 @@ export const chrome = {
   "chrome.copied": "Copied",
   /** `{what}` is the caller's noun (`Copyable`'s `label`). */
   "chrome.copy": "Copy {what}",
-  /** `{noun}` is the caller's plural noun (`Truncated`'s `noun`); a sentence per noun waits for the callers. */
+  /**
+   * `{noun}` is the caller's plural noun (`Truncated`'s `noun`). In a language that counts with a measure word the
+   * noun key carries its own (zh-Hans 份草稿, 条通知, 封…来信), because the word depends on the noun; the template
+   * carries none (F5, the owner's review of 1 October 2026).
+   */
   "chrome.truncated": "Showing the newest {shown} {noun}. Older ones exist and are not listed.",
   "chrome.nothing.loading": "Reading…",
   "chrome.nothing.failed": "This could not be read. That is different from it being empty.",

@@ -1,0 +1,21 @@
+{"auth_dmarc":null}
+  details: Not evaluated — arrived before this Node checked senders
+  alert: -
+{"auth_dmarc":"absent"}
+  details: no authentication header from the receiving server
+  alert: -
+{"auth_dmarc":"pass"}
+  details: SPF pass · DKIM fail · DMARC pass — <span class="mono">northwind.example</span> vouches for this message
+  alert: -
+{"auth_dmarc":"none"}
+  details: SPF pass · DKIM fail · DMARC none — <span class="mono">northwind.example</span> publishes no policy
+  alert: -
+{"auth_dmarc":"fail","auth_dmarc_policy":null}
+  details: SPF pass · DKIM fail · DMARC fail — <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span>
+  alert: <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf pass, dkim fail)
+{"auth_dmarc":"fail","auth_dmarc_policy":"quarantine","auth_from_domain":null}
+  details: SPF pass · DKIM fail · DMARC fail — <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span>
+  alert: <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf pass, dkim fail; the domain asks receivers to quarantine)
+{"auth_dmarc":"temperror","auth_dkim":null}
+  details: SPF pass · DKIM absent · DMARC temperror — <span class="mono">northwind.example</span> publishes no policy
+  alert: -

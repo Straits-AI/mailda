@@ -1,5 +1,9 @@
+import { t } from "/app/locale.js";
+
 import { useDrafts } from "../api.ts";
 import { Nothing, Truncated } from "../chrome.tsx";
+import * as format from "../format.ts";
+import { marked } from "../words.tsx";
 import { useCompose } from "../shell-context.tsx";
 
 /**
@@ -13,18 +17,18 @@ import { useCompose } from "../shell-context.tsx";
 export function Drafts() {
   const drafts = useDrafts();
   const compose = useCompose();
-  const heading = <header className="ledger-head"><h1>Drafts</h1></header>;
+  const heading = <header className="ledger-head"><h1>{t("route./drafts")}</h1></header>;
 
   if (drafts.isPending) return <>{heading}<Nothing kind="loading" /></>;
-  if (drafts.isError) return <>{heading}<Nothing kind="failed" detail={drafts.error.message} /></>;
+  if (drafts.isError) return <>{heading}<Nothing kind="failed" detail={marked(drafts.error)} /></>;
   const rows = drafts.data.drafts;
-  if (rows.length === 0) return <>{heading}<Nothing kind="empty" detail="No drafts." /></>;
+  if (rows.length === 0) return <>{heading}<Nothing kind="empty" detail={t("drafts.empty")} /></>;
 
   return (
     <>
       {heading}
-      <Truncated when={drafts.data.truncated} shown={rows.length} noun="drafts" />
-      <ul className="draft-list" aria-label="Drafts">
+      <Truncated when={drafts.data.truncated} shown={rows.length} noun={t("drafts.noun")} />
+      <ul className="draft-list" aria-label={t("route./drafts")}>
         {rows.map((draft) => (
           <li key={draft.id}>
             <button
@@ -37,12 +41,12 @@ export function Drafts() {
                 ...(draft.caseId === null ? {} : { caseId: draft.caseId }),
               })}
             >
-              <span>{draft.subject.trim() === "" ? "(no subject)" : draft.subject}</span>
+              <span>{draft.subject.trim() === "" ? t("drafts.noSubject") : draft.subject}</span>
               {" · "}
-              <span>{draft.to.length === 0 ? "no recipient yet" : draft.to.join(", ")}</span>
+              <span>{draft.to.length === 0 ? t("drafts.noRecipient") : draft.to.join(", ")}</span>
               {" · "}
-              <time dateTime={draft.updatedAt} title={new Date(draft.updatedAt).toLocaleString()}>
-                {new Date(draft.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+              <time dateTime={draft.updatedAt} title={format.dateTime(draft.updatedAt)}>
+                {format.mediumDateTime(draft.updatedAt)}
               </time>
             </button>
           </li>

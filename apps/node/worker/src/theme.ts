@@ -1,3 +1,5 @@
+import type { BodyScript } from "@mailda/contract/schemas";
+
 /**
  * The shell's colour tokens, in both themes, and the two stylesheets built from them.
  *
@@ -152,6 +154,40 @@ export function themeCss(): string {
  * table past the frame. A long bare token in a cell (an ID, an unlinked URL) can still do that, and the
  * frame then scrolls sideways; that is rarer than a narrow table of short words, which is most receipts.
  */
+/**
+ * The Han faces for each script a message can say it is in (`data-script`, `BODY_SCRIPTS` in the contract), named
+ * before the UI sans because a system UI face on a Japanese or Chinese system carries Han of its own and would
+ * draw it in that system's forms (critic M9). Local faces only, as the rest of this sheet: the Simplified list is
+ * the shell's own `:root:lang(zh)` stack (`src/shell-css.ts`), and the Traditional and Japanese lists are each
+ * platform's counterpart. A presentation choice with that basis, not a measurement: no frame has been measured.
+ *
+ * The shell's plain-text body (`.message-text` in `src/shell-css.ts`) draws from the same table, through
+ * `scriptFamily`, so a message's Han has one set of forms whether it arrived as HTML or as text.
+ */
+export const FRAME_SCRIPTS: Readonly<Record<BodyScript, string>> = {
+  sc: `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC"`,
+  tc: `"PingFang TC", "Microsoft JhengHei", "Noto Sans CJK TC", "Source Han Sans TC", "Noto Sans TC"`,
+  jp: `"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", "Noto Sans JP"`,
+};
+
+/** A script's whole `font-family`: its Han faces, then the UI sans the frame uses for everything else. */
+export function scriptFamily(script: BodyScript): string {
+  return `${FRAME_SCRIPTS[script]}, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+}
+
+/**
+ * The language tags a sender may put on one element of their message, and the script each is drawn in, in source
+ * order: `:lang(zh)` also matches `zh-TW`, so the Traditional tags come after it and win at equal specificity, and
+ * `:lang(zh-Hant)` does not match `zh-TW`, so the region tags are named too. Only on an element that carries `lang`
+ * (`[lang]`), so a `<pre>` or `<code>` inside keeps its monospace by its own rule. The frame's `data-script` is the
+ * whole message's; a sender's `<p lang="ja">` inside a GB2312 message is that paragraph's, and it wins there.
+ */
+const LANG_SCRIPTS: ReadonlyArray<readonly [BodyScript, readonly string[]]> = [
+  ["sc", ["zh", "zh-Hans", "zh-CN", "zh-SG"]],
+  ["tc", ["zh-Hant", "zh-TW", "zh-HK", "zh-MO"]],
+  ["jp", ["ja"]],
+];
+
 export function frameStylesheet(): string {
   return themeBlocks("") + `html { background: var(--bg-reader); color: var(--text-primary); }
 body { margin: 0; padding: 0 2px 24px; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow-wrap: break-word; }
@@ -162,5 +198,7 @@ td, th { padding: 2px 6px; vertical-align: top; text-align: left; }
 blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--border); color: var(--text-secondary); }
 pre, code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 hr { border: 0; border-top: 1px solid var(--border); }
+${(Object.keys(FRAME_SCRIPTS) as BodyScript[]).map((script) => `html[data-script="${script}"] body { font-family: ${scriptFamily(script)}; }`).join("\n")}
+${LANG_SCRIPTS.map(([script, tags]) => `${tags.map((tag) => `[lang]:lang(${tag})`).join(", ")} { font-family: ${scriptFamily(script)}; }`).join("\n")}
 `;
 }

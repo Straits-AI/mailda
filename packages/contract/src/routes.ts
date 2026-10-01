@@ -845,15 +845,16 @@ export const ROUTES = [
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/routing-rules/take-over",
     summary: "Point an existing routing rule at this Node, registering its address here first (or keeping the "
-      + "mailbox it already files into) and recording the action it had on the audit entry, then reading the rule "
-      + "back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, one with more than one "
-      + "destination, an address with more than one rule, and a zone with subaddressing on",
+      + "mailbox it already files into) and recording the action it had on the audit entry and in the rule's own "
+      + "name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled "
+      + "rule, an action other than forward, worker or drop, one with more than one destination, an address with "
+      + "more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it",
     request: S.providerRoutingRuleTakeOverRequest, response: S.providerRoutingRuleOutcomeResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/routing-rules/put-back",
-    summary: "Restore a rule this Node took over to the action the take-over recorded, then read it back. "
+    summary: "Restore a rule this Node took over to the action and name the take-over recorded, then read it back. "
       + "Refuses a rule this Node never took, or one that no longer routes here",
     request: S.providerRoutingRulePutBackRequest, response: S.providerRoutingRuleOutcomeResponse,
   },

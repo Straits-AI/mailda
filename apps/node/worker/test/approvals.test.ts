@@ -2,6 +2,7 @@ import { createExecutionContext, env, SELF, waitOnExecutionContext } from "cloud
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
+import { SEND_REASONS } from "@mailda/contract/schemas";
 
 import { revoke } from "../src/access.ts";
 import { verifyChain } from "../src/audit.ts";
@@ -12,7 +13,6 @@ import {
 import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
-import deliveryScript from "../src/client/delivery.client.js";
 import { cancelSend, dispatchDue, type SendState } from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
 import worker from "../src/index.ts";
@@ -242,13 +242,11 @@ describe("the satisfiability rule (shortfallFor)", () => {
     expect(shortfall?.team).toEqual({ id: "tm_ghost", name: null });
   });
 
-  it("gives every reason token it writes words in the module a browser is served", () => {
-    // The same split #60 established: this module mints the tokens, `delivery.client.js` owns the prose, and
-    // the assertion is against the exact bytes `ui.ts` serves rather than an imported map — because that file
-    // is a Text module and cannot be imported as a namespace inside workerd.
-    for (const reason of APPROVAL_REASONS) {
-      expect(deliveryScript, `no words for ${reason}`).toContain(`\n  ${reason}: {`);
-    }
+  it("writes only reason tokens the contract declares, which is where their words are keyed", () => {
+    // The same split #60 established: this module mints the tokens and the catalog owns the prose, keyed by
+    // the contract's `SEND_REASONS` (`src/i18n/en/delivery.ts`), so a declared token without words does not
+    // compile. `test/outbound-recheck.test.ts` holds the other direction, over every module that mints.
+    for (const reason of APPROVAL_REASONS) expect(SEND_REASONS).toContain(reason);
   });
 });
 

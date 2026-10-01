@@ -16,9 +16,9 @@ import { Icon } from "../ui/icons.tsx";
 import { Popover } from "../ui/popover.tsx";
 import { shortcutsEnabled, useShortcuts } from "../ui/shortcuts.ts";
 import { marked, sentence } from "../words.tsx";
-import type { ComposerContext } from "./composer.tsx";
+import { type ComposerContext, forwardSubject, quoteLine, replySubject } from "./composer.tsx";
 import { NextSteps, deterministicNextSteps } from "./next-steps.tsx";
-import { MONTHS, ReadingPane, Thread, bodyQuery, fullTime, shortTime, subjectOf, type RenderedBody } from "./reader.tsx";
+import { ReadingPane, Thread, bodyQuery, subjectOf, type RenderedBody } from "./reader.tsx";
 
 /**
  * The mail view: the list pane and the reading column, for the Inbox, Archive and Trash alike.
@@ -171,12 +171,9 @@ function replyContext(
     caseId,
     to: sender,
     cc: others.join(", "),
-    // Not doubled after a Chinese client's 回复： either (critic L5). The prefix written is `Re:` whatever the
-    // interface's language: it goes into the mail, which is data, not this screen's words (docs/i18n.md, L10).
-    subject: /^(?:re:|回复[:：])/i.test(subject) ? subject : `Re: ${subject}`,
+    subject: replySubject(subject),
     originalSubject: subjectOf(message),
-    // `fullTime`, the reader's Received: the same instant in the same 24-hour form, not a second clock.
-    body: `\n\nOn ${fullTime(message.accepted_at)}, ${message.from_addr ?? message.envelope_from} wrote:\n${quoted}`,
+    body: `\n\n${quoteLine(message.accepted_at, message.from_addr ?? message.envelope_from)}\n${quoted}`,
   };
 }
 
@@ -222,10 +219,10 @@ function SearchField({ term, onSearch }: { term: string | null; onSearch: (next:
   );
 }
 
-/** A date field's `YYYY-MM-DD` as "26 Sep": the day as written, which is the UTC day the API reads it as. */
+/** A date field's `YYYY-MM-DD` as "26 Sep" / "9月26日": the day as written, which is the UTC day the API reads it as. */
 function day(value: string): string {
-  const [, month, date] = value.split("-").map(Number);
-  return `${date} ${MONTHS[month! - 1]}`;
+  const [year, month, date] = value.split("-").map(Number);
+  return format.monthDay(new Date(year!, month! - 1, date));
 }
 
 /**
@@ -391,7 +388,7 @@ function Row({ row, place, selected, stop, onSelect, onFocus }: {
         {/* The name the sender chose, with the address one hover away; the reader shows both. */}
         <span className="row-sender" title={address}>{row.from_name ?? address}</span>
         {/* When this Node received it: `accepted_at`, the one time it observed itself. */}
-        <time className="row-time" dateTime={row.accepted_at} title={fullTime(row.accepted_at)}>{shortTime(row.accepted_at)}</time>
+        <time className="row-time" dateTime={row.accepted_at} title={format.fullTime(row.accepted_at)}>{format.shortTime(row.accepted_at)}</time>
         {/* An unmaterialised receipt (R1) has no subject and stays listed: accepted-but-absent is the worst failure. */}
         <span className="row-subject">{subjectOf(row)}</span>
         {row.preview === null ? null : <span className="row-preview">{row.preview}</span>}
@@ -604,8 +601,7 @@ export function Inbox({ place = "inbox" }: { place?: Place } = {}) {
     compose.open({
       mailboxId: message.mailbox_id,
       forwardOfMessageId: message.message_id,
-      // As Reply's: 转发： is not doubled either, and the prefix written is the mail's, not the interface's.
-      subject: /^(?:fwd?:|转发[:：])/i.test(subject) ? subject : `Fwd: ${subject}`,
+      subject: forwardSubject(subject),
       originalSubject: subjectOf(message),
       body: "",
     });

@@ -1,3 +1,4 @@
+import { type RecordedAction, recordedInName, takenOverName } from "@mailda/contract/routing-rule-name";
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch, log } from "../audit.ts";
@@ -42,12 +43,71 @@ export interface RoutingRule {
   offer: "take_over" | "put_back" | null;
   /** The refusal the act would answer, by code, when nothing is offered. */
   refusal: Refusal | null;
+  /**
+   * What pointing the rule here changes, in the words every channel shows (1 October 2026): the setup step, the
+   * Setup screen and `mailda provider --routing-rules` print these rather than each keeping its own table, so they
+   * cannot disagree. Null unless `offer` is `take_over`.
+   */
+  takeOver: TakeOverOffer | null;
 }
+
+/** The one choice besides leaving the rule as it is, and what taking it changes. */
+export interface TakeOverOffer {
+  label: string;
+  says: string;
+  /** The mailbox an address row already there files into, which a take-over keeps. */
+  filesInto: { id: string; name: string } | null;
+  /**
+   * A forward rule's address is somebody's mail going to their own inbox, so it files only into a mailbox chosen
+   * for it (`E_ROUTING_FORWARD_NEEDS_MAILBOX`), never into the only one by default. False once an address row
+   * decides it.
+   */
+  asksMailbox: boolean;
+}
+
+/**
+ * What taking a rule over changes, by what it does today. Closed over Cloudflare's three actions (AGENTS.md §2c,
+ * rung 1): a rule with any other action is refused (`E_ROUTING_RULE_ACTION_UNKNOWN`), since what it does, and so
+ * what stops, cannot be said.
+ */
+const TAKE_OVER: Record<"forward" | "worker" | "drop", (rule: Listed) => { label: string; says: string }> = {
+  forward: (rule) => ({
+    label: "receive here only",
+    says: `${rule.destinations[0]} gets nothing more for ${rule.to}: it is stored here instead, and replies sent `
+      + `from ${rule.destinations[0]} are not seen here`,
+  }),
+  worker: (rule) => {
+    const earlier = earlierRecord(rule);
+    return {
+      label: "receive here",
+      says: `${rule.destinations[0]} stops receiving mail for ${rule.to}, and this Node cannot see what `
+        + `${rule.destinations[0]} did with it: if it forwarded or answered, that stops too`
+        + (earlier === null ? "" : `. The rule was itself taken over by ${rule.destinations[0]}: its name records that it `
+          + `was ${saidAction(earlier)}, and that record is kept`),
+    };
+  },
+  drop: (rule) => ({ label: "receive here", says: `mail Cloudflare was discarding for ${rule.to} is kept from now on` }),
+};
+const isKnownAction = (action: string): action is keyof typeof TAKE_OVER => Object.hasOwn(TAKE_OVER, action);
+
+/**
+ * The record an earlier take-over wrote into the rule's name, when the rule still routes to the Worker that wrote it
+ * (review, 1 October 2026). Another Node's take-over, or this Worker's with its audit trail gone: either way the
+ * name is the only record of what the address did before any Node, so a take-over carries it forward rather than
+ * record "was worker <that Node>", and a put-back with no audit entry restores from it.
+ */
+function earlierRecord(rule: Pick<Listed, "name" | "action" | "destinations">): RecordedAction | null {
+  const recorded = recordedInName(rule.name);
+  if (recorded === null || rule.action !== "worker" || !rule.destinations.includes(recorded.worker)) return null;
+  return { action: recorded.action, destinations: recorded.destinations };
+}
+
+const saidAction = (one: RecordedAction) => `${one.action}${one.destinations.length === 0 ? "" : ` ${one.destinations.join(", ")}`}`;
 
 /** A named refusal, as the act would throw it. */
 export interface Refusal { code: string; what: string; why: string; fix: string }
 
-type Listed = Omit<RoutingRule, "offer" | "refusal">;
+type Listed = Omit<RoutingRule, "offer" | "refusal" | "takeOver">;
 
 export interface RoutingRules {
   domain: string;
@@ -95,17 +155,40 @@ export async function routingRulesFor(
     ).bind(orgId, "provider.routing_rule_taken_over", "provider.catch_all_taken_over").all<{ action: string; subject: string }>();
     for (const one of results) taken.add(`${one.action} ${one.subject}`);
   }
+  const settings = await zoneSettings(env, ctx, orgId, zone.id);
+  // Where each address already files, since a take-over keeps an address row's mailbox: one read for the listing.
+  const { results: rows } = await env.CATALOG.prepare(
+    "SELECT a.address, m.id, m.name FROM addresses a JOIN mailboxes m ON m.id = a.mailbox_id AND m.org_id = a.org_id "
+    + "WHERE a.org_id = ?",
+  ).bind(orgId).all<{ address: string; id: string; name: string }>();
+  const filing = new Map(rows.map((one) => [one.address, { id: one.id, name: one.name }]));
   return {
     domain, zone: zone.name, zoneId: zone.id, error: null,
     rules: rules.map((rule) => {
       if (rule.ours) {
-        const refusal = taken.has(takenKey(rule, zone.name)) ? null : neverTaken(rule.id);
-        return { ...rule, offer: refusal === null ? "put_back" as const : null, refusal };
+        // The audit entry, or the name's record when that is gone (a reinstalled Node): either restores the action.
+        const refusal = taken.has(takenKey(rule, zone.name)) || earlierRecord(rule) !== null ? null : neverTaken(rule.id);
+        return { ...rule, offer: refusal === null ? "put_back" as const : null, refusal, takeOver: null };
       }
-      const refusal = takeOverRefusal(rules, rule);
-      return { ...rule, offer: refusal === null ? "take_over" as const : null, refusal };
+      const refusal = takeOverRefusal(rules, rule, zone.name, settings);
+      if (refusal !== null || !isKnownAction(rule.action)) return { ...rule, offer: null, refusal, takeOver: null };
+      const filesInto = filing.get(rule.to) ?? null;
+      return {
+        ...rule, offer: "take_over" as const, refusal,
+        takeOver: { ...TAKE_OVER[rule.action](rule), filesInto, asksMailbox: rule.action === "forward" && filesInto === null },
+      };
     }),
   };
+}
+
+/** Whether the zone has subaddressing on, or why that could not be read; a take-over depends on it. */
+type ZoneSettings = { ok: true; subaddress: boolean } | { ok: false; error: string };
+
+async function zoneSettings(env: Env, ctx: Ctx, orgId: string, zoneId: string): Promise<ZoneSettings> {
+  const read = await cloudflareGet<{ support_subaddress?: boolean } | null>(env, ctx, orgId, `/zones/${zoneId}/email/routing`);
+  if (!read.ok) return { ok: false, error: read.error };
+  if (read.result === null) return { ok: false, error: "Cloudflare answered with no settings" };
+  return { ok: true, subaddress: read.result.support_subaddress === true };
 }
 
 /** The audit entry a put-back restores from: the catch-all's is recorded against the zone, a rule's against its id. */
@@ -128,6 +211,11 @@ export interface TakeoverOutcome {
   after: { action: string; destinations: string[] };
   /** The mailbox the address files into after a take-over, which is the address row's own; null on a put-back. */
   mailbox: { id: string; name: string } | null;
+  /**
+   * Whether the rule read back with the name the take-over wrote into it (critic H1): false means Cloudflare kept or
+   * cut the name, so `--without-node` cannot restore the rule and only this Node's put-back can. Null on a put-back.
+   */
+  nameRecorded: boolean | null;
 }
 
 async function ruleNow(
@@ -182,7 +270,7 @@ async function ruleNow(
 async function putAndConfirm(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string, act: "take_over" | "put_back", subject: string, path: string,
   body: { name: string; enabled: boolean; matchers: unknown[]; actions: Array<{ type: string; value?: string[] }> },
-): Promise<{ action: string; destinations: string[] }> {
+): Promise<{ action: string; destinations: string[]; name: string }> {
   const sent = body.actions[0]!;
   const expected = { action: sent.type, destinations: sent.value ?? [], enabled: body.enabled };
   /*
@@ -234,16 +322,17 @@ async function putAndConfirm(
   }
   // Equal to what was sent once confirmed, so returning `expected` instead survives a mutant; the read-back is
   // returned because it is the claim the outcome's `after` makes.
-  return { action: now.action, destinations: now.destinations };
+  return { action: now.action, destinations: now.destinations, name: back.ok ? back.result.name ?? "" : "" };
 }
 
 /**
- * The refusals a take-over needs that the listing itself decides (30 September 2026): each is a rule this Node
- * could point here and then receive nothing through, or lose a destination by, while reporting success. Pure,
- * because the listing offers by it and the act refuses by it, so the two cannot disagree. Subaddressing is not
- * here: it is a zone setting the listing does not read, so the act alone refuses it (`refuseUnserved`).
+ * The refusals a take-over needs (30 September 2026): each is a rule this Node could point here and then receive
+ * nothing through, or lose a destination by, while reporting success. Pure, because the listing offers by it and
+ * the act refuses by it, so the two cannot disagree. The zone's subaddressing setting is read with the listing
+ * (1 October 2026) and decided here too: it used to be read by the act alone, so the setup step offered a rule
+ * the act then refused.
  */
-function takeOverRefusal(rules: Listed[], rule: Listed): Refusal | null {
+function takeOverRefusal(rules: Listed[], rule: Listed, zone: string, settings: ZoneSettings): Refusal | null {
   const dashboard = "the Cloudflare dashboard (Email, Email Routing, Routing rules)";
   if (rule.catchAll || rule.to === "") {
     return {
@@ -269,6 +358,14 @@ function takeOverRefusal(rules: Listed[], rule: Listed): Refusal | null {
   }
   if (rule.ours) {
     return { code: "E_ROUTING_RULE_ALREADY_OURS", what: `${rule.to} already routes to this Worker`, why: "there is nothing to take over", fix: "nothing" };
+  }
+  if (!isKnownAction(rule.action)) {
+    return {
+      code: "E_ROUTING_RULE_ACTION_UNKNOWN",
+      what: `the rule for ${rule.to} has the action ${JSON.stringify(rule.action)}`,
+      why: "this Node knows forward, worker and drop, and cannot say what a take-over of any other action stops",
+      fix: `leave it, or change it in ${dashboard} and list the rules again`,
+    };
   }
   // Cloudflare documents `value` as "currently limited to a single value"; a put-back could only restore what was read.
   if (rule.destinations.length > 1) {
@@ -296,37 +393,33 @@ function takeOverRefusal(rules: Listed[], rule: Listed): Refusal | null {
       fix: `delete all but one in ${dashboard}, list the rules again, and take that one over`,
     };
   }
-  return null;
-}
-
-/** The take-over refusal the zone's settings decide, which the listing does not read. */
-async function refuseUnserved(
-  env: Env, ctx: Ctx, orgId: string, listing: RoutingRules, rule: RoutingRule,
-): Promise<void> {
   /*
    * Subaddressing (developers.cloudflare.com/email-service/configuration/email-routing-addresses/#subaddressing,
    * off unless the zone's `support_subaddress` is true): with it on, `user+tag@` matches `user@`'s rule, so after
-   * a take-over it reaches this Node, and ingress files by the exact address and bounces it as an unknown recipient. Before, the rule forwarded it. Refused rather than handled, because the
-   * address row is also the join every read makes from a receipt's `envelope_to` to its mailbox, and teaching it
-   * `+tag` is a change to ingress and those reads, not to this act. Unreadable is refused too: the setting decides.
+   * a take-over it reaches this Node, and ingress files by the exact address and bounces it as an unknown
+   * recipient. Before, the rule forwarded it. Refused rather than handled, because the address row is also the
+   * join every read makes from a receipt's `envelope_to` to its mailbox, and teaching it `+tag` is a change to
+   * ingress and those reads, not to this act. Unreadable is refused too: the setting decides.
    */
-  const settings = await cloudflareGet<{ support_subaddress?: boolean } | null>(env, ctx, orgId, `/zones/${listing.zoneId}/email/routing`);
-  if (!settings.ok || settings.result === null) {
-    throw unprocessable("E_ROUTING_SETTINGS_UNREADABLE", {
-      what: `the Email Routing settings of ${listing.zone} could not be read`,
-      why: settings.ok ? "Cloudflare answered with no settings" : settings.error,
+  if (!settings.ok) {
+    return {
+      code: "E_ROUTING_SETTINGS_UNREADABLE",
+      what: `the Email Routing settings of ${zone} could not be read`,
+      why: settings.error,
       fix: "whether subaddressing is on decides whether a take-over bounces mail; check the grant and the zone",
-    });
+    };
   }
-  if (settings.result.support_subaddress === true) {
+  if (settings.subaddress) {
     const [local, host] = rule.to.split("@");
-    throw unprocessable("E_ROUTING_SUBADDRESS_UNSERVED", {
-      what: `${listing.zone} has subaddressing on, so the rule for ${rule.to} also routes ${local}+anything@${host}`,
+    return {
+      code: "E_ROUTING_SUBADDRESS_UNSERVED",
+      what: `${zone} has subaddressing on, so the rule for ${rule.to} also routes ${local}+anything@${host}`,
       why: "this Node files mail by the exact address it was sent to, so after a take-over mail to a +tag address "
         + "would reach it and bounce as an unknown recipient, where today the rule delivers it",
       fix: `turn subaddressing off in the Cloudflare dashboard (Email, Email Routing, Settings) and take over again, or leave the rule as it is`,
-    });
+    };
   }
+  return null;
 }
 
 export async function takeOverRule(
@@ -334,7 +427,7 @@ export async function takeOverRule(
   domain: string, ruleId: string, digest: string, mailboxId: string | null,
 ): Promise<TakeoverOutcome> {
   const { listing, rule, raw } = await ruleNow(env, ctx, orgId, domain, ruleId);
-  const refusal = takeOverRefusal(listing.rules, rule);
+  const refusal = takeOverRefusal(listing.rules, rule, listing.zone ?? domain, await zoneSettings(env, ctx, orgId, listing.zoneId!));
   if (refusal !== null) throw unprocessable(refusal.code, { what: refusal.what, why: refusal.why, fix: refusal.fix });
   if (digest !== rule.digest) {
     throw conflict("E_ROUTING_RULE_STALE", {
@@ -343,7 +436,6 @@ export async function takeOverRule(
       fix: `list the rules again and confirm the digest shown: ${rule.digest}`,
     });
   }
-  await refuseUnserved(env, ctx, orgId, listing, rule);
   const worker = workerNameFor(env);
 
   /*
@@ -362,15 +454,35 @@ export async function takeOverRule(
       fix: `take it over without a mailbox, or with ${existing.id}, and it files into ${JSON.stringify(existing.name)}`,
     });
   }
+  /*
+   * A forward rule is somebody's mail on its way to their own inbox (critic M4, 1 October 2026). Filed into the
+   * organization's only mailbox by default, it would be read by whoever reads that mailbox, with nothing but the
+   * take-over on the audit trail to say so. So it files only into a mailbox chosen for it.
+   */
+  if (existing === null && mailboxId === null && rule.action === "forward") {
+    throw unprocessable("E_ROUTING_FORWARD_NEEDS_MAILBOX", {
+      what: `the rule for ${rule.to} forwards to ${rule.destinations.join(", ")}, and no mailbox was chosen for it`,
+      why: "a forwarded address is usually one person's mail, and filing it into a mailbox by default hands it to "
+        + "everyone who reads that mailbox",
+      fix: "choose the mailbox it files into (mailboxId, or `--mailbox` on `mailda provider --take-over`); a new "
+        + "mailbox for it is made with POST /api/mailboxes",
+    });
+  }
   const mailbox = existing ?? await mailboxForAddress(env, orgId, mailboxId);
   const before = { action: rule.action, destinations: rule.destinations };
+  /*
+   * The action it had goes into the rule's own name as well as the audit entry (critic H1, 1 October 2026): the
+   * entry is on this Node, and a Node that is deleted takes it along, leaving a rule that names a Worker that is
+   * gone and nothing anywhere saying where the address used to go. Cloudflare keeps the name.
+   */
+  const name = takenOverName(worker, earlierRecord(rule) ?? before, new Date(ctx.now()));
 
   // The address first, in the same batch as the entry, so a rule that delivers finds a recipient (#92). A plain
   // INSERT: a row that appeared since the read above fails the batch rather than being recorded as this mailbox.
   await auditedBatch(env, ctx, orgId, {
     action: "provider.routing_rule_taken_over", outcome: "ok", actorUserId, subject: ruleId,
     detail: {
-      zone: listing.zone, to: rule.to, name: rule.name, before, after: { action: "worker", destinations: [worker] },
+      zone: listing.zone, to: rule.to, name: rule.name, nameWritten: name, before, after: { action: "worker", destinations: [worker] },
       mailboxId: mailbox.id, addressExisted: existing !== null, readBackFollows: true,
     },
   }, (entry) => [
@@ -380,10 +492,10 @@ export async function takeOverRule(
       : []),
     entry,
   ]);
-  const after = await putAndConfirm(env, ctx, orgId, actorUserId, "take_over", ruleId,
+  const { name: nameNow, ...after } = await putAndConfirm(env, ctx, orgId, actorUserId, "take_over", ruleId,
     `/zones/${listing.zoneId}/email/routing/rules/${raw.id}`,
-    { name: raw.name ?? "", enabled: raw.enabled === true, matchers: raw.matchers ?? [], actions: [{ type: "worker", value: [worker] }] });
-  return { ruleId, to: rule.to, before, after, mailbox };
+    { name, enabled: raw.enabled === true, matchers: raw.matchers ?? [], actions: [{ type: "worker", value: [worker] }] });
+  return { ruleId, to: rule.to, before, after, mailbox, nameRecorded: nameNow === name };
 }
 
 export async function putBackRule(
@@ -403,9 +515,15 @@ export async function putBackRule(
     rule.catchAll ? "provider.catch_all_taken_over" : "provider.routing_rule_taken_over",
     rule.catchAll ? (listing.zone ?? domain) : ruleId,
   ).first<{ detail: string | null }>();
-  const recorded = typeof last?.detail === "string"
-    ? (JSON.parse(last.detail) as { before?: { action?: string; destinations?: string[]; enabled?: boolean } }).before
+  const detail = typeof last?.detail === "string"
+    ? JSON.parse(last.detail) as { name?: string; before?: { action?: string; destinations?: string[]; enabled?: boolean } }
     : undefined;
+  // With no entry (a reinstalled Node, or its audit rows gone), the rule's name, when it records a take-over by the
+  // Worker it routes to: what `--without-node` restores from, done by the Node so the entry is written. Only for a
+  // rule routed here; without `rule.ours` another Worker's rule would still be refused, as NOT_OURS_NOW ("no longer
+  // routes to this Worker") instead of the truer NEVER_TAKEN, so no test fails on it (a known mutant survivor).
+  const fromName = detail?.before?.action === undefined && rule.ours ? earlierRecord(rule) : null;
+  const recorded = fromName ?? detail?.before;
   if (recorded?.action === undefined) {
     const { code, ...said } = neverTaken(ruleId);
     throw unprocessable(code, said);
@@ -422,7 +540,7 @@ export async function putBackRule(
   const restore = { action: recorded.action, destinations: recorded.destinations ?? [] };
   const actions = [{ type: restore.action, ...(restore.destinations.length === 0 ? {} : { value: restore.destinations }) }];
   if (rule.catchAll) {
-    const wasEnabled = recorded.enabled === true;
+    const wasEnabled = detail?.before?.enabled === true;
     await auditedBatch(env, ctx, orgId, {
       action: "provider.catch_all_put_back", outcome: "ok", actorUserId, subject: listing.zone ?? domain,
       detail: { zone: listing.zone, before: { ...before, enabled: true }, after: { ...restore, enabled: wasEnabled }, readBackFollows: true },
@@ -430,14 +548,23 @@ export async function putBackRule(
     const after = await putAndConfirm(env, ctx, orgId, actorUserId, "put_back", listing.zone ?? domain,
       `/zones/${listing.zoneId}/email/routing/rules/catch_all`,
       { name: raw.name ?? "", enabled: wasEnabled, matchers: [{ type: "all" }], actions });
-    return { ruleId, to: "*", before, after, mailbox: null };
+    return { ruleId, to: "*", before, after: { action: after.action, destinations: after.destinations }, mailbox: null, nameRecorded: null };
   }
+  /*
+   * The name the rule had before the take-over wrote its record into it, while that record is still the name: a
+   * rule renamed since keeps the name it was given. An entry from before 1 October 2026 recorded the name the take-over
+   * left as it was, so restoring it changes nothing.
+   */
+  const name = recordedInName(raw.name ?? "") === null ? raw.name ?? "" : fromName === null && typeof detail?.name === "string" ? detail.name : "";
   await auditedBatch(env, ctx, orgId, {
     action: "provider.routing_rule_put_back", outcome: "ok", actorUserId, subject: ruleId,
-    detail: { zone: listing.zone, to: rule.to, name: rule.name, before, after: restore, readBackFollows: true },
+    detail: {
+      zone: listing.zone, to: rule.to, name: rule.name, nameRestored: name, before, after: restore,
+      restoredFrom: fromName === null ? "audit" : "name", readBackFollows: true,
+    },
   }, (entry) => [entry]);
-  const after = await putAndConfirm(env, ctx, orgId, actorUserId, "put_back", ruleId,
+  const { name: _nameNow, ...after } = await putAndConfirm(env, ctx, orgId, actorUserId, "put_back", ruleId,
     `/zones/${listing.zoneId}/email/routing/rules/${raw.id}`,
-    { name: raw.name ?? "", enabled: raw.enabled === true, matchers: raw.matchers ?? [], actions });
-  return { ruleId, to: rule.to, before, after, mailbox: null };
+    { name, enabled: raw.enabled === true, matchers: raw.matchers ?? [], actions });
+  return { ruleId, to: rule.to, before, after, mailbox: null, nameRecorded: null };
 }

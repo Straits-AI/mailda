@@ -25,7 +25,7 @@ vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")
 
 const { Inbox } = await import("../../src/client/app/screens/inbox.tsx");
 const { ShellProvider } = await import("../../src/client/app/shell-context.tsx");
-const { shortTime } = await import("../../src/client/app/screens/reader.tsx");
+const { shortTime } = await import("../../src/client/app/format.ts");
 
 function row(n: number, over: Partial<MessageRow> = {}): MessageRow {
   return {

@@ -1,3 +1,5 @@
+import type { SendReason } from "@mailda/contract/schemas";
+
 /**
  * The human-release gate on a Butler-proposed send: the one send state #50 adds (§16, ADR 39).
  *
@@ -58,8 +60,8 @@
  *    it outranks this and the Butler send goes through the approval instead.
  */
 
-/** The machine token. The words live in `src/client/delivery.client.js`, like every other send reason. */
-export const BUTLER_RELEASE_REASON = "butler_release_required";
+/** The machine token. The words live in the catalog (`src/i18n/en/delivery.ts`), like every other send reason. */
+export const BUTLER_RELEASE_REASON = "butler_release_required" satisfies SendReason;
 
 /**
  * Every reason this gate mints, as a list.
@@ -69,7 +71,7 @@ export const BUTLER_RELEASE_REASON = "butler_release_required";
  * `test/outbound-recheck.test.ts` reads a set from each module that mints tokens, and a module that
  * contributed a single string instead would be the one entry somebody has to remember to spell.
  */
-export const BUTLER_REASONS: readonly string[] = [BUTLER_RELEASE_REASON];
+export const BUTLER_REASONS: readonly SendReason[] = [BUTLER_RELEASE_REASON];
 
 /**
  * How long a proposed send waits for a person before the run gives up on it.

@@ -1,12 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
+import type { Text } from "../../../i18n/format.ts";
 import { Nothing, Scroller, Truncated } from "../chrome.tsx";
+import { fullTime } from "../format.ts";
 import {
-  type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
+  type CaseRow, type ClaimResult, type QuarantinedDelivery, type Said, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
   setAttachmentLimits, setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
 } from "../api.ts";
 import { isComposingKey } from "../ui/ime.ts";
+import { marked } from "../words.tsx";
 
 /**
  * The shared queue: what two people work without colliding.
@@ -40,34 +44,36 @@ import { isComposingKey } from "../ui/ime.ts";
 export function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
-  if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>Hand to…</button>;
+  if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>{t("queue.handTo.open")}</button>;
   return (
     <span className="hand-to">
       <input
-        className="mono" placeholder="colleague@…" aria-label="Colleague's sign-in address" value={email}
+        className="mono" placeholder={t("queue.handTo.placeholder")} aria-label={t("queue.handTo.label")} value={email}
         onChange={(event) => setEmail(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter" && !isComposingKey(event.nativeEvent) && email.trim() !== "") { event.preventDefault(); onAssign(email.trim()); } }}
       />
-      <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>Hand over</button>
+      <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>{t("queue.handTo.submit")}</button>
     </span>
   );
 }
 
 /** Minutes and hours, not a library. Read at a glance, so rounded is fine. */
-function duration(ms: number): string {
+function duration(ms: number): Text {
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return "under a minute";
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1) return t("queue.duration.underMinute");
+  if (minutes < 60) return t("queue.duration.minutes", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ${minutes % 60}m`;
-  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+  if (hours < 24) return t("queue.duration.hours", { n: hours, m: minutes % 60 });
+  return t("queue.duration.days", { n: Math.floor(hours / 24), h: hours % 24 });
 }
 
-/** How long ago something happened. */
-function ageOf(since: string): string {
+/**
+ * How long ago something happened, or `null` for under a minute (and for a moment not yet come, or unreadable),
+ * which each sentence words for itself: "just now" is not a duration a sentence can hold.
+ */
+function ageOf(since: string): Text | null {
   const ms = Date.now() - Date.parse(since);
-  if (!Number.isFinite(ms) || ms < 0) return "just now";
-  return duration(ms) === "under a minute" ? "just now" : duration(ms);
+  return ms >= 60_000 ? duration(ms) : null; // NaN, from an unreadable instant, compares false: null too
 }
 
 /**
@@ -80,15 +86,15 @@ function ageOf(since: string): string {
  * defect here; the defect was a dev fixture with a deadline in 2099, and nothing in this file was wrong.
  *
  * The lesson kept: a suspicious rendering is a claim about the input as much as about the code, and the input
- * is the cheaper half to check.
+ * is the cheaper half to check. (Numbers are grouped for the locale since the catalog, so that fixture now reads
+ * "in 26,438d 20h".) Called only for a deadline still ahead: `ClockCell` says "due now" for one that is not.
  */
-function untilOf(due: string): string {
-  const ms = Date.parse(due) - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return "now";
-  return duration(ms);
+function untilOf(due: string): Text {
+  return duration(Date.parse(due) - Date.now());
 }
 
-type Held = { kind: "held"; heldBy: string; heldSince: string; message: string };
+type Held = Extract<ClaimResult, { kind: "held" }>;
+type CaseState = "unclaimed" | "mine" | "held";
 
 /**
  * The clock, as a word plus a duration.
@@ -103,22 +109,37 @@ function ClockCell({ row }: { row: CaseRow }) {
     return <span className="dim">—</span>;
   }
   if (row.first_response_at !== null) {
-    return <span className="state clock-answered">answered</span>;
+    return <span className="state clock-answered">{t("queue.clock.answered")}</span>;
   }
   if (row.response_breached_at !== null) {
     // Recorded by the sweep. Shown here, which until now it was not.
+    const age = ageOf(row.response_due_at);
     return (
-      <span className="state clock-breached" title={`Target passed at ${row.response_due_at}`}>
-        overdue {ageOf(row.response_due_at)}
+      <span className="state clock-breached" title={t("queue.clock.targetPassed", { at: fullTime(row.response_due_at) })}>
+        {age === null ? t("queue.clock.overdueJustNow") : t("queue.clock.overdue", { age })}
       </span>
     );
   }
   // Between the deadline passing and the next sweep noticing: up to a minute, plus cron's unmeasured skew.
-  // Saying "due now" rather than "on time" is the honest reading of that gap.
-  if (Date.parse(row.response_due_at) <= Date.now()) {
-    return <span className="state clock-due">due now</span>;
+  // Saying "due now" rather than "on time" is the honest reading of that gap. Negated, so an unreadable deadline
+  // (NaN compares false both ways) lands here too rather than counting down from nothing.
+  if (!(Date.parse(row.response_due_at) > Date.now())) {
+    return <span className="state clock-due">{t("queue.clock.dueNow")}</span>;
   }
-  return <span className="dim mono">in {untilOf(row.response_due_at)}</span>;
+  return <span className="dim mono">{t("queue.clock.dueIn", { until: untilOf(row.response_due_at) })}</span>;
+}
+
+/** Why a delivery was held back, as one sentence per reason. */
+function whyHeld(one: QuarantinedDelivery): Text {
+  switch (one.reason) {
+    case "held":
+      return one.note === null ? t("queue.held.noReason") : t("queue.held.reason.held", { note: one.note });
+    case "dmarc_fail_reject":
+    case "dmarc_fail_quarantine":
+      return t(`queue.held.reason.${one.reason}`, { domain: one.fromDomain ?? t("queue.held.fromDomain") });
+    default:
+      return t(`queue.held.reason.${one.reason}`);
+  }
 }
 
 /**
@@ -132,9 +153,9 @@ function Restricted({ what }: { what: "subject" | "sender" }) {
   return (
     <span
       className="restricted"
-      title={`You hold send.propose on this mailbox but neither read relation, so the ${what} is withheld. An administrator grants mailbox.metadata.read.`}
+      title={t(`queue.restricted.${what}`)}
     >
-      restricted
+      {t("queue.restricted")}
     </span>
   );
 }
@@ -151,7 +172,7 @@ function CaseRowView({
 }) {
   const unclaimed = row.assignee === null;
   // The state word, which is the channel that does not depend on colour being measured.
-  const state = unclaimed ? "unclaimed" : mine ? "mine" : "held";
+  const state: CaseState = unclaimed ? "unclaimed" : mine ? "mine" : "held";
 
   return (
     <tr className={mine ? "case-row mine" : unclaimed ? "case-row" : "case-row theirs"}>
@@ -163,9 +184,9 @@ function CaseRowView({
             type="checkbox"
             checked={picked}
             onChange={() => onPick(row.id)}
-            aria-label={`Pick ${row.subject ?? "this case"} for merging`}
+            aria-label={row.subject === null ? t("queue.pick.noSubject") : t("queue.pick", { subject: row.subject })}
           />
-          <span className={`state case-${state}`}>{state}</span>
+          <span className={`state case-${state}`}>{t(`queue.state.${state}`)}</span>
         </label>
       </td>
       <td>
@@ -176,10 +197,10 @@ function CaseRowView({
         */}
         <span className="case-subject">
           {row.content_restricted ? <Restricted what="subject" />
-            : row.subject ?? <span className="dim">(no subject)</span>}
+            : row.subject ?? <span className="dim">{t("queue.noSubject")}</span>}
         </span>
         {row.message_count > 1 ? (
-          <span className="dim mono case-count"> · {row.message_count} messages</span>
+          <span className="dim mono case-count"> · {t("queue.case.messages", { n: row.message_count })}</span>
         ) : null}
       </td>
       <td className="dim mono">
@@ -193,8 +214,8 @@ function CaseRowView({
             real inconsistency worth seeing rather than hiding behind "somebody". */}
         {unclaimed ? "—" : (
           <>
-            <span>{mine ? "you" : row.assignee_email ?? row.assignee}</span>{" "}
-            <span>· {ageOf(row.claimed_at ?? row.state_at)}</span>
+            <span>{mine ? t("queue.holder.you") : row.assignee_email ?? row.assignee}</span>{" "}
+            <span>· {ageOf(row.claimed_at ?? row.state_at) ?? t("queue.age.justNow")}</span>
           </>
         )}
       </td>
@@ -202,15 +223,15 @@ function CaseRowView({
       <td className="num case-actions">
         {unclaimed ? (
           <button type="button" className="linkish" onClick={() => onAct("claim", row.id)}>
-            Claim
+            {t("queue.act.claim")}
           </button>
         ) : mine ? (
           <>
             <button type="button" className="linkish" onClick={() => onAct("release", row.id)}>
-              Release
+              {t("queue.act.release")}
             </button>
             <button type="button" className="linkish" onClick={() => onAct("close", row.id)}>
-              Close
+              {t("queue.act.close")}
             </button>
             <HandTo onAssign={(email) => onAssign(row.id, email)} />
           </>
@@ -218,7 +239,7 @@ function CaseRowView({
           // Available to any colleague, deliberately. Restricting it to administrators recreates the
           // blocked queue the absent timeout would otherwise have prevented, and there is no third answer.
           <button type="button" className="linkish" onClick={() => onAct("steal", row.id)}>
-            Take
+            {t("queue.act.take")}
           </button>
         )}
       </td>
@@ -231,8 +252,9 @@ export function Queue() {
   const me = useMe();
   const [selected, setSelected] = useState<string | null>(null);
   const [lost, setLost] = useState<Held | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  /** The Node's refusal, or this interface's fallback when it said nothing (`Said`), shown through `marked()`. */
+  const [problem, setProblem] = useState<Said | null>(null);
+  const [notice, setNotice] = useState<Text | null>(null);
   /** Cases picked for a merge. Exactly two, because merging is a statement about a pair. */
   const [picked, setPicked] = useState<string[]>([]);
   const queryClient = useQueryClient();
@@ -266,8 +288,8 @@ export function Queue() {
     await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     setPicked([]);
-    if (outcome.ok) setNotice(`Merged. ${outcome.messagesMoved} message(s) moved.`);
-    else setProblem(outcome.message);
+    if (outcome.ok) setNotice(t("queue.merged", { n: outcome.messagesMoved }));
+    else setProblem(outcome);
   }
 
   async function onSetTarget(minutes: number | null) {
@@ -277,10 +299,8 @@ export function Queue() {
     const outcome = await setResponseTarget(mailboxId, minutes);
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     if (outcome.ok) {
-      setNotice(minutes === null
-        ? "This mailbox now promises nothing, so its cases carry no clock."
-        : `First response promised within ${minutes} minutes. Clocks start on the next message.`);
-    } else setProblem(outcome.message);
+      setNotice(minutes === null ? t("queue.target.cleared") : t("queue.target.set", { n: minutes }));
+    } else setProblem(outcome);
   }
 
   async function onSetQuarantine(which: "dmarc" | "attachments", on: boolean) {
@@ -290,12 +310,8 @@ export function Queue() {
     const outcome = await setQuarantineSwitch(mailboxId, which, on);
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     if (outcome.ok) {
-      setNotice(on
-        ? (which === "dmarc"
-          ? "From now on, a delivery whose sender's domain disowns it (DMARC fail, p=reject or p=quarantine) is held back here for an administrator."
-          : "From now on, a delivery carrying an executable, a script, or a program under a document's name is held back here for an administrator.")
-        : "That is off. Deliveries already held stay held until released.");
-    } else setProblem(outcome.message);
+      setNotice(on ? t(`queue.quarantine.${which}.on`) : t("queue.quarantine.off"));
+    } else setProblem(outcome);
   }
 
   async function onSetLimits(limits: { attachmentMaxBytes?: number | null; attachmentAllowedTypes?: string[] | null }) {
@@ -304,8 +320,8 @@ export function Queue() {
     if (mailboxId === null) return;
     const outcome = await setAttachmentLimits(mailboxId, limits);
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
-    if (outcome.ok) setNotice("Attachment limits saved. They apply to the next message in and the next send out.");
-    else setProblem(outcome.message);
+    if (outcome.ok) setNotice(t("queue.limits.saved"));
+    else setProblem(outcome);
   }
 
   async function onRelease(messageId: string) {
@@ -315,8 +331,8 @@ export function Queue() {
     await queryClient.invalidateQueries({ queryKey: ["quarantine"] });
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
-    if (outcome.ok) setNotice("Released. It is in the queue now, with the case it would have had.");
-    else setProblem(outcome.message);
+    if (outcome.ok) setNotice(t("queue.released"));
+    else setProblem(outcome);
   }
 
   async function onAssign(id: string, email: string) {
@@ -325,8 +341,8 @@ export function Queue() {
     const outcome = await assignCase(id, email);
     await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
-    if (outcome.ok) setNotice(`Handed to ${email}. It is in their queue now, and the trail names you both.`);
-    else setProblem(outcome.message);
+    if (outcome.ok) setNotice(t("queue.handedTo", { email }));
+    else setProblem(outcome);
   }
 
   async function onAct(action: "claim" | "steal" | "release" | "close", id: string) {
@@ -345,22 +361,22 @@ export function Queue() {
 
     if (outcome.ok) return;
     if (outcome.kind === "held") setLost(outcome);
-    else setProblem(outcome.message);
+    else setProblem(outcome);
   }
 
   const heading = (
     <header className="ledger-head">
-      <h1>Queue</h1>
+      <h1>{t("route./queue")}</h1>
       {mailboxes.isSuccess && mailboxes.data.mailboxes.length > 1 ? (
         <label className="queue-picker">
-          <span className="dim mono">Mailbox</span>
+          <span className="dim mono">{t("queue.mailbox")}</span>
           <select
             value={mailboxId ?? ""}
             onChange={(event) => setSelected(event.target.value)}
           >
             {mailboxes.data.mailboxes.map((box) => (
               <option key={box.id} value={box.id}>
-                {box.name} ({box.unclaimed} unclaimed)
+                {t("queue.mailbox.option", { name: box.name, n: box.unclaimed })}
               </option>
             ))}
           </select>
@@ -371,24 +387,24 @@ export function Queue() {
 
   if (mailboxes.isPending) return <section className="ledger">{heading}<Nothing kind="loading" /></section>;
   if (mailboxes.isError) {
-    return <section className="ledger">{heading}<Nothing kind="failed" detail={mailboxes.error.message} /></section>;
+    return <section className="ledger">{heading}<Nothing kind="failed" detail={marked(mailboxes.error)} /></section>;
   }
   if (mailboxes.data.mailboxes.length === 0) {
     return (
-      <section className="ledger" aria-label="Queue">
+      <section className="ledger" aria-label={t("route./queue")}>
         {heading}
         {/* Not "no mailboxes exist": this person may work none of them, and §5C keeps those alike. The fix
             is a grant, so the message names it rather than leaving somebody to guess. */}
         <Nothing
           kind="empty"
-          detail="You cannot work any mailbox on this Node yet. An administrator grants send.propose on one."
+          detail={t("queue.noMailbox")}
         />
       </section>
     );
   }
 
   return (
-    <section className="ledger" aria-label="Queue">
+    <section className="ledger" aria-label={t("route./queue")}>
       {heading}
 
       {/*
@@ -398,8 +414,8 @@ export function Queue() {
       */}
       <p className="notice dim queue-target">
         {current === undefined || current.first_response_minutes === null
-          ? "This mailbox promises no response time, so no case here carries a clock."
-          : `First response promised within ${current.first_response_minutes} minutes.`}
+          ? t("queue.target.none")
+          : t("queue.target.promised", { n: current.first_response_minutes })}
         {" "}
         {/*
           An inline field, not window.prompt. A prompt blocks the page — it stops the accessibility harness
@@ -407,13 +423,13 @@ export function Queue() {
           Empty means "promise nothing", which is the same request as null.
         */}
         <label className="target-edit">
-          <span className="dim mono">Minutes</span>
+          <span className="dim mono">{t("queue.target.minutes")}</span>
           <input
             type="number"
             min={1}
             inputMode="numeric"
             defaultValue={current?.first_response_minutes ?? ""}
-            aria-label="First response target in minutes; empty promises nothing"
+            aria-label={t("queue.target.label")}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || isComposingKey(event.nativeEvent)) return;
               const raw = (event.target as HTMLInputElement).value.trim();
@@ -427,7 +443,7 @@ export function Queue() {
           />
         </label>
         {current !== undefined && current.breached > 0 ? (
-          <span className="state clock-breached queue-breached">{current.breached} overdue</span>
+          <span className="state clock-breached queue-breached">{t("queue.overdue", { n: current.breached })}</span>
         ) : null}
       </p>
 
@@ -442,18 +458,18 @@ export function Queue() {
             type="checkbox"
             checked={current?.quarantine_dmarc_fail === 1}
             onChange={(event) => void onSetQuarantine("dmarc", event.target.checked)}
-            aria-label="Hold back deliveries whose sender's domain disowns them"
+            aria-label={t("queue.quarantine.dmarc.label")}
           />
-          <span>Hold back a delivery its sender's domain disowns (DMARC fail, p=reject or p=quarantine).</span>
+          <span>{t("queue.quarantine.dmarc.text")}</span>
         </label>
         <label className="case-pick">
           <input
             type="checkbox"
             checked={current?.quarantine_dangerous_attachments === 1}
             onChange={(event) => void onSetQuarantine("attachments", event.target.checked)}
-            aria-label="Hold back deliveries carrying a dangerous attachment"
+            aria-label={t("queue.quarantine.attachments.label")}
           />
-          <span>Hold back a delivery carrying an executable, a script, or a program under a document's name.</span>
+          <span>{t("queue.quarantine.attachments.text")}</span>
         </label>
         {/*
           The mailbox's own limits (0065). A bound and a list, both empty by default; either one holds a
@@ -461,10 +477,10 @@ export function Queue() {
           what a person reads, and the judge already goes by it.
         */}
         <label className="field-row" htmlFor="queue-attachment-max">
-          <span>Largest attachment, in KB</span>
+          <span>{t("queue.limits.maxSize")}</span>
           <input
             id="queue-attachment-max" className="mono" type="number" min={1} inputMode="numeric"
-            placeholder="no limit"
+            placeholder={t("queue.limits.noLimit")}
             key={`max-${current?.attachment_max_bytes ?? "none"}`}
             defaultValue={current?.attachment_max_bytes == null ? "" : String(Math.round(current.attachment_max_bytes / 1024))}
             onBlur={(event) => {
@@ -475,9 +491,9 @@ export function Queue() {
           />
         </label>
         <label className="field-row" htmlFor="queue-attachment-types">
-          <span>Allowed attachment types</span>
+          <span>{t("queue.limits.types")}</span>
           <input
-            id="queue-attachment-types" className="mono" type="text" placeholder="any — or pdf, docx, png"
+            id="queue-attachment-types" className="mono" type="text" placeholder={t("queue.limits.typesPlaceholder")}
             key={`types-${current?.attachment_allowed_types ?? "none"}`}
             defaultValue={current?.attachment_allowed_types == null ? "" : (JSON.parse(current.attachment_allowed_types) as string[]).join(", ")}
             onBlur={(event) => {
@@ -489,51 +505,40 @@ export function Queue() {
           />
         </label>
         {current !== undefined && current.quarantined > 0 ? (
-          <span className="state clock-due">{current.quarantined} held</span>
+          <span className="state clock-due">{t("queue.held.count", { n: current.quarantined })}</span>
         ) : null}
       </div>
 
       {current !== undefined && current.quarantined > 0 ? (
         quarantine.isError ? (
-          <p className="notice bad" role="alert">{quarantine.error.message}</p>
+          <p className="notice bad" role="alert">{marked(quarantine.error)}</p>
         ) : held.length === 0 ? null : (
           <>
           {/* The cap is on the Node's whole list, and `held` is this mailbox's share of it, so the noun says so. */}
           <Truncated
             when={quarantine.data?.truncated === true} shown={quarantine.data?.quarantined.length ?? 0}
-            noun="held deliveries across this Node"
+            noun={t("queue.held.noun")}
           />
-          <table className="queue-table" aria-label="Held back">
+          <table className="queue-table" aria-label={t("queue.held.table")}>
             <thead>
               <tr>
-                <th scope="col">Held</th>
-                <th scope="col">Subject</th>
-                <th scope="col">From</th>
-                <th scope="col">Why</th>
-                <th scope="col" className="num">Action</th>
+                <th scope="col">{t("queue.held.col.at")}</th>
+                <th scope="col">{t("queue.col.subject")}</th>
+                <th scope="col">{t("queue.col.from")}</th>
+                <th scope="col">{t("queue.held.col.why")}</th>
+                <th scope="col" className="num">{t("queue.col.action")}</th>
               </tr>
             </thead>
             <tbody>
               {held.map((one) => (
                 <tr key={one.messageId}>
-                  <td className="mono dim">{one.quarantinedAt.slice(0, 16).replace("T", " ")}</td>
-                  <td>{one.subject ?? <span className="dim">(no subject)</span>}</td>
+                  <td className="mono dim"><time dateTime={one.quarantinedAt}>{fullTime(one.quarantinedAt)}</time></td>
+                  <td>{one.subject ?? <span className="dim">{t("queue.noSubject")}</span>}</td>
                   <td className="mono">{one.fromAddr ?? <span className="dim">—</span>}</td>
-                  <td>
-                    {one.reason === "held"
-                      ? `Held on request: ${one.note ?? "no reason given"}`
-                      : one.reason === "attachment_too_large"
-                        ? "Carries an attachment over this mailbox's size limit."
-                      : one.reason === "attachment_type_refused"
-                        ? "Carries an attachment of a type this mailbox does not accept."
-                      : one.reason === "attachment_dangerous"
-                        ? "Carries an executable, a script, a program under a document's name, or an archive listing one."
-                        : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `
-                          + `${one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.`}
-                  </td>
+                  <td>{whyHeld(one)}</td>
                   <td className="num">
                     <button type="button" className="linkish" onClick={() => void onRelease(one.messageId)}>
-                      Release
+                      {t("queue.held.release")}
                     </button>
                   </td>
                 </tr>
@@ -546,13 +551,13 @@ export function Queue() {
 
       {picked.length === 2 ? (
         <p className="notice">
-          Two cases picked. <button type="button" className="linkish" onClick={() => void onMerge()}>
-            Merge them
+          {t("queue.merge.picked")} <button type="button" className="linkish" onClick={() => void onMerge()}>
+            {t("queue.merge.do")}
           </button>{" "}
           <span className="dim">
-            — most merges are refused, and the refusal names the pair to resolve first.
+            {t("queue.merge.hint")}
           </span>{" "}
-          <button type="button" className="linkish" onClick={() => setPicked([])}>Clear</button>
+          <button type="button" className="linkish" onClick={() => setPicked([])}>{t("queue.merge.clear")}</button>
         </p>
       ) : null}
 
@@ -561,28 +566,28 @@ export function Queue() {
         <p className="notice bad" role="alert">
           {/* Names who won. This is the compare-and-swap's `changes = 0`, rendered — the whole reason the
               server re-reads the row instead of reporting a bare failure. */}
-          {lost.message}
+          {marked(lost)}
         </p>
       )}
       {problem === null ? null : (
-        <p className="notice bad" role="alert">{problem}</p>
+        <p className="notice bad" role="alert">{marked(problem)}</p>
       )}
 
       {cases.isPending ? <Nothing kind="loading" /> : cases.isError ? (
-        <Nothing kind="failed" detail={cases.error.message} />
+        <Nothing kind="failed" detail={marked(cases.error)} />
       ) : cases.data.cases.length === 0 ? (
-        <Nothing kind="empty" detail="Nothing waiting in this queue." />
+        <Nothing kind="empty" detail={t("queue.empty")} />
       ) : (
-        <Scroller label="Cases">
+        <Scroller label={t("queue.cases")}>
         <table className="queue-table">
           <thead>
             <tr>
-              <th scope="col">State</th>
-              <th scope="col">Subject</th>
-              <th scope="col">From</th>
-              <th scope="col">Held by</th>
-              <th scope="col">Response</th>
-              <th scope="col" className="num">Action</th>
+              <th scope="col">{t("queue.col.state")}</th>
+              <th scope="col">{t("queue.col.subject")}</th>
+              <th scope="col">{t("queue.col.from")}</th>
+              <th scope="col">{t("queue.col.holder")}</th>
+              <th scope="col">{t("queue.col.response")}</th>
+              <th scope="col" className="num">{t("queue.col.action")}</th>
             </tr>
           </thead>
           <tbody>

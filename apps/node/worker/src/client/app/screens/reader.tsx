@@ -1,13 +1,20 @@
+import { BODY_SCRIPTS, oneOf, type AttachmentVerdict, type BodyScript, type LinkVerdict } from "@mailda/contract/schemas";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { current, t } from "/app/locale.js";
 import { apiFetch } from "/app/session.js";
 import { currentTheme, type ThemeChoice } from "/app/theme.js";
 
+import type { Text } from "../../../i18n/format.ts";
+import type { Locale } from "../../../i18n/locales.ts";
 import { Nothing } from "../chrome.tsx";
 import {
   type MessageRow, type Place, type SendRow, assignCase, labelsOf, setLabels, stealCase, useCases, useMe,
   useMessageHeaders, useThread,
 } from "../api.ts";
+import { sendStateWords, shown } from "../delivery-words.ts";
+import { fullTime, shortTime } from "../format.ts";
+import { NodeWords, marked, sentence } from "../words.tsx";
 import { useToast } from "../shell-context.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { isComposingKey } from "../ui/ime.ts";
@@ -42,7 +49,8 @@ import { Modal, Popover } from "../ui/popover.tsx";
  */
 
 export interface RenderedBody {
-  state: string;
+  /** The four states `src/render/body.ts` distinguishes (Blueprint §5C). */
+  state: "html" | "text-only" | "no-body" | "unparsed";
   html: string | null;
   text: string | null;
   blockedRemote: number;
@@ -52,10 +60,16 @@ export interface RenderedBody {
     filename: string | null;
     declaredType: string;
     bytes: number;
-    verdict: "executable" | "script" | "archive" | "archive_dangerous" | "disguised" | "plain";
+    verdict: AttachmentVerdict;
   }>;
-  links: Array<{ href: string; text: string; verdict: "plain" | "mismatch" | "lookalike" | "userinfo" | "ip_host" }>;
+  links: Array<{ href: string; text: string; verdict: LinkVerdict }>;
   recipients: { to: string[]; cc: string[]; replyTo: string | null };
+  /**
+   * The script the message is written in, where the message says (`src/render/script.ts`); absent from an older
+   * Node, and possibly a script a newer Node knows and this client does not, so it is narrowed before use
+   * (`bodyScriptOf`).
+   */
+  script?: string | null;
 }
 
 /**
@@ -69,7 +83,7 @@ export function bodyQuery(id: string) {
     queryKey: ["body", id],
     queryFn: async (): Promise<RenderedBody> => {
       const response = await apiFetch(`/api/messages/${encodeURIComponent(id)}/body`);
-      if (!response.ok) throw new Error(`The body could not be read (${response.status}).`);
+      if (!response.ok) throw new Error(t("reader.body.unreadable", { status: response.status }));
       return (await response.json()) as RenderedBody;
     },
     // A body is immutable once accepted, so unlike the lists this can be cached hard. Authorization is
@@ -83,17 +97,35 @@ export function useBody(id: string) {
 }
 
 /**
- * The start of the frame's document: the viewer's theme on the frame's own `<html>`, and the frame's sheet.
+ * The start of the frame's document: the viewer's theme and the message's script on the frame's own `<html>`,
+ * and the frame's sheet.
  *
  * The frame is opaque-origin and cannot see the shell's `<html>`, so it is told on its own, and
- * `frameStylesheet()` in `src/theme.ts` matches `:root[data-theme=…]` there. `theme` is one of three words by
- * type, and `currentTheme()` checks the attribute it reads against them, so nothing unchecked reaches the
- * frame. A sender cannot override it: the sanitiser keeps `<html>` with no attributes (`src/render/body.ts`),
- * and a later `<html>` start tag only adds attributes the element lacks. The doctype first keeps the frame in
- * standards mode; a sender's own doctype then parses as an ignored duplicate.
+ * `frameStylesheet()` in `src/theme.ts` matches `:root[data-theme=…]` and `html[data-script=…]` there. `theme` is
+ * one of three words by type, and `currentTheme()` checks the attribute it reads against them; `script` is one of
+ * the contract's `BODY_SCRIPTS` by type. A sender cannot override either: the sanitiser keeps only `lang` and
+ * `dir` on `<html>` (`src/render/body.ts`), and a later `<html>` start tag only adds attributes the element
+ * lacks, so a sender's `lang` does reach the frame and nothing else of theirs does. The doctype first keeps the
+ * frame in standards mode; a sender's own doctype then parses as an ignored duplicate.
+ *
+ * Never the interface's `lang`: the frame is the sender's (ADR 46). `script` only picks the glyph forms Han is
+ * drawn in, which the message decides where it says (`bodyScript`), and the viewer's locale only where it does not.
  */
-export function frameHead(theme: ThemeChoice): string {
-  return `<!doctype html><html data-theme="${theme}"><link rel="stylesheet" href="/app/frame.css">`;
+export function frameHead(theme: ThemeChoice, script: BodyScript | null): string {
+  const scripted = script === null ? "" : ` data-script="${script}"`;
+  return `<!doctype html><html data-theme="${theme}"${scripted}><link rel="stylesheet" href="/app/frame.css">`;
+}
+
+/**
+ * The glyph forms each interface locale reads Han in, for a message that does not say its own (critic M9): the
+ * one guess left once the charset and `Content-Language` are silent, and a better one than the platform's
+ * default, which draws a UTF-8 Chinese message in Japanese forms on some systems. English guesses nothing.
+ */
+const VIEWER_SCRIPT: Readonly<Record<Locale, BodyScript | null>> = { en: null, "zh-Hans": "sc" };
+
+/** The body's script: the message's own where it names one this client knows, else the viewer's guess. */
+function bodyScriptOf(rendered: RenderedBody): BodyScript | null {
+  return oneOf(BODY_SCRIPTS, rendered.script) ? rendered.script : VIEWER_SCRIPT[current().locale];
 }
 
 /** The original, as it arrived. A download is recorded as an export, and the route decides who may. */
@@ -101,51 +133,24 @@ export function rawHref(receiptId: string): string {
   return `/api/messages/${encodeURIComponent(receiptId)}/raw`;
 }
 
-/** The full local time of an instant: the `title` behind every short time, and the details' Received. */
-export function fullTime(at: string): string {
-  return new Date(at).toLocaleString(undefined, { hour12: false });
-}
-
-/** Month names for dates in lists and chips; see `shortTime` for why they are written out. */
-export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/**
- * When this Node received it, as short as it can be and still be unambiguous: `15:09` today, `26 Sep` this
- * year, `26 Sep 2025` before. The month names are written here rather than asked of `Intl`, whose `en-GB`
- * short month for September changed to "Sept" across ICU versions; a list is a place a date is scanned for.
- * `accepted_at` is this Node's own observation: a sender's Date header can be absent, unreadable or false.
- */
-export function shortTime(at: string, now: Date = new Date()): string {
-  const when = new Date(at);
-  if (when.toDateString() === now.toDateString()) {
-    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  }
-  const day = `${when.getDate()} ${MONTHS[when.getMonth()]}`;
-  return when.getFullYear() === now.getFullYear() ? day : `${day} ${when.getFullYear()}`;
-}
-
-const LINK_WORDS: Record<RenderedBody["links"][number]["verdict"], string | null> = {
-  plain: null,
-  mismatch: "says one place and goes to another",
-  lookalike: "goes to a domain that resembles one of yours and is not it",
-  userinfo: "carries a name before the real host, so it reads as somewhere it is not",
-  ip_host: "goes to a bare address rather than a named site",
-};
-
 /**
  * The links worth a word, with where each really goes. Nothing is rewritten in the body — the sender's
  * href is what a click follows — so this is the comparison a hover cannot make, stated once, above the body.
  */
 function Links({ links }: { links: RenderedBody["links"] }) {
-  const flagged = links.filter((one) => one.verdict !== "plain");
+  type Flagged = RenderedBody["links"][number] & { verdict: Exclude<LinkVerdict, "plain"> };
+  const flagged = links.filter((one): one is Flagged => one.verdict !== "plain");
   if (flagged.length === 0) return null;
   return (
     <div className="notice bad" role="alert">
-      <p>{flagged.length} of {links.length} link{links.length === 1 ? "" : "s"} in this message {flagged.length === 1 ? "is" : "are"} not what {flagged.length === 1 ? "it says" : "they say"}:</p>
+      <p>{links.length === 1 ? t("reader.links.flaggedOfOne") : t("reader.links.flagged", { n: flagged.length, total: links.length })}</p>
       <ul className="links-flagged">
         {flagged.map((one, index) => (
           <li key={index}>
-            <span className="mono">{one.text === "" ? "(an image)" : one.text}</span> {LINK_WORDS[one.verdict]}: <span className="mono dim">{one.href}</span>
+            {sentence(`reader.link.${one.verdict}`, {
+              text: <span className="mono">{one.text === "" ? t("reader.links.image") : one.text}</span>,
+              href: <span className="mono dim">{one.href}</span>,
+            })}
           </li>
         ))}
       </ul>
@@ -153,15 +158,13 @@ function Links({ links }: { links: RenderedBody["links"] }) {
   );
 }
 
-/** What each verdict means, in words. Also shown by the composer, so a file is described the same way both ways. */
-export const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
-  plain: null,
-  archive: "an archive; what is inside has not been opened",
-  archive_dangerous: "an archive listing a program or a script",
-  executable: "a program",
-  script: "a script",
-  disguised: "a program under a document's name",
-};
+/**
+ * What an attachment's verdict means, in words, or null for a plain file. Also said by the composer, so a file is
+ * described the same way both ways.
+ */
+export function verdictWords(verdict: AttachmentVerdict): Text | null {
+  return verdict === "plain" ? null : t(`reader.verdict.${verdict}`);
+}
 
 /**
  * What was attached, named and judged, with no way to open it from here: the bytes stay in the original,
@@ -170,16 +173,16 @@ export const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"
 function Attachments({ parts, receiptId }: { parts: RenderedBody["attachments"]; receiptId: string }) {
   if (parts.length === 0) return null;
   return (
-    <ul className="attachments" aria-label="Attachments">
+    <ul className="attachments" aria-label={t("reader.attachments")}>
       {parts.map((part, index) => {
-        const word = VERDICT_WORDS[part.verdict];
+        const word = verdictWords(part.verdict);
         return (
           <li key={index}>
             {/* A link to the part's own bytes; the Node serves a flagged one as octet-stream, to save and not run. */}
             <a className="mono" href={`/api/messages/${encodeURIComponent(receiptId)}/attachments/${index}`}>
-              {part.filename ?? "(unnamed)"}
+              {part.filename ?? t("reader.attachment.unnamed")}
             </a>{" "}
-            <span className="dim">{part.declaredType} · {Math.max(1, Math.round(part.bytes / 1024))} KB</span>
+            <span className="dim">{t("reader.attachment.size", { type: part.declaredType, kb: Math.max(1, Math.round(part.bytes / 1024)) })}</span>
             {word === null ? null : (
               <span className={part.verdict === "archive" ? "dim" : "bad"}> — {word}</span>
             )}
@@ -237,7 +240,7 @@ export function MessageBody({ id }: { id: string }) {
   const frameFocused = useFrameFocus(frame);
 
   if (body.isPending) return <Nothing kind="loading" />;
-  if (body.isError) return <Nothing kind="failed" detail={body.error.message} />;
+  if (body.isError) return <Nothing kind="failed" detail={marked(body.error)} />;
 
   const rendered = body.data;
 
@@ -245,7 +248,7 @@ export function MessageBody({ id }: { id: string }) {
     return (
       <Nothing
         kind="failed"
-        detail={rendered.problem ?? "This message's body could not be read. The original is unchanged."}
+        detail={rendered.problem === null ? t("reader.body.unparsed") : <NodeWords>{rendered.problem}</NodeWords>}
       />
     );
   }
@@ -253,28 +256,28 @@ export function MessageBody({ id }: { id: string }) {
   return (
     <>
       {rendered.blockedRemote > 0 ? (
-        <p className="notice dim">
-          {rendered.blockedRemote} remote resource{rendered.blockedRemote === 1 ? "" : "s"} withheld. Loading
-          them would tell the sender you opened this.
-        </p>
+        <p className="notice dim">{t("reader.body.remote", { n: rendered.blockedRemote })}</p>
       ) : null}
-      {rendered.truncated ? <p className="notice dim">Shown truncated. The original is complete.</p> : null}
+      {rendered.truncated ? <p className="notice dim">{t("reader.body.truncated")}</p> : null}
       <Attachments parts={rendered.attachments} receiptId={id} />
       <Links links={rendered.links} />
       {rendered.state === "html" && rendered.html !== null ? (
         <iframe
           ref={frame}
           className="message-body"
-          title="Message body"
+          title={t("reader.body.frame")}
           data-focused={frameFocused ? "" : undefined}
           // Neither allow-scripts nor allow-same-origin. See the header — this is the trust boundary.
           sandbox=""
           referrerPolicy="no-referrer"
           // Read when the frame renders. The theme changes only on /settings, where no reader is mounted.
-          srcDoc={frameHead(currentTheme()) + rendered.html}
+          srcDoc={frameHead(currentTheme(), bodyScriptOf(rendered)) + rendered.html}
         />
       ) : (
-        <pre className="message-text">{rendered.text ?? ""}</pre>
+        // The sender's text, in the shell's document: `lang=""` so it does not claim the interface's language
+        // (ADR 46), and the message's script, as the frame has, so its Han is drawn in the message's forms
+        // (`.message-text[data-script]` in `src/shell-css.ts`, from the frame's own table).
+        <pre className="message-text" lang="" data-script={bodyScriptOf(rendered) ?? undefined}>{rendered.text ?? ""}</pre>
       )}
     </>
   );
@@ -289,39 +292,33 @@ export function MessageBody({ id }: { id: string }) {
  * against a domain that asked for `reject` — is the only red thing here. A message from before this Node
  * evaluated authentication says so, rather than reading as clean.
  *
- * `evidence` adds the parenthesis; the details line states the three results before the sentence already.
+ * `evidence` adds the parenthesis to a `fail`, the one verdict shown outside the details; the details line states
+ * the three results before the sentence already. The results are the protocol's own tokens, in every locale.
  */
 function Authenticated({ message, evidence }: { message: MessageRow; evidence: boolean }) {
-  const domain = <span className="mono">{message.auth_from_domain ?? "the From domain"}</span>;
-  const why = `spf ${message.auth_spf ?? "absent"}, dkim ${message.auth_dkim ?? "absent"}`;
-  if (message.auth_dmarc === null) return <>Not evaluated — arrived before this Node checked senders</>;
-  if (message.auth_dmarc === "absent") return <>no authentication header from the receiving server</>;
-  if (message.auth_dmarc === "pass") {
-    return <>{domain} vouches for this message{evidence ? ` (dmarc pass; ${why})` : ""}</>;
-  }
-  if (message.auth_dmarc === "fail") {
-    return (
-      <>
-        {domain} <span className="bad">says this message is not theirs</span>
-        {evidence
-          ? ` (dmarc fail; ${why}${message.auth_dmarc_policy === null ? "" : `; the domain asks receivers to ${message.auth_dmarc_policy}`})`
-          : ""}
-      </>
-    );
-  }
-  return <>{domain} publishes no policy{evidence ? ` (dmarc ${message.auth_dmarc}; ${why})` : ""}</>;
+  const domain = <span className="mono">{message.auth_from_domain ?? t("reader.auth.fromDomain")}</span>;
+  if (message.auth_dmarc === null) return <>{t("reader.auth.unevaluated")}</>;
+  if (message.auth_dmarc === "absent") return <>{t("reader.auth.absent")}</>;
+  if (message.auth_dmarc === "pass") return <>{sentence("reader.auth.pass", { domain })}</>;
+  if (message.auth_dmarc !== "fail") return <>{sentence("reader.auth.noPolicy", { domain })}</>;
+  const notTheirs = <span className="bad">{t("reader.auth.notTheirs")}</span>;
+  if (!evidence) return <>{sentence("reader.auth.fail", { domain, notTheirs })}</>;
+  const results = { domain, notTheirs, spf: result(message.auth_spf), dkim: result(message.auth_dkim) };
+  return message.auth_dmarc_policy === null
+    ? <>{sentence("reader.auth.failEvidence", results)}</>
+    : <>{sentence("reader.auth.failEvidencePolicy", { ...results, policy: message.auth_dmarc_policy })}</>;
 }
+
+/** An SPF or DKIM result as the header gave it, or the word for its absence. */
+const result = (token: string | null): string => token ?? t("reader.auth.missing");
 
 /** The details line: the three results, then what they add up to. */
 function authLine(message: MessageRow) {
   if (message.auth_dmarc === null || message.auth_dmarc === "absent") return <Authenticated message={message} evidence={false} />;
-  return (
-    <>
-      SPF {message.auth_spf ?? "absent"} · DKIM {message.auth_dkim ?? "absent"} · DMARC {message.auth_dmarc}
-      {" — "}
-      <Authenticated message={message} evidence={false} />
-    </>
-  );
+  return sentence("reader.auth.line", {
+    spf: result(message.auth_spf), dkim: result(message.auth_dkim), dmarc: message.auth_dmarc,
+    verdict: <Authenticated message={message} evidence={false} />,
+  });
 }
 
 /**
@@ -342,36 +339,36 @@ function Details({ message, body, onHeaders }: {
   const replyTo = body?.recipients.replyTo ?? null;
   return (
     <details className="reader-details">
-      <summary className="reader-to">to {message.envelope_to} <Icon name="chevron-down" /></summary>
+      <summary className="reader-to">{t("reader.to", { address: message.envelope_to })} <Icon name="chevron-down" /></summary>
       <dl className="details-grid">
-        <dt>From</dt>
+        <dt>{t("reader.details.from")}</dt>
         <dd>{message.from_name === null ? address : `${message.from_name} <${address}>`}</dd>
-        <dt>To</dt>
+        <dt>{t("reader.details.to")}</dt>
         {/* The To header once the body has been read (it is content); the envelope's address until then. */}
         <dd>{to.length > 0 ? to.join(", ") : message.envelope_to}</dd>
-        {cc.length > 0 ? <><dt>Cc</dt><dd>{cc.join(", ")}</dd></> : null}
-        {replyTo === null ? null : <><dt>Reply-To</dt><dd>{replyTo}</dd></>}
-        <dt>Delivered to</dt>
+        {cc.length > 0 ? <><dt>{t("reader.details.cc")}</dt><dd>{cc.join(", ")}</dd></> : null}
+        {replyTo === null ? null : <><dt>{t("reader.details.replyTo")}</dt><dd>{replyTo}</dd></>}
+        <dt>{t("reader.details.deliveredTo")}</dt>
         <dd>{message.envelope_to}</dd>
         {/* "Received": when this Node accepted it, the one time it observed itself. */}
-        <dt>Received</dt>
+        <dt>{t("reader.details.received")}</dt>
         <dd><time dateTime={message.accepted_at}>{fullTime(message.accepted_at)}</time></dd>
-        <dt>Authentication</dt>
+        <dt>{t("reader.details.authentication")}</dt>
         <dd>{authLine(message)}</dd>
-        <dt>Size</dt>
-        <dd>{message.raw_bytes.toLocaleString()} bytes</dd>
+        <dt>{t("reader.details.size")}</dt>
+        <dd>{t("reader.details.bytes", { n: message.raw_bytes })}</dd>
       </dl>
       <div className="details-actions">
         {/* After the body: the headers route takes the body's authority, so a reader it refused is refused again. */}
         {body === undefined ? null : (
-          <button type="button" className="btn" onClick={(event) => onHeaders(event.currentTarget)}><Icon name="headers" /> View headers</button>
+          <button type="button" className="btn" onClick={(event) => onHeaders(event.currentTarget)}><Icon name="headers" /> {t("reader.headers.view")}</button>
         )}
         {/*
           No `download` attribute: the route sends content-disposition itself, and without the attribute a
           `message.export` refusal opens as the Node's words instead of being saved as a file of error JSON.
         */}
-        <a className="btn" href={rawHref(message.id)}><Icon name="download" /> Download original</a>
-        <span className="details-note">Downloading is recorded as an export.</span>
+        <a className="btn" href={rawHref(message.id)}><Icon name="download" /> {t("reader.original")}</a>
+        <span className="details-note">{t("reader.original.recorded")}</span>
       </div>
     </details>
   );
@@ -389,17 +386,16 @@ function HeadersDialog({ receiptId, opener, onClose }: {
 }) {
   const headers = useMessageHeaders(receiptId);
   return (
-    <Modal className="headers-dialog" label="Headers" onClose={onClose} returnTo={opener}>
+    <Modal className="headers-dialog" label={t("reader.headers")} onClose={onClose} returnTo={opener}>
       <header>
-        <h2>Headers</h2>
-        <button type="button" className="btn btn-icon" aria-label="Close" onClick={onClose}><Icon name="close" /></button>
+        <h2>{t("reader.headers")}</h2>
+        <button type="button" className="btn btn-icon" aria-label={t("reader.headers.close")} onClick={onClose}><Icon name="close" /></button>
       </header>
-      {headers.isPending ? <Nothing kind="loading" /> : headers.isError ? <Nothing kind="failed" detail={headers.error.message} /> : (
+      {headers.isPending ? <Nothing kind="loading" /> : headers.isError ? <Nothing kind="failed" detail={marked(headers.error)} /> : (
         <>
           {headers.data.truncated ? (
             <p className="headers-note">
-              Shown: the first {headers.data.limit_bytes.toLocaleString()} bytes (<code>mime.max_header_bytes</code>).
-              The full header block is in Download original.
+              {sentence("reader.headers.truncated", { n: headers.data.limit_bytes, budget: <code>mime.max_header_bytes</code> })}
             </p>
           ) : null}
           {/*
@@ -407,7 +403,7 @@ function HeadersDialog({ receiptId, opener, onClose }: {
             taller than the dialog, and a browser that does not focus a scroller by itself (WebKit) left a keyboard
             no way to read past the first screen of it (R2AXE-1). ARIA names no bare `<pre>`, hence the role.
           */}
-          <pre className="headers-text" tabIndex={0} role="region" aria-label="Header block">{headers.data.headers}</pre>
+          <pre className="headers-text" tabIndex={0} role="region" aria-label={t("reader.headers.block")}>{headers.data.headers}</pre>
         </>
       )}
     </Modal>
@@ -430,14 +426,15 @@ function AssignBody({ message, onDone }: { message: MessageRow; onDone: () => vo
   const me = useMe();
   const [stolen, setStolen] = useState(false);
   const [email, setEmail] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<React.ReactNode>(null);
+  const unreachable = (error: unknown) => setProblem(sentence("inbox.unreachable", { problem: marked(error as Error) }));
 
-  if (caseId === null) return <p>This message has no case yet, so it cannot be assigned. It predates the queue.</p>;
+  if (caseId === null) return <p>{t("reader.assign.noCase")}</p>;
   if (cases.isPending || me.isPending) return <Nothing kind="loading" />;
-  if (cases.isError) return <Nothing kind="failed" detail={cases.error.message} />;
-  if (me.isError) return <Nothing kind="failed" detail={me.error.message} />;
+  if (cases.isError) return <Nothing kind="failed" detail={marked(cases.error)} />;
+  if (me.isError) return <Nothing kind="failed" detail={marked(me.error)} />;
   const listed = cases.data.cases.find((one) => one.id === caseId);
-  if (listed === undefined) return <p>This case is closed.</p>;
+  if (listed === undefined) return <p>{t("reader.assign.closed")}</p>;
   const mine = stolen || (listed.assignee !== null && listed.assignee === me.data.userId);
 
   async function refresh() {
@@ -452,7 +449,9 @@ function AssignBody({ message, onDone }: { message: MessageRow; onDone: () => vo
     return (
       <>
         <p className="assign-holder">
-          Held by {listed.assignee_email ?? "a colleague"} since {listed.claimed_at === null ? "an unrecorded time" : fullTime(listed.claimed_at)}.{" "}
+          {listed.claimed_at === null
+            ? t("reader.assign.heldUnrecorded", { who: listed.assignee_email ?? t("reader.assign.colleague") })
+            : t("reader.assign.held", { who: listed.assignee_email ?? t("reader.assign.colleague"), when: fullTime(listed.claimed_at) })}{" "}
           <button
             type="button"
             className="linkish"
@@ -460,14 +459,14 @@ function AssignBody({ message, onDone }: { message: MessageRow; onDone: () => vo
               setProblem(null);
               const taken = await stealCase(caseId);
               if (!taken.ok) {
-                setProblem(taken.message);
+                setProblem(marked(taken));
                 return;
               }
               setStolen(true);
               await refresh();
-            })().catch((error: unknown) => setProblem(`This Node could not be reached (${(error as Error).message}).`))}
+            })().catch(unreachable)}
           >
-            Take it anyway
+            {t("inbox.takeAnyway")}
           </button>
         </p>
         {problem === null ? null : <p className="bad" role="alert">{problem}</p>}
@@ -486,18 +485,18 @@ function AssignBody({ message, onDone }: { message: MessageRow; onDone: () => vo
           void (async () => {
             const outcome = await assignCase(caseId, email, holder);
             if (!outcome.ok) {
-              setProblem(outcome.message);
+              setProblem(marked(outcome));
               return;
             }
             onDone();
-            toast({ text: `Handed to ${email}. It is in their queue now, and the trail names you both.` });
+            toast({ text: t("reader.assign.handed", { email }) });
             await refresh();
-          })().catch((error: unknown) => setProblem(`This Node could not be reached (${(error as Error).message}).`));
+          })().catch(unreachable);
         }}
       >
-        <label htmlFor="assign-email">Colleague's sign-in address</label>
+        <label htmlFor="assign-email">{t("reader.assign.email")}</label>
         <input id="assign-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-        <button type="submit" className="primary">Hand over</button>
+        <button type="submit" className="primary">{t("reader.assign.handOver")}</button>
       </form>
       {problem === null ? null : <p className="bad" role="alert">{problem}</p>}
     </>
@@ -517,9 +516,9 @@ function Assign({ message }: { message: MessageRow }) {
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        <Icon name="assign" /> Assign
+        <Icon name="assign" /> {t("reader.assign")}
       </button>
-      <Popover open={open} onClose={() => setOpen(false)} label="Assign" className="assign-popover popover-down popover-start" anchor={anchor}>
+      <Popover open={open} onClose={() => setOpen(false)} label={t("reader.assign")} className="assign-popover popover-down popover-start" anchor={anchor}>
         <AssignBody message={message} onDone={() => setOpen(false)} />
       </Popover>
     </span>
@@ -542,7 +541,7 @@ function Labels({ message, onFilter, adding, setAdding, done }: {
   const queryClient = useQueryClient();
   const [labels, setLabelsShown] = useState<string[]>(() => labelsOf(message));
   const [draft, setDraft] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<React.ReactNode>(null);
   const field = useRef<HTMLInputElement>(null);
   // The labels route takes standing content read, exactly what `standing_content` reports.
   const may = message.standing_content === 1 && message.message_id !== null;
@@ -556,10 +555,12 @@ function Labels({ message, onFilter, adding, setAdding, done }: {
     if (message.message_id === null) return;
     setProblem(null);
     const outcome = await setLabels(message.message_id, delta).catch((error: unknown) => ({
-      ok: false as const, message: `This Node could not be reached (${(error as Error).message}).`,
+      ok: false as const, unreachable: error as Error,
     }));
     if (!outcome.ok) {
-      setProblem(outcome.message);
+      setProblem("unreachable" in outcome
+        ? sentence("inbox.unreachable", { problem: marked(outcome.unreachable) })
+        : marked(outcome));
       return;
     }
     setLabelsShown(outcome.labels);
@@ -574,11 +575,11 @@ function Labels({ message, onFilter, adding, setAdding, done }: {
     <div className="reader-labels">
       {labels.map((label) => (
         <span key={label} className="chip chip-label">
-          <button type="button" className="linkish" onClick={() => onFilter(label)} title={`Show mail labelled ${label}`}>
+          <button type="button" className="linkish" onClick={() => onFilter(label)} title={t("reader.label.show", { label })}>
             {label}
           </button>
           {may ? (
-            <button type="button" className="chip-remove" aria-label={`Remove label ${label}`} onClick={() => void change({ remove: [label] })}>
+            <button type="button" className="chip-remove" aria-label={t("reader.label.remove", { label })} onClick={() => void change({ remove: [label] })}>
               ×
             </button>
           ) : null}
@@ -588,9 +589,9 @@ function Labels({ message, onFilter, adding, setAdding, done }: {
         <input
           ref={field}
           className="label-add"
-          aria-label="Add a label"
+          aria-label={t("reader.label.field")}
           // What to type and how to finish, visibly: opened from the menu, the field stands alone (WCAG 3.3.2).
-          placeholder="Label, then Enter"
+          placeholder={t("reader.label.hint")}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -632,8 +633,8 @@ export function Thread({ conversationId, current }: { conversationId: string | n
   ].sort((a, b) => a.at.localeCompare(b.at));
   if (items.length === 0) return null;
   return (
-    <section className="thread" aria-label="Conversation">
-      <h3>{items.length} other message{items.length === 1 ? "" : "s"} in this conversation</h3>
+    <section className="thread" aria-label={t("reader.thread")}>
+      <h3>{t("reader.thread.count", { n: items.length })}</h3>
       <ul className="thread-list">
         {items.map((item) => (
           <li key={item.key}>
@@ -652,18 +653,19 @@ export function Thread({ conversationId, current }: { conversationId: string | n
               </span>
               <time className="row-time" dateTime={item.at} title={fullTime(item.at)}>{shortTime(item.at)}</time>
               <span className="row-subject">
-                {item.message !== undefined ? item.message.subject ?? "(no subject)" : item.send!.subject}
+                {item.message !== undefined ? item.message.subject ?? t("reader.noSubject") : item.send!.subject}
                 {/* A send's own state word, never "sent": `handed_over` is as far as this Node can know. */}
-                {item.send !== undefined ? ` · a send from this Node, ${item.send.state}` : null}
+                {item.send !== undefined ? sentence("reader.thread.send", { state: shown(sendStateWords(item.send.state)) }) : null}
               </span>
             </button>
             {open === item.key && item.message !== undefined ? <MessageBody id={item.message.id} /> : null}
             {open === item.key && item.send !== undefined ? (
               <p className="notice dim">
-                A send from this Node. Its bytes are in the outbox
-                {item.send.has_submitted === 1 ? (
-                  <>: <a className="mono" href={`/api/sends/${encodeURIComponent(item.send.id)}/submitted`}>.eml</a></>
-                ) : null}.
+                {item.send.has_submitted === 1
+                  ? sentence("reader.thread.sendBytesAt", {
+                    link: <a className="mono" href={`/api/sends/${encodeURIComponent(item.send.id)}/submitted`}>.eml</a>,
+                  })
+                  : t("reader.thread.sendBytes")}
               </p>
             ) : null}
           </li>
@@ -675,7 +677,7 @@ export function Thread({ conversationId, current }: { conversationId: string | n
 
 /** The subject, or the words for its absence: a header parse failure stores "" (`src/materialise.ts`). */
 export function subjectOf(message: { subject: string | null }): string {
-  return message.subject === null || message.subject.trim() === "" ? "(no subject)" : message.subject;
+  return message.subject === null || message.subject.trim() === "" ? t("reader.noSubject") : message.subject;
 }
 
 export function ReadingPane({
@@ -741,27 +743,27 @@ export function ReadingPane({
   // Three groups: this message's state (read, labels), where it lives, and the original.
   const items: MenuItem[] = [];
   if (may) {
-    items.push({ label: message.read === 1 ? "Mark unread" : "Mark read", onSelect: () => onMarkRead(message.read !== 1) });
-    items.push({ label: "Add label…", onSelect: () => setLabelling(true) });
+    items.push({ label: message.read === 1 ? t("inbox.act.unread") : t("inbox.act.read"), onSelect: () => onMarkRead(message.read !== 1) });
+    items.push({ label: t("reader.label.add"), onSelect: () => setLabelling(true) });
     const places: MenuItem[] = [];
-    if (message.place !== "archive") places.push({ label: "Archive", onSelect: () => onMove("archive") });
-    if (message.place !== "inbox") places.push({ label: "Move to Inbox", onSelect: () => onMove("inbox") });
-    if (message.place !== "trash") places.push({ label: "Move to Trash", onSelect: () => onMove("trash") });
+    if (message.place !== "archive") places.push({ label: t("inbox.act.archive"), onSelect: () => onMove("archive") });
+    if (message.place !== "inbox") places.push({ label: t("reader.act.toInbox"), onSelect: () => onMove("inbox") });
+    if (message.place !== "trash") places.push({ label: t("inbox.act.trash"), onSelect: () => onMove("trash") });
     items.push(...places.map((item, index) => (index === 0 ? { ...item, startsGroup: true } : item)));
   }
   // From the menu, focus has already gone back to its trigger, which is where it should return.
-  if (body.isSuccess) items.push({ label: "View headers", startsGroup: true, onSelect: () => showHeaders(document.activeElement as HTMLElement | null) });
-  items.push({ label: "Download original", startsGroup: !body.isSuccess, href: rawHref(message.id), note: "Recorded as an export." });
+  if (body.isSuccess) items.push({ label: t("reader.headers.view"), startsGroup: true, onSelect: () => showHeaders(document.activeElement as HTMLElement | null) });
+  items.push({ label: t("reader.original"), startsGroup: !body.isSuccess, href: rawHref(message.id), note: t("reader.original.note") });
 
   const address = message.from_addr ?? message.envelope_from;
   return (
-    <article className="reading-pane" aria-label="Message">
+    <article className="reading-pane" aria-label={t("reader.pane")}>
       {back === null ? null : (
         <>
           {/* The list's h1 is hidden with the list below 768px; the screen keeps its name. */}
           <h1 className="visually-hidden">{back.label}</h1>
           {/* Named for where it goes: "Inbox" alone is also the sidebar's link. The visible text is in the name. */}
-          <button type="button" className="btn btn-ghost reader-back" aria-label={`Back to ${back.label}`} onClick={back.run}>
+          <button type="button" className="btn btn-ghost reader-back" aria-label={t("reader.back", { place: back.label })} onClick={back.run}>
             <Icon name="back" /> {back.label}
           </button>
         </>
@@ -789,23 +791,23 @@ export function ReadingPane({
       ) : null}
       {message.parse_error === null ? null : (
         <p className="notice dim">
-          Headers were only partly readable: {message.parse_error}. The original is unchanged.
+          {sentence("reader.partlyReadable", { problem: <NodeWords>{message.parse_error}</NodeWords> })}
         </p>
       )}
-      <div ref={actions} className="reader-actions" role="group" aria-label="Message actions">
+      <div ref={actions} className="reader-actions" role="group" aria-label={t("reader.actions")}>
         {sendable === true ? (
           <>
-            <button type="button" className="btn" onClick={() => onReply(false)}><Icon name="reply" /> Reply</button>
-            <button type="button" className="btn" onClick={() => onReply(true)}><Icon name="reply-all" /> Reply all</button>
+            <button type="button" className="btn" onClick={() => onReply(false)}><Icon name="reply" /> {t("inbox.act.reply")}</button>
+            <button type="button" className="btn" onClick={() => onReply(true)}><Icon name="reply-all" /> {t("inbox.act.replyAll")}</button>
             {/* A forward carries the original whole, so it needs no claim on the case: nothing is answered. */}
-            <button type="button" className="btn" onClick={onForward}><Icon name="forward" /> Forward</button>
+            <button type="button" className="btn" onClick={onForward}><Icon name="forward" /> {t("inbox.act.forward")}</button>
             <Assign message={message} />
           </>
         ) : null}
-        <Menu label="More actions" face={<Icon name="more" />} items={items} />
+        <Menu label={t("reader.more")} face={<Icon name="more" />} items={items} />
       </div>
       {sendable === false ? (
-        <p className="reader-note">Replying from {mailboxName} needs send.propose on it, which you do not hold.</p>
+        <p className="reader-note">{t("inbox.withheld.reply", { mailbox: mailboxName })}</p>
       ) : null}
       {notice}
       {nextSteps}

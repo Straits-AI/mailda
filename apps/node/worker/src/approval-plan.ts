@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { SendReason } from "@mailda/contract/schemas";
 
 import { BUDGETS } from "@mailda/budgets";
 import type { AuditEvent, AuditGate } from "./audit.ts";
@@ -6,8 +7,8 @@ import { adminsOf, decidersOf, type TeamRoster } from "./deciders.ts";
 import { noticesForApprovalRequest } from "./notifications.ts";
 
 /**
- * The `send_manifests.state_reason` tokens an approval produces, with the **words** in
- * `src/client/delivery.client.js`.
+ * The `send_manifests.state_reason` tokens an approval produces, with the **words** in the catalog
+ * (`src/i18n/en/delivery.ts`).
  *
  * Not in `STATE_FOR`, and that is a boundary rather than an inconsistency. `STATE_FOR` maps a policy *outcome*
  * to the state a seal produces, and neither of these is produced by an outcome: `approval_denied` is what a
@@ -15,10 +16,10 @@ import { noticesForApprovalRequest } from "./notifications.ts";
  * outcome really is `require_approval`, and what makes the send `withheld` is that nobody can clear it. Adding
  * them to a `Record<Outcome, …>` would need two fake outcomes to hang them on.
  *
- * The reason words live in `delivery.client.js` by design, for the reason its own header gives: one place owns
- * the prose, and it is the module a test can evaluate as the exact bytes a browser is served.
+ * The reason words live in the catalog by design: one place owns the prose, keyed by the contract's
+ * `SEND_REASONS`, which this list must be part of.
  */
-export const APPROVAL_REASONS = ["approval_denied", "approval_unsatisfiable"] as const;
+export const APPROVAL_REASONS = ["approval_denied", "approval_unsatisfiable"] as const satisfies readonly SendReason[];
 
 export type ApprovalState = "pending" | "approved" | "denied" | "unsatisfiable" | "cancelled";
 export type Decision = "approve" | "deny";

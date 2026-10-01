@@ -2,8 +2,9 @@ import { useState } from "react";
 
 import { LOCALE_FLAG, chooseLocale, current, storedLocale, t } from "/app/locale.js";
 import { OFFERED, localeEntry, type Locale } from "../../../i18n/locales.ts";
+import type { Said } from "../api.ts";
 import { useCompose } from "../shell-context.tsx";
-import { NodeWords, sentence } from "../words.tsx";
+import { marked, sentence } from "../words.tsx";
 
 /**
  * Settings > Language: the interface's language for this viewer in this browser (ADR 46), beside Appearance
@@ -23,7 +24,7 @@ import { NodeWords, sentence } from "../words.tsx";
 export function Language() {
   const compose = useCompose();
   const [unreadable] = useState(() => !storedLocale().readable);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const now = current();
 
   async function choose(locale: Locale) {
@@ -66,7 +67,7 @@ export function Language() {
         </p>
       ) : null}
       {problem === null ? null : (
-        <p className="bad" role="alert">{sentence("language.draft", { problem: <NodeWords>{problem}</NodeWords> })}</p>
+        <p className="bad" role="alert">{sentence("language.draft", { problem: marked(problem) })}</p>
       )}
       {unreadable ? <p className="notice" role="status">{t("language.unreadable")}</p> : null}
     </section>

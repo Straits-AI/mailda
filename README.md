@@ -108,8 +108,38 @@ login, or the Setup screen with a token carrying the optional Email Routing Addr
 
 **A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
 point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
-previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
-addresses are left alone. On a zone's own name the receiving step offers the **catch-all** instead: one
+previous destination is kept on the audit trail and written into the rule's own name, and *put back* restores
+it. Every rule can be pointed back; mail that arrived here meanwhile stays here. Existing rules for other
+addresses are left alone.
+
+`mailda install`, `mailda setup` and every `mailda upgrade` end with the same list for the name the Node
+receives at: each address with a rule of its own, where it goes, and the one change the Node offers for it.
+These are the defaults, and how to change each:
+
+- **One y/N, only when a rule can be offered.** On a zone whose rules you keep on purpose, it asks on every
+  upgrade; nothing remembers a "no". Answer N, or run with `--yes`.
+- **Each rule defaults to "leave it".** A forward (often someone's personal mail) offers *receive here only*:
+  the destination gets nothing more, and replies sent from there are not seen here. A rule to another Worker
+  offers *receive here*: that Worker stops receiving the address, and this Node cannot see what it did. A drop
+  offers *receive here*: mail Cloudflare was discarding is kept from now on. Keeping a forward while
+  receiving here is not built.
+- **A forward goes only into a mailbox you choose**, a new one named after the address offered first (or the
+  mailbox already named after it, never a second), never into the only mailbox by default (the API refuses it,
+  `E_ROUTING_FORWARD_NEEDS_MAILBOX`).
+- **Rules on names the Node does not receive for** (another subdomain) are a count line with
+  `mailda provider --routing-rules <name>` to list them.
+- **`--yes`, or no terminal, changes no rule**: it prints the list and the exact `mailda provider --take-over`
+  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen.
+- Disabled rules, rules with several destinations, duplicate rules and zones with subaddressing on are listed
+  with the reason and never offered.
+
+**Before deleting a Node, put back every rule it took over**
+(`mailda provider --routing-rules <domain>` shows each with its put-back). If it is already gone, a rule taken
+over from 1 October 2026 records in its name where it went, and `mailda provider --put-back <rule id> --domain
+<domain> --without-node` restores it with your own wrangler login, without the Node and without an audit entry.
+Two kinds record nothing in their name and can only be put back through the Node, so do it before deleting it:
+the **catch-all** (the receiving step's take-over), and any rule taken over before 1 October 2026. The step
+also says so for any rule whose name did not read back as written. On a zone's own name the receiving step offers the **catch-all** instead: one
 rule pointing the domain's unmatched mail here, its previous target kept for a put-back, and every address
 without a rule of its own from then on managed on People inside the Node. An enabled rule of an address's own
 outranks the catch-all (of a disabled one Cloudflare does not say), so `mailda install`, `mailda setup`, `mailda provider --onboard-receiving` and the Setup screen
@@ -178,7 +208,7 @@ What is blocking, as of 19 September 2026, with everything else on the
 | **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account, then a real backup, then a same-account restore that took a domain, wrote its own routing, and accepted a message from outside. The catalog imports at about a thousand rows a second. The evidence copy works with any tool that moves the bytes, including one that drops the key label, and has only been timed with wrangler (5.4 s per object); a bucket-to-bucket copy is the tool for a real mailbox and is deliberately not timed here. [Runbook](./docs/disaster-recovery.md). |
 | **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). The canary is reached by a version override on the production hostname, because preview URLs do not exist for a Worker with Durable Objects. Unmeasured on a Free account, where ADR 25 says not to run anyway. [Receipt](./docs/receipts/deploy-drill-live-account.md). |
 | **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored; a DMARC failure is shown on the message and its row in the list, and the full verdict is one click away in the message's details. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. A classifier you run in your own account can hold a delivery through the API with its reason and score; the Node ships none ([example](./examples/hold-agent/)). A ZIP is listed without being opened, and one naming a program is held. Leaving, a program, a script, a program under a document's name, or a ZIP naming one is refused unless its author sends it anyway (a zip of source code is the usual case), with a warning in the composer, and the seal's audit entry records which attached files it let through, by position. A mailbox can bound attachment size and type, in and out. Absent: inbound acts beyond the quarantine switch, RAR and 7z listings, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
-| **English only, for now; Chinese is in review** | The interface's words are a typed catalog per locale (ADR 46): a missing translation does not compile, and a check with the TypeScript checker counts every string not yet in the catalog, file by file, down to zero. English is the only language offered. Simplified Chinese (淼达) is a preview, reachable by adding `?locale=zh-Hans` to an address, and offered nowhere else until every screen is migrated; today that is the navigation and the rail, the command palette, the health popover and notices, the Inbox's message list, Settings (with a Language section), every screen's title, and the interface's own failure sentences. The API, the CLI's machine-read output, doctor's text, MCP and the SDK stay English permanently, for the programs that parse them. [`docs/i18n.md`](./docs/i18n.md). |
+| **English only, for now; Chinese is in review** | The interface's words are a typed catalog per locale (ADR 46): a missing translation does not compile, and a check with the TypeScript checker counts every string not yet in the catalog, file by file, down to zero. English is the only language offered. Simplified Chinese (淼达) is a preview, reachable by adding `?locale=zh-Hans` to an address, and offered nowhere else until every screen is migrated; today that is the navigation and the rail, the command palette, the health popover and notices, the Inbox's message list and reader, the composer and Drafts, the Queue, the Outbox, Audit, Log and Doctor, Settings (with a Language section), every screen's title, and the interface's own failure sentences. A message is drawn in its own script's forms whatever the interface's language, from its charset, then its `Content-Language`. The API, the CLI's machine-read output, doctor's text, MCP and the SDK stay English permanently, for the programs that parse them. [`docs/i18n.md`](./docs/i18n.md). |
 
 What it is good for now: a design-partner alpha, a non-critical shared mailbox, and exercising the
 governance and deterministic-automation model, which is further along than anything else here.

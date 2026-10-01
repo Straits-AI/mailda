@@ -86,6 +86,11 @@ const PLANTED: Readonly<Record<string, { readonly source: string; readonly expec
     ].join("\n"),
     expected: [["literal", "The Node's own words"], ["literal", "Request failed"], ["text", "Plain text"]],
   },
+  // An open union: a literal member beside `string & {}` still lets the position hold any sentence.
+  "open-union.ts": {
+    source: `type Token = "held" | (string & {});\nexport const x: Token = "Nothing heard yet";\nexport const y: Token | null = "held";`,
+    expected: [["literal", "Nothing heard yet"], ["literal", "held"]],
+  },
   // Formatting outside format.ts picks its own locale.
   "formatter.ts": {
     source: `export const G = (n: number, at: number) => [new Intl.NumberFormat().format(n), new Date(at).toLocaleTimeString()];`,

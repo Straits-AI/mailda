@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
+import { SEND_REASONS } from "@mailda/contract/schemas";
 
 import {
   decideApproval, expiryFor, pendingApprovals, stageOf, withdrawApproval,
 } from "../src/approvals.ts";
+import { APPROVAL_REASONS } from "../src/approval-plan.ts";
 import { BREAKER_REASONS } from "../src/breakers.ts";
 import { BUTLER_REASONS } from "../src/butler/gate.ts";
 import { runDoctor } from "../src/doctor.ts";
@@ -20,8 +22,7 @@ import {
   bindEnvelope, DISPATCH_REASONS, ENVELOPE_ABSENT, ENVELOPE_COLUMNS, WITHHOLDING,
 } from "../src/outbound/recheck.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
-import { createPolicyDraft, publishPolicy } from "../src/policy.ts";
-import deliveryScript from "../src/client/delivery.client.js";
+import { createPolicyDraft, POLICY_REASONS, publishPolicy } from "../src/policy.ts";
 
 /**
  * The dispatch-time recheck of an approved send (#62): the six reasons, the envelope, and the two paths.
@@ -784,38 +785,20 @@ describe("the reason vocabulary is closed in both directions", () => {
       .toEqual(["evidence_changed"]);
   });
 
-  it("gives every token words in the module a browser is served, and has no words for a token nothing writes", () => {
+  it("mints exactly the contract's reasons: every declared token is written somewhere, and nothing else is", () => {
     /*
-     * Extracted from the served bytes rather than matched against them, which is the difference between a
-     * check and a vacuous one. A `toContain` per token proves each name appears *somewhere* in a 300-line
-     * file; this reads the keys of `SEND_REASONS` itself, so it also catches the other direction — a
-     * sentence left behind for a reason that was renamed, which would read as the explanation for something
-     * nothing writes.
+     * The contract's `SEND_REASONS` is the one list, and the catalog's words are keyed by it
+     * (`src/i18n/en/delivery.ts`), so "every token has words" is a compile error rather than a test. What only a
+     * test can hold is this: the modules that write `state_reason` write exactly that list. Each is typed with
+     * `SendReason`, so a token outside it does not compile; this catches the other direction, a declared reason
+     * nothing mints, whose words would read as the explanation for something nothing writes.
      */
-    const block = /export const SEND_REASONS = \{([\s\S]*?)\n\};/.exec(deliveryScript);
-    expect(block, "SEND_REASONS not found in the served delivery module").not.toBeNull();
-    const worded = [...block![1]!.matchAll(/^ {2}([a-z_]+): \{$/gm)].map((match) => match[1]!);
-    // Anti-vacuity: an extractor that stopped matching would make every comparison below trivially pass.
-    expect(worded.length).toBeGreaterThanOrEqual(14);
-
-    for (const reason of [...DISPATCH_REASONS, ...BREAKER_REASONS]) {
-      expect(worded, `no words for ${reason}`).toContain(reason);
-    }
-    // And nothing here explains a token no module mints. The seal's and the approval's tokens are the rest
-    // of the set, imported from where they are declared rather than listed again.
-    const minted = new Set([
-      ...DISPATCH_REASONS,
-      "policy_hold", "policy_approval_required", "policy_denied",
-      "approval_denied", "approval_unsatisfiable",
-      // #66's three rate gates, imported from the map that mints them rather than listed here — a second
-      // literal list of the same tokens is exactly the drift this closed world exists to catch.
-      ...BREAKER_REASONS,
-      // #50's human-release gate, imported from the module that mints it rather than spelled again here. It
-      // is the one `awaiting` reason that neither a policy nor a breaker produces: a program wrote the
-      // message and no person has seen it.
-      ...BUTLER_REASONS,
-    ]);
-    expect(worded.filter((reason) => !minted.has(reason))).toEqual([]);
+    const minted = [
+      ...POLICY_REASONS, ...APPROVAL_REASONS, ...DISPATCH_REASONS, ...BREAKER_REASONS, ...BUTLER_REASONS,
+    ];
+    // One module per token: two minting the same reason would be two meanings for one sentence.
+    expect(new Set(minted).size).toBe(minted.length);
+    expect([...minted].sort()).toEqual([...SEND_REASONS].sort());
   });
 });
 

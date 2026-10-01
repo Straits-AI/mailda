@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { messageBodyResponse } from "@mailda/contract/schemas";
 
+import { install } from "/app/locale.js";
 import { answerWith, reset } from "./session-stub.ts";
+import { CATALOGS } from "../../src/i18n/catalog.ts";
 import { CONTENT_SECURITY_POLICY } from "../../src/security-headers.ts";
 
 /**
@@ -75,7 +77,7 @@ const BODY = messageBodyResponse.parse({
   truncated: false,
   problem: null,
   attachments: [{ filename: "invoice-4417.pdf", declaredType: "application/pdf", bytes: 20480, verdict: "plain" }],
-  links: [], recipients: { to: [], cc: [], replyTo: null },
+  links: [], recipients: { to: [], cc: [], replyTo: null }, script: null,
 });
 
 function mount() {
@@ -87,10 +89,13 @@ function mount() {
   );
 }
 
+let body: typeof BODY = BODY;
+
 beforeEach(() => {
   reset();
+  body = BODY;
   answerWith((call) => {
-    if (call.path.endsWith("/body")) return Response.json(BODY);
+    if (call.path.endsWith("/body")) return Response.json(body);
     if (call.path.startsWith("/api/messages")) return Response.json({ messages: [MESSAGE] });
     return Response.json({});
   });
@@ -98,6 +103,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete document.documentElement.dataset.theme;
+  install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app });
 });
 
 /** Opens the one message and returns its frame. */
@@ -115,6 +121,21 @@ async function openFrame(): Promise<HTMLIFrameElement> {
     return found as HTMLIFrameElement;
   });
 }
+
+/** Opens the one message and returns its plain-text body. */
+async function openText(): Promise<HTMLPreElement> {
+  mount();
+  const row = await screen.findByRole("button", { name: /An invoice/ });
+  await act(async () => { row.click(); });
+  return await waitFor(() => {
+    const found = document.querySelector("pre.message-text");
+    expect(found, "the reading pane rendered no plain-text body").not.toBeNull();
+    return found as HTMLPreElement;
+  });
+}
+
+/** The frame document's root start tag, as the reader wrote it. */
+const head = (frame: HTMLIFrameElement): string => /^<!doctype html><html[^>]*>/.exec(frame.getAttribute("srcdoc")!)![0];
 
 /** The CSP as a directive map, so a test reads one directive rather than matching a whole string. */
 function directive(name: string): string[] {
@@ -155,7 +176,7 @@ describe("the reading pane renders mail into a sandboxed frame", () => {
     expect(frame.getAttribute("srcdoc")!.startsWith(
       '<!doctype html><html data-theme="light"><link rel="stylesheet" href="/app/frame.css">',
     )).toBe(true);
-    expect(frame.getAttribute("srcdoc")!.startsWith(frameHead("light"))).toBe(true);
+    expect(frame.getAttribute("srcdoc")!.startsWith(frameHead("light", null))).toBe(true);
   });
 
   it("tells it dark when the shell wears no theme", async () => {
@@ -168,6 +189,54 @@ describe("the reading pane renders mail into a sandboxed frame", () => {
     const frame = await openFrame();
     expect(frame.getAttribute("srcdoc")!.startsWith('<!doctype html><html data-theme="dark">')).toBe(true);
     expect(frame.getAttribute("srcdoc")).not.toContain("onload");
+  });
+
+  /*
+   * The glyph forms Han is drawn in come from the message (critic M9): a GB2312 message in an English interface is
+   * still Simplified, and a Japanese one read in a Chinese interface is still Japanese. The viewer's locale is the
+   * guess only when the message says nothing, and English guesses nothing. Never `lang`: the frame is the sender's.
+   */
+  it("takes the script the message says, whatever the interface's language", async () => {
+    body = messageBodyResponse.parse({ ...BODY, script: "sc" });
+    expect(head(await openFrame())).toBe('<!doctype html><html data-theme="dark" data-script="sc">');
+  });
+
+  it("keeps the message's script over the viewer's", async () => {
+    install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
+    body = messageBodyResponse.parse({ ...BODY, script: "jp" });
+    expect(head(await openFrame())).toBe('<!doctype html><html data-theme="dark" data-script="jp">');
+  });
+
+  it("guesses the viewer's script only for a message that says none, and English guesses nothing", async () => {
+    install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
+    expect(head(await openFrame())).toBe('<!doctype html><html data-theme="dark" data-script="sc">');
+    cleanup();
+    install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app });
+    expect(head(await openFrame())).toBe('<!doctype html><html data-theme="dark">');
+  });
+
+  it("narrows the message's script to one it knows, so a newer Node's is the viewer's guess, never markup", async () => {
+    install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
+    body = messageBodyResponse.parse({ ...BODY, script: "kr" });
+    expect(head(await openFrame())).toBe('<!doctype html><html data-theme="dark" data-script="sc">');
+  });
+
+  /*
+   * A plain-text body is drawn in the shell's own document, not a frame, so it is where the interface's `lang` and
+   * its SC stack would reach the sender's text. It clears the one (`lang=""`) and carries the message's script.
+   */
+  it("gives a plain-text body the message's script and no interface lang", async () => {
+    install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
+    body = messageBodyResponse.parse({ ...BODY, state: "text-only", html: null, text: "直骨誤", script: "jp" });
+    const pre = await openText();
+    expect(pre.getAttribute("lang")).toBe("");
+    expect(pre.getAttribute("data-script")).toBe("jp");
+    cleanup();
+    install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app });
+    body = messageBodyResponse.parse({ ...BODY, state: "text-only", html: null, text: "hello", script: null });
+    const plain = await openText();
+    expect(plain.getAttribute("lang")).toBe("");
+    expect(plain.hasAttribute("data-script")).toBe(false);
   });
 
   it("is permitted by frame-src, which is therefore not 'none'", () => {

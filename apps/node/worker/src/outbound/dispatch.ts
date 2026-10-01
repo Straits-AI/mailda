@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { SendState } from "@mailda/contract/schemas";
 
 import { auditedBatch, log } from "../audit.ts";
 import { stopClockForConversation } from "../response-clock.ts";
@@ -92,9 +93,8 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  * told a duplicate is possible.
  */
 
-export type SendState =
-  | "held" | "awaiting" | "cancelled" | "withheld" | "throttled" | "refused" | "suppressed"
-  | "handed_over" | "outcome_unknown";
+/** The nine states, declared once in the contract (`SEND_STATES`) so the interface's words are keyed by the same list. */
+export type { SendState };
 
 /**
  * The two states a person may still stop.
