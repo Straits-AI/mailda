@@ -33,6 +33,8 @@ export const limits = {
   "limits.state.unarmed.no_observations": "unarmed — no observations",
 
   "limits.pauses": "Paused domains",
+  /** The table's scroller: its own name, as two landmarks with one name are one too many (axe landmark-unique). */
+  "limits.pauses.list": "Domains paused now",
   "limits.pauses.lead":
     "Pausing a domain takes the agreement of two other administrators; whoever asks is never one of them. Lifting a pause takes a single administrator, alone, because a mistake in the cautious direction should be easy to undo.",
   "limits.pauses.asked": "Asked. Two other administrators have to agree before this domain is paused.",

@@ -9,7 +9,7 @@ export const matters: Twin<typeof source> = {
   "matters.field.mailbox": "邮箱",
   "matters.field.matter": "所属事项",
   "matters.choose": "请选择…",
-  "matters.noMatterYet": "暂无事项",
+  "matters.noMatterYet": "暂不关联事项",
 
   "matters.new": "开立事项",
   "matters.new.kind": "类型",

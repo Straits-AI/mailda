@@ -172,7 +172,7 @@ function Pauses() {
       </div>
 
       {pauses.isSuccess && pauses.data.pauses.length > 0 ? (
-        <Scroller label={t("limits.pauses")}>
+        <Scroller label={t("limits.pauses.list")}>
           <table>
             <thead>
               <tr>

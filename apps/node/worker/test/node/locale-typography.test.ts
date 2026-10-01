@@ -104,6 +104,11 @@ describe("the Simplified Chinese type", () => {
   it("keeps a column header's Han together under Chinese, as a Latin header's word is", () => {
     expect(property(`${ZH} thead th`, "word-break")).toBe("keep-all");
   });
+
+  it("keeps a control's Han together in a table cell under Chinese, so a row's 发布 is not one character per line", () => {
+    expect(property(`${ZH} td button`, "word-break")).toBe("keep-all");
+    expect(property(`${ZH} td a`, "word-break")).toBe("keep-all");
+  });
 });
 
 describe("a plain-text body's type", () => {

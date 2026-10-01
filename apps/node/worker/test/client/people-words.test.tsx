@@ -393,7 +393,7 @@ function approval(id: string, subjectKind: string, overrides: Record<string, unk
   return {
     id, subjectKind, subjectId: `sub_${id}`, scopeId: "org_x", actorUserId: "usr_bob", state: "pending",
     requestedAt: INSTANTS[2], resolvedAt: null, expiresAt: INSTANTS[3], stages: [], openStage: null, decidedByMe: false,
-    reason: null, supervised: null, pause: null, ...overrides,
+    reason: null, supervised: null, domainPause: null, ...overrides,
   };
 }
 
@@ -409,7 +409,8 @@ const APPROVALS = [
     supervised: { grantId: "sgr_2", subjectId: "usr_dan", scope: "content", matterId: "mtr_1" },
   }),
   approval("apr_export", "ediscovery_export", { stages: [{ count: 2, teamId: null }], openStage: 1, decidedByMe: true }),
-  approval("apr_pause", "domain_pause", { reason: "Bouncing everything.", pause: { pauseId: "dpz_1", domain: "example.org", reason: "Bouncing everything." } }),
+  // As the Node sends it: the approval's own reason is null, and the requester's words are on the pause.
+  approval("apr_pause", "domain_pause", { domainPause: { pauseId: "dpz_1", domain: "example.org", reason: "Bouncing everything." } }),
 ];
 
 function approvalsNode(approvals: unknown[]) {

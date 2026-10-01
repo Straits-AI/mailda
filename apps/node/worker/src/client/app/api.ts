@@ -1419,7 +1419,8 @@ export interface ApprovalRow {
   /** The requester's own words, where the subject kind carries any. NULL for a send. */
   reason: string | null;
   supervised?: { grantId: string; subjectId: string; scope: string; matterId: string | null } | null;
-  pause?: { pauseId: string; domain: string; reason: string } | null;
+  /** The field `src/approval-pending.ts` sends. Read as `pause` until 1 October 2026, so no card showed the domain. */
+  domainPause?: { pauseId: string; domain: string; reason: string } | null;
 }
 
 export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Error> {

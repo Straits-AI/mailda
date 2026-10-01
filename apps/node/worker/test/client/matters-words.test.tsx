@@ -234,6 +234,10 @@ describe("Sending limits in English", () => {
     await screen.findByText("customer.example");
     await screen.findByText("gone@example.test");
     await expect(await limits(container)).toMatchFileSnapshot("./golden/limits.populated.en.html");
+    // Every landmark its own name (axe's landmark-unique): the pauses table's scroller once took its section's.
+    const names = [...container.querySelectorAll("section[aria-label], [role='region'][aria-label]")].map((one) => one.getAttribute("aria-label"));
+    expect(names.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(names).size, names.join(" | ")).toBe(names.length);
   });
 
   it("renders the empty state", async () => {

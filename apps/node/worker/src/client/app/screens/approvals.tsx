@@ -88,10 +88,11 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
         <dd>{progress(row)}</dd>
       </dl>
 
-      {row.reason === null ? null : (
-        // The requester's own words. Present for a hold lift, a supervised read and a domain pause; a send
-        // carries none, because the reason it is being reviewed is the policy that matched.
-        <blockquote className="approval-reason">{row.reason}</blockquote>
+      {(row.reason ?? row.domainPause?.reason ?? null) === null ? null : (
+        // The requester's own words. Present for a hold lift and a supervised read; a domain pause's are on the pause
+        // (`src/approval-pending.ts` sends them as `domainPause.reason`); a send carries none, because the reason it is
+        // being reviewed is the rule that matched.
+        <blockquote className="approval-reason">{row.reason ?? row.domainPause?.reason}</blockquote>
       )}
 
       {row.supervised == null ? null : (
@@ -101,8 +102,8 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
             : t("approvals.supervised.matter", { scope: row.supervised.scope, subject: row.supervised.subjectId, matter: row.supervised.matterId })}
         </p>
       )}
-      {row.pause == null ? null : (
-        <p className="dim mono">{t("approvals.domain", { domain: row.pause.domain })}</p>
+      {row.domainPause == null ? null : (
+        <p className="dim mono">{t("approvals.domain", { domain: row.domainPause.domain })}</p>
       )}
 
       {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}

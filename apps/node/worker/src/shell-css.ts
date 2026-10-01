@@ -109,6 +109,9 @@ const RULES = `
 /* A column header is a word. Han may break between any two characters, so a narrow column (the Queue's Response,
    over a dash) stacked 响应 one character per line at 1440; keep-all breaks a Han run only where a space is. */
 :root:lang(zh) thead th { word-break: keep-all; }
+/* A control in a cell is a word as well: at 390 a rule's 发布 stacked one character per line and a pause's 恢复发信
+   four, where the English (one unbreakable word) kept its column wide enough to read. */
+:root:lang(zh) td button, :root:lang(zh) td a { word-break: keep-all; }
 
 /* ---- base ------------------------------------------------------------------------------- */
 

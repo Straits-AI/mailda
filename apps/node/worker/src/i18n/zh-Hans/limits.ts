@@ -23,6 +23,7 @@ export const limits: Twin<typeof source> = {
   "limits.state.unarmed.no_observations": "未启用——尚无观测数据",
 
   "limits.pauses": "已暂停的域名",
+  "limits.pauses.list": "当前暂停的域名",
   "limits.pauses.lead": "暂停一个域名需要另外两名管理员批准，提出申请的人永远不算在内。解除暂停只需一名管理员独自操作，因为往谨慎方向犯的错应该容易撤销。",
   "limits.pauses.asked": "已提出申请。需要另外两名管理员批准，这个域名才会暂停。",
   "limits.pauses.domain": "域名",
