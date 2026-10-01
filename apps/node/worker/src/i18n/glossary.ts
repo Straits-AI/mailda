@@ -238,7 +238,7 @@ export const CONCEPTS: readonly Concept[] = [
   row("case.held", "Held (a colleague holds the case)", "他人处理中", { avoid: { "zh-Hans": ["暂留"] } }),
   row("quarantine", "quarantine / held back", "隔离"),
   row("legal-hold", "legal hold", "法律保全", { sentences: ["ledgers.collect.warning"], avoid: { "zh-Hans": ["保留", "冻结"] } }),
-  row("policy-hold", "policy hold", "规则暂扣", { keys: ["send.reason.policy_hold"] }),
+  row("policy-hold", "rule hold", "规则暂扣", { keys: ["send.reason.policy_hold"] }),
   row("case.hand-over", "Hand over (a case)", "转交", { avoid: { "zh-Hans": ["移交"] } }),
   row("case.release", "Release", "放回队列", {
     keys: ["queue.act.release"], sentences: ["inbox.released"], avoid: { "zh-Hans": ["退回", "释放"] },

@@ -18,7 +18,7 @@ describe("the words for a delivery token", () => {
 
   it("finds a state, a reason, a delivery state, unobserved and a delivery reason", () => {
     expect(sendStateWords("handed_over").label).toBe("handed over");
-    expect(sendReasonWords("policy_hold").label).toBe("policy hold");
+    expect(sendReasonWords("policy_hold").label).toBe("rule hold");
     // Notes, not labels, where the English label is the token itself: a lookup that fell through to the raw
     // token would read the same.
     expect(deliveryWords("bounced").note).toContain("refused it");

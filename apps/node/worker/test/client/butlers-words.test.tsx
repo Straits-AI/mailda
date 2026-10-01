@@ -269,7 +269,7 @@ describe("the English the migration fixed", () => {
   /**
    * D1 (`docs/i18n.md`): the send notes said "a policy", and the interface calls one a rule (the Rules screen). Read
    * from the catalog, so a note the Outbox golden does not render (approval required, denied, stricter, impossible)
-   * is held too; the labels keep "policy" (`policy hold` is the glossary's confirmed English).
+   * is held too; since D30 (the owner's decision, 1 October 2026) the labels say rule as well.
    */
   it("calls a rule a rule in every send note (D1)", () => {
     const notes = Object.entries(CATALOGS.en.app).filter(([key]) => key.startsWith("send.") && key.endsWith(".note"));
@@ -280,6 +280,14 @@ describe("the English the migration fixed", () => {
       "send.reason.policy_approval_required.note", "send.reason.policy_denied.note", "send.reason.policy_stricter.note",
       "send.reason.approval_unsatisfiable.note",
     ]));
+  });
+
+  it("says rule, not policy, in every send-reason label (D30)", () => {
+    const labels = Object.entries(CATALOGS.en.app)
+      .filter(([key]) => key.startsWith("send.reason.") && !key.endsWith(".note"));
+    expect(labels.length).toBeGreaterThan(10);
+    expect(labels.filter(([, label]) => /\bpolic(y|ies)\b/i.test(String(label))).map(([key]) => key)).toEqual([]);
+    expect(CATALOGS.en.app["send.reason.policy_hold"]).toBe("rule hold");
   });
 });
 

@@ -68,10 +68,10 @@ export const delivery = {
     "none — so the attempt failed before the mail service was contacted. Nothing was sent, and no " +
     "duplicate can result from sending it again.",
 
-  "send.reason.policy_hold": "policy hold",
+  "send.reason.policy_hold": "rule hold",
   /**
-   * D1 (`docs/i18n.md`): the notes said "a policy", and the interface's word for one is a rule (Rules). The labels
-   * keep "policy" (`policy hold` is the glossary's confirmed English) until the owner takes a label change.
+   * D1 and D30 (`docs/i18n.md`): the notes and, by the owner's decision of 1 October 2026, the labels said "policy",
+   * and the interface's word for one is a rule (Rules).
    */
   "send.reason.policy_hold.note":
     "A rule holds this send. It has not left. Anybody who may send as this mailbox can release it — no " +
@@ -80,7 +80,7 @@ export const delivery = {
   "send.reason.policy_approval_required.note":
     "A rule requires this send to be approved. It has not left. Only somebody holding approval.decide " +
     "on this mailbox can approve it, which is why this is the stricter gate.",
-  "send.reason.policy_denied": "policy denied",
+  "send.reason.policy_denied": "rule denied",
   "send.reason.policy_denied.note":
     "A rule denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
     "service was never asked. There is no act that clears a denial — compose again, or change the rule.",
@@ -99,7 +99,7 @@ export const delivery = {
     "Somebody whose approval released this send no longer holds approval.decide on this mailbox, so this " +
     "Node will not act on their approval. Separation of duty is evaluated live, not trusted from when the " +
     "decision was taken. Grant the relation again, or compose again so eligible approvers can decide it.",
-  "send.reason.policy_stricter": "policy is stricter now",
+  "send.reason.policy_stricter": "rules are stricter now",
   "send.reason.policy_stricter.note":
     "The rules changed between the approval and the hand-over, and they are stricter than what this send was " +
     "approved under — so it fails closed rather than going out under a rule that no longer applies. " +
