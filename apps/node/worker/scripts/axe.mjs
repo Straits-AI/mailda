@@ -90,7 +90,6 @@ const AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 const ADVISORY_TAGS = ["best-practice"];
 
 const browser = await chromium.launch();
-const signedIn = await browser.newContext();
 
 /**
  * Signs in, if the operator supplied credentials for their own Node.
@@ -104,18 +103,22 @@ const signedIn = await browser.newContext();
  */
 const email = process.env.MAILDA_AXE_EMAIL;
 const password = process.env.MAILDA_AXE_PASSWORD;
-if (email !== undefined && password !== undefined) {
-  const response = await signedIn.request.post(`${origin}/api/auth/login`, {
-    data: { email, password },
-  });
-  if (!response.ok()) {
-    console.log(`Sign-in failed (${response.status()}). The screens below will be skipped.`);
-  }
-}
 
-/** One browser context per theme, each carrying the session and the stored choice. */
-const session = await signedIn.storageState();
-await signedIn.close();
+/**
+ * A session of its own for each context. One snapshot shared by every context was one refresh token: the first
+ * context to renew rotated it, the next to present the old one was refused as a reuse and the whole family signed
+ * out, so a run longer than the access token's life skipped every screen after it (2 October 2026: the light half).
+ */
+async function session() {
+  const signedIn = await browser.newContext();
+  if (email !== undefined && password !== undefined) {
+    const response = await signedIn.request.post(`${origin}/api/auth/login`, { data: { email, password } });
+    if (!response.ok()) console.log(`Sign-in failed (${response.status()}). The screens below will be skipped.`);
+  }
+  const state = await signedIn.storageState();
+  await signedIn.close();
+  return state;
+}
 
 let violations = 0;
 /** Unproven, counted both ways: rule results, the unit earlier runs recorded, and the nodes behind them. */
@@ -256,13 +259,13 @@ async function auditWhole(page, label, name) {
  */
 const PRE_AUTH = [
   ["join", async (page) => {
-    await page.getByRole("button", { name: "I have an invitation", exact: true }).click();
+    await page.getByRole("button", { name: words["preauth.signin.invited"], exact: true }).click();
     await page.locator("#invitation").waitFor({ timeout: 10_000 });
   }],
   ["sign-in refused", async (page) => {
-    await page.getByLabel("Email", { exact: true }).fill("nobody@axe-sweep.invalid");
-    await page.getByLabel("Password", { exact: true }).fill("not-a-password-of-this-node");
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByLabel(words["preauth.signin.email"], { exact: true }).fill("nobody@axe-sweep.invalid");
+    await page.getByLabel(words["preauth.password"], { exact: true }).fill("not-a-password-of-this-node");
+    await page.getByRole("button", { name: words["preauth.signin.submit"], exact: true }).click();
     await page.locator(".errors > *").first().waitFor({ timeout: 10_000 });
   }],
 ];
@@ -307,7 +310,7 @@ for (const theme of THEMES) {
 for (const theme of THEMES) {
   currentTheme = theme;
   for (const viewport of ROUTE_VIEWPORTS) {
-    const sized = await themed(await browser.newContext({ storageState: session, viewport }), theme);
+    const sized = await themed(await browser.newContext({ storageState: await session(), viewport }), theme);
     for (const route of ROUTES) {
       const label = `${theme.padEnd(5)} ${String(viewport.width).padStart(4)} ${route.padEnd(11)}`;
       const page = await open(sized, route);
@@ -328,7 +331,7 @@ for (const theme of THEMES) {
     await sized.close();
   }
 
-  const context = await themed(await browser.newContext({ storageState: session }), theme);
+  const context = await themed(await browser.newContext({ storageState: await session() }), theme);
 
   for (const [route, name, reach, leave] of STATES) {
     const page = await open(context, route);
@@ -379,7 +382,7 @@ for (const theme of THEMES) {
    * not the message list: a ready Node with no mail yet renders no list, and was reported as a view that did not
    * open (R3C-GATE-EMPTY-INBOX).
    */
-  const gated = await themed(await browser.newContext({ storageState: session }), theme, { overridden: false });
+  const gated = await themed(await browser.newContext({ storageState: await session() }), theme, { overridden: false });
   const label = `${theme.padEnd(5)} ${"first-run gate".padEnd(26)}`;
   const page = await open(gated, "/", ".app-shell, .first-run");
   const loading = page === null ? "neither the shell nor the gate mounted" : await unsettled(page);

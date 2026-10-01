@@ -160,15 +160,22 @@ if (email === undefined || password === undefined) {
 
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
-const signedIn = await browser.newContext();
-const login = await signedIn.request.post(`${origin}/api/auth/login`, { data: { email, password } });
-if (!login.ok()) {
-  console.log(`Sign-in failed (${login.status()}); nothing was measured.`);
-  await browser.close();
-  process.exit(1);
+/**
+ * A session of its own for each context: one snapshot shared by every context was one refresh token, which the first
+ * renewal rotated and the next context then presented as a reuse, signing the whole family out mid-run.
+ */
+async function session() {
+  const signedIn = await browser.newContext();
+  const login = await signedIn.request.post(`${origin}/api/auth/login`, { data: { email, password } });
+  if (!login.ok()) {
+    console.log(`Sign-in failed (${login.status()}); nothing was measured.`);
+    await browser.close();
+    process.exit(1);
+  }
+  const state = await signedIn.storageState();
+  await signedIn.close();
+  return state;
 }
-const session = await signedIn.storageState();
-await signedIn.close();
 
 const report = [];
 const say = (line) => { console.log(line); report.push(line); };
@@ -221,7 +228,7 @@ async function check(page, label) {
 
 for (const theme of THEMES) {
   for (const viewport of VIEWPORTS) {
-    const context = await themed(await browser.newContext({ storageState: session, viewport }), theme);
+    const context = await themed(await browser.newContext({ storageState: await session(), viewport }), theme);
     const size = `${theme.padEnd(5)} ${String(viewport.width).padStart(4)}`;
     for (const route of APP_ROUTES) {
       const label = `${size} ${route.padEnd(11)}`;
