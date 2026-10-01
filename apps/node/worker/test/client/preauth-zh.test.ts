@@ -8,7 +8,8 @@ import {
 
 /**
  * The pages before sign-in under Simplified Chinese (ADR 46, layer 3), reached as a reviewer reaches them: the
- * address asks for it (`?locale=zh-Hans`, the preview flag) before the script boots. The words are the catalog's;
+ * address asks for it (`?locale=zh-Hans`, the review flag) before the script boots, which reaches it whatever the
+ * browser asks for. A Chinese browser reaching it without asking is `locale-boot.test.tsx`. The words are the catalog's;
  * what is held here is how they reach the page: the lockup, the switch, and a refusal's headline beside the Node's
  * English, marked.
  */

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bootTheme, chooseTheme, currentTheme, storedTheme } from "/app/theme.js";
@@ -108,7 +108,8 @@ describe("choosing", () => {
 });
 
 describe("Settings > Appearance", () => {
-  const radios = () => screen.getAllByRole("radio") as HTMLInputElement[];
+  /** The Theme group's radios: Settings also has the Language group's. */
+  const radios = () => within(screen.getByRole("group", { name: "Theme" })).getAllByRole("radio") as HTMLInputElement[];
 
   it("offers Dark, Light and System, in that order, with Dark checked by default", async () => {
     bootTheme();

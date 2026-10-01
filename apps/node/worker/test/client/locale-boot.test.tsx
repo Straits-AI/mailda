@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bootLocale, current, install, t } from "/app/locale.js";
@@ -75,11 +75,16 @@ describe("booting the viewer's language", () => {
     expect(current().source).toBe("flag");
   });
 
-  it("never gives a Chinese browser the preview, nor a preview tag written into storage", () => {
-    at("", ["zh-CN", "zh"]);
-    expect(bootLocale()).toBe("en");
+  it("gives a Simplified Chinese browser zh-Hans, not a Traditional one, and honours a stored choice over either", () => {
+    at("", ["zh-CN", "en"]);
+    expect([bootLocale(), current().source, html.lang, document.title]).toEqual(["zh-Hans", "browser", "zh-Hans", "淼达"]);
+    at("", ["zh-TW", "en-GB"]);
+    expect([bootLocale(), current().source]).toEqual(["en", "browser"]);
     localStorage.setItem("mailda.locale", "zh-Hans");
-    expect(bootLocale()).toBe("en");
+    expect([bootLocale(), current().source]).toEqual(["zh-Hans", "stored"]);
+    localStorage.setItem("mailda.locale", "en");
+    at("", ["zh-CN"]);
+    expect([bootLocale(), current().source]).toEqual(["en", "stored"]);
   });
 
   it("never stores the review flag", () => {
@@ -121,12 +126,14 @@ describe("Settings > Language", () => {
     render(<QueryClientProvider client={client}><ShellProvider><Language /></ShellProvider></QueryClientProvider>);
   }
 
-  it("offers no preview: while English is the only offered language it says so, and lists no choice", () => {
+  it("lists every offered language in its own name, the active one checked", () => {
     mount();
     expect(screen.getByRole("heading", { name: "Language" })).toBeTruthy();
-    expect(screen.getByText("English is the only language offered so far.")).toBeTruthy();
-    expect(screen.queryByRole("radio")).toBeNull();
-    expect(document.body.textContent).not.toContain("简体中文");
+    const group = screen.getByRole("group", { name: "Language of this interface" });
+    const radios = within(group).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((radio) => [radio.value, radio.closest("label")!.lang, radio.closest("label")!.textContent, radio.checked]))
+      .toEqual([["en", "en", "English", true], ["zh-Hans", "zh-Hans", "简体中文", false]]);
+    expect(screen.queryByText("English is the only language offered so far.")).toBeNull();
   });
 
   it("says when the page is in a language only because its address asks for it", () => {
@@ -134,7 +141,7 @@ describe("Settings > Language", () => {
     bootLocale();
     install(current(), CATALOGS["zh-Hans"].app);
     mount();
-    expect(screen.getByText(/简体中文/).getAttribute("role")).toBe("status");
+    expect(screen.getByText(/简体中文/, { selector: "[role=status]" }).tagName).toBe("P");
   });
 
   it("says so when this browser will not let it read a saved language", () => {

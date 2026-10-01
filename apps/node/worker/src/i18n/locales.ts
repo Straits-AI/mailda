@@ -10,12 +10,13 @@
  * stored choice naming it is ignored, and Settings does not list it. It is reachable only through the
  * `?locale=` review flag (`docs/i18n.md`), which applies to one page load and is never stored. So a locale
  * whose screens are still partly English is never shown to anybody who did not ask for exactly that, and no
- * real viewer meets a screen in two languages. The flag is deleted when the untranslated ratchet is empty
- * and the last screen is migrated.
+ * real viewer meets a screen in two languages. zh-Hans left preview on 2 October 2026 (`docs/i18n.md`, The
+ * preview flag); the mechanism stays for the next locale, and `test/node/locale-preview.test.ts` holds it with a
+ * test-only one. The review flag stays too: the sweeps and the switch before sign-in use it.
  */
 export const LOCALES = [
   { tag: "en", dir: "ltr", endonym: "English", preview: false },
-  { tag: "zh-Hans", dir: "ltr", endonym: "简体中文", preview: true },
+  { tag: "zh-Hans", dir: "ltr", endonym: "简体中文", preview: false },
 ] as const satisfies ReadonlyArray<{ tag: string; dir: "ltr" | "rtl"; endonym: string; preview: boolean }>;
 
 export type Locale = (typeof LOCALES)[number]["tag"];
@@ -31,5 +32,13 @@ export function localeEntry(tag: Locale): (typeof LOCALES)[number] {
   return LOCALES.find((entry) => entry.tag === tag)!;
 }
 
+/**
+ * The locales of `locales` a viewer can reach without the review flag: the ones that are not a preview. A function so
+ * a test can hand it a registry that still has a preview in it (`test/node/locale-preview.test.ts`).
+ */
+export function offeredOf<L extends string>(locales: ReadonlyArray<{ tag: L; preview: boolean }>): L[] {
+  return locales.filter((entry) => !entry.preview).map((entry) => entry.tag);
+}
+
 /** The locales a viewer can reach without the review flag: negotiation, a stored choice, Settings. */
-export const OFFERED: readonly Locale[] = LOCALES.filter((entry) => !entry.preview).map((entry) => entry.tag);
+export const OFFERED: readonly Locale[] = offeredOf(LOCALES);

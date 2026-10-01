@@ -13,7 +13,9 @@ import {
  *
  * `golden/preauth.*.en.html` were written from `src/client/app.client.js` on 2 October 2026, **before** the file
  * moved a word into the catalog, by this file as it then stood. So the English a viewer sees is held to what it
- * was, and a changed English word is a deliberate one, listed in `docs/i18n.md`.
+ * was, and a changed English word is a deliberate one, listed in `docs/i18n.md`. The five whose strip is drawn
+ * after `/health` answers were rewritten the same day when zh-Hans left preview, for the language switch the strip
+ * then gained, and for nothing else: no English word changed.
  *
  * It renders into `#app` on import and keeps module state, so it is imported once and every state is reached
  * through it as a browser reaches it (`preauth-driver.ts`).
@@ -204,11 +206,14 @@ describe("the pre-authentication pages, in English, equal their goldens", () => 
 });
 
 describe("the pre-authentication chrome, in English", () => {
-  it("draws no language switch while English is the only language offered", async () => {
+  it("draws the language switch for an English reader too, each language in its own name, English chosen", async () => {
     await signInScreen();
-    expect(strip().querySelector("select")).toBeNull();
-    // A strip that never drew would pass the line above; it did draw, with the host in it.
-    expect(strip().textContent).toContain(location.host);
+    const select = strip().querySelector("select")!;
+    expect(select.getAttribute("aria-label")).toBe("Language");
+    expect([...select.options].map((option) => [option.value, option.lang, option.textContent])).toEqual([
+      ["en", "en", "English"], ["zh-Hans", "zh-Hans", "简体中文"],
+    ]);
+    expect(select.value).toBe("en");
   });
 
   it("shows the one mark, Mailda, with no second one beside it", () => {
