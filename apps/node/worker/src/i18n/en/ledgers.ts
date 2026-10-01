@@ -60,9 +60,7 @@ export const ledgers = {
   "ledgers.outbox.reported": "Reported",
   /** A delivery chip on a send with more than one recipient: how many are in that state. */
   "ledgers.outbox.chip": "{n} {state}",
-  /** A bounced recipient's note, then the provider's bounce type (`hard`, `soft`). */
-  "ledgers.outbox.bounce": "{note} ({type})",
-  /** `RecipientKind`, the envelope field an address was on. */
+    /** `RecipientKind`, the envelope field an address was on. */
   "ledgers.outbox.kind.to": "to",
   "ledgers.outbox.kind.cc": "cc",
   "ledgers.outbox.kind.bcc": "bcc",
@@ -76,6 +74,10 @@ export const ledgers = {
   "ledgers.audit.col.action": "Action",
   "ledgers.audit.col.actor": "Actor",
   "ledgers.audit.col.outcome": "Outcome",
+  /** `AUDIT_OUTCOMES`, an audit entry's outcome: the act happened, this Node refused it, or it failed. */
+  "ledgers.audit.outcome.ok": "ok",
+  "ledgers.audit.outcome.refused": "refused",
+  "ledgers.audit.outcome.failed": "failed",
   /** A machine's entry: the agent, then the person accountable for it (`agt_… for usr_…`). */
   "ledgers.audit.actorFor": "{actor} for {delegator}",
 

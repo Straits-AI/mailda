@@ -1,6 +1,6 @@
 import { BODY_SCRIPTS, oneOf, type AttachmentVerdict, type BodyScript, type LinkVerdict } from "@mailda/contract/schemas";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { current, t } from "/app/locale.js";
 import { apiFetch } from "/app/session.js";
 import { currentTheme, type ThemeChoice } from "/app/theme.js";
@@ -56,6 +56,10 @@ export interface RenderedBody {
   blockedRemote: number;
   truncated: boolean;
   problem: string | null;
+  /** Which problem `problem` says: one of `BODY_PROBLEMS`, a newer Node's code, or absent from an older Node. */
+  problemCode?: string | null;
+  /** The parser's or sanitiser's own first line, inside `problem`'s parentheses. */
+  problemCause?: string | null;
   attachments: Array<{
     filename: string | null;
     declaredType: string;
@@ -230,6 +234,19 @@ function useFrameFocus(frame: React.RefObject<HTMLIFrameElement | null>): boolea
 }
 
 /**
+ * Why a body could not be shown: this interface's sentence for the Node's code (`BODY_PROBLEMS`), with the
+ * parser's own words inside it marked, or the Node's whole sentence for a code this interface does not know.
+ */
+function bodyProblem(rendered: RenderedBody): ReactNode {
+  const code = rendered.problemCode;
+  const cause = <NodeWords>{rendered.problemCause ?? ""}</NodeWords>;
+  if (code === "sanitised_empty") return t("reader.body.problem.sanitised_empty");
+  if (code === "unreadable") return sentence("reader.body.problem.unreadable", { cause });
+  if (code === "unrenderable") return sentence("reader.body.problem.unrenderable", { cause });
+  return rendered.problem === null ? t("reader.body.unparsed") : <NodeWords>{rendered.problem}</NodeWords>;
+}
+
+/**
  * The body, and every notice about it **above** it: remote resources withheld, a truncated rendering, the
  * attachments with their verdicts, links that are not what they say. A warning under the fold of a long
  * message is a warning read after the click it was about.
@@ -244,14 +261,7 @@ export function MessageBody({ id }: { id: string }) {
 
   const rendered = body.data;
 
-  if (rendered.state === "unparsed") {
-    return (
-      <Nothing
-        kind="failed"
-        detail={rendered.problem === null ? t("reader.body.unparsed") : <NodeWords>{rendered.problem}</NodeWords>}
-      />
-    );
-  }
+  if (rendered.state === "unparsed") return <Nothing kind="failed" detail={bodyProblem(rendered)} />;
 
   return (
     <>
@@ -306,17 +316,17 @@ function Authenticated({ message, evidence }: { message: MessageRow; evidence: b
   const results = { domain, notTheirs, spf: result(message.auth_spf), dkim: result(message.auth_dkim) };
   return message.auth_dmarc_policy === null
     ? <>{sentence("reader.auth.failEvidence", results)}</>
-    : <>{sentence("reader.auth.failEvidencePolicy", { ...results, policy: message.auth_dmarc_policy })}</>;
+    : <>{sentence("reader.auth.failEvidencePolicy", { ...results, policy: <code>{message.auth_dmarc_policy}</code> })}</>;
 }
 
-/** An SPF or DKIM result as the header gave it, or the word for its absence. */
-const result = (token: string | null): string => token ?? t("reader.auth.missing");
+/** An SPF or DKIM result as the header gave it, a protocol token in `<code>` (docs/i18n.md, Register), or the word for its absence. */
+const result = (token: string | null): ReactNode => (token === null ? t("reader.auth.missing") : <code>{token}</code>);
 
 /** The details line: the three results, then what they add up to. */
 function authLine(message: MessageRow) {
   if (message.auth_dmarc === null || message.auth_dmarc === "absent") return <Authenticated message={message} evidence={false} />;
   return sentence("reader.auth.line", {
-    spf: result(message.auth_spf), dkim: result(message.auth_dkim), dmarc: message.auth_dmarc,
+    spf: result(message.auth_spf), dkim: result(message.auth_dkim), dmarc: <code>{message.auth_dmarc}</code>,
     verdict: <Authenticated message={message} evidence={false} />,
   });
 }

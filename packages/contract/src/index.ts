@@ -20,3 +20,5 @@ export * from "./authority.ts";
 export * from "./naming.ts";
 export * from "./routes.ts";
 export * from "./send-mail.ts";
+/* The refusal codes a page before sign-in has words for (ADR 46, layer 3); `/app/locale.js` imports the module itself. */
+export * from "./preauth-errors.ts";

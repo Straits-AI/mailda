@@ -12,6 +12,9 @@ export const reader: Twin<typeof source> = {
   "reader.body.frame": "邮件正文",
   "reader.body.unreadable": "无法读取正文（{status}）。",
   "reader.body.unparsed": "无法读取此邮件的正文。原始邮件未改动。",
+  "reader.body.problem.unreadable": "无法读取此邮件的正文（{cause}）。原始邮件未改动，仍可下载。",
+  "reader.body.problem.sanitised_empty": "此邮件的 HTML 经过安全清理后没有留下任何内容。原始邮件未改动，仍可下载。",
+  "reader.body.problem.unrenderable": "无法安全地呈现此邮件的 HTML（{cause}）。原始邮件未改动，仍可下载。",
   "reader.body.remote": "已拦截 {n} 项远程资源。加载它们会让发件人知道你打开了这封邮件。",
   "reader.body.truncated": "此处显示的内容已截断。原始邮件是完整的。",
 

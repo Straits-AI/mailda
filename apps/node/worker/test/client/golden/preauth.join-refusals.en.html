@@ -1,0 +1,30 @@
+<!-- E_INVITATION_UNUSABLE -->
+<p class="notice bad" data-reveal="">That invitation could not be used.<br>
+<span lang="en">E_INVITATION_UNUSABLE  that invitation cannot be used
+  why      it does not exist, it has already been redeemed, or it has expired. Which one is deliberately not said: distinguishing them would let somebody guess at secrets and would confirm who was invited
+  fix      ask the administrator who invited you to send a new one — minting a fresh invitation withdraws the old link</span>
+</p>
+<!-- E_WEAK_PASSWORD -->
+<p class="notice bad" data-reveal="">That password is too short.<br>
+<span lang="en">E_WEAK_PASSWORD  that password is not usable
+  why      E_PASSWORD_TOO_SHORT  minimum=12, got 5
+  why      length is the only property that reliably resists offline guessing
+  fix      use a longer passphrase; there are no character-class requirements
+  fix      choose a longer passphrase; there are no character-class requirements</span>
+</p>
+<!-- cross_site -->
+<p class="notice bad" data-reveal="">This Node refused a request that did not come from its own page.<br>
+<span lang="en">E_CROSS_SITE_REQUEST  a POST arrived from https://evil.example, and this Node is https://node.example
+  why      an Origin that is not this Node's is another site acting as the person signed in here.
+  fix      state-changing requests must come from this Node's own interface</span>
+</p>
+<!-- internal -->
+<p class="notice bad" data-reveal="">
+<span lang="en">This Node failed to handle the request. Its operator can find this in the log.</span>
+</p>
+<!-- unknown -->
+<p class="notice bad" data-reveal="">
+<span lang="en">A refusal this interface has no words for.</span>
+</p>
+<!-- silent -->
+<p class="notice bad" data-reveal="">That invitation could not be used.</p>

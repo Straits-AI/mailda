@@ -1,6 +1,6 @@
 import { BUDGETS } from "@mailda/budgets";
 
-import type { BodyScript } from "@mailda/contract/schemas";
+import type { BodyProblem, BodyScript } from "@mailda/contract/schemas";
 
 import { type AttachmentSummary, summariseAttachments } from "../attachments.ts";
 import { headerBlock, headerFields } from "../mime.ts";
@@ -379,11 +379,27 @@ export interface RenderedBody {
   truncated: boolean;
   /** Set when `state` is `unparsed`: what went wrong, in the reader's terms. */
   problem: string | null;
+  /** Which problem `problem` says (`BODY_PROBLEMS`), so an interface can say it in its viewer's language. */
+  problemCode: BodyProblem | null;
+  /** The failure's own first line, inside `problem`'s parentheses; null when it names none. */
+  problemCause: string | null;
   attachments: AttachmentSummary[];
   /** Every link in the rendered HTML, judged. Empty for a text-only body: a bare URL cannot say one thing and go to another. */
   links: JudgedLink[];
   /** The script the message says it is in (`script.ts`), for the frame's glyph forms; null when it says none. */
   script: BodyScript | null;
+}
+
+/**
+ * The Node's sentence for a body problem, byte-stable for the agents that read it; the interface says the same thing
+ * in its viewer's language by `code` (`reader.body.problem.*`, ADR 46), and `test/render.test.ts` holds the English
+ * of the two equal. `fallback`: the plain-text alternative is shown instead.
+ */
+export function problemSentence(code: BodyProblem, cause: string | null, fallback: boolean): string {
+  const head = code === "unreadable" ? `This message's body could not be read (${cause}). `
+    : code === "unrenderable" ? `This message's HTML could not be rendered safely (${cause}). `
+    : "Nothing in this message's HTML survived sanitising. ";
+  return head + (fallback ? "Its plain-text alternative is shown instead." : "The original is unchanged and can still be downloaded.");
 }
 
 /** `ownDomains` are the organization's own, for the lookalike verdict; the caller reads them from `addresses`. */
@@ -395,6 +411,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
   } catch (error) {
     // §24 forbids losing accepted mail: a body that cannot be parsed is still a message, and the
     // original remains downloadable in full. Reported as its own state rather than as an empty one.
+    const cause = (error as Error).message.split("\n")[0]!;
     return {
       state: "unparsed",
       html: null,
@@ -403,9 +420,9 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       truncated: false,
       attachments: [],
       links: [],
-      problem:
-        `This message's body could not be read (${(error as Error).message.split("\n")[0]}). ` +
-        `The original is unchanged and can still be downloaded.`,
+      problem: problemSentence("unreadable", cause, false),
+      problemCode: "unreadable",
+      problemCause: cause,
       script: bodyScript(null, language),
     };
   }
@@ -432,11 +449,9 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
           truncated: extracted.truncated,
       attachments: extracted.attachments,
         links,
-          problem:
-            "Nothing in this message's HTML survived sanitising. " +
-            (extracted.text === null
-              ? "The original is unchanged and can still be downloaded."
-              : "Its plain-text alternative is shown instead."),
+          problem: problemSentence("sanitised_empty", null, extracted.text !== null),
+          problemCode: "sanitised_empty",
+          problemCause: null,
           script: said,
         };
       }
@@ -450,6 +465,8 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       attachments: extracted.attachments,
         links,
         problem: null,
+        problemCode: null,
+        problemCause: null,
         script: said,
       };
     } catch (error) {
@@ -457,6 +474,7 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       // `sanitizeHtml` was not, so a rewriter failure escaped as a 500 instead of the state §24
       // requires. Falling back to the plain alternative where one exists means a body that cannot be
       // *rendered* is still readable.
+      const cause = (error as Error).message.split("\n")[0]!;
       return {
         state: extracted.text === null ? "unparsed" : "text-only",
         html: null,
@@ -465,12 +483,9 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
         truncated: extracted.truncated,
         attachments: extracted.attachments,
         links: [],
-        problem:
-          `This message's HTML could not be rendered safely ` +
-          `(${(error as Error).message.split("\n")[0]}). ` +
-          (extracted.text === null
-            ? "The original is unchanged and can still be downloaded."
-            : "Its plain-text alternative is shown instead."),
+        problem: problemSentence("unrenderable", cause, extracted.text !== null),
+        problemCode: "unrenderable",
+        problemCause: cause,
         script,
       };
     }
@@ -486,6 +501,8 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
       attachments: extracted.attachments,
     links: [],
       problem: null,
+      problemCode: null,
+      problemCause: null,
       script,
     };
   }
@@ -499,6 +516,8 @@ export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] 
     attachments: extracted.attachments,
     links: [],
     problem: null,
+    problemCode: null,
+    problemCause: null,
     script,
   };
 }

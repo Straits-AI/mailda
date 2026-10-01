@@ -1,0 +1,42 @@
+<!-- no passkey support -->
+<p class="notice bad" data-reveal="">This browser has no passkey support. Sign in with your password.</p>
+<!-- the challenge refused -->
+<p class="notice bad" data-reveal="">This Node could not start a passkey sign-in.</p>
+<!-- no answer -->
+<p class="notice bad" data-reveal="">This Node did not answer.</p>
+<!-- E_PASSKEY_REJECTED -->
+<p class="notice bad" data-reveal="">That passkey was not accepted.<br>
+<span lang="en">E_PASSKEY_REJECTED  that passkey did not verify
+  why      an unknown credential, a wrong origin, a stale challenge and a bad signature are one answer here on purpose: telling an anonymous caller which it was hands them half of it (§5C). The Node's own log records the detail: unknown credential
+  fix      try again, or sign in with your password and register this device</span>
+</p>
+<!-- E_CHALLENGE_UNUSABLE -->
+<p class="notice bad" data-reveal="">This passkey sign-in can no longer be finished. Start again.<br>
+<span lang="en">E_CHALLENGE_UNUSABLE  that challenge was not issued by this Node for this ceremony, or it has expired
+  why      a challenge is the anti-replay device of the whole exchange: it is minted here, spent once, and deleted. Its lifetime is auth.passkey_challenge_ttl_seconds=300
+  fix      start again — the interface asks for a fresh challenge each time</span>
+</p>
+<!-- E_CHALLENGE_ALREADY_SPENT -->
+<p class="notice bad" data-reveal="">This passkey sign-in was already used. Start again.<br>
+<span lang="en">E_CHALLENGE_ALREADY_SPENT  that challenge was spent by another request
+  why      a challenge is single-use, and two ceremonies redeeming one would be a replay
+  fix      start again</span>
+</p>
+<!-- cross_site -->
+<p class="notice bad" data-reveal="">This Node refused a request that did not come from its own page.<br>
+<span lang="en">E_CROSS_SITE_REQUEST  a POST arrived from https://evil.example, and this Node is https://node.example
+  why      an Origin that is not this Node's is another site acting as the person signed in here.
+  fix      state-changing requests must come from this Node's own interface</span>
+</p>
+<!-- internal -->
+<p class="notice bad" data-reveal="">
+<span lang="en">This Node failed to handle the request. Its operator can find this in the log.</span>
+</p>
+<!-- unknown -->
+<p class="notice bad" data-reveal="">
+<span lang="en">A refusal this interface has no words for.</span>
+</p>
+<!-- silent -->
+<p class="notice bad" data-reveal="">That passkey was not accepted.</p>
+<!-- cancelled -->
+

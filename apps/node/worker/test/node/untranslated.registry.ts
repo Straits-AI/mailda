@@ -21,11 +21,7 @@
  * scan's own structural rules (`test/node/support/untranslated.ts`) instead, with its reason there.
  */
 
-export const UNMIGRATED: Readonly<Record<string, number>> = {
-  "src/client/app.client.js": 245,
-  "src/client/session.client.js": 23,
-  "src/client/theme.client.js": 7,
-};
+export const UNMIGRATED: Readonly<Record<string, number>> = {};
 
 export interface NotProse {
   /** The finding's exact text (a template's literal parts joined, trimmed). */
@@ -38,7 +34,29 @@ export interface NotProse {
  * with no entries may be listed with an empty array or left out.
  */
 export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
-  "src/client/app.client.js": [],
+  "src/client/app.client.js": [
+    ...[
+      "notice", "bad", "hint", "primary", "split", "split-lede", "panel", "sub", "errors", "codes", "mono", "dim", "linkish",
+      "field", "field mono", "field session mono", "field-row", "dot live", "dot idle", "shell",
+    ].map((text) => ({ text, reason: "a class name, set with `class` or classList: a style hook, never shown" })),
+    ...["app", "status", "org", "email", "password", "secret", "invitation", "join-password"]
+      .map((text) => ({ text, reason: "a document id (`getElementById`, or the id a field's label points at)" })),
+    ...["required", "novalidate", "submit", "button", "alert", "off", "username", "new-password", "current-password"]
+      .map((text) => ({ text, reason: "an attribute's token (required, novalidate, a button or input type, a role, an autocomplete token)" })),
+    { text: "en", reason: "a language tag, the `lang` of the Node's marked words" },
+    { text: "modulepreload", reason: "a link relation token" },
+    { text: "click", reason: "a DOM event name, in the element helper" },
+    { text: "[data-reveal]", reason: "a CSS selector" },
+    { text: "--reveal-delay", reason: "a CSS custom property's name" },
+    { text: "ms", reason: "a CSS unit, after the reveal delay's figure" },
+    ...["/health", "/api/claim", "/api/auth/login", "/api/auth/passkeys/challenge", "/api/auth/passkeys/verify", "/api/invitations/redeem"]
+      .map((text) => ({ text, reason: "a route path the page fetches" })),
+    { text: "/app/shell.js", reason: "the shell bundle's URL, preloaded and imported after sign-in" },
+    { text: "POST", reason: "an HTTP method" },
+    { text: "application/json", reason: "a media type in a content-type header" },
+    { text: "authenticate", reason: "the passkey challenge's purpose token, sent to the Node" },
+    { text: "signed-in", reason: "what the passkey function returns on success, compared by its caller, never shown" },
+  ],
   "src/client/app/api.ts": [
     ...[
       "thread", "notifications", "me", "messages", "headers", "sends", "audit", "access.revoked",
@@ -132,10 +150,6 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "sends", reason: "a query key" },
     { text: "drafts", reason: "a query key" },
     { text: "/outbox", reason: "a route path, where a seal navigates" },
-    ...["KB", "MB"].map((text) => ({
-      text,
-      reason: "a unit symbol after a figure this file rounds itself (`kilobytes`, `megabytes`): the same symbol in every locale, and the figure is left ungrouped on purpose (`4096 KB`), which a catalog number would group",
-    })),
   ],
   "src/client/app/screens/drafts.tsx": [],
   "src/client/app/screens/first-run.tsx": [
@@ -305,6 +319,24 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "input, textarea, select, [contenteditable]:not([contenteditable=false])", reason: "a CSS selector" },
     { text: "dialog, [role=dialog], [role=menu], [role=listbox], .composer-dock", reason: "a CSS selector" },
   ],
-  "src/client/session.client.js": [],
-  "src/client/theme.client.js": [],
+  "src/client/session.client.js": [
+    { text: "date", reason: "a response header's name, read for the server's clock" },
+    { text: "(?:^|;\\s*)", reason: "a regular expression's source, finding the expiry cookie" },
+    { text: "mailda-refresh", reason: "a Web Lock's name, shared by this origin's tabs" },
+    ...["/api/auth/refresh", "/api/auth/logout"].map((text) => ({ text, reason: "a route path the session fetches" })),
+    { text: "POST", reason: "an HTTP method" },
+    { text: "same-origin", reason: "a fetch credentials mode" },
+    { text: "application/json", reason: "a media type in a content-type header" },
+    { text: "x-mailda-refreshable", reason: "a response header's name, the Node's 401 contract" },
+    ...["refreshed", "signed-in", "signed-out"].map((text) => ({ text, reason: "a session event's type, compared by its listeners, never shown" })),
+    ...["session_ended", "signed_out", "refresh_did_not_help"].map((text) => ({
+      text, reason: "a session event's reason token: `app.client.js` compares it or keys its words by it, never shows it",
+    })),
+  ],
+  "src/client/theme.client.js": [
+    { text: "mailda.theme", reason: "a localStorage key" },
+    ...["dark", "light", "system"].map((text) => ({
+      text, reason: "a theme choice's token, stored and set as `data-theme`; Settings shows the catalog's words for it",
+    })),
+  ],
 };

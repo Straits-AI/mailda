@@ -53,9 +53,21 @@ import type { AgentGrantableRelation } from "./relations.ts";
  * revocation ambiguous in a UI built on these names.
  */
 
+/**
+ * Every capability id, as a closed list, so the interface can key a capability's words by its id
+ * (`capability.<id>` in the catalog, ADR 46) and a capability without words is a compile error there. The wire
+ * stays a string (`GET /api/agent-capabilities`): a newer Node's unknown id is shown as the Node's English.
+ * `apps/node/worker/test/node/capability-words.test.ts` holds this list equal to `CAPABILITIES`' ids.
+ */
+export const CAPABILITY_IDS = [
+  "mail.read", "mail.label", "mail.place", "mail.hold", "mail.draft", "send.observe", "send.cancel",
+  "queue.read", "queue.assign", "notice.read", "health.read", "identity.read", "directory.read", "matter.open",
+] as const;
+export type CapabilityId = (typeof CAPABILITY_IDS)[number];
+
 export interface Capability {
   /** Stable id. Stored nowhere — it is an input and a label — so renaming one is safe. */
-  readonly id: string;
+  readonly id: CapabilityId;
   /** What a person reads when choosing it. Written for somebody deciding, not documenting. */
   readonly says: string;
   /**
@@ -403,7 +415,7 @@ export function capabilityIds(): readonly string[] {
  * fails later, in the middle of something, looking like a bug.
  */
 export function routesFor(ids: readonly string[]): { routes: string[]; unknown: string[] } {
-  const known = new Map(CAPABILITIES.map((one) => [one.id, one]));
+  const known = new Map<string, Capability>(CAPABILITIES.map((one) => [one.id, one]));
   const routes = new Set<string>();
   const unknown: string[] = [];
   for (const id of ids) {

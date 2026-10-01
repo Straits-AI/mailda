@@ -22,6 +22,11 @@ export const reader = {
   "reader.body.frame": "Message body",
   "reader.body.unreadable": "The body could not be read ({status}).",
   "reader.body.unparsed": "This message's body could not be read. The original is unchanged.",
+  // Why the body could not be shown, by the code the Node sends beside its sentence (`BODY_PROBLEMS`); the English is
+  // the Node's sentence for a body with no plain-text alternative, and {cause} the parser's own words, marked.
+  "reader.body.problem.unreadable": "This message's body could not be read ({cause}). The original is unchanged and can still be downloaded.",
+  "reader.body.problem.sanitised_empty": "Nothing in this message's HTML survived sanitising. The original is unchanged and can still be downloaded.",
+  "reader.body.problem.unrenderable": "This message's HTML could not be rendered safely ({cause}). The original is unchanged and can still be downloaded.",
   "reader.body.remote": {
     one: "{n} remote resource withheld. Loading them would tell the sender you opened this.",
     other: "{n} remote resources withheld. Loading them would tell the sender you opened this.",

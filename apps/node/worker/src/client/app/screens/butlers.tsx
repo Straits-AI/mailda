@@ -245,7 +245,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
               onChange={() => setFormat(option)}
             />
             {" "}
-            {option}
+            <code>{option}</code>
           </label>
         ))}
         {/*

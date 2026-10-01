@@ -4336,3 +4336,27 @@ breaker's name are now lists in the contract that the Node itself uses, so their
 the Node's English. One flag is left for a change of its own:
 the API's prose still says stop and restart for a domain pause, byte-stable for the agents that read it (G6). The flags
 are in `docs/i18n.md`.
+
+## The interface's languages, layer 3: the pages before sign-in, and the pseudo-locale (2 October 2026)
+
+**Every screen is in the catalog now, the ones before sign-in included, and a pseudo-locale proves it.** Layer 3 moved
+the framework-free scripts (the claim and its recovery codes, sign-in with a password or a passkey, the invitation, the
+session's timer, the theme) into the catalog, so `UNMIGRATED` is empty. With no React before sign-in, the Node's
+English is marked by a DOM twin of `<NodeWords>`. A refusal before sign-in used to be the Node's four-part English
+alone, a code first; it now has a headline in the viewer's language, keyed by a closed list in the contract
+(`PREAUTH_ERRORS`), with the Node's sentence beside it, marked (D34). A reader on an English browser can switch
+language from the status strip, which reloads with `?locale=` and needs no storage, and the claim and sign-in pages
+draw the 淼达 lockup. `/app/locale.js` grew from 3 KB to 16 KB raw (6.5 KB gzip) to carry it, still with no framework
+(ADR 30, ADR 46). The Doctor's checks, a capability's description and a body's problem are keyed by their codes.
+
+**The pseudo-locale (T4) renders every route, empty, full and failed, and presses every button against a Node that
+refuses everything, then the pages before sign-in with each of their refusals.** Any Latin letter outside the Node's
+marked English, `<code>` or the fixtures' data fails it. Its first run found fifteen places English was still bare:
+raw tokens (an audit action, a log event, SPF results, `yaml`), raw ISO stamps and an approval's subject token in the
+notices band, a unit, a recipient's error unmarked, a token inside a `title`. Identifiers are now in `<code>`, words a
+reader needs are keyed from contract lists (`AUDIT_OUTCOMES`, `APPROVAL_SUBJECT_KINDS`), and its fixtures were moved to
+the Node's real shapes, which several were not (a scope of `read`, an audit outcome of `allowed`). It also found three
+defects that were not about language, each fixed in its own change with a test that failed first: Audit's Verify read
+a refusal as "Chain broken at entry undefined", Doctor's Acknowledge threw on an empty field and stayed busy, and the
+first-run gate re-read the provider about once a second for a member, whose read is refused. Twenty-five new glossary
+rows are proposed for the owner, and zh-Hans stays a preview until that review.

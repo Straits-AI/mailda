@@ -348,13 +348,18 @@ button.linkish { display: inline-flex; align-items: center; min-height: 24px; }
   color: var(--text-primary);
 }
 .wordmark svg { flex: none; }
+/* The lockup before sign-in under a locale whose mark is not Mailda (docs/i18n.md, Brand): 淼达, then the Latin mark
+   marked lang="en", 8px after it by the wordmark's gap and quieter, so it reads as the secondary. */
+.wordmark > span[lang] { font-weight: 500; color: var(--text-secondary); }
 
 /* The status strip: this host and the session's countdown. Its figures are diagnostics, so they are the one
    place outside code the monospace appears. */
 #status {
   display: flex;
   align-items: center;
-  gap: clamp(.8rem, 2.5vw, 1.75rem);
+  column-gap: clamp(.8rem, 2.5vw, 1.75rem);
+  /* The strip wraps on a phone, and the language switch is a control: its lines stand 8px apart. */
+  row-gap: 8px;
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-secondary);
@@ -363,6 +368,8 @@ button.linkish { display: inline-flex; align-items: center; min-height: 24px; }
 #status .field { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 #status .mono { font-family: var(--mono); font-weight: 400; color: var(--text-primary); }
 #status .session { color: var(--accent-text); }
+/* The language switch before sign-in (ADR 46), in the strip's 12px; 28px tall, above the 24px target minimum. */
+#status select { font-size: 12px; min-height: 28px; padding: 3px 8px; }
 
 /* A state dot. The word beside it carries the state; the colour repeats it. No pulse: an infinite animation
    is a loop, and this interface has none. */

@@ -5,17 +5,17 @@
   details: no authentication header from the receiving server
   alert: -
 {"auth_dmarc":"pass"}
-  details: SPF pass · DKIM fail · DMARC pass — <span class="mono">northwind.example</span> vouches for this message
+  details: SPF <code>pass</code> · DKIM <code>fail</code> · DMARC <code>pass</code> — <span class="mono">northwind.example</span> vouches for this message
   alert: -
 {"auth_dmarc":"none"}
-  details: SPF pass · DKIM fail · DMARC none — <span class="mono">northwind.example</span> publishes no policy
+  details: SPF <code>pass</code> · DKIM <code>fail</code> · DMARC <code>none</code> — <span class="mono">northwind.example</span> publishes no policy
   alert: -
 {"auth_dmarc":"fail","auth_dmarc_policy":null}
-  details: SPF pass · DKIM fail · DMARC fail — <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span>
-  alert: <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf pass, dkim fail)
+  details: SPF <code>pass</code> · DKIM <code>fail</code> · DMARC <code>fail</code> — <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span>
+  alert: <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf <code>pass</code>, dkim <code>fail</code>)
 {"auth_dmarc":"fail","auth_dmarc_policy":"quarantine","auth_from_domain":null}
-  details: SPF pass · DKIM fail · DMARC fail — <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span>
-  alert: <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf pass, dkim fail; the domain asks receivers to quarantine)
+  details: SPF <code>pass</code> · DKIM <code>fail</code> · DMARC <code>fail</code> — <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span>
+  alert: <span class="mono">the From domain</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf <code>pass</code>, dkim <code>fail</code>; the domain asks receivers to <code>quarantine</code>)
 {"auth_dmarc":"temperror","auth_dkim":null}
-  details: SPF pass · DKIM absent · DMARC temperror — <span class="mono">northwind.example</span> publishes no policy
+  details: SPF <code>pass</code> · DKIM absent · DMARC <code>temperror</code> — <span class="mono">northwind.example</span> publishes no policy
   alert: -

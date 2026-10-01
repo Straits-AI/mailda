@@ -2024,11 +2024,13 @@ export const supervisedRequestedResponse = z.object({
   }).strict(),
 }).strict();
 
+/** What an approval can be about (`approval_requests.subject_kind`). An approval-request notice carries it too. */
+export const APPROVAL_SUBJECT_KINDS = ["send_manifest", "hold_lift", "supervised_read", "ediscovery_export", "domain_pause"] as const;
+export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
+
 export const approvalRow = z.object({
   id: z.string().min(1),
-  subjectKind: z.enum([
-    "send_manifest", "hold_lift", "supervised_read", "ediscovery_export", "domain_pause",
-  ]),
+  subjectKind: z.enum(APPROVAL_SUBJECT_KINDS),
   subjectId: z.string().min(1),
   scopeId: z.string().min(1),
   actorUserId: userId,
@@ -2295,6 +2297,13 @@ export type ExportState = (typeof EXPORT_STATES)[number];
  */
 export const RATE_BREAKER_NAMES = ["volume", "bounce_rate", "complaint_rate"] as const;
 export type RateBreakerName = (typeof RATE_BREAKER_NAMES)[number];
+
+/**
+ * An audit entry's outcome (`audit_entries.outcome`, written by `apps/node/worker/src/audit.ts`, whose
+ * `Outcome` is this list): the act happened, this Node refused it, or it failed. The wire stays a string.
+ */
+export const AUDIT_OUTCOMES = ["ok", "refused", "failed"] as const;
+export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
 
 /** The operational log's levels (`log_entries.level`, written by `log` in `apps/node/worker/src/audit.ts`). */
 export const LOG_LEVELS = ["error", "warn", "info"] as const;
@@ -2858,6 +2867,16 @@ export const sendReleasedResponse = z.object({
 export const BODY_SCRIPTS = ["sc", "tc", "jp"] as const;
 export type BodyScript = (typeof BODY_SCRIPTS)[number];
 
+/**
+ * Why a body's `problem` is set, beside the sentence (ADR 46): the interface says it in the viewer's language by
+ * this code and keeps the Node's sentence for agents. `unreadable` is a body the MIME parser could not read,
+ * `sanitised_empty` an HTML part of which nothing survived sanitising, `unrenderable` an HTML part the sanitiser
+ * failed on. The wire is a string, so a newer Node's fifth reason reaches an older client as one it shows as the
+ * Node's sentence.
+ */
+export const BODY_PROBLEMS = ["unreadable", "sanitised_empty", "unrenderable"] as const;
+export type BodyProblem = (typeof BODY_PROBLEMS)[number];
+
 export const messageBodyResponse = z.object({
   state: z.string().min(1),
   html: z.string().nullable(),
@@ -2865,6 +2884,13 @@ export const messageBodyResponse = z.object({
   blockedRemote: z.number().int().nonnegative(),
   truncated: z.boolean(),
   problem: z.string().nullable(),
+  /** Which problem `problem` says, one of `BODY_PROBLEMS`; null exactly when `problem` is. Absent from an older Node. */
+  problemCode: z.string().nullable().optional(),
+  /**
+   * The failure's own first line, the part of `problem` inside its parentheses (`unreadable`, `unrenderable`): the
+   * parser's or sanitiser's English, never translated. Null when the problem names none.
+   */
+  problemCause: z.string().nullable().optional(),
   /** Every attached part, named and judged; the bytes stay in the original. Empty when `state` is `unparsed`. */
   attachments: z.array(attachmentSummary),
   /** Every link in the rendered HTML, judged. Empty for a text-only body. */

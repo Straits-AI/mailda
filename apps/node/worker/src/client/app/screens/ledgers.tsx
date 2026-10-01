@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, type ReactNode, useState } from "react";
-import { LOG_LEVELS, RECIPIENT_KINDS, oneOf } from "@mailda/contract/schemas";
+import { AUDIT_OUTCOMES, DOCTOR_CHECKS, LOG_LEVELS, RECIPIENT_KINDS, oneOf } from "@mailda/contract/schemas";
 import { apiFetch } from "/app/session.js";
 import { describeReason, describeRecipient, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 import { t } from "/app/locale.js";
@@ -77,21 +77,21 @@ function Recipients({ send }: { send: SendRow }) {
                   {oneOf(RECIPIENT_KINDS, recipient.kind) ? t(`ledgers.outbox.kind.${recipient.kind}`) : <code>{recipient.kind}</code>}
                 </span>
                 <span className="mono">{recipient.address}</span>
-                <span
-                  className={`state delivery-${recipient.delivery_state ?? "unobserved"}`}
-                  title={recipient.bounce_type ? t("ledgers.outbox.bounce", { note: state.note, type: recipient.bounce_type }) : state.note}
-                >
+                <span className={`state delivery-${recipient.delivery_state ?? "unobserved"}`} title={state.note}>
                   {shown(state)}
                 </span>
+                {/* The provider's bounce type (`hard`, `soft`), its token in every locale. Beside the state rather than
+                    in its title, where a token cannot be marked as one. */}
+                {recipient.bounce_type ? <code className="dim">{recipient.bounce_type}</code> : null}
                 {reason === null ? null : (
                   // Beside `unobserved`, not instead of it, as the send row's reason sits beside its state (#62):
                   // the state is what was heard, which is nothing; the reason is why nothing is coming.
                   <span className="state state-reason delivery-chip" title={reason.note}>{shown(reason)}</span>
                 )}
                 {recipient.last_error ? (
-                  // The provider's own words. A paraphrase of somebody else's mail server is a guess. Not marked
-                  // as the Node's English either: the receiving server wrote them, in whatever language it uses.
-                  <span className="dim mono recipient-error">{recipient.last_error}</span>
+                  // The provider's own words, which this Node passes on as it does its own (an SMTP reply is English
+                  // by protocol), so marked as the Node's English. A paraphrase of somebody else's mail server is a guess.
+                  <span className="dim mono recipient-error"><NodeWords>{recipient.last_error}</NodeWords></span>
                 ) : null}
               </div>
             );
@@ -444,10 +444,13 @@ export function Audit() {
             {audit.data.entries.map((entry) => (
               <tr key={entry.id}>
                 <td className="num mono dim">{entry.seq}</td>
-                <td className="mono">{entry.action}</td>
+                {/* The audit key, an identifier in every locale (docs/i18n.md, Register). */}
+                <td className="mono"><code>{entry.action}</code></td>
                 <td className="mono dim">{actorLabel(entry)}</td>
                 <td>
-                  <span className={`state state-audit-${entry.outcome}`}>{entry.outcome}</span>
+                  <span className={`state state-audit-${entry.outcome}`}>
+                    {oneOf(AUDIT_OUTCOMES, entry.outcome) ? t(`ledgers.audit.outcome.${entry.outcome}`) : <code>{entry.outcome}</code>}
+                  </span>
                 </td>
                 <td className="mono dim">{entry.subject ?? "—"}</td>
                 <td className="num mono dim">{clock(entry.at)}</td>
@@ -508,7 +511,7 @@ export function Log() {
                   <td>
                     <span className={`state state-log-${entry.level}`}>{levelWord(entry.level)}</span>
                   </td>
-                  <td className="mono">{entry.event}</td>
+                  <td className="mono"><code>{entry.event}</code></td>
                   <td><NodeWords>{entry.message}</NodeWords></td>
                   <td className="num mono dim">{clock(entry.at)}</td>
                 </tr>
@@ -576,7 +579,7 @@ function SendingCredentials() {
         ? <Nothing kind="loading" />
         : (
           <p className="dim">
-            {sentence("ledgers.transport.through", { adapter: <span className="mono">{report.adapter}</span> })}
+            {sentence("ledgers.transport.through", { adapter: <span className="mono"><NodeWords>{report.adapter}</NodeWords></span> })}
             {" "}
             {report.available.binding
               ? t("ledgers.transport.binding")
@@ -981,6 +984,16 @@ function EvidenceVerify() {
   );
 }
 
+/**
+ * A finding's check: this interface's title for it (`doctor.check.*`) above its name, or, for a name a newer Node
+ * emits that this interface does not know, the name alone. The name stays because the Node's own `fix` text cites
+ * checks by it ("check the migrations_applied finding first").
+ */
+function CheckName({ check }: { check: string }) {
+  if (!oneOf(DOCTOR_CHECKS, check)) return <td className="mono"><NodeWords>{check}</NodeWords></td>;
+  return <td>{t(`doctor.check.${check}`)}<span className="mono dim block"><NodeWords>{check}</NodeWords></span></td>;
+}
+
 export function Doctor() {
   const doctor = useDoctor();
   if (doctor.isPending || doctor.isError) {
@@ -1013,7 +1026,7 @@ export function Doctor() {
         <tbody>
           {report.findings.map((finding) => (
             <tr key={finding.check}>
-              <td className="mono">{finding.check}</td>
+              <CheckName check={finding.check} />
               <td>
                 <span className={`state ${finding.ok ? "delivery-accepted" : `severity-${finding.severity}`}`}>
                   {t(finding.ok ? "health.status.ok" : `health.status.${finding.severity}`)}

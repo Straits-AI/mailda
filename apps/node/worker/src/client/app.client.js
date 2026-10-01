@@ -25,7 +25,7 @@
 import {
   accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, onSessionChange, refresh, start,
 } from "./session.js";
-import { bootLocale, loadApp } from "./locale.js";
+import { LOCALE_FLAG, bootLocale, current, loadApp, refusalHeadline, rich, switchable, t } from "./locale.js";
 import { bootTheme } from "./theme.js";
 
 // The viewer's theme, before this script renders anything: the claim, the sign-in and a locked-out doctor honour
@@ -41,6 +41,16 @@ bootLocale();
 const app = document.getElementById("app");
 const statusStrip = document.getElementById("status");
 
+/**
+ * One element, built node by node. Typed for the untranslated-text scan (`test/node/support/untranslated.ts`),
+ * which reads this file with the checker: a tag is one of the platform's, so its name is a token, not words.
+ *
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag
+ * @param {Record<string, any>} [props]
+ * @param {Node | string | null | false | Array<Node | string | null | false>} [children]
+ * @returns {HTMLElementTagNameMap[K]}
+ */
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -68,8 +78,33 @@ function show(...nodes) {
   });
 }
 
-function notice(text, kind = "") {
-  return el("p", { class: `notice ${kind}`.trim(), text, "data-reveal": "" });
+/** A notice: `said` is the catalog's text, the Node's marked words, or the two (`refusal()`). */
+function notice(said, kind = "") {
+  return el("p", { class: `notice ${kind}`.trim(), "data-reveal": "" }, said);
+}
+
+/**
+ * The Node's own English, marked as English: the pre-authentication twin of the shell's `<NodeWords>`
+ * (`src/client/app/words.tsx`). Its `message`s stay English and byte-stable for the agents that read them (ADR 46).
+ */
+function nodeWords(message) {
+  return el("span", { lang: "en", text: message });
+}
+
+/**
+ * A refusal the Node sent (`{ error, message }`), as a notice. A code the contract lists (`PREAUTH_ERRORS`) has a
+ * headline in the viewer's language, and the Node's English follows it, marked; a code it does not list shows the
+ * Node's English alone; a Node that said nothing gets `fallback`, this interface's own words.
+ *
+ * Where the Node's words begin with the headline they already say it, and are shown alone: so English, whose
+ * headline for a fixed sentence is that sentence, never shows one sentence twice.
+ */
+function refusal(body, fallback) {
+  const said = typeof body?.message === "string" && body.message !== "" ? body.message : null;
+  const headline = refusalHeadline(body?.error);
+  if (said === null) return notice(headline ?? fallback, "bad");
+  if (headline === null || said.startsWith(headline)) return notice(nodeWords(said), "bad");
+  return notice([headline, el("br"), nodeWords(said)], "bad");
 }
 
 /* ------------------------------------------------------------------ status strip ---------- */
@@ -86,7 +121,7 @@ let nodeState = { claimed: false, outboxPending: 0, mailboxId: null };
 function renderStatus(sessionText = null) {
   const dot = el("span", { class: nodeState.claimed ? "dot live" : "dot idle" });
   const items = [
-    el("span", { class: "field" }, [dot, el("span", { text: nodeState.claimed ? "listening" : "unclaimed" })]),
+    el("span", { class: "field" }, [dot, el("span", { text: t(nodeState.claimed ? "preauth.status.listening" : "preauth.status.unclaimed") })]),
     el("span", { class: "field mono", text: location.host }),
   ];
 
@@ -96,22 +131,45 @@ function renderStatus(sessionText = null) {
   if (sessionText !== null) {
     items.push(el("span", { class: "field session mono", text: sessionText }));
   }
+  if (languageSwitch !== null) items.push(languageSwitch);
 
   statusStrip.replaceChildren(...items);
 }
+
+/**
+ * The language, chosen before sign-in (ADR 46). Settings is where a choice is kept, and it is behind sign-in, so a
+ * reader on a browser that asks for another language could not reach it. This reloads the page with the review
+ * flag (`?locale=`), which applies to that load and needs no storage, so it works where the browser refuses it.
+ *
+ * Built once, and put back into the strip each time it is redrawn, so a redraw never takes the control from under
+ * somebody using it. Not drawn while there is one language to choose (`switchable()`).
+ */
+const languageSwitch = (() => {
+  const choices = switchable();
+  if (choices.length < 2) return null;
+  const select = el("select", { "aria-label": t("preauth.language") },
+    choices.map((choice) => el("option", { value: choice.tag, lang: choice.tag, text: choice.endonym })));
+  select.value = current().locale;
+  select.addEventListener("change", () => {
+    const next = new URL(location.href);
+    next.searchParams.set(LOCALE_FLAG, select.value);
+    location.assign(next);
+  });
+  return el("span", { class: "field" }, [select]);
+})();
 
 let sessionTicker = null;
 let renewingUntil = 0;
 
 function sessionReadout() {
   if (!isSignedIn()) return null;
-  if (Date.now() < renewingUntil) return "session · renewing";
+  if (Date.now() < renewingUntil) return t("preauth.session.renewing");
   const expiresAt = accessExpiresAt();
   if (expiresAt === null) return null;
   const remaining = Math.max(0, expiresAt - Date.now());
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
-  return `session · renews in ${minutes}:${String(seconds).padStart(2, "0")}`;
+  return t("preauth.session.renewsIn", { time: `${minutes}:${String(seconds).padStart(2, "0")}` });
 }
 
 function startSessionTicker() {
@@ -140,23 +198,23 @@ function panel(title, subtitle, children) {
  * a password — an install that ends with an account nobody can sign into again is not an install.
  */
 function renderClaim() {
-  const org = field("org", "Organization", { value: "", required: "required", placeholder: "Acme Logistics" });
-  const email = field("email", "Owner email", { type: "email", required: "required", autocomplete: "username" });
-  const password = field("password", "Password", {
+  const org = field("org", t("preauth.claim.org"), { value: "", required: "required", placeholder: t("preauth.claim.orgExample") });
+  const email = field("email", t("preauth.claim.email"), { type: "email", required: "required", autocomplete: "username" });
+  const password = field("password", t("preauth.password"), {
     type: "password", required: "required", minlength: "12", autocomplete: "new-password",
   });
-  const secret = field("secret", "Bootstrap secret", { required: "required", autocomplete: "off", class: "mono" });
+  const secret = field("secret", t("preauth.claim.secret"), { required: "required", autocomplete: "off", class: "mono" });
   const errors = el("div", { class: "errors", role: "alert" });
-  const submit = el("button", { class: "primary", type: "submit", text: "Claim this Node" });
+  const submit = el("button", { class: "primary", type: "submit", text: t("preauth.claim.submit") });
 
   const form = el("form", { novalidate: "novalidate" }, [
     org.node, email.node,
     // The two identities people conflate: an owner who claimed as admin@ was surprised to reply as hello@.
-    el("p", { class: "hint", text: "You sign in with this email. Mail goes out from a mailbox's address, which setup chooses." }),
+    el("p", { class: "hint", text: t("preauth.claim.emailHint") }),
     password.node,
-    el("p", { class: "hint", text: "At least 12 characters. No character-class rules — length is what resists guessing." }),
+    el("p", { class: "hint", text: t("preauth.password.rule") }),
     secret.node,
-    el("p", { class: "hint", text: "Shown once, by `mailda claim-secret`." }),
+    el("p", { class: "hint", text: t("preauth.claim.secretHint") }),
     submit, errors,
   ]);
 
@@ -164,7 +222,7 @@ function renderClaim() {
     event.preventDefault();
     errors.replaceChildren();
     submit.disabled = true;
-    submit.textContent = "Claiming…";
+    submit.textContent = t("preauth.claim.busy");
     try {
       const response = await fetch("/api/claim", {
         method: "POST",
@@ -200,25 +258,20 @@ function renderClaim() {
       }
       const body = await response.json().catch(() => ({}));
       // §5C: the server's actual reason, including the four-part explanation when it sends one.
-      errors.replaceChildren(notice(body.message ?? "Claim failed.", "bad"));
+      errors.replaceChildren(refusal(body, t("preauth.claim.failed")));
     } finally {
       submit.disabled = false;
-      submit.textContent = "Claim this Node";
+      submit.textContent = t("preauth.claim.submit");
     }
   });
 
   show(
     el("div", { class: "split" }, [
       el("div", { class: "split-lede", "data-reveal": "" }, [
-        el("h1", { text: "This Node is yours to claim." }),
-        el("p", {
-          text:
-            "It is running in your Cloudflare account, holding your data, under your keys. " +
-            "Nothing has been claimed yet, so it rejects incoming mail rather than filing it " +
-            "somewhere it cannot attribute.",
-        }),
+        el("h1", { text: t("preauth.claim.title") }),
+        el("p", { text: t("preauth.claim.lede") }),
       ]),
-      panel("First run", null, [form]),
+      panel(t("preauth.claim.heading"), null, [form]),
     ]),
   );
 }
@@ -243,35 +296,20 @@ function renderClaim() {
  */
 export function renderRecoveryCodes(codes) {
   const acknowledged = el("button", {
-    class: "primary", type: "button", text: "I have saved these ten codes",
+    class: "primary", type: "button", text: t("preauth.codes.saved"),
   });
   acknowledged.addEventListener("click", () => route());
 
   show(
     el("div", { class: "split" }, [
       el("div", { class: "split-lede", "data-reveal": "" }, [
-        el("h1", { text: "Write these down now." }),
-        el("p", {
-          text:
-            "These ten codes are the only way to recover this Node's keys. They open the escrow holding the "
-            + "content and credential keys — the ones that decrypt your mail — and they are shown here once. "
-            + "The Node keeps only a hash of each, so nothing, including us, can produce them again.",
-        }),
-        el("p", {
-          text:
-            "Put them somewhere that survives losing this computer and this Cloudflare account. A password "
-            + "manager, or paper in a different building. Each is single-use.",
-        }),
+        el("h1", { text: t("preauth.codes.title") }),
+        el("p", { text: t("preauth.codes.lede") }),
+        el("p", { text: t("preauth.codes.keep") }),
       ]),
-      panel("Recovery codes", "Shown once. Not recoverable.", [
+      panel(t("preauth.codes.heading"), t("preauth.codes.once"), [
         el("ol", { class: "codes" }, codes.map((code) => el("li", { class: "mono", text: code }))),
-        el("p", {
-          class: "hint",
-          text:
-            "Next: run `mailda recovery-codes confirm` and type one back. That proves a person holds them — "
-            + "until it is done, this Node reports degraded, because ten codes nobody has read are the same "
-            + "as none.",
-        }),
+        el("p", { class: "hint", text: t("preauth.codes.next") }),
         acknowledged,
       ]),
     ]),
@@ -326,12 +364,12 @@ function serialiseCredential(credential) {
  * who asks. That is the same property `login` protects by making an unknown address and a wrong password
  * indistinguishable, and it would be lost by asking for an email first.
  *
- * Returns a message on failure and never throws: this is the screen an operator reaches when the Node is
+ * Returns a notice on failure and never throws: this is the screen an operator reaches when the Node is
  * already misbehaving, and a thrown error here is a blank page.
  */
 async function signInWithPasskey() {
   if (typeof PublicKeyCredential === "undefined") {
-    return "This browser has no passkey support. Sign in with your password.";
+    return notice(t("preauth.passkey.unsupported"), "bad");
   }
   let options;
   try {
@@ -341,10 +379,10 @@ async function signInWithPasskey() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ purpose: "authenticate" }),
     });
-    if (!challenged.ok) return "This Node could not start a passkey sign-in.";
+    if (!challenged.ok) return notice(t("preauth.passkey.notStarted"), "bad");
     options = (await challenged.json()).publicKey;
   } catch {
-    return "This Node did not answer.";
+    return notice(t("preauth.passkey.silent"), "bad");
   }
 
   let credential;
@@ -366,14 +404,15 @@ async function signInWithPasskey() {
   });
   if (verified.ok) return "signed-in";
   const body = await verified.json().catch(() => ({}));
-  return body.message ?? "That passkey was not accepted.";
+  return refusal(body, t("preauth.passkey.failed"));
 }
 
-function renderSignIn(message = null) {
-  const email = field("email", "Email", { type: "email", required: "required", autocomplete: "username" });
-  const password = field("password", "Password", { type: "password", required: "required", autocomplete: "current-password" });
+/** Sign-in, with `ended` (a notice: why the last session ended) in its errors region, or nothing there. */
+function renderSignIn(ended = null) {
+  const email = field("email", t("preauth.signin.email"), { type: "email", required: "required", autocomplete: "username" });
+  const password = field("password", t("preauth.password"), { type: "password", required: "required", autocomplete: "current-password" });
   const errors = el("div", { class: "errors", role: "alert" });
-  const submit = el("button", { class: "primary", type: "submit", text: "Sign in" });
+  const submit = el("button", { class: "primary", type: "submit", text: t("preauth.signin.submit") });
 
   /*
    * The passkey button comes **first**, because ADR 29 makes passkeys the mechanism this product builds and
@@ -381,17 +420,17 @@ function renderSignIn(message = null) {
    * what the decision says. It is a button rather than an automatic prompt: a page that summons an
    * authenticator dialog on load is one people learn to dismiss without reading.
    */
-  const passkey = el("button", { class: "primary", type: "button", text: "Sign in with a passkey" });
-  const fallback = el("p", { class: "dim", text: "or sign in with your password" });
+  const passkey = el("button", { class: "primary", type: "button", text: t("preauth.signin.passkey") });
+  const fallback = el("p", { class: "dim", text: t("preauth.signin.or") });
   const form = el("form", { novalidate: "novalidate" }, [
     passkey, fallback, email.node, password.node, submit, errors,
   ]);
-  if (message !== null) errors.replaceChildren(notice(message, "bad"));
+  if (ended !== null) errors.replaceChildren(ended);
 
   passkey.addEventListener("click", async () => {
     errors.replaceChildren();
     passkey.disabled = true;
-    passkey.textContent = "Waiting for your passkey…";
+    passkey.textContent = t("preauth.passkey.waiting");
     try {
       const outcome = await signInWithPasskey();
       if (outcome === "signed-in") {
@@ -400,10 +439,10 @@ function renderSignIn(message = null) {
         return route();
       }
       // `null` is a cancelled prompt: the person changed their mind, which is not a failure to report.
-      if (outcome !== null) errors.replaceChildren(notice(outcome, "bad"));
+      if (outcome !== null) errors.replaceChildren(outcome);
     } finally {
       passkey.disabled = false;
-      passkey.textContent = "Sign in with a passkey";
+      passkey.textContent = t("preauth.signin.passkey");
     }
   });
 
@@ -411,7 +450,7 @@ function renderSignIn(message = null) {
     event.preventDefault();
     errors.replaceChildren();
     submit.disabled = true;
-    submit.textContent = "Signing in…";
+    submit.textContent = t("preauth.signin.busy");
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
@@ -425,25 +464,20 @@ function renderSignIn(message = null) {
         startSessionTicker();
         return route();
       }
-      errors.replaceChildren(notice(body.message ?? "Sign-in failed.", "bad"));
+      errors.replaceChildren(refusal(body, t("preauth.signin.failed")));
     } finally {
       submit.disabled = false;
-      submit.textContent = "Sign in";
+      submit.textContent = t("preauth.signin.submit");
     }
   });
 
   show(
     el("div", { class: "split" }, [
       el("div", { class: "split-lede", "data-reveal": "" }, [
-        el("h1", { text: "Shared inboxes that know who replied." }),
-        el("p", {
-          text:
-            "Every message that arrives here is kept byte for byte, encrypted at rest, and " +
-            "readable only by people you have granted access. Access is re-checked on every " +
-            "request — not carried in a token.",
-        }),
+        el("h1", { text: t("preauth.signin.title") }),
+        el("p", { text: t("preauth.signin.lede") }),
       ]),
-      panel("Sign in", null, [
+      panel(t("preauth.signin.heading"), null, [
         form,
         /*
          * The way in for somebody who was invited (#83).
@@ -455,7 +489,7 @@ function renderSignIn(message = null) {
          */
         el("p", { class: "hint" }, [
           (() => {
-            const link = el("button", { class: "linkish", type: "button", text: "I have an invitation" });
+            const link = el("button", { class: "linkish", type: "button", text: t("preauth.signin.invited") });
             link.addEventListener("click", () => renderJoin());
             return link;
           })(),
@@ -476,18 +510,18 @@ function renderSignIn(message = null) {
  * colleague's existing credential for a different site — which is what `current-password` would invite here.
  */
 function renderJoin() {
-  const secret = field("invitation", "Invitation secret", {
+  const secret = field("invitation", t("preauth.join.secret"), {
     required: "required", autocomplete: "off", class: "mono",
   });
-  const password = field("join-password", "Choose a password", {
+  const password = field("join-password", t("preauth.join.password"), {
     type: "password", required: "required", autocomplete: "new-password",
   });
   const errors = el("div", { class: "errors", role: "alert" });
-  const submit = el("button", { class: "primary", type: "submit", text: "Join" });
+  const submit = el("button", { class: "primary", type: "submit", text: t("preauth.join.submit") });
 
   const form = el("form", { novalidate: "novalidate" }, [
     secret.node, password.node,
-    el("p", { class: "hint", text: "At least 12 characters. No character-class rules — length is what resists guessing." }),
+    el("p", { class: "hint", text: t("preauth.password.rule") }),
     submit, errors,
   ]);
 
@@ -495,7 +529,7 @@ function renderJoin() {
     event.preventDefault();
     errors.replaceChildren();
     submit.disabled = true;
-    submit.textContent = "Joining…";
+    submit.textContent = t("preauth.join.busy");
     try {
       const response = await fetch("/api/invitations/redeem", {
         method: "POST",
@@ -511,31 +545,27 @@ function renderJoin() {
         return route();
       }
       const body = await response.json().catch(() => ({}));
-      // The Node's own words. Its refusal is deliberately the same for a wrong, spent or expired secret, and
-      // softening it here would either invent a reason or lose the one sentence that says what to do.
-      errors.replaceChildren(notice(body.message ?? "That invitation could not be used.", "bad"));
+      // The Node's own words, beside a headline that says no more than they do. Its refusal is deliberately the
+      // same for a wrong, spent or expired secret, and softening it here would either invent a reason or lose the
+      // one sentence that says what to do.
+      errors.replaceChildren(refusal(body, t("preauth.join.failed")));
     } finally {
       submit.disabled = false;
-      submit.textContent = "Join";
+      submit.textContent = t("preauth.join.submit");
     }
   });
 
   show(
     el("div", { class: "split" }, [
       el("div", { class: "split-lede", "data-reveal": "" }, [
-        el("h1", { text: "You have been invited." }),
-        el("p", {
-          text:
-            "Paste the secret you were given and choose a password. Nobody else ever sees it — not even " +
-            "the administrator who invited you. You will arrive holding nothing until they grant you " +
-            "access to a mailbox.",
-        }),
+        el("h1", { text: t("preauth.join.title") }),
+        el("p", { text: t("preauth.join.lede") }),
       ]),
-      panel("Join", null, [
+      panel(t("preauth.join.heading"), null, [
         form,
         el("p", { class: "hint" }, [
           (() => {
-            const back = el("button", { class: "linkish", type: "button", text: "I already have an account" });
+            const back = el("button", { class: "linkish", type: "button", text: t("preauth.join.member") });
             back.addEventListener("click", () => renderSignIn());
             return back;
           })(),
@@ -609,11 +639,7 @@ async function handOverToShell() {
   } catch (error) {
     // A shell that cannot load must say so rather than leave an empty page. The pre-authentication
     // surface is still here and still works, which is why this is recoverable at all.
-    return show(notice(
-      `The application could not be loaded (${error.message}). This Node is running — /api/doctor and ` +
-      `the original of every message are still reachable.`,
-      "bad",
-    ));
+    return show(notice(rich("preauth.shell.failed", { reason: reason(error) }), "bad"));
   }
   app.replaceChildren();
   return shell.mount(app);
@@ -631,7 +657,7 @@ onSessionChange((event) => {
     // rendered tree.
     if (shell !== null) return;
     renewingUntil = Date.now() + 1200;
-    renderStatus("session · renewed");
+    renderStatus(t("preauth.session.renewed"));
   }
   if (event.type === "signed-out") {
     clearInterval(sessionTicker);
@@ -640,7 +666,7 @@ onSessionChange((event) => {
     // 401, and would eventually render itself back on top of it.
     shell?.unmount();
     document.body.classList.remove("shell");
-    renderSignIn(event.message ?? null);
+    renderSignIn(ended(event));
   }
   if (event.type === "signed-in") {
     // No ticker: the shell's Settings screen carries the countdown from here on.
@@ -662,6 +688,23 @@ onSessionChange((event) => {
  */
 window.mailda = { refresh, ensureFresh, apiFetch, accessExpiresAt, isSignedIn, route };
 
+/**
+ * Why the last session ended, for sign-in to say, or null. A renewal that did not help is this interface's own
+ * finding (`session.client.js`), so it has words of its own; anything else is the Node's refusal.
+ */
+function ended(event) {
+  if (event.reason === "refresh_did_not_help") return notice(t("preauth.session.notRenewed"), "bad");
+  return event.message === undefined ? null : refusal({ error: event.reason, message: event.message }, null);
+}
+
+/**
+ * The browser's own reason for a failure (a module that would not load, a `fetch` that failed), for a sentence to
+ * carry. It is the platform's English, not this interface's words, so it is marked as English, as the Node's are.
+ */
+function reason(error) {
+  return nodeWords(String(error?.message ?? error));
+}
+
 start();
 if (isSignedIn()) startSessionTicker();
-route().catch((error) => show(notice(`Could not reach this Node: ${error.message}`, "bad")));
+route().catch((error) => show(notice(rich("preauth.unreachable", { reason: reason(error) }), "bad")));

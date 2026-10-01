@@ -1,6 +1,7 @@
 import { onlineManager, useQueryClient, type QueryCacheNotifyEvent, type QueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { APPROVAL_SUBJECT_KINDS, MATTER_TYPES, oneOf } from "@mailda/contract/schemas";
 import { t } from "/app/locale.js";
 import { MARK_IS_AUTHORED } from "../../brand.ts";
 import type { Text } from "../../i18n/format.ts";
@@ -11,7 +12,7 @@ import {
   type DoctorReport, type NotificationRow, type SendsResponse,
 } from "./api.ts";
 import { isAppRoute, type AppRoute } from "../../app-routes.ts";
-import { ago, clock } from "./format.ts";
+import { ago, clock, dateTime } from "./format.ts";
 import { healthRows } from "./health.ts";
 import { SetupUnfinished } from "./onboarding.tsx";
 import { useCompose, useToast, useToastAction } from "./shell-context.tsx";
@@ -766,46 +767,64 @@ interface NoticeBody {
 
 const fact = (value: unknown): string | null => typeof value === "string" ? value : null;
 const tally = (value: unknown): number => typeof value === "number" ? value : 0;
+/** A recorded instant in the viewer's zone and locale (`format.ts`), or the words for one that was not recorded. */
+const instant = (value: unknown, unrecorded: string): string => {
+  const at = fact(value);
+  return at === null ? unrecorded : dateTime(at);
+};
+/** The facts joined by a middle dot, each its own message or element. */
+const facts = (items: readonly ReactNode[]): ReactNode =>
+  items.map((item, index) => <Fragment key={index}>{index === 0 ? null : " · "}{item}</Fragment>);
 
 /**
  * A notice as a headline sentence and a line of facts. The line is a list, each item its own message, joined by
  * a middle dot; a fact the Node did not record is passed as the words that say so, never left out or guessed.
+ * A token the Node recorded is shown in its words where the contract lists it (an approval's subject, a matter's
+ * type), and as itself in `<code>` where it does not or is an identifier (a grant's scope).
  */
-function noticeText(notice: NotificationRow): { headline: string; meta: string } {
+function noticeText(notice: NotificationRow): { headline: ReactNode; meta: ReactNode } {
   const body = (notice.body ?? {}) as NoticeBody;
   const unrecorded = t("chrome.notice.unrecorded");
 
   if (notice.kind === "approval_request") {
+    const kind = fact(body.subjectKind);
     return {
-      headline: t("chrome.notice.approval", { kind: fact(body.subjectKind) ?? t("chrome.notice.an_act") }),
-      meta: [
+      headline: sentence("chrome.notice.approval", {
+        kind: kind === null ? t("chrome.notice.an_act")
+          : oneOf(APPROVAL_SUBJECT_KINDS, kind) ? t(`chrome.notice.kind.${kind}`) : <code>{kind}</code>,
+      }),
+      meta: facts([
         t("chrome.notice.request", { id: fact(body.approvalId) ?? notice.subjectId }),
         t("chrome.notice.asked_by", { who: fact(body.requestedBy) ?? t("chrome.notice.somebody") }),
-        fact(body.requestedAt) ?? unrecorded,
-      ].join(" · "),
+        instant(body.requestedAt, unrecorded),
+      ]),
     };
   }
 
   const acts = body.acts ?? {};
   const matter = fact(body.matterId) ?? t("chrome.notice.none_cited");
   const type = fact(body.matterType);
+  const scope = fact(body.scope);
   return {
-    headline: t("chrome.notice.supervised", {
+    headline: sentence("chrome.notice.supervised", {
       reader: fact(body.readerEmail) ?? fact(body.readerId) ?? t("chrome.notice.somebody"),
-      scope: fact(body.scope) ?? t("chrome.notice.read"),
+      scope: scope === null ? t("chrome.notice.read") : <code>{scope}</code>,
       mailbox: fact(body.mailboxName) ?? fact(body.mailboxId) ?? t("chrome.notice.a_mailbox"),
-      from: fact(body.grantedAt) ?? t("chrome.notice.unrecorded_at"),
-      to: fact(body.expiresAt) ?? unrecorded,
+      from: instant(body.grantedAt, t("chrome.notice.unrecorded_at")),
+      to: instant(body.expiresAt, unrecorded),
     }),
     // The counts are the part that makes this actionable rather than ceremonial: the difference between a
     // grant nobody used and one under which everything was opened.
-    meta: [
+    meta: facts([
       t("chrome.notice.queries", { n: tally(acts.queries), listed: t("chrome.notice.listed", { n: tally(acts.listed) }) }),
       t("chrome.notice.opened", { n: tally(acts.opened) }),
       t("chrome.notice.raw", { n: tally(acts.attachments) }),
-      type === null ? t("chrome.notice.matter", { matter }) : t("chrome.notice.matter.typed", { matter, type }),
+      type === null ? t("chrome.notice.matter", { matter })
+        : sentence("chrome.notice.matter.typed", {
+          matter, type: oneOf(MATTER_TYPES, type) ? t(`matters.type.${type}`) : <code>{type}</code>,
+        }),
       t("chrome.notice.grant", { grant: fact(body.grantId) ?? notice.subjectId }),
-    ].join(" · "),
+    ]),
   };
 }
 

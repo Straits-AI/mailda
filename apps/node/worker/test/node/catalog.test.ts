@@ -27,6 +27,16 @@ const ROUND_THREE = [
   "administrator", "receipt.measured", "onboard", "zone", "apex", "token", "delivery-event", "subscription", "consumer",
 ];
 
+/**
+ * Layer 3's rows (2 October 2026), proposed: the owner has not seen them yet. A row here is held to proposed, and
+ * a row outside it to confirmed, so the owner's next round is the only edit that moves one.
+ */
+const PROPOSED = [
+  "node.listening", "organization", "owner", "operator", "renew", "passkey-sign-in", "doctor.check", "credential-key", "signing-key",
+  "key-generation", "evidence", "evidence-bucket", "catalog-db", "migration", "backlog", "stranded", "orphaned", "supervision-notice",
+  "transport", "reduced-report", "sanitise", "classifier", "triage", "audit.refused", "workers-paid",
+];
+
 const whole = (locale: keyof typeof CATALOGS): Table => ({ ...CATALOGS[locale].preauth, ...CATALOGS[locale].app });
 
 const WORLD: World = {
@@ -148,13 +158,17 @@ describe("the glossary", () => {
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
     const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
-    // Every row is confirmed: round one (30 September 2026), its two held rows answered and round two's three new rows
-    // (1 October 2026), and layer 2b's twenty in round three. No glossary word stops zh-Hans being released; T4 and
-    // `UNMIGRATED` (layer 3) still do.
-    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
+    // Rounds one to three confirmed every row they saw. Layer 3's rows are proposed, so released today zh-Hans would
+    // ship each of them unconfirmed: this, not T4 or `UNMIGRATED`, is what holds the preview on now. Every proposed
+    // row is reported (each governs a key), and no other row is.
+    const reported = confirmedBeforeShipping(released(CONCEPTS));
+    expect(new Set(reported.map((line) => line.split(": ")[1]!.split(" is proposed")[0]))).toEqual(new Set(PROPOSED));
+    // With the proposed rows confirmed, nothing stops it.
+    const owned = CONCEPTS.map((concept) => (concept.status === "proposed" ? { ...concept, status: { confirmedBy: "owner", record: "a review" } } : concept));
+    expect(confirmedBeforeShipping(released(owned))).toEqual([]);
     // Put back to proposed, a row is reported on every key it governs, so the empty list above is the check finding
     // nothing, not a check that cannot find anything.
-    const back = (id: string) => CONCEPTS.map((concept) => (concept.id === id ? { ...concept, status: "proposed" as const } : concept));
+    const back = (id: string) => owned.map((concept) => (concept.id === id ? { ...concept, status: "proposed" as const } : concept));
     expect(confirmedBeforeShipping(released(back("breaker")))).toEqual([
       "zh-Hans limits.col.breaker: breaker is proposed, not confirmed",
       "zh-Hans limits.breakers: breaker is proposed, not confirmed",
@@ -164,9 +178,9 @@ describe("the glossary", () => {
       "zh-Hans composer.how.body: recall is proposed, not confirmed",
     ]);
     expect(confirmedBeforeShipping(released(back("passkey")))).toEqual([
-      "zh-Hans api.passkey.unsupported: passkey is proposed, not confirmed",
-      "zh-Hans api.passkey.none: passkey is proposed, not confirmed",
-    ]);
+      "api.passkey.unsupported", "api.passkey.none", "preauth.signin.passkey", "preauth.passkey.waiting", "preauth.passkey.unsupported",
+      "preauth.passkey.failed", "preauth.refusal.E_PASSKEY_REJECTED",
+    ].map((key) => `zh-Hans ${key}: passkey is proposed, not confirmed`));
     // A row put back to proposed is reported on every key it governs, its own and a prose concept's alike.
     const unconfirmed = back("brand");
     expect(confirmedBeforeShipping(released(unconfirmed))).toContain("zh-Hans brand.name: brand is proposed, not confirmed");
@@ -176,12 +190,12 @@ describe("the glossary", () => {
     expect(confirmedBeforeShipping(released(confirmed))).toEqual([]);
   });
 
-  it("records the owner's review against rows that exist, and leaves no row proposed", () => {
+  it("records the owner's review against rows that exist, and leaves only layer 3's rows proposed", () => {
     const ids = new Set(CONCEPTS.map((concept) => concept.id));
     expect([...CONFIRMED].filter((id) => !ids.has(id))).toEqual([]);
-    // Every row the owner has seen is confirmed, and the owner has seen every row. A confirmed row put back to
-    // proposed, or a new row added, is an edit here.
-    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual([]);
+    // Every row the owner has seen is confirmed, and the rows the owner has not seen are layer 3's. A confirmed row put
+    // back to proposed, or a new row added, is an edit here.
+    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual(PROPOSED);
     // Each round's rows carry that round's record, not another's.
     const recorded = (round: string) => CONCEPTS
       .filter((concept) => typeof concept.status === "object" && concept.status.record.includes(round)).map((concept) => concept.id);

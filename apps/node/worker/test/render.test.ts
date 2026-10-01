@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { BUDGETS } from "@mailda/budgets";
-import { messageBodyResponse } from "@mailda/contract/schemas";
+import { BODY_PROBLEMS, messageBodyResponse } from "@mailda/contract/schemas";
 
-import { renderBody, sanitizeHtml } from "../src/render/body.ts";
+import { CATALOGS } from "../src/i18n/catalog.ts";
+import { text } from "../src/i18n/format.ts";
+import { problemSentence, renderBody, sanitizeHtml } from "../src/render/body.ts";
 
 const mime = (parts: { html?: string; text?: string }) => {
   const boundary = "b1";
@@ -425,5 +427,35 @@ describe("the message's language and script", () => {
     expect((await renderBody(raw(["Content-Language: en"], utf8))).script).toBeNull();
     expect((await renderBody(raw(["Content-Language: !!"], utf8))).script).toBeNull();
     expect((await renderBody(raw([], [["text/html", "no-such-charset"]]))).script).toBeNull();
+  });
+});
+
+/**
+ * A body's problem carries its code beside the Node's sentence (ADR 46, layer 3): the interface says the sentence
+ * in its viewer's language by the code, and the API keeps the English. In English the two must read the same, so
+ * the reader's English is the Node's byte for byte.
+ */
+describe("a body's problem, by code", () => {
+  const en: Readonly<Record<string, unknown>> = CATALOGS.en.app;
+
+  it("says in the interface's English exactly what the Node's sentence says, for every code", () => {
+    const differing = BODY_PROBLEMS.filter((code) =>
+      text(en[`reader.body.problem.${code}`] as string, { cause: "a parser's line" }, "en", undefined)
+        !== problemSentence(code, "a parser's line", false));
+    expect(differing).toEqual([]);
+  });
+
+  it("names the code and the cause beside the sentence, and none when there is no problem", async () => {
+    const empty = await renderBody(mime({ html: "<script>everything()</script>" }));
+    expect([empty.state, empty.problemCode, empty.problemCause]).toEqual(["unparsed", "sanitised_empty", null]);
+    expect(empty.problem).toBe(en["reader.body.problem.sanitised_empty"]);
+    expect(messageBodyResponse.safeParse({ ...empty, recipients: { to: [], cc: [], replyTo: null } }).success).toBe(true);
+
+    const fallback = await renderBody(mime({ html: "<script>everything()</script>", text: "the real words" }));
+    expect([fallback.state, fallback.problemCode]).toEqual(["text-only", "sanitised_empty"]);
+    expect(fallback.problem).toBe("Nothing in this message's HTML survived sanitising. Its plain-text alternative is shown instead.");
+
+    const plain = await renderBody(mime({ text: "just words" }));
+    expect([plain.problem, plain.problemCode, plain.problemCause]).toEqual([null, null, null]);
   });
 });

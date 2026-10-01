@@ -318,7 +318,11 @@ describe("the ledgers in zh-Hans", () => {
     const detail = container.querySelector("#detail-snd_over")!;
     expect([...detail.querySelectorAll(".recipient .label")].map((one) => one.textContent)).toEqual(["收件人", "收件人", "抄送", "密送"]);
     expect([...container.querySelectorAll(".delivery-chip")].map((one) => one.textContent)).toContain("已受理 2");
-    expect(detail.querySelector(".delivery-bounced")!.getAttribute("title")).toMatch(/（hard）$/);
+    // The provider's bounce type is its token, in <code> beside the state rather than inside its title, where it could
+    // not be marked; and a recipient's last error is the Node's English, marked.
+    expect(detail.querySelector(".delivery-bounced")!.getAttribute("title")).not.toMatch(/hard/);
+    expect(detail.querySelector(".delivery-bounced + code")?.textContent).toBe("hard");
+    expect(screen.getByText("550 no such user").closest("[lang]")?.getAttribute("lang")).toBe("en");
     // A Butler's send offers 放行, as a rule-held one does; neither is 放回队列, which is a case given back.
     expect(screen.getAllByRole("button", { name: "放行" })).toHaveLength(2);
     await expect(html(container)).toMatchFileSnapshot("./golden/ledgers.outbox.zh-Hans.html");
@@ -343,7 +347,7 @@ describe("the ledgers in zh-Hans", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("审计");
   });
 
-  it("says the Doctor's states and remedies in Chinese, with each finding's detail and fix in the Node's English", async () => {
+  it("says the Doctor's titles, states and remedies in Chinese, with each check's name, detail and fix in the Node's English", async () => {
     zh();
     answerDoctor(true, { binding: false, rest: { accountId: "acc_123" } });
     const { container } = mount(<Doctor />);
@@ -355,6 +359,11 @@ describe("the ledgers in zh-Hans", () => {
     expect([...container.querySelectorAll("tbody .state")].map((one) => one.textContent)).toEqual(["ok", "未通过", "降级", "提示"]
       .map((word) => (word === "ok" ? CATALOGS["zh-Hans"].app["health.status.ok"] : word)));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("诊断");
+    // A check this interface knows has a Chinese title over its name; a name it does not know is shown alone. The
+    // name is the Node's token either way, marked, since the Node's fix text cites checks by it.
+    const checks = [...container.querySelectorAll("tbody tr")].map((row) => row.firstElementChild!.outerHTML);
+    expect(checks[1]).toBe('<td>发信通道<span class="mono dim block"><span lang="en">transport_adapters</span></span></td>');
+    expect(checks[0]).toBe('<td class="mono"><span lang="en">d1_reachable</span></td>');
   });
 
   it("joins a batch's two sentences as Chinese joins them, and marks each fault's words as the Node's", async () => {

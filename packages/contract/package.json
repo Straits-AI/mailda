@@ -31,6 +31,7 @@
     "./relations": "./src/relations.ts",
     "./authority": "./src/authority.ts",
     "./naming": "./src/naming.ts",
-    "./routing-rule-name": "./src/routing-rule-name.ts"
+    "./routing-rule-name": "./src/routing-rule-name.ts",
+    "./preauth-errors": "./src/preauth-errors.ts"
   }
 }

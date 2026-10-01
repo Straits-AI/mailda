@@ -1,0 +1,34 @@
+<!-- already_claimed -->
+<p class="notice bad" data-reveal="">
+<span lang="en">This Node has already been claimed. Sign in instead, or restore from backup to start over.</span>
+</p>
+<!-- bad_secret -->
+<p class="notice bad" data-reveal="">
+<span lang="en">That bootstrap secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.</span>
+</p>
+<!-- not_installed -->
+<p class="notice bad" data-reveal="">
+<span lang="en">This Node has no bootstrap secret recorded. Run `mailda deploy` to complete installation.</span>
+</p>
+<!-- weak_password -->
+<p class="notice bad" data-reveal="">That password is too short.<br>
+<span lang="en">E_PASSWORD_TOO_SHORT  minimum=12, got 5
+  why      length is the only property that reliably resists offline guessing
+  fix      use a longer passphrase; there are no character-class requirements</span>
+</p>
+<!-- cross_site -->
+<p class="notice bad" data-reveal="">This Node refused a request that did not come from its own page.<br>
+<span lang="en">E_CROSS_SITE_REQUEST  a POST arrived from https://evil.example, and this Node is https://node.example
+  why      an Origin that is not this Node's is another site acting as the person signed in here.
+  fix      state-changing requests must come from this Node's own interface</span>
+</p>
+<!-- internal -->
+<p class="notice bad" data-reveal="">
+<span lang="en">This Node failed to handle the request. Its operator can find this in the log.</span>
+</p>
+<!-- unknown -->
+<p class="notice bad" data-reveal="">
+<span lang="en">A refusal this interface has no words for.</span>
+</p>
+<!-- silent -->
+<p class="notice bad" data-reveal="">Claim failed.</p>

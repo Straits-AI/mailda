@@ -27,7 +27,7 @@
 <time datetime="2026-09-26T07:09:02.000Z">[full]</time>
 </dd>
 <dt>Authentication</dt>
-<dd>SPF absent · DKIM fail · DMARC fail — <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span>
+<dd>SPF absent · DKIM <code>fail</code> · DMARC <code>fail</code> — <span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span>
 </dd>
 <dt>Size</dt>
 <dd>14,090 bytes</dd>
@@ -50,7 +50,7 @@
 </details>
 </div>
 <p class="auth-alert" role="alert">
-<span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf absent, dkim fail; the domain asks receivers to reject)</p>
+<span class="mono">northwind.example</span> <span class="bad">says this message is not theirs</span> (dmarc fail; spf absent, dkim <code>fail</code>; the domain asks receivers to <code>reject</code>)</p>
 <div class="reader-actions" role="group" aria-label="Message actions">
 <span class="popover-wrap">
 <button type="button" class="btn btn-icon" aria-haspopup="menu" aria-expanded="false" aria-label="More actions">

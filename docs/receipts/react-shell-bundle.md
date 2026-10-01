@@ -1,7 +1,7 @@
 ---
 id: react-shell-bundle
 kind: measured-tripwire
-measured_on: 2026-10-01
+measured_on: 2026-10-02
 stale_when: >
   react, react-dom, @tanstack/react-router or @tanstack/react-query change major version; the esbuild
   target moves below es2022; a fourth runtime dependency is added to the authenticated application; the
@@ -13,18 +13,41 @@ stale_when: >
   until the interface is migrated; or `/app/locale.js` starts carrying an `app` table, which
   `test/catalog-served.test.ts` refuses
 values:
-  shell.bundle_bytes: 761502
-  shell.bundle_gzip_bytes: 219307
+  shell.bundle_bytes: 762699
+  shell.bundle_gzip_bytes: 216350
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
-  shell.pre_auth_locale_bytes: 3348
-  shell.catalog_bytes_en: 49074
-  shell.catalog_bytes_zh_hans: 49428
+  shell.pre_auth_locale_bytes: 15903
+  shell.catalog_bytes_en: 92568
+  shell.catalog_bytes_zh_hans: 92909
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
 composer and nobody had priced either half.
 
+
+## Re-measured 2 October 2026: the interface's languages, layers 2b and 3
+
+Layer 2b (every other React screen) did not remeasure, so this one measurement carries both layers. Layer 3 migrated
+the framework-free scripts before sign-in (`app.client.js`, `session.client.js`, `theme.client.js`), which emptied
+`UNMIGRATED`; keyed the Doctor's check titles, a capability's description and a body's problem by the contract's
+lists; and gave every locale's `preauth` table the claim, recovery, sign-in, invitation and passkey screens and the
+eighteen headlines of `PREAUTH_ERRORS`. `pnpm build:client` (the build step `wrangler deploy --dry-run` runs) printed,
+on branch `i18n-l3` from `f876780`, after the layer's last catalog change:
+
+| | 1 October (layer 2a) | 2 October (layers 2b and 3) | delta |
+|:--|--:|--:|--:|
+| shell bundle | 761,502 raw / 219,307 gzip | **762,699 / 216,350** | +1,197 (+0.16%) / −2,957 (−1.35%) |
+| `/app/locale.js`, loaded before sign-in | 3,348 / 1,657 | **15,903 / 6,470** | +12,555 (4.75×) |
+| the `en` app table | 49,074 / 13,559 | **92,568 / 25,722** | +43,494 (1.9×) |
+| the `zh-Hans` app table | 49,428 / 15,778 | **92,909 / 29,365** | +43,481 (1.9×) |
+
+`/app/locale.js` moved past the 10% clause, and is the one the pre-authentication pages pay for: it now carries every
+pre-sign-in word in both locales, where layer 1 carried the wordmark and the language section's few. 6.5 KB gzip,
+fetched once per content tag, before any framework and with none (ADR 30 and ADR 46, amended in Blueprint §29 with this
+measurement). The app tables moved past it too, as the 1 October projection said they would; they are near the 100 KB
+raw it extrapolated, and the interface is now migrated, so a further move is a wording change, not a migration. The
+shell did not move past the band: its words left it while its code grew.
 
 ## Re-measured 1 October 2026: the interface's languages, layer 2a
 
