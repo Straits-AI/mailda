@@ -16,7 +16,7 @@ import { domainOf } from "./policy.ts";
  *
  * A rate breaker says *too much, too fast* — the mail is still wanted, so it gates and goes when the window
  * clears (`src/breakers.ts`). A pause says *this must not be sent at all*, and a windowed answer to that would
- * flap: a domain stopped because it is sending something it must not send would resume by itself at the top of
+ * flap: a domain paused because it is sending something it must not send would unpause itself at the top of
  * the hour. So a pause is a row, and only a person removes it.
  *
  * ## #64's asymmetry, inverted, for the same reason it held there
@@ -25,7 +25,7 @@ import { domainOf } from "./policy.ts";
  * placing only ever preserves, and ceremony in front of it is how evidence is lost in the hour after somebody
  * realises they need it. Lifting re-permits destruction, so it takes two people and a reason.
  *
- * Placing a domain pause **stops a customer's mail**. So the safe direction reverses, and the conclusion
+ * Placing a domain pause **pauses a customer's mail**. So the safe direction reverses, and the conclusion
  * reverses with it:
  *
  *   place   two distinct administrators (#61's machinery, subject kind `domain_pause`) and a **mandatory
@@ -79,7 +79,7 @@ export interface DomainPauseRequested {
 }
 
 /**
- * Asks two other administrators to stop every send from a domain.
+ * Asks two other administrators to pause every send from a domain.
  *
  * Writes the `domain_pauses` row **and** the approval in one transaction, with `placed_at` NULL: a request is
  * not a pause, and the row exists from the moment somebody asks so that the reason the two approvers read is
@@ -127,10 +127,10 @@ export async function requestDomainPause(
   if (stated === "") {
     throw unprocessable("E_DOMAIN_PAUSE_REASON_REQUIRED", {
       what: "a domain pause needs a reason, and this one is empty",
-      why: "#66 made the reason part of what placing is: this stops every send from the domain, and the two "
+      why: "#66 made the reason part of what placing is: this pauses every send from the domain, and the two "
         + "administrators asked to approve it read this text — a blank one asks them to agree to nothing in "
         + "particular",
-      fix: "send {\"reason\":\"...\"} saying what this domain is doing that has to stop",
+      fix: "send {\"reason\":\"...\"} saying what this domain is doing that has to be paused",
     });
   }
 
@@ -163,7 +163,7 @@ export async function requestDomainPause(
   const planned = planApproval(env, ctx, orgId, {
     subjectKind: "domain_pause",
     subjectId: pauseId,
-    // The **organization**: who may decide a pause is who administers the Node whose mail it stops. See
+    // The **organization**: who may decide a pause is who administers the Node whose mail it pauses. See
     // `SCOPE_OF`, which is what makes this a decision the compiler asked for rather than a value chosen here.
     scopeId: orgId,
     actorUserId,
@@ -184,11 +184,11 @@ export async function requestDomainPause(
     // for the reason `grant` permits admins to grant `org.admin`.
     throw conflict("E_DOMAIN_PAUSE_UNSATISFIABLE", {
       what: `${domain} cannot be paused: ${describeShortfall(planned.shortfall, orgId, "organization")}`,
-      why: "#66 requires two distinct administrators to stop a domain's mail and excludes whoever asked, so "
+      why: "#66 requires two distinct administrators to pause a domain's mail and excludes whoever asked, so "
         + "an organization with fewer than two other org.admin holders has no pause anybody can complete. "
         + "The domain keeps sending, which is the only thing a refusal here can leave behind",
       fix: "grant org.admin to two people who are not you — POST /api/access/grant — then ask again. If the "
-        + "domain has to stop right now and nobody else holds it, the acts that are available to one "
+        + "domain has to be paused right now and nobody else holds it, the acts that are available to one "
         + "administrator are a policy that denies (POST /api/policies) and cancelling the sends in flight",
     });
   }
@@ -223,14 +223,14 @@ export async function requestDomainPause(
         what: `${domain} is already paused (${now.live})`,
         why: "one domain has one pause: two would need two lifts to restore the mail, and an administrator "
           + "who lifted the one they could see would believe they had",
-        fix: `nothing to do — mail from ${domain} is already stopped. To restore it, `
+        fix: `nothing to do — mail from ${domain} is already paused. To lift the pause, `
           + `POST /api/domain-pauses/${now.live}/lift, which one administrator may do alone`,
       });
     }
     throw conflict("E_DOMAIN_PAUSE_PENDING", {
       what: `${domain} already has a pause waiting to be decided${now?.pending == null ? "" : ` (${now.pending})`}`,
       why: "one domain has one open question at a time: two requests would ask two pairs of administrators "
-        + "about the same domain, and whichever finished first would stop it while the other still read as "
+        + "about the same domain, and whichever finished first would pause it while the other still read as "
         + "pending",
       fix: "GET /api/approvals to see the open request and the reason it was asked for. If the reason is "
         + "wrong, the administrators can deny it and a fresh request can be made",
@@ -254,7 +254,7 @@ export interface DomainPauseLifted {
 }
 
 /**
- * Releases a pause. **One administrator, alone**, and that is the decision rather than a shortcut.
+ * Lifts a pause. **One administrator, alone**, and that is the decision rather than a shortcut.
  *
  * The whole act is one conditional UPDATE with its audit entry in the same transaction. `lifted_at IS NULL`
  * is what makes two concurrent lifts produce one lift and one refusal (#9), and it is what makes the entry
@@ -262,7 +262,7 @@ export interface DomainPauseLifted {
  * already flowing.
  *
  * `reason` is optional here and mandatory on the way in, which is the asymmetry stated once more where it is
- * implemented: stopping a customer's mail needs a justification two people read; restarting it does not need
+ * implemented: pausing a customer's mail needs a justification two people read; lifting the pause does not need
  * one at all, because delay is the harm this direction is trying to avoid. The text is recorded when given.
  */
 export async function liftDomainPause(
@@ -283,7 +283,7 @@ export async function liftDomainPause(
   if (paused === null) {
     throw notFound("E_NO_DOMAIN_PAUSE", {
       what: `${pauseId} is not a domain pause in this organization`,
-      why: "a lift names the pause it releases; there is nothing here to release",
+      why: "a lift names the pause it lifts; there is nothing here to lift",
       fix: "GET /api/domain-pauses lists every pause in force with its id, its domain and its reason",
     });
   }
@@ -291,7 +291,7 @@ export async function liftDomainPause(
     // A request nobody decided is not a pause, and lifting it would be a third answer to an open question
     // that already has two. The act available on a request is to decide it.
     throw conflict("E_DOMAIN_PAUSE_NOT_PLACED", {
-      what: `pause ${pauseId} was requested and never placed, so ${paused.domain} is not stopped`,
+      what: `pause ${pauseId} was requested and never placed, so ${paused.domain} is not paused`,
       why: "a pause takes two administrators; until they decide, the row is a request and the domain is "
         + "sending normally — there is nothing to lift",
       fix: "POST /api/approvals/:id/decide to deny the request, which closes it. GET /api/approvals finds it",
@@ -300,10 +300,10 @@ export async function liftDomainPause(
   if (paused.lifted_at !== null) {
     throw conflict("E_DOMAIN_PAUSE_ALREADY_LIFTED", {
       what: `pause ${pauseId} was lifted at ${paused.lifted_at}`,
-      why: "a lifted pause stops nothing, so there is nothing left to release; the row stays as the record "
-        + "of what was stopped and when it started again",
-      fix: `nothing to do — mail from ${paused.domain} is flowing. Ask for a new pause if it has to stop `
-        + "again: POST /api/domain-pauses",
+      why: "a lifted pause holds nothing back, so there is nothing left to lift; the row stays as the record "
+        + "of when the domain was paused and when the pause was lifted",
+      fix: `nothing to do — mail from ${paused.domain} is flowing. Ask for a new pause if it has to be `
+        + "paused again: POST /api/domain-pauses",
     });
   }
 

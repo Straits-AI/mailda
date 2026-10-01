@@ -32,9 +32,9 @@ export const sending = {
    * pause a person places.
    *
    * `GET  /api/breakers`                 what every rate is at right now, armed or not
-   * `POST /api/domain-pauses`            ask two other administrators to stop a domain's mail
+   * `POST /api/domain-pauses`            ask two other administrators to pause a domain's mail
    * `GET  /api/domain-pauses`            every pause in force, with its reason and its age
-   * `POST /api/domain-pauses/:id/lift`   restart a domain. **One** administrator, alone
+   * `POST /api/domain-pauses/:id/lift`   lift a domain's pause. **One** administrator, alone
    *
    * ## `GET /api/breakers` exists because of AGENTS.md's third principle, not for a dashboard
    *
@@ -55,7 +55,7 @@ export const sending = {
    * domain outright** — one would contradict #66's whole asymmetry.
    *
    * The lift, by contrast, *is* a single endpoint one administrator calls alone, and that asymmetry is the
-   * decision rather than an accident: placing stops a customer's mail and lifting restarts it, so ceremony
+   * decision rather than an accident: placing pauses a customer's mail and lifting the pause lets it go again, so ceremony
    * belongs in front of the first and nowhere near the second. #64 made the same call in the opposite
    * direction about legal holds, for the same reason.
    */
@@ -83,7 +83,7 @@ export const sending = {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Both absent values reach `requestDomainPause` as the empty string and are refused there with the
     // four-part message, rather than being defaulted — a pause with an invented reason would be this Node
-    // writing a justification for stopping somebody's mail.
+    // writing a justification for pausing somebody's mail.
     const requested = await requestDomainPause(
       env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.reason ?? ""),
     );
@@ -96,7 +96,7 @@ export const sending = {
 
   "POST /api/domain-pauses/:pauseId/lift": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    // Optional, unlike the reason for placing. Restarting mail is the direction #66 made easy, so a
+    // Optional, unlike the reason for placing. Lifting a pause is the direction #66 made easy, so a
     // missing reason is accepted and recorded as absent rather than as a phrase nobody said.
     const reason = body.reason === undefined || body.reason === null ? null : String(body.reason);
     return Response.json({

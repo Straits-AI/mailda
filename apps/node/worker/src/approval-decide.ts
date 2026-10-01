@@ -656,8 +656,8 @@ export const HAS_AWAITING_MANIFEST: Record<ApprovalSubjectKind, boolean> = {
   // An export stays `requested` until somebody runs it, so a denial leaves it exactly where it was and a
   // withdrawal that makes the request unsatisfiable does too. Nothing was moved to be moved back.
   ediscovery_export: false,
-  // A denied pause request leaves `placed_at` NULL, which is where it started: the domain was never stopped,
-  // so nothing is restored. The row stays as the record that somebody asked to stop a domain's mail and two
+  // A denied pause request leaves `placed_at` NULL, which is where it started: the domain was never paused,
+  // so nothing is restored. The row stays as the record that somebody asked to pause a domain's mail and two
   // administrators would not — which is the half of the trail a unilateral pause would not produce.
   domain_pause: false,
 };

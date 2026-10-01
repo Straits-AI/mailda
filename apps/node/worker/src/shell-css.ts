@@ -1507,7 +1507,10 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .butler-dry { border-top: 1px solid var(--border-soft); padding-top: 14px; margin-bottom: 24px; }
 .butler-dry h3 { margin: 0 0 6px; }
 .butler-dry-runs, .export-objects { list-style: none; margin: 8px 0; padding: 0; }
-.butler-dry-runs li, .export-objects li { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
+.butler-dry-runs li, .export-objects li { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.export-objects li { margin: 4px 0; }
+/* A stack of "Dry run over …" buttons: 8px between them, as every row of controls has. Collapsed li margins gave 4. */
+.butler-dry-runs { display: flex; flex-direction: column; gap: 8px; }
 .butler-dry-result { margin-top: 12px; }
 /* The detail is JSON on one line and can be long. It scrolls in its own cell rather than widening the table:
    nothing makes the page scroll sideways. */

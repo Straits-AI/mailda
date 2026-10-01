@@ -50,7 +50,7 @@ An approval decides on a **subject**: `(subject_kind, subject_id)`, unique over 
 | `hold_lift` | a `hold_lifts` row, one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's | `approval.decide` on the held mailbox |
 | `supervised_read` | a `supervised_grants` row | sets `granted_at` and owes §7's notice | `[2]` ([#63][63]) | `approval.decide` on the mailbox being read |
 | `ediscovery_export` | an `exports` row | makes the run permissible | `[2]` ([#65][65]) | `approval.decide` on the mailbox being copied |
-| `domain_pause` | a `domain_pauses` row | sets `placed_at`; **stops every send from a domain** | `[2]` ([#66][66]) | **`org.admin` on the organization** |
+| `domain_pause` | a `domain_pauses` row | sets `placed_at`; **pauses every send from a domain** | `[2]` ([#66][66]) | **`org.admin` on the organization** |
 
 It shipped manifest-shaped (`manifest_id TEXT NOT NULL`, `UNIQUE (manifest_id)`), and the lift was the second
 caller, which found that on its first day. The two alternatives lose for the same reason in two directions: a

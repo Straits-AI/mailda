@@ -92,7 +92,7 @@ import type { TransportAdapter } from "./transport.ts";
  *
  * `domain_paused` is #66's, and it is the second member of this list that neither the approved path nor even
  * *dispatch* owns exclusively: it is written at the **seal** as well, by `sealManifest`, because a pause in
- * force must stop a send at the moment it is composed rather than a hold window later. It lives here anyway,
+ * force must refuse a send at the moment it is composed rather than a hold window later. It lives here anyway,
  * for `authority_lost`'s reason — one list, or the vocabulary has two homes and the closed-world test over the
  * minted tokens can only see one of them. This module's name is about where most of these are decided, not
  * about who may declare one.
@@ -135,11 +135,11 @@ export const WITHHOLDING = {
   },
   domain_paused: {
     // Not a raise, and the distinction is worth keeping sharp beside `evidence_changed` above: two
-    // administrators deliberately stopped this domain, so the Node is doing exactly what it was told. What
+    // administrators deliberately paused this domain, so the Node is doing exactly what it was told. What
     // makes it visible is `doctor`, which reports every pause in force with its reason and its age — an
     // operational state rather than an alarm, because an alarm for a decision somebody took is noise.
     raises: false,
-    sentence: "Sending from this domain is paused: two administrators stopped it, and one can restart it.",
+    sentence: "Sending from this domain is paused: two administrators paused it, and one can lift the pause.",
   },
 } as const satisfies Partial<Record<SendReason, { raises: boolean; sentence: string }>>;
 
@@ -184,7 +184,7 @@ export function authorityLost(actorUserId: string, mailboxId: string): Withholdi
  *
  * The `fix` half of the sentence names the act and who may perform it, because AGENTS.md's rule about
  * refusals is not only about budgets: a person reading "this domain is paused" needs to know that one
- * administrator can restart it and where. The pause id is in the evidence rather than in the prose, so the
+ * administrator can lift it and where. The pause id is in the evidence rather than in the prose, so the
  * sentence stays a sentence and the trail keeps the join key.
  */
 export function domainPaused(
@@ -193,8 +193,8 @@ export function domainPaused(
 ): Withholding {
   return withheld(
     "domain_paused",
-    `Mail from ${domain} has been stopped since ${pause.placedAt}: "${pause.reason}". This send never left `
-    + "and the mail service was never asked. Any one administrator can restart the domain — "
+    `Mail from ${domain} has been paused since ${pause.placedAt}: "${pause.reason}". This send never left `
+    + "and the mail service was never asked. Any one administrator can lift the pause — "
     + `POST /api/domain-pauses/${pause.pauseId}/lift — and the message has to be composed again, because a `
     + "sealed send is never edited.",
     { domain, pauseId: pause.pauseId, placedAt: pause.placedAt },

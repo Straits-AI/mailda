@@ -94,7 +94,7 @@ describe("every rate over send_recipient_events counts attributed events only", 
   it("keeps domain_pauses to the two writers its asymmetry is made of", () => {
     // Placing is `src/approval-decide.ts` (the completing decision's `UPDATE domain_pauses`), because a pause is
     // #61's fifth approval subject. Everything else — the request row and the lift — is `src/domain-pause.ts`.
-    // A third writer would be a way to stop or restart a domain's mail that skips one of those two acts, and
+    // A third writer would be a way to pause a domain's mail or lift the pause that skips one of those two acts, and
     // it is exactly what `content-deletion-world.test.ts` refuses for `holds` on #64's terms.
     const offenders: string[] = [];
     for (const relative of readdirSync(srcDir, { recursive: true, encoding: "utf8" })) {

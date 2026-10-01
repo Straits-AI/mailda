@@ -25,7 +25,7 @@ const SENDS = {
     id: "snd_1", subject: "two recipients", envelope_to: JSON.stringify(["friend@gmail.test", "ops@example.test"]),
     state: "handed_over", state_at: "2026-09-28T04:36:51.379Z", release_at: "2026-09-28T04:36:51.379Z",
     attempts: 1, last_error: null, transport_message_id: "<m@example.test>", fidelity: "authored", has_submitted: 1,
-    state_reason: null, policy_outcome: "allow", retry: { mode: null, why: "" },
+    state_reason: null, policy_outcome: "allow", retry: { mode: null, why: "acceptance_observed" },
     recipients: [
       recipient("friend@gmail.test", null, "verified_destination"),
       // Served by no Node (an event clears the reason in SQL), and rendered safely anyway: an outcome wins.

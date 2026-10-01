@@ -155,7 +155,7 @@ export async function pendingApprovals(
        LEFT JOIN exports x ON a.subject_kind = 'ediscovery_export' AND x.id = a.subject_id
                           AND x.org_id = a.org_id
       -- #66's pause, on the same query and outer for the same reason as the three above: an administrator
-      -- being asked to stop a customer's mail must see which domain and why before they agree to it, and
+      -- being asked to pause a customer's mail must see which domain and why before they agree to it, and
       -- every other subject kind produces all-null here.
       LEFT JOIN domain_pauses dp ON a.subject_kind = 'domain_pause' AND dp.id = a.subject_id
                                 AND dp.org_id = a.org_id

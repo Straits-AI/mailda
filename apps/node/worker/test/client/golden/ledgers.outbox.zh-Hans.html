@@ -28,7 +28,7 @@
 <span class="state state-held" title="尚未移交。你仍可以停止它。">暂留</span>
 <span class="state state-reason delivery-chip" title="一条规则暂扣了这封邮件。它尚未发出。任何可以用此邮箱发送的人都能放行它，不需要审批人，所以暂扣是两道关卡中较轻的一道。">规则暂扣</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish">放行</button> · <button type="button" class="linkish">停止</button>
 </td>
@@ -56,7 +56,7 @@
 <span class="state state-awaiting" title="尚未移交。一条规则拦下了这封邮件，它正在等人放行。是哪一道关卡，见旁边的原因：规则暂扣，任何可以用此邮箱发送的人都能放行；或者审批，只有审批人能给出。">待放行</span>
 <span class="state state-reason delivery-chip" title="这封邮件由管家撰写，还没有人看过，所以本节点不会移交它。它尚未发出，也没有丢失。任何可以用此邮箱发送的人都能放行它（撰写它本来就需要同样的权限），放行后它会回到普通的暂留窗口，在那里仍可以取消。它不会自行放行：管家是一个程序，这道关卡的意义就在于程序无权断定某个人已经同意。">等待人工放行</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish" title="这封邮件由管家撰写。放行后，它会进入普通的暂留窗口，在那里仍然可以停止。">放行</button> · <button type="button" class="linkish">停止</button>
 </td>
@@ -77,14 +77,14 @@
 <td>
 <button type="button" class="row-toggle" aria-expanded="true" aria-controls="detail-snd_over">subject snd_over</button>
 </td>
-<td class="dim mono">a@example.test, b@example.test, c@example.test, d@example.test</td>
+<td class="dim mono">a@example.test、b@example.test、c@example.test和d@example.test</td>
 <td>
 <span class="state state-handed_over" title="邮件服务商已接手。是否到达收件方，从这里无从得知。">已移交</span>
 <span class="state delivery-bounced delivery-chip" title="接收方服务器退回了它。硬退信表示地址有误；软退信表示临时故障的重试次数已经用完。">退信 1</span>
 <span class="state delivery-verified_destination delivery-chip" title="已验证的目标地址不会报告投递结果。对本节点 Cloudflare 账户的一次读取显示，这个地址是已验证的 Email Routing 目标地址，且在这封邮件移交之前就已验证；在测量过的唯一一例中，Cloudflare 没有为发往已验证目标地址的邮件发布任何投递事件。所以这里不会有回报。这种沉默不是本节点的故障，也不说明这封邮件是否已到达。如果某个地址在最近一次读取之后才从账户的列表中移除，在再次读取列表之前，这里仍会显示此项。">已验证的目标地址 1</span>
 <span class="state delivery-accepted delivery-chip" title="接收方邮件服务器受理了这封邮件并返回了 250。这不等于有人读过它：这里的一切都无法知道这一点。">已受理 2</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <a class="mono" href="/api/sends/snd_over/submitted">.eml</a>
 </td>
@@ -134,9 +134,9 @@
 <td>
 <span class="state state-outcome_unknown" title="它从未发出。本节点在请求邮件服务商之前会先存下提交的字节，而这里没有，所以这次尝试在联系邮件服务商之前就失败了。什么都没有发出，再次发送也不会产生重复的邮件。">结果未知</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
-<button type="button" class="linkish" title="">重新发出…</button>
+<button type="button" class="linkish">重新发出…</button>
 </td>
 </tr>
 <tr id="detail-snd_unknown" class="detail" hidden="">
@@ -161,9 +161,9 @@
 <td>
 <span class="state state-refused" title="邮件服务商不肯接收它。它从未发出。">服务商拒收</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
-<button type="button" class="linkish" title="">重试</button>
+<button type="button" class="linkish">重试</button>
 </td>
 </tr>
 <tr id="detail-snd_refused" class="detail" hidden="">
@@ -186,7 +186,7 @@
 <span class="state state-reason delivery-chip" title="这封邮件的审批在移交前已过期。这是最终结果：审批绑定于这些确切的字节，一个可以无限期恢复的审批就成了长期有效的放行，而不是一次决定。重新撰写后，新邮件会有自己的审批。">审批已过期</span>
 <span class="state delivery-deferred delivery-chip" title="临时故障，邮件服务商仍在重试。结果确实还不知道。">延迟</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <span class="dim mono">—</span>
 </td>

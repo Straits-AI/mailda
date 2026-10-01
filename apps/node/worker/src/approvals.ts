@@ -21,7 +21,7 @@
  *                     meant *the object whose relation-holders are eligible to decide* — for a send the
  *                     mailbox the message is from, for a lift the **held** mailbox, for a supervised read
  *                     and an export the mailbox being reached into. A domain pause has **no mailbox**: it
- *                     stops every mailbox sending from a domain, so no single mailbox's holders have
+ *                     pauses every mailbox sending from a domain, so no single mailbox's holders have
  *                     authority over it, and its eligible set comes from `org.admin` on the organization.
  *                     Migration 0021 named that case and deferred it — *"that kind either names a mailbox or
  *                     brings a second source for its eligible set, and that is its ticket's work"* — and this
