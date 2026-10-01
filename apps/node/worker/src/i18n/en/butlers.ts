@@ -1,4 +1,18 @@
+import type { ButlerPauseReason, ButlerVersionState } from "@mailda/contract/schemas";
+
 import type { Area } from "../areas.ts";
+
+/**
+ * A version's state and a pause's reason, keyed by the contract's closed lists (`BUTLER_VERSION_STATES`,
+ * `BUTLER_PAUSE_REASONS`; the owner's round three, G12). The English is the token as the screen showed it before.
+ * A run's state is not here yet: it is shown in three places, one of them inside the Node's own line (layer 3).
+ */
+const tokens = {
+  "butlers.version.draft": "draft",
+  "butlers.version.published": "published",
+  "butlers.version.superseded": "superseded",
+  "butlers.pauseReason.loop_detected": "loop detected",
+} as const satisfies Record<`butlers.version.${ButlerVersionState}` | `butlers.pauseReason.${ButlerPauseReason}`, string>;
 
 /**
  * Butlers (`src/client/app/screens/butlers.tsx`): published versions, runs and pauses, the editor and its dry run.
@@ -11,6 +25,7 @@ import type { Area } from "../areas.ts";
  * the author's hands and not the interface's words (`docs/i18n.md`, "Never persist a `t()` string as data").
  */
 export const butlers = {
+  ...tokens,
   "butlers.new": "New butler",
   "butlers.notAdmin": "No Butlers here, or you do not hold org.admin. Writing one is an administrator's act.",
   "butlers.empty": "Nothing is automated on this Node yet.",

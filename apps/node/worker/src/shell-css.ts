@@ -112,6 +112,10 @@ const RULES = `
 /* A control in a cell is a word as well: at 390 a rule's 发布 stacked one character per line and a pause's 恢复发信
    four, where the English (one unbreakable word) kept its column wide enough to read. */
 :root:lang(zh) td button, :root:lang(zh) td a { word-break: keep-all; }
+/* Prose in a cell still breaks per character, so at 390 the cell shrank to one: Rules' 作用, a Butler's 有未发布的修改,
+   Limits' 已启用 (the owner's round three, G16). Four Han characters is a presentation constant: the shortest of those
+   words reads on one line, and a sentence wraps inside the column rather than down a single character's width. */
+:root:lang(zh) td { min-width: 4em; }
 
 /* ---- base ------------------------------------------------------------------------------- */
 

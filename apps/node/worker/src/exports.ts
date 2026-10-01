@@ -1,3 +1,4 @@
+import { EXPORT_STATES, type ExportState } from "@mailda/contract/schemas";
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
@@ -74,7 +75,8 @@ import { readMatter } from "./matters.ts";
  */
 
 /**
- * What an export is doing. **The declared set, and the only place it is declared.**
+ * What an export is doing. **The declared set, declared once**, in the contract (`EXPORT_STATES` in
+ * `packages/contract/src/schemas.ts`), so the interface keys its words by the list this file writes (G12).
  *
  * `exports.state` carries no CHECK constraint, for the reason `APPROVAL_SUBJECT_KINDS` and
  * `SUPERVISED_SCOPES` already live with: SQLite cannot add one with `ALTER TABLE`, a trigger cannot exist in
@@ -83,14 +85,11 @@ import { readMatter } from "./matters.ts";
  * the constraint and `test/node/matter-and-scope-world.test.ts` is what makes it one rather than a
  * convention.
  *
- * `as const satisfies` and a derived union rather than `readonly string[]`, so a mistyped state is a compile
+ * An `as const` list and a derived union rather than `readonly string[]`, so a mistyped state is a compile
  * error instead of a row that matches no predicate and quietly stops being runnable.
  */
-export const EXPORT_STATES = [
-  "requested", "running", "completed", "aborted",
-] as const satisfies readonly string[];
-
-export type ExportState = (typeof EXPORT_STATES)[number];
+export { EXPORT_STATES };
+export type { ExportState };
 
 /** The states a run may still advance. Named once, so the SQL and the checks cannot disagree. */
 const RESUMABLE: readonly ExportState[] = ["requested", "running"];

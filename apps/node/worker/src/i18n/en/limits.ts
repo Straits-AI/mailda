@@ -1,4 +1,13 @@
+import type { RateBreakerName } from "@mailda/contract/schemas";
+
 import type { Area } from "../areas.ts";
+
+/** A breaker's name, keyed by the contract's `RATE_BREAKER_NAMES` (the owner's round three, G12), as shown before. */
+const breakers = {
+  "limits.breaker.volume": "volume",
+  "limits.breaker.bounce_rate": "bounce rate",
+  "limits.breaker.complaint_rate": "complaint rate",
+} as const satisfies Record<`limits.breaker.${RateBreakerName}`, string>;
 
 /**
  * Sending limits (`src/client/app/screens/limits.tsx`): breakers, paused domains and suppressions.
@@ -11,6 +20,7 @@ import type { Area } from "../areas.ts";
  * `cause`, and `limits.state.unarmed.*` by `BreakerReading`'s `unarmedReason`.
  */
 export const limits = {
+  ...breakers,
   "limits.title": "Sending limits",
 
   "limits.breakers": "Breakers",

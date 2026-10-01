@@ -306,18 +306,21 @@ describe("Butlers and Rules in zh-Hans", () => {
     return copy.textContent ?? "";
   };
 
-  it("says Butlers in Chinese, with a pause's words and the dry run's outcomes in the Node's English", async () => {
+  it("says Butlers in Chinese, with a pause's reason and a version's state in its words, the dry run's outcomes in the Node's English", async () => {
     zh();
     butlers((call) => (call.path.endsWith("/simulate") ? Response.json({ simulation: SIMULATION }) : undefined));
     const { container } = mount(<Butlers />);
     await screen.findByText("triage");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("管家");
     expect(screen.getByText(pause.detail).closest("[lang]")?.getAttribute("lang")).toBe("en");
-    expect(screen.getByText("loop detected").closest("[lang]")?.getAttribute("lang")).toBe("en");
-    expect(screen.getByText("loop detected").closest(".bad")!.textContent).toBe("已暂停：loop detected");
+    // A pause's reason is the contract's token (`BUTLER_PAUSE_REASONS`), keyed in the catalog since round three (G12).
+    expect(screen.getByText("已暂停：检测到循环").closest("[lang='en']")).toBeNull();
     expect(screen.getByText("生效中 · v3")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "打开" })[0]!);
-    await act(async () => { screen.getAllByRole("button", { name: /^按 .+ 的运行试运行$/ })[0]!.click(); });
+    await waitFor(() => { expect(container.querySelector(".butler-detail table tbody td:nth-child(2)")).not.toBeNull(); });
+    expect([...container.querySelectorAll(".butler-detail table tbody td:nth-child(2)")].map((cell) => cell.innerHTML))
+      .toEqual(expect.arrayContaining(["已发布"]));
+    await act(async () => { screen.getAllByRole("button", { name: /^试运行：.+ 的那次运行$/ })[0]!.click(); });
     await waitFor(() => { expect(container.querySelector(".butler-dry-result")).not.toBeNull(); });
     expect(container.querySelector(".butler-dry-result .dim")!.textContent).toBe("草稿 · 4 个步骤 · 将消耗 2");
     expect([...container.querySelectorAll(".butler-dry-result tbody td:nth-child(3) [lang=en]")].map((one) => one.textContent))
@@ -349,9 +352,13 @@ describe("Butlers and Rules in zh-Hans", () => {
       "每封邮件都照常发出。",
       "来自 Support、发给组织外部的人、作为新邮件的邮件需要先经审批才能发出。",
       "来自 mbx_gone、由 usr_wang 撰写、只发给同事、作为回复的邮件会被暂扣，等人放行。",
-      "回复发件人域名不予认可的来信、在本节点今天已移交 500 封之后的邮件会被否决。",
-      "发给组织外部的人、不是回复不予认可的来信的邮件会被否决。",
+      "回复发件人域名不予认可的来信、在本节点今天已移交 500 封之后的邮件会被此规则否决。",
+      "发给组织外部的人、不是回复不予认可的来信的邮件会被此规则否决。",
     ]);
+    // A rule is 规则 in every word the screen writes, its caption and New rule included, which say "rule" and so are
+    // not bound to the rules row (G20); DMARC's own policy is not on this screen.
+    expect(container.querySelector("caption")!.textContent).toContain("规则");
+    expect(container.textContent).not.toContain("策略");
     await act(async () => { screen.getByRole("button", { name: "发布" }).click(); });
     expect((await screen.findByRole("alert")).querySelector("[lang=en]")?.textContent).toBe(REFUSED.message);
   });

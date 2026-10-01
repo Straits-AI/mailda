@@ -251,7 +251,7 @@
 </section>
 <section class="setup-block" aria-label="Delivery outcomes">
 <h2>5. Delivery outcomes</h2>
-<p class="dim">A sending domain reports what happened to each message — delivered, bounced, complained — only if a subscription publishes those events into this Node's queue. Without one, every send stays unobserved. The domain must be onboarded for sending first.</p>
+<p class="dim">A sending domain reports what happened to each message — accepted (Cloudflare's <code>delivered</code>), bounced, complained — only if a subscription publishes those events into this Node's queue. Without one, every send stays unobserved. The domain must be onboarded for sending first.</p>
 <div class="limits-ask">
 <label class="field-row" for="setup-subscribe-domain">
 <span>Domain</span>
@@ -268,7 +268,7 @@
 </div>
 <h3>Verified destinations</h3>
 <p class="dim">Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Read on this Node's token; <span class="mono">mailda setup</span> reads it with wrangler's login instead.</p>
-<p class="notice" role="status">Read 2026-09-28T05:00:00.000Z from account acc_one. 1 of the 2 addresses this Node has handed mail to is a verified destination. No outcome is reported for verified destinations; the Outbox marks their hand-overs made while they were verified.</p>
+<p class="notice" role="status">Read [clock] from account acc_one. 1 of the 2 addresses this Node has handed mail to is a verified destination. No outcome is reported for verified destinations; the Outbox marks their hand-overs made while they were verified.</p>
 <button class="quiet" type="button">Read verified destinations</button>
 </section>
 <p class="dim">Buying a domain through this credential is not on this screen yet. It spends money, and who may press that button is a decision this Node has not been given.</p>

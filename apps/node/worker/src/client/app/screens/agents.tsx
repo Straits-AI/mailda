@@ -5,7 +5,7 @@ import { shortfall } from "@mailda/contract/capability";
 
 import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
-import { list } from "../format.ts";
+import { dateTime, list } from "../format.ts";
 import {
   AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMe, usePeople,
   useSponsorMailboxes,
@@ -209,7 +209,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
                 setChosen(next);
               }}
             />
-            <span className="mono">{capability.id}</span>
+            <span className="mono"><NodeWords>{capability.id}</NodeWords></span>
             {/*
               * Marked, not inferred from the name. §7's whole authorization model turns on metadata against
               * content, and `export.read` reaches message bytes while sounding administrative.
@@ -266,7 +266,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
                       setReach(next);
                     }}
                   />
-                  <span className="mono">{one.relation}</span>
+                  <span className="mono"><NodeWords>{one.relation}</NodeWords></span>
                   {one.reachesContent
                     ? <span className="state state-audit-warn">{t("agents.mint.reachesContent")}</span>
                     : null}
@@ -409,7 +409,7 @@ export function Agents() {
                     <ul className="bare">
                       {agent.held.map((one) => (
                         <li key={one.id}>
-                          <span className="mono">{one.id}</span>
+                          <span className="mono"><NodeWords>{one.id}</NodeWords></span>
                           {/*
                             * Only shown when it is partial, so a whole capability reads as a name and a
                             * partial one cannot be mistaken for it.
@@ -422,7 +422,7 @@ export function Agents() {
                       {agent.unnamed.length === 0 ? null : (
                         <li className="dim">
                           {t("agents.unnamed", { n: agent.unnamed.length })}{" "}
-                          <span className="mono">{agent.unnamed.join(", ")}</span>
+                          <span className="mono"><NodeWords>{agent.unnamed.join(", ")}</NodeWords></span>
                         </li>
                       )}
                     </ul>
@@ -442,7 +442,7 @@ export function Agents() {
                           {agent.grants.map((grant) => (
                             <li key={`${grant.mailboxId}:${grant.relation}`}>
                               <span>{grant.mailboxName ?? grant.mailboxId}</span>
-                              <span className="mono dim">{` ${grant.relation}`}</span>
+                              <span className="mono dim">{" "}<NodeWords>{grant.relation}</NodeWords></span>
                               {grant.effective
                                 ? null
                                 : (
@@ -454,7 +454,7 @@ export function Agents() {
                       )}
                   </td>
                   <td><span className={`state state-audit-${where}`}>{t(`agents.standing.${where}`)}</span></td>
-                  <td className="num mono dim">{agent.expiresAt}</td>
+                  <td className="num mono dim">{dateTime(agent.expiresAt)}</td>
                   <td>
                     {/*
                       * Offered only while there is something to withdraw. A button that answers "already

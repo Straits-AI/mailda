@@ -7,6 +7,10 @@ import type { Twin } from "../catalog.ts";
  * the outcome "would", which the caption names because the table shows it as the Node sent it.
  */
 export const butlers: Twin<typeof source> = {
+  "butlers.version.draft": "草稿",
+  "butlers.version.published": "已发布",
+  "butlers.version.superseded": "已被取代",
+  "butlers.pauseReason.loop_detected": "检测到循环",
   "butlers.new": "新建管家",
   "butlers.notAdmin": "这里没有管家，或者你没有 org.admin。编写管家是管理员的操作。",
   "butlers.empty": "本节点上还没有任何自动化。",
@@ -41,7 +45,7 @@ export const butlers: Twin<typeof source> = {
     "下面的演练不会造成任何影响，所以之后想做几次都可以。",
   "butlers.dry.explain":
     "让草稿（没有草稿时用生效中的版本）走一遍过去某次运行的输入。会读取真实的数据，也会询问真实的权限问题；不写入任何内容。",
-  "butlers.dry.over": "按 {at} 的运行试运行",
+  "butlers.dry.over": "试运行：{at} 的那次运行",
   "butlers.dry.noFacts": "那次运行没有记录触发时的事实，无从演练。请选一次更晚的运行。",
   "butlers.dry.draft": "草稿",
   "butlers.dry.version": "v{version}",

@@ -1,4 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
+import { BUTLER_PAUSE_REASONS, type ButlerPauseReason } from "@mailda/contract/schemas";
 import { butler as butlerSchema } from "@mailda/butler-ast";
 
 /**
@@ -65,10 +66,11 @@ import { butler as butlerSchema } from "@mailda/butler-ast";
  * repository has now recorded several times. `PauseReason` below is derived from it, so `placeButlerPause`
  * cannot be handed a string outside it; and `isPauseReason` is what `doctor` and the resume path use to decide
  * whether a *stored* reason is one this build knows about, which a type cannot answer about a row read back
- * from a database somebody else may have written to.
+ * from a database somebody else may have written to. Declared in the contract (`BUTLER_PAUSE_REASONS`), so the
+ * interface keys a reason's words by it too (G12).
  */
-export const PAUSE_REASONS = ["loop_detected"] as const;
-export type PauseReason = (typeof PAUSE_REASONS)[number];
+export const PAUSE_REASONS = BUTLER_PAUSE_REASONS;
+export type PauseReason = ButlerPauseReason;
 
 /**
  * Is this stored reason one this build declares?

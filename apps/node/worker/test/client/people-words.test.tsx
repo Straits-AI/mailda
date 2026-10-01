@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,7 +32,7 @@ const { Approvals } = await import("../../src/client/app/screens/approvals.tsx")
 
 const INSTANTS = [
   "2026-10-05T00:00:00.000Z", "2026-09-20T00:00:00.000Z", "2026-09-28T09:15:00.000Z", "2026-10-02T17:00:00.000Z",
-  "2026-08-01T00:00:00.000Z", "2026-09-30T08:00:00.000Z",
+  "2026-08-01T00:00:00.000Z", "2026-09-30T08:00:00.000Z", "2099-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z",
 ];
 
 /** The text with every fixture instant the viewer's way replaced by its placeholder. */
@@ -494,11 +494,28 @@ describe("People, Agents and Approvals in Chinese", () => {
     expect((await screen.findByText("Shown once: only its hash is stored.")).outerHTML).toBe('<span lang="en">Shown once: only its hash is stored.</span>');
   });
 
+  it("marks a relation and a capability as the Node's tokens, says a live agent as a live Butler is, and dates its expiry (G8, G7, G4)", async () => {
+    const people = peopleNode();
+    await screen.findAllByText("mailbox.content.read");
+    // A relation's token, in every mailbox's grants and the organization's (a team's list names people instead).
+    const relations = [...people.container.querySelectorAll(".grant-list label > .mono")]
+      .filter((one) => /^[a-z]+(\.[a-z]+)+$/.test(one.textContent!));
+    expect(relations.length).toBeGreaterThan(3);
+    expect(relations.map((one) => one.firstElementChild?.getAttribute("lang"))).toEqual(relations.map(() => "en"));
+    cleanup();
+    const { container } = agentsNode([agent("agt_live")]);
+    await screen.findByText("Legal");
+    const row = container.querySelector("tbody tr")!;
+    expect([...row.querySelectorAll(".mono [lang='en']")].map((one) => one.textContent)).toEqual(["mail.read", "mailbox.content.read"]);
+    expect(row.textContent).toContain(CATALOGS["zh-Hans"].app["butlers.standing.live"].split(" · ")[0]!);
+    expect(row.textContent).toContain(new Date("2099-01-01T00:00:00.000Z").toLocaleString("zh-Hans"));
+  });
+
   it("names each approval in Chinese, counts what waits, and keeps a refusal English", async () => {
     approvalsNode(APPROVALS);
     expect((await screen.findByText(/项等你决定$/)).textContent).toBe("6 项等你决定");
     expect(screen.getByRole("heading", { name: "暂停一个域名的邮件" })).toBeDefined();
-    expect(screen.getByText("第 1 阶段，共 2 个阶段 · 总计 3 项审批")).toBeDefined();
+    expect(screen.getByText("第 1 阶段，共 2 个阶段 · 共需 3 人批准")).toBeDefined();
     await act(async () => { screen.getAllByRole("button", { name: "否决" })[0]!.click(); });
     expect((await screen.findByRole("alert")).innerHTML).toBe('<span lang="en">Refused, for the test.</span>');
   });

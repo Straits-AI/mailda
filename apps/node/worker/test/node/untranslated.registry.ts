@@ -189,10 +189,6 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
       .map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
     { text: "col", reason: "a <th> scope token" },
     { text: "example.com", reason: "an input's placeholder that is a domain, the shape the field takes (RFC 2606's example domain), the same in every locale" },
-    {
-      text: "T",
-      reason: "the ISO 8601 date-time separator, replaced by a space in the wire's `observedAt`: a UTC instant's own form, not words",
-    },
   ],
   "src/client/app/screens/matters.tsx": [
     ...["matters", "holds", "supervised", "exports", "approvals"]
@@ -266,6 +262,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     ...["mail.example.com", "inbox@mail.example.com", "example.com"]
       .map((text) => ({ text, reason: "a placeholder's example domain or address: the field's format, the same in every locale" })),
     { text: "mailda setup", reason: "a CLI command, in mono: identifiers stay Latin (docs/i18n.md, Register)" },
+    { text: "delivered", reason: "Cloudflare's event kind, in mono beside this Node's word for it, accepted (D31): an identifier" },
     { text: "curl -fsSL https://mailda.site/update.sh | bash", reason: "the update command, in mono, run as written in every locale" },
   ],
   "src/client/app/shell-context.tsx": [

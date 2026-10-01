@@ -10,7 +10,7 @@ export const ui: Twin<typeof source> = {
   "ui.firstRun.terminal": "在终端中操作（推荐，无需令牌）",
   "ui.firstRun.terminal.what": "命令",
   "ui.firstRun.terminal.body":
-    "在安装时创建的目录中运行。部署完成后，它会询问本节点在哪个域名接收邮件，并使用 wrangler 已有的授权配置接收、发信和投递结果。",
+    "在安装时创建的目录中运行。部署完成后，它会询问本节点在哪个域名接收邮件，并使用 wrangler 已获得的授权配置接收、发信和投递结果。",
   "ui.firstRun.browser": "在此页面操作",
   "ui.firstRun.browser.body":
     "浏览器中没有 wrangler，所以这种方式需要本节点自己的凭据：{link}。在根域名上，Catch-all 地址只需一步，之后邮件地址都在本节点上管理。",

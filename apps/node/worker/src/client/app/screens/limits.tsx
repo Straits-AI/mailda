@@ -1,3 +1,4 @@
+import { RATE_BREAKER_NAMES, oneOf } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -70,7 +71,9 @@ function Breakers() {
           {breakers.data.breakers.map((reading) => (
             <tr key={reading.breaker}>
               <td>
-                <span className="mono">{reading.breaker.replace(/_/g, " ")}</span>
+                <span className="mono">
+                  {oneOf(RATE_BREAKER_NAMES, reading.breaker) ? t(`limits.breaker.${reading.breaker}`) : reading.breaker.replace(/_/g, " ")}
+                </span>
                 <br />
                 {/* The Node's own sentence, so a person reads the same words here and on a stopped send. */}
                 <span className="dim"><NodeWords>{reading.sentence}</NodeWords></span>
@@ -196,8 +199,13 @@ function Pauses() {
             </tbody>
           </table>
         </Scroller>
-      ) : (
+      ) : pauses.isSuccess ? (
         <Nothing kind="empty" detail={t("limits.pauses.empty")} />
+      ) : pauses.isError ? (
+        // A read that failed is not an empty list: "No domain is paused" there would state a fact nobody read (G5).
+        <Nothing kind="failed" detail={marked(pauses.error)} />
+      ) : (
+        <Nothing kind="loading" />
       )}
     </section>
   );
@@ -244,7 +252,7 @@ function Suppressions() {
                 <tr key={row.address}>
                   <td className="mono">{row.address}</td>
                   <td>{t(`limits.cause.${row.cause}`)}{row.detail === null ? null : <> — <NodeWords>{row.detail}</NodeWords></>}</td>
-                  <td className="mono dim">{row.observedAt.slice(0, 16).replace("T", " ")}</td>
+                  <td className="mono dim">{dateTime(row.observedAt)}</td>
                   <td>
                     <label className="target-edit">
                       <span className="dim mono">{t("limits.why")}</span>

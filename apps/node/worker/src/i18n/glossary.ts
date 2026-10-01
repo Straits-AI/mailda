@@ -17,7 +17,7 @@ import type { Locale } from "./locales.ts";
  * made (a PR review comment, an issue comment, or a decision the owner recorded on a review page). An author,
  * human or agent, never writes a `confirmedBy` for somebody else: the only edit to a row's status is copying
  * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026 (and `ANSWERED` and
- * `ROUND_TWO` for the answers and the second round of 1 October 2026). The check cannot tell who typed the
+ * `ROUND_TWO` for the answers and the second round of 1 October 2026, `ROUND_THREE` for the third). The check cannot tell who typed the
  * field, so **the real gate is the owner's approval of the pull request that carries the edit**, and
  * `docs/i18n.md` says so.
  *
@@ -84,6 +84,19 @@ const OWNER_ROUND_TWO = {
   record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, round two, decisions recorded 1 October 2026",
 } as const;
 const ROUND_TWO: ReadonlySet<string> = new Set(["send.denied", "recall", "vault"]);
+/**
+ * Round three, on the same review page: the twenty rows layer 2b added, each confirmed by the owner's recorded
+ * decision with the word as proposed (decisions stamped 1 October 2026, 15:50 to 15:52 UTC). The same round
+ * confirmed 送达 in `NEVER` and answered the reviewer's flags G1 to G20 (`docs/i18n.md`).
+ */
+const OWNER_ROUND_THREE = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, round three, decisions recorded 1 October 2026",
+} as const;
+const ROUND_THREE: ReadonlySet<string> = new Set([
+  "team", "mint", "capability", "approve", "routing-rule", "pause", "supervised-read", "export", "breaker", "vouch", "lift",
+  "administrator", "receipt.measured", "onboard", "zone", "apex", "token", "delivery-event", "subscription", "consumer",
+]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -119,7 +132,10 @@ export const CONCEPTS: readonly Concept[] = [
     sentences: ["ledgers.audit.empty", "ledgers.log.empty", "ledgers.transport.none", "ledgers.outbox.daily.throttled"],
     avoid: { "zh-Hans": ["服务器", "实例"] }, note: "one deployment in the customer's own account; 本节点 for 'this Node'" }),
   row("butler", "Butler", "管家", {
-    sentences: ["api.grant.org.admin", "ledgers.outbox.gate.failed", "ledgers.outbox.release.title"],
+    sentences: [
+      "api.grant.org.admin", "ledgers.outbox.gate.failed", "ledgers.outbox.release.title", "butlers.notAdmin", "butlers.runs.none",
+      "butlers.dry.notRun",
+    ],
     avoid: { "zh-Hans": ["Butler", "机器人", "智能助手"] },
     note: "the owner's word (30 Sep 2026), replacing Latin Butler, which is now avoided so one locale has one word. The CLI noun `butler` stays Latin and in mono",
   }),
@@ -130,7 +146,11 @@ export const CONCEPTS: readonly Concept[] = [
     avoid: { "zh-Hans": ["调查", "案件"] },
     note: "a supervised read, legal hold, departure handover or regulatory request; 调查 would call a routine handover an investigation (critic H3, D9)",
   }),
-  row("rules", "Rules", "规则", { avoid: { "zh-Hans": ["策略"] }, note: "the UI word for policy (D1)" }),
+  row("rules", "Rules", "规则", {
+    // Round three (G20): the Rules screen's sentences that say rules. `policies.caption` and `policies.new` say "rule",
+    // another form, and are held by `butlers-words.test.tsx`'s rendered Rules screen.
+    sentences: ["policies.notAdmin", "policies.empty"], avoid: { "zh-Hans": ["策略"] }, note: "the UI word for policy (D1)",
+  }),
   row("approval", "approval", "审批", { avoid: { "zh-Hans": ["同意"] } }),
   row("receipt.ingress", "receipt", "接收记录", { avoid: { "zh-Hans": ["回执", "收据"] } }),
   row("escrow", "escrow", "密钥恢复副本", { avoid: { "zh-Hans": ["托管"] } }),
@@ -215,7 +235,7 @@ export const CONCEPTS: readonly Concept[] = [
     note: "an agent drafts and submits a send intent for a person to seal; 提议 reads as suggesting an email",
   }),
   row("send.denied", "denied", "否决", {
-    sentences: ["send.reason.policy_denied", "send.reason.approval_denied"], avoid: { "zh-Hans": ["拒绝"] },
+    sentences: ["send.reason.policy_denied", "send.reason.approval_denied", "policies.outcome.deny"], avoid: { "zh-Hans": ["拒绝"] },
     note: "a rule or an approver decided against a send (layer 2a; confirmed in round two, 1 Oct 2026). 拒绝 is the refusal family (拒收, 投递前被拒), which is somebody else's server",
   }),
   row("send.outcome_unknown", "outcome unknown", "结果未知", {
@@ -237,7 +257,10 @@ export const CONCEPTS: readonly Concept[] = [
   // Words one English word would merge.
   row("case.held", "Held (a colleague holds the case)", "他人处理中", { avoid: { "zh-Hans": ["暂留"] } }),
   row("quarantine", "quarantine / held back", "隔离"),
-  row("legal-hold", "legal hold", "法律保全", { sentences: ["ledgers.collect.warning"], avoid: { "zh-Hans": ["保留", "冻结"] } }),
+  row("legal-hold", "legal hold", "法律保全", {
+    // `matters.type.legal_hold` is the matter kind's own name, keyed over the contract's `MATTER_TYPES` (G12).
+    keys: ["matters.type.legal_hold"], sentences: ["ledgers.collect.warning"], avoid: { "zh-Hans": ["保留", "冻结"] },
+  }),
   row("policy-hold", "rule hold", "规则暂扣", { keys: ["send.reason.policy_hold"] }),
   row("case.hand-over", "Hand over (a case)", "转交", { avoid: { "zh-Hans": ["移交"] } }),
   row("case.release", "Release", "放回队列", {
@@ -273,16 +296,16 @@ export const CONCEPTS: readonly Concept[] = [
     note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). The owner confirmed 移到废纸篓 (30 Sep 2026), renamed Trash 回收站, and confirmed 移到回收站 (1 Oct 2026)",
   }),
 
-  // Layer 2b (1 October 2026): the words its screens needed that no row had. Proposed, for the owner's next review;
-  // zh-Hans is a preview, so it may carry them meanwhile. A binding matches English by case, so a capitalised label
-  // ("Lift", "Mint an agent") is held by its screen's zh test rather than bound here.
+  // Layer 2b (1 October 2026): the words its screens needed that no row had, confirmed in round three. A sentence's
+  // English names its concept whatever the case ("No rules here" names Rules), but a label whose English is a
+  // different form of the word ("Mint an agent", "New rule") is held by its screen's zh test rather than bound here.
   row("team", "team", "团队", {
     sentences: ["people.teams.lede", "people.teams.new", "people.teams.none"],
     note: "a group an approval stage can require a decision from",
   }),
   row("mint", "mint", "签发", {
     sentences: ["people.invited.expired", "agents.none", "agents.mint.which.note", "agents.mint.renewal"],
-    note: "issuing a credential that is shown once (an invitation secret, an agent's token); re-minting is 重新签发. `ledgers.codes.mint` (recovery codes) says 生成, for the owner to decide",
+    note: "issuing a credential that is shown once (an invitation secret, an agent's token); re-minting is 重新签发. Only for a credential handed to someone: recovery codes are generated, 生成 (`ledgers.codes.mint`; the owner's round three, G7)",
   }),
   row("capability", "capability", "能力", {
     note: "an agent's ceiling, one unit of what it may do; the ids stay Latin. Unbound: the plural's forms (capability, capabilities) defeat a binding by containment, so `people-words.test.tsx` holds `agents.review.capabilities`",
@@ -390,7 +413,8 @@ export const CONCEPTS: readonly Concept[] = [
   }),
 ].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
   : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER }
-  : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO } : concept));
+  : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO }
+  : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only
@@ -406,7 +430,7 @@ export const NEVER: Readonly<Record<Exclude<Locale, "en">, ReadonlyArray<{ reado
     { phrase: "必达", why: "a pun on 达 that claims delivery" },
     {
       phrase: "送达",
-      why: "ADR 39: no Node observes a message reach an inbox. Cloudflare's `delivered` event is the receiving server's acceptance, which this Node calls accepted, 已受理 (`src/outbound/events.ts`)",
+      why: "ADR 39: no Node observes a message reach an inbox. Cloudflare's `delivered` event is the receiving server's acceptance, which this Node calls accepted, 已受理 (`src/outbound/events.ts`). Added in layer 2b; confirmed in the owner's round three (1 October 2026)",
     },
     { phrase: "秒达", why: "the homophone of 淼达, a delivery slogan: the brand misspelt as an overclaim" },
     { phrase: "您", why: "the register is 你 (docs/i18n.md)" },

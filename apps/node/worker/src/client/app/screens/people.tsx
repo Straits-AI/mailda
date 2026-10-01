@@ -550,7 +550,7 @@ function Arrivals({ people, boxes, onChanged }: {
           <ul className="grant-list">
             {READ_AND_SEND.map((relation) => (
               <li key={relation}>
-                <span className="mono">{relation}</span>
+                <span className="mono"><NodeWords>{relation}</NodeWords></span>
                 {" — "}
                 <span className="dim">{GRANTABLE_RELATIONS.find((entry) => entry.relation === relation)?.what}</span>
               </li>
@@ -617,7 +617,7 @@ function Grants({
                   onChange={(event) => void toggle(entry.relation, event.target.checked)}
                 />
                 {" "}
-                <span className="mono">{entry.relation}</span>
+                <span className="mono"><NodeWords>{entry.relation}</NodeWords></span>
                 {" — "}
                 <span className="dim">{entry.what}</span>
               </label>

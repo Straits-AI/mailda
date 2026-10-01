@@ -2,6 +2,14 @@ import type { matters as source } from "../en/matters.ts";
 import type { Twin } from "../catalog.ts";
 
 export const matters: Twin<typeof source> = {
+  "matters.type.legal_hold": "法律保全",
+  "matters.type.security_incident": "安全事件",
+  "matters.type.departure_handover": "离职交接",
+  "matters.type.regulatory_request": "监管要求",
+  "matters.export.requested": "已申请",
+  "matters.export.running": "运行中",
+  "matters.export.completed": "已完成",
+  "matters.export.aborted": "已中止",
   "matters.open": "{n} 项进行中",
   "matters.lead":
     "事项，以及它所授权的操作：保全邮件，使其无法被删除；在限定时间内查阅同事的邮箱；导出一份副本。事项关闭后，才需要通知邮件被查阅的人（§7）。",

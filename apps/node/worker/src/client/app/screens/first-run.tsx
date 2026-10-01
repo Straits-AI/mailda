@@ -56,7 +56,7 @@ export function FirstRun({ steps, next, onOpenAnyway }: { steps: Step[]; next: S
       )}
       <p className="dim first-run-anyway">
         <button type="button" className="linkish" onClick={onOpenAnyway}>{t("ui.firstRun.anyway")}</button>
-        {" "}{t("ui.firstRun.anyway.note")}
+        {t("join.sentence")}{t("ui.firstRun.anyway.note")}
       </p>
     </section>
   );

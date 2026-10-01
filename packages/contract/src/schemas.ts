@@ -1751,9 +1751,9 @@ export const saveDraftRequest = z.object({
  * Opening a matter, for the same reason `saveDraftRequest` exists: it became a machine-reachable act when its
  * authority declaration was corrected, and a tool with no declared body is a tool that cannot be called.
  *
- * `type` is a string here and an enum in `src/matters.ts`. Deliberate: the refusal names the four it accepts,
- * and a caller who sends a fifth gets `E_MATTER_TYPE_UNKNOWN` with the list — which is more use than a schema
- * error, and keeps the vocabulary in the domain that owns it rather than copied into the wire contract.
+ * `type` is a string here, though the four types are a closed list below (`MATTER_TYPES`, which `src/matters.ts`
+ * checks against). Deliberate: the refusal names the four it accepts, and a caller who sends a fifth gets
+ * `E_MATTER_TYPE_UNKNOWN` with the list, which is more use than a schema error.
  */
 export const openMatterRequest = z.object({
   type: z.string(),
@@ -2238,6 +2238,63 @@ export type DeliveryReason = (typeof DELIVERY_REASONS)[number];
 /** The envelope's three recipient kinds, in envelope order. A person reads them as To, Cc and Bcc. */
 export const RECIPIENT_KINDS = ["to", "cc", "bcc"] as const;
 export type RecipientKind = (typeof RECIPIENT_KINDS)[number];
+
+/*
+ * The automation, matter and limit vocabularies, as closed lists (the owner's round three, G12), for the reason the
+ * sending ones above are: each is the one declaration its writer types itself with, and the interface's catalog is
+ * keyed by it where a screen shows the token, so words go missing at compile time rather than on a page. The wire
+ * stays `z.string()` here too.
+ */
+
+/**
+ * Every state a Butler run can be in (`butler_runs.state`), written by `apps/node/worker/src/butler/record.ts`
+ * (`RUN_STATES` there is this list).
+ */
+export const BUTLER_RUN_STATES = [
+  /** The interpreter is walking the graph. */
+  "running",
+  /** Parked on `step.waitForEvent` for a human to release a send it proposed. */
+  "awaiting_release",
+  /** The graph ran out of nodes. */
+  "finished",
+  /** A `stop` node ended it, or a release gate timed out. The reason says which. */
+  "stopped",
+  /**
+   * The run stopped **itself**: its AST no longer checks, a `validate` did not hold, it ran out of pot, or
+   * its Butler was paused (#75) while it was in flight — in which case the counts on the row are the ones the
+   * run last wrote, because `abandonRun` and not `closeRun` is what ends it.
+   */
+  "refused",
+  /** A fault: an unresolvable path, a schema this engine cannot honour, a loop past its own bound. */
+  "failed",
+] as const;
+export type ButlerRunState = (typeof BUTLER_RUN_STATES)[number];
+
+/**
+ * A Butler version's lifecycle (`butler_versions.state`, `migrations/0027_butlers.sql`), which only runs forwards:
+ * `ButlerState` in `apps/node/worker/src/butlers.ts` is this list.
+ */
+export const BUTLER_VERSION_STATES = ["draft", "published", "superseded"] as const;
+export type ButlerVersionState = (typeof BUTLER_VERSION_STATES)[number];
+
+/** Why a Butler is paused (`butler_pauses.reason`): `PAUSE_REASONS` in `apps/node/worker/src/butler/pause.ts`. */
+export const BUTLER_PAUSE_REASONS = ["loop_detected"] as const;
+export type ButlerPauseReason = (typeof BUTLER_PAUSE_REASONS)[number];
+
+/** A matter's type, the four `openMatter` accepts: `MATTER_TYPES` in `apps/node/worker/src/matters.ts`. */
+export const MATTER_TYPES = ["legal_hold", "security_incident", "departure_handover", "regulatory_request"] as const;
+export type MatterType = (typeof MATTER_TYPES)[number];
+
+/** What an eDiscovery export is doing (`exports.state`): `EXPORT_STATES` in `apps/node/worker/src/exports.ts`. */
+export const EXPORT_STATES = ["requested", "running", "completed", "aborted"] as const;
+export type ExportState = (typeof EXPORT_STATES)[number];
+
+/**
+ * The three rate breakers, in evaluation order (`GET /api/breakers`' `breaker`): the keys of `RATE_BREAKERS` in
+ * `apps/node/worker/src/breakers.ts`, which `satisfies` a record over this list.
+ */
+export const RATE_BREAKER_NAMES = ["volume", "bounce_rate", "complaint_rate"] as const;
+export type RateBreakerName = (typeof RATE_BREAKER_NAMES)[number];
 
 /** The operational log's levels (`log_entries.level`, written by `log` in `apps/node/worker/src/audit.ts`). */
 export const LOG_LEVELS = ["error", "warn", "info"] as const;

@@ -26,7 +26,7 @@ export const policies: Twin<typeof source> = {
   "policies.outcome.allow": "照常发出",
   "policies.outcome.hold": "会被暂扣，等人放行",
   "policies.outcome.require_approval": "需要先经审批才能发出",
-  "policies.outcome.deny": "会被否决",
+  "policies.outcome.deny": "会被此规则否决",
 
   "policies.rule.every": "每封邮件都{outcome}。",
   "policies.rule.when": "{conditions}的邮件{outcome}。",

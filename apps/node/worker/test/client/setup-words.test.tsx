@@ -26,6 +26,9 @@ const { Setup } = await import("../../src/client/app/screens/setup.tsx");
 const { ProgressList, SetupUnfinished, onboardingSteps } = await import("../../src/client/app/onboarding.tsx");
 
 const REGISTERED = "2026-09-26T00:00:00.000Z";
+/** When the verified-destinations fixture was read, shown in the viewer's zone since round three (G4). */
+const READ_AT = "2026-09-28T05:00:00.000Z";
+const clocks = (text: string) => [REGISTERED, READ_AT].reduce((out, at) => out.replaceAll(new Date(at).toLocaleString(), "[clock]"), text);
 /** The date `onboarding.tsx` writes for a record, computed the way it computes it. */
 const day = (iso: string) => {
   const when = new Date(iso);
@@ -35,7 +38,7 @@ const DAYS = ["2026-09-24T10:00:00Z", "2026-09-24T10:01:00Z", "2026-09-25T10:01:
 
 function html(element: Element | string): string {
   let text = typeof element === "string" ? element : element.innerHTML;
-  text = text.replaceAll(new Date(REGISTERED).toLocaleString(), "[clock]");
+  text = clocks(text);
   for (const one of DAYS) text = text.replaceAll(day(one), "[date]");
   return text.replaceAll("><", ">\n<") + "\n";
 }
@@ -146,7 +149,7 @@ const RULES = [
   rule({}),
 ];
 const listing = (rules: unknown[], error: string | null = null) => ({ routing: { domain: "example.com", zone: "example.com", zoneId: "z1", rules, error } });
-const READ = { accountId: "acc_one", readAt: "2026-09-28T05:00:00.000Z", attemptedAt: "2026-09-28T05:00:00.000Z", error: null, recipients: 2, verified: 1 };
+const READ = { accountId: "acc_one", readAt: READ_AT, attemptedAt: READ_AT, error: null, recipients: 2, verified: 1 };
 
 beforeEach(() => {
   reset();
@@ -351,7 +354,7 @@ describe("Setup in English", () => {
     await said("verified, failed, never read", {}, verified({ destinations: { ...READ, error: "fixture: refused for the test", readAt: null, accountId: null, verified: null } }), "alert");
     await said("verified, failed, an earlier read stands", {}, verified({ destinations: { ...READ, error: "fixture: refused for the test" } }), "alert");
     await said("verified, refused", {}, verified(refused(409, "E_PROVIDER_ACCOUNT_MISMATCH", "E_PROVIDER_ACCOUNT_MISMATCH  the token is bound to another account\n  fix      run the command again")), "alert");
-    await expect(lines.join("\n") + "\n").toMatchFileSnapshot("./golden/setup.outcomes.en.txt");
+    await expect(clocks(lines.join("\n")) + "\n").toMatchFileSnapshot("./golden/setup.outcomes.en.txt");
   });
 
   it("says what each button says while its act is in flight, and the screen before and without its data, as before", async () => {
@@ -580,6 +583,39 @@ describe("Setup in zh-Hans", () => {
     expect(english("10000 Authentication error")).toBe("en");
     expect(container.querySelectorAll(".onboarding-detail")[1]!.textContent)
       .toBe("mail.example.test：10000 Authentication error；b.test：仍需 2 条记录");
+  });
+
+  it("sets a sentence beside the last with no half-width space between, as Chinese punctuation carries its own (G14)", () => {
+    zh();
+    const steps = onboardingSteps({ provider: binding(), doctor: doctor(true), routing: [routingRow()], delivery: [] });
+    const last = steps.length - 1;
+    const { container } = mount(<ProgressList steps={steps.map((step, index) => (index === last ? { ...step, state: "optional" as const } : step))} />);
+    expect(container.querySelector("p")!.textContent).toMatch(/。第五步是可选的。$/);
+  });
+
+  it("marks where a rule sends mail, a routing status, the records already there and Cloudflare's event kind as the Node's English (G8, G3)", async () => {
+    zh();
+    const w = CATALOGS["zh-Hans"].app;
+    answerMailboxes([{ id: "mbx_test", name: "Support", addresses: "support@example.test" }]);
+    node({
+      "GET /api/provider/email-routing": { routing: [routingRow({ domain: "mail.example.com", zone: "example.com" })] },
+      "GET /api/provider/receiving": { proposal: RECEIVE },
+      "GET /api/provider/routing-rules": listing(RULES),
+    });
+    await settled();
+    expect(english("ready")).toBe("en");
+    expect(screen.getByText("delivered", { selector: "code" }).closest("[lang]")?.getAttribute("lang")).toBe("en");
+    field(w["setup.receiving.subdomain"], "example.com");
+    field(w["setup.receiving.address"], "hello@example.com");
+    fireEvent.click(screen.getByText(w["setup.receiving.propose"]));
+    expect((await screen.findByText("route2.mx.cloudflare.net")).getAttribute("lang")).toBe("en");
+    expect(screen.getAllByText("worker → butler").map((one) => one.getAttribute("lang"))).toEqual(["en"]);
+    field(w["setup.domain"], "example.com", "#setup-rules-domain");
+    fireEvent.click(screen.getByText(w["setup.rules.list"]));
+    await waitFor(() => { expect(screen.getAllByText("forward → someone@gmail.test").length).toBeGreaterThan(0); });
+    const goes = screen.getAllByText(/^(worker → butler|forward → someone@gmail\.test|drop)$/);
+    expect(goes.length).toBeGreaterThan(3);
+    expect(goes.map((one) => one.getAttribute("lang"))).toEqual(goes.map(() => "en"));
   });
 });
 

@@ -151,8 +151,12 @@ export const setup = {
 
   "setup.outcomes.title": "Delivery outcomes",
   "setup.outcomes.heading": "5. Delivery outcomes",
+  /**
+   * `{delivered}` is Cloudflare's event kind, in mono: this Node reads it as accepted (`src/outbound/events.ts`), and no
+   * Node observes a message reach a person, so the sentence says what the Node does with it (D31).
+   */
   "setup.outcomes.about":
-    "A sending domain reports what happened to each message — delivered, bounced, complained — only if a subscription publishes those events into this Node's queue. Without one, every send stays unobserved. The domain must be onboarded for sending first.",
+    "A sending domain reports what happened to each message — accepted (Cloudflare's {delivered}), bounced, complained — only if a subscription publishes those events into this Node's queue. Without one, every send stays unobserved. The domain must be onboarded for sending first.",
   "setup.outcomes.propose": "See what subscribing this would do",
   "setup.outcomes.carriedBy": "Carried by {domain}, the onboarded domain that covers this name; the subscription is made for that one.",
   "setup.outcomes.subscribed": "Already subscribed, as {name}.",

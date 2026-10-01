@@ -1,5 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
-import type { SendReason } from "@mailda/contract/schemas";
+import type { RateBreakerName, SendReason } from "@mailda/contract/schemas";
 import { BUDGETS, BUDGET_ORIGINS, type BudgetName } from "@mailda/budgets";
 
 import { type Suppression, suppressedSubselect, suppressionsFromJson } from "./suppression.ts";
@@ -159,7 +159,7 @@ export const RATE_BREAKERS = {
     minObservationsBudget: "breaker.complaint_min_observations",
     sentence: "Too many recipients marked this Node's mail as spam.",
   },
-} as const satisfies Record<string, {
+} as const satisfies Record<RateBreakerName, {
   reason: SendReason;
   windowBudget: BudgetName;
   limitBudget: BudgetName;

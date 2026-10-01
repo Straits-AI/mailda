@@ -30,7 +30,7 @@ export const policies = {
   "policies.outcome.allow": "goes as normal",
   "policies.outcome.hold": "is held for a person to release",
   "policies.outcome.require_approval": "needs an approval before it goes",
-  "policies.outcome.deny": "is refused",
+  "policies.outcome.deny": "is denied by this rule",
 
   /** A rule with no conditions matches everything, and says so. */
   "policies.rule.every": "Every message {outcome}.",

@@ -541,7 +541,8 @@ describe("reading which recipients are verified destinations", () => {
     mount({ verified: { status: 200, body: read({ error: "fixture: refused for the test", recipients: 0, verified: 0 }) } });
     await press();
     const said = await screen.findByText(/The read did not succeed/);
-    expect(said.textContent).toContain("The read of 2026-09-28T05:00:00.000Z still stands.");
+    // In the viewer's zone and locale, as every other time on this screen (the owner's round three, G4).
+    expect(said.textContent).toContain(`The read of ${new Date("2026-09-28T05:00:00.000Z").toLocaleString()} still stands.`);
     expect(said.textContent).not.toContain("nothing to compare");
     expect(screen.queryByRole("status")).toBeNull();
   });

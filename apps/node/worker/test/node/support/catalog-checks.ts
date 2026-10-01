@@ -101,7 +101,8 @@ export function governed(concept: Concept, source: Table): string[] {
  *
  * - a concept's own keys equal its term;
  * - a governed key does not use an avoided phrase (the term itself removed first, so a term may contain one);
- * - a prose concept's governed keys contain its term.
+ * - a prose concept's governed keys, and a concept's bound sentences, contain its term. In English, whatever its case:
+ *   "No rules here" names Rules (round three, G20), as a sentence starts with a capital that a label does not need.
  */
 export function glossaryTerms(world: World): string[] {
   const all = [{ tag: "en", table: world.source }, ...world.locales];
@@ -120,7 +121,8 @@ export function glossaryTerms(world: World): string[] {
       return branches(message).flatMap((one) => {
         const bad: string[] = [];
         if (own && one !== term) bad.push(`${tag} ${key}: is ${JSON.stringify(one)}, ${concept.id} says ${JSON.stringify(term)}`);
-        if (!own && !one.includes(term)) bad.push(`${tag} ${key}: names ${concept.en} in English and not ${term}`);
+        const contains = tag === "en" ? one.toLowerCase().includes(term.toLowerCase()) : one.includes(term);
+        if (!own && !contains) bad.push(`${tag} ${key}: names ${concept.en} in English and not ${term}`);
         const rest = one.split(term).join("⁠");
         for (const phrase of avoid) if (rest.includes(phrase)) bad.push(`${tag} ${key}: uses ${phrase}, which ${concept.id} avoids`);
         return bad;

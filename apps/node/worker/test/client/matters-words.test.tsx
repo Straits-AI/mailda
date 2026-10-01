@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useRef } from "react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -251,6 +251,10 @@ describe("Sending limits in English", () => {
     node({ "/api/breakers": 403, "/api/domain-pauses": 403, "/api/suppressions": 403 });
     const { container } = mount(<Limits />);
     await waitFor(() => { expect(container.querySelectorAll(".notice").length).toBeGreaterThanOrEqual(2); });
+    // A pauses read that failed says so, as the breakers' does, and never reads as an empty list (G5).
+    const pauses = screen.getByRole("region", { name: "Paused domains" });
+    await waitFor(() => { expect(within(pauses).getByRole("alert").textContent).toBe("You do not hold org.admin."); });
+    expect(pauses.textContent).not.toContain("No domain is paused.");
     await expect(await limits(container)).toMatchFileSnapshot("./golden/limits.refused-read.en.html");
   });
 
@@ -395,6 +399,9 @@ describe("the same screens in Chinese", () => {
     await screen.findByText("customer.example");
     expect([...container.querySelectorAll<HTMLTableRowElement>("[aria-label='熔断器'] tbody tr")].map((row) => row.cells[2]!.textContent))
       .toEqual(["1 天", "2 天", "1 小时", "2 小时", "15 分钟", "1 分钟"]);
+    // A breaker the contract names (`RATE_BREAKER_NAMES`) has words; one it does not is shown as the Node's token (G12).
+    expect([...container.querySelectorAll("[aria-label='熔断器'] tbody td:first-child .mono")].map((cell) => cell.textContent))
+      .toEqual(["退信率", "投诉率", "sends per hour", "sends per day", "unknown rate", "burst"]);
     expect(screen.getByText(/^仅显示最新的/).textContent).toBe("仅显示最新的 2 个邮件地址。更早的仍然存在，但未列出。");
     expect(screen.getByRole("heading", { name: "已暂停的域名" })).toBeDefined();
     // The breaker's sentence is the Node's own, so it stays English and says so.
@@ -410,14 +417,17 @@ describe("the same screens in Chinese", () => {
       .toBe("浏览器中没有 wrangler，所以这种方式需要本节点自己的凭据：用一个 API 令牌连接本节点，然后在那里配置接收。在根域名上，Catch-all 地址只需一步，之后邮件地址都在本节点上管理。");
   });
 
-  it("marks the Node's own tokens and words as English: a matter's kind, a read's scope, an export's state, a bounce", async () => {
+  it("marks the Node's own tokens and words as English: a read's scope, an export's reason, a bounce", async () => {
     const marked = (root: HTMLElement) => [...root.querySelectorAll("td [lang='en']")].map((one) => one.textContent);
     node(MATTERS);
     const { container } = mount(<Matters />);
     await screen.findByText("paused at a page");
-    expect(marked(container)).toEqual(expect.arrayContaining(
-      ["security incident", "departure handover", "content", "metadata", "running", "paused at a page", "completed"],
-    ));
+    expect(marked(container)).toEqual(expect.arrayContaining(["content", "metadata", "paused at a page"]));
+    // A matter's type and an export's state are the contract's tokens, in the catalog's words since round three (G12).
+    for (const word of ["安全事件", "离职交接", "运行中", "已完成"]) {
+      expect(screen.getAllByText(word).every((one) => one.closest("[lang='en']") === null), word).toBe(true);
+    }
+    expect(marked(container)).not.toEqual(expect.arrayContaining(["security incident"]));
     node(LIMITS);
     const limits = mount(<Limits />);
     await screen.findByText("gone@example.test");

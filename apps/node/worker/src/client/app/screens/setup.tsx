@@ -60,9 +60,15 @@ function Refusal({ said }: { said: ReactNode }) {
 /** The Node's own English, marked as such: a plan's refusal, Cloudflare's error, where a rule sends mail. */
 const nodeSaid = (words: string): ReactNode => <NodeWords>{words}</NodeWords>;
 
-/** Where a rule sends mail, in Cloudflare's tokens: `forward → someone@example.com`, `drop`. */
-const goesTo = (one: { action: string; destinations: string[] }): string =>
-  `${one.action}${one.destinations.length === 0 ? "" : ` → ${one.destinations.join(", ")}`}`;
+/**
+ * Where a rule sends mail, in Cloudflare's tokens: `forward → someone@example.com`, `drop`. The Node's English, so
+ * marked as such wherever it lands, a sentence included (the owner's round three, G8).
+ */
+const goesTo = (one: { action: string; destinations: string[] }): ReactNode =>
+  nodeSaid(`${one.action}${one.destinations.length === 0 ? "" : ` → ${one.destinations.join(", ")}`}`);
+
+/** Cloudflare's event kind for a receiving server's acceptance, which this Node calls accepted (D31). */
+const CLOUDFLARE_DELIVERED = "delivered";
 
 /** A command, in mono: identifiers stay Latin in every locale. */
 const SETUP_COMMAND = <span className="mono">mailda setup</span>;
@@ -227,16 +233,16 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
     const here = done.routing.state === "catch_all" || done.routing.state === "rule_written";
     // The Node's own sentence after ours: why the address is not routed here, or what it noticed in DNS.
     const then = (said: string | null) => (said === null ? null : <>{" "}{nodeSaid(said)}</>);
-    const before = done.catchAll === null ? "" : done.catchAll.before.enabled
+    const before = done.catchAll === null ? null : done.catchAll.before.enabled
       ? goesTo(done.catchAll.before)
-      : t("setup.rule.disabled", { rule: goesTo(done.catchAll.before) });
+      : sentence("setup.rule.disabled", { rule: goesTo(done.catchAll.before) });
     setOutcome(
       done.catchAll !== null
-        ? <>{t("setup.receiving.done.catchAll", { domain: done.domain, before })}{then(here ? null : done.routing.detail)}</>
+        ? <>{sentence("setup.receiving.done.catchAll", { domain: done.domain, before })}{then(here ? null : done.routing.detail)}</>
         : done.confirmed.length === 0
           ? <>{t("setup.receiving.done.nothing", { domain: done.domain })}{then(done.note)}</>
           : here
-            ? t("setup.receiving.done.routed", { domain: done.domain, n: done.confirmed.length, rule: done.rule ?? "?" })
+            ? sentence("setup.receiving.done.routed", { domain: done.domain, n: done.confirmed.length, rule: done.rule === null ? "?" : nodeSaid(done.rule) })
             : <>{t("setup.receiving.done.notRouted", { domain: done.domain, n: done.confirmed.length })}{then(done.routing.detail)}</>,
     );
     await refresh();
@@ -268,7 +274,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
                     {row.error !== null
                       ? <span className="bad">{t("setup.receiving.unread")}</span>
                       : row.enabled === true
-                        ? <span>{row.status === null ? t("setup.receiving.on") : t("setup.receiving.onStatus", { status: row.status })}</span>
+                        ? <span>{row.status === null ? t("setup.receiving.on") : sentence("setup.receiving.onStatus", { status: nodeSaid(row.status) })}</span>
                         : <span className="dim">{t("setup.receiving.off")}</span>}
                   </td>
                   <td className="mono num">{row.error === null ? count(row.required.length) : "—"}</td>
@@ -356,7 +362,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
             </Scroller>
           )}
           {plan.present.length === 0 ? null : (
-            <p className="dim">{t("setup.receiving.present", { records: plan.present.join(", ") })}</p>
+            <p className="dim">{sentence("setup.receiving.present", { records: nodeSaid(plan.present.join(", ")) })}</p>
           )}
           {/*
             Cloudflare's catch-all exists for apex zones only. On an apex it is one rule and every address
@@ -377,9 +383,9 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
                 {plan.catchAll === null
                   ? t("setup.receiving.catchAll.none")
                   : plan.catchAll.enabled
-                    ? t("setup.receiving.catchAll.enabled", { rule: goesTo(plan.catchAll) })
-                    : t("setup.receiving.catchAll.disabled", { rule: goesTo(plan.catchAll) })}
-                {" "}{t("setup.receiving.catchAll.then")}
+                    ? sentence("setup.receiving.catchAll.enabled", { rule: goesTo(plan.catchAll) })
+                    : sentence("setup.receiving.catchAll.disabled", { rule: goesTo(plan.catchAll) })}
+                {t("join.sentence")}{t("setup.receiving.catchAll.then")}
               </p>
               <OwnRules domain={plan.domain} rules={plan.ownRules} />
             </div>
@@ -510,9 +516,9 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     await list();
     setOutcome(
       <>
-        {t("setup.rules.done", { address: done.to, before: goesTo(done.before), after: goesTo(done.after) })}
-        {done.mailbox === null ? null : <>{" "}{t("setup.rules.filedInto", { name: done.mailbox.name })}</>}
-        {done.nameRecorded === false ? <>{" "}{t("setup.rules.nameNotRecorded")}</> : null}
+        {sentence("setup.rules.done", { address: done.to, before: goesTo(done.before), after: goesTo(done.after) })}
+        {done.mailbox === null ? null : <>{t("join.sentence")}{t("setup.rules.filedInto", { name: done.mailbox.name })}</>}
+        {done.nameRecorded === false ? <>{t("join.sentence")}{t("setup.rules.nameNotRecorded")}</> : null}
       </>,
     );
   }
@@ -553,7 +559,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                 <tr key={rule.id}>
                   <td className="mono">
                     {rule.catchAll ? <span className="dim">{t("setup.rules.catchAll")}</span> : rule.to}
-                    {rule.enabled ? "" : <span className="dim">{" "}{t("setup.rules.disabled")}</span>}
+                    {rule.enabled ? "" : <span className="dim">{t("join.sentence")}{t("setup.rules.disabled")}</span>}
                   </td>
                   <td className="mono">{rule.ours ? t("setup.thisNode") : goesTo(rule)}</td>
                   <td>
@@ -752,7 +758,7 @@ function Subscription() {
   return (
     <section className="setup-block" aria-label={t("setup.outcomes.title")}>
       <h2>{t("setup.outcomes.heading")}</h2>
-      <p className="dim">{t("setup.outcomes.about")}</p>
+      <p className="dim">{sentence("setup.outcomes.about", { delivered: <NodeWords><code>{CLOUDFLARE_DELIVERED}</code></NodeWords> })}</p>
 
       <Refusal said={problem} />
       {outcome === null ? null : <p className="notice" role="status">{outcome}</p>}
@@ -847,14 +853,14 @@ function VerifiedDestinationsRead({ read }: { read: VerifiedDestinationsState })
     return (
       <Refusal
         said={<>
-          {sentence("setup.verified.failed", { said: nodeSaid(read.error) })}{" "}
-          {read.readAt === null ? t("setup.verified.failed.never") : t("setup.verified.failed.stands", { at: read.readAt })}
+          {sentence("setup.verified.failed", { said: nodeSaid(read.error) })}{t("join.sentence")}
+          {read.readAt === null ? t("setup.verified.failed.never") : t("setup.verified.failed.stands", { at: dateTime(read.readAt) })}
         </>}
       />
     );
   }
-  // A read that succeeded names its time and account; `readAt` is shown as the Node stamped it (not reformatted).
-  const at = { at: read.readAt ?? "", account: read.accountId ?? "" };
+  // A read that succeeded names its time, in the viewer's zone (the owner's round three, G4), and its account.
+  const at = { at: read.readAt === null ? "" : dateTime(read.readAt), account: read.accountId ?? "" };
   if (read.recipients === 0) return <p className="notice" role="status">{t("setup.verified.nobody", at)}</p>;
   return (
     <p className="notice" role="status">

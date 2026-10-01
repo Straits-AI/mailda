@@ -4284,3 +4284,24 @@ the template none. F9 fixed the English a migration had held still: "1 sends", "
 minutes" and the Doctor's "(s)" counts are plurals, a sentence with three counts being three plurals filled into it
 rather than one plural over three numbers (D10 to D12), and the held, awaiting and withheld notes say "Not handed
 over" (尚未移交), ADR 39's word, where they said "Not sent" (D13).
+
+## The interface's languages, layer 2b: every other React screen (1 October 2026)
+
+**The owner's third review confirmed all of it, and thirteen of the twenty flags moved words or code.** Layer 2b moved
+every other React screen into the catalog (Setup, People, Agents, Approvals, Matters, Limits, Butlers, Rules and the
+first-run screen, 542 strings), adding twenty glossary rows its screens needed; `docs/i18n.md` has its account. Its twenty
+glossary rows (team, mint, pause, lift, token and the rest) were confirmed as proposed with that round's own record
+(`ROUND_THREE` in `glossary.ts`), and 送达 in `NEVER`, so no glossary row is proposed any more and only `UNMIGRATED` and
+the pseudo-locale render stand between zh-Hans and release. Three English sentences changed (D31 to D33): Setup's
+delivery outcomes say "accepted (Cloudflare's `delivered`)", because no Node sees a message reach a person; a deny rule
+"is denied by this rule", not "refused", the provider's word; and three raw ISO stamps became the viewer's date and time.
+Limits had said "No domain is paused." when it could not read the pauses at all, and now says the read failed. The
+Node's tokens inside Setup's sentences (where a rule sends mail, a status, a record) and the relation and capability
+tokens on People and Agents are marked as English. Two sentences side by side are joined by a catalog word, a space in
+English and nothing in Chinese, and a Chinese table cell is at least four characters wide, so a phone no longer stacks
+已启用 one character per line. The Chinese counts people deciding as 人批准 rather than requests, calls Cloudflare's
+queue Cloudflare 队列, and says a live agent is 生效中 as a live Butler is. A matter's kind, an export's state, a Butler version's state and a
+breaker's name are now lists in the contract that the Node itself uses, so their Chinese is keyed rather than shown as
+the Node's English. One flag is left for a change of its own:
+the API's prose still says stop and restart for a domain pause, byte-stable for the agents that read it (G6). The flags
+are in `docs/i18n.md`.

@@ -3,7 +3,8 @@ import type { Twin } from "../catalog.ts";
 
 /**
  * 配置进度。A step's `phrase` is its label unchanged: Chinese has no capital to lower. "doctor" the check is 诊断,
- * the Doctor screen's word; the delivery-events queue is Cloudflare's, 队列 here, not the shared Queue.
+ * the Doctor screen's word; the delivery-events queue is Cloudflare's, Cloudflare 队列, so 队列 alone is always the shared
+ * Queue (the owner's round three, G11).
  */
 export const onboarding: Twin<typeof source> = {
   "onboarding.step.address": "可接收邮件的邮件地址",
@@ -50,8 +51,8 @@ export const onboarding: Twin<typeof source> = {
   "onboarding.outcomes.none": "还没有可订阅的内容",
   "onboarding.outcomes.noSubscription": "没有订阅",
   "onboarding.outcomes.off": "订阅未启用",
-  "onboarding.outcomes.noQueue": "没有队列",
-  "onboarding.outcomes.noConsumer": "队列没有消费者",
+  "onboarding.outcomes.noQueue": "没有 Cloudflare 队列",
+  "onboarding.outcomes.noConsumer": "Cloudflare 队列没有消费者",
 
   "onboarding.progress.label": "配置进度",
   "onboarding.progress.done": "已完成 {done}/{total} 步。",

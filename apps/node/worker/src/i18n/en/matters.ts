@@ -1,4 +1,22 @@
+import type { ExportState, MatterType } from "@mailda/contract/schemas";
+
 import type { Area } from "../areas.ts";
+
+/**
+ * A matter's type and an export's state, keyed by the contract's closed lists (`MATTER_TYPES`, `EXPORT_STATES`;
+ * the owner's round three, G12): a token without words, or words for no token, does not compile. The English is
+ * the token as the screen showed it before it had words, so English is unchanged.
+ */
+const tokens = {
+  "matters.type.legal_hold": "legal hold",
+  "matters.type.security_incident": "security incident",
+  "matters.type.departure_handover": "departure handover",
+  "matters.type.regulatory_request": "regulatory request",
+  "matters.export.requested": "requested",
+  "matters.export.running": "running",
+  "matters.export.completed": "completed",
+  "matters.export.aborted": "aborted",
+} as const satisfies Record<`matters.type.${MatterType}` | `matters.export.${ExportState}`, string>;
 
 /**
  * Matters (`src/client/app/screens/matters.tsx`): matters, legal holds, supervised access and exports.
@@ -11,6 +29,7 @@ import type { Area } from "../areas.ts";
  * `matters.scope.*` is keyed by the read scope the Node takes (`metadata`, `content`).
  */
 export const matters = {
+  ...tokens,
   "matters.open": "{n} open",
   "matters.lead":
     "A matter, and what it authorises. Mail is held so it cannot be deleted, a colleague’s mailbox may be read for a bounded time, a copy may be taken. Closing the matter is what makes the notice to the person who was read about fall due (§7).",

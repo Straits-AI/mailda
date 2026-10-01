@@ -2,6 +2,9 @@ import type { limits as source } from "../en/limits.ts";
 import type { Twin } from "../catalog.ts";
 
 export const limits: Twin<typeof source> = {
+  "limits.breaker.volume": "发信量",
+  "limits.breaker.bounce_rate": "退信率",
+  "limits.breaker.complaint_rate": "投诉率",
   "limits.title": "发信限额",
 
   "limits.breakers": "熔断器",

@@ -1,3 +1,4 @@
+import { EXPORT_STATES, MATTER_TYPES as MATTER_TYPE_TOKENS, oneOf } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -164,7 +165,12 @@ export function Matters() {
                 {(matters.data?.matters ?? []).map((matter) => (
                   <tr key={matter.id}>
                     <td>{matter.description}<br /><span className="dim mono">{matter.id}</span></td>
-                    <td><NodeWords>{matter.type.replace(/_/g, " ")}</NodeWords></td>
+                    <td>
+                      {/* A type this client has no words for, from a newer Node, is shown as the Node's token. */}
+                      {oneOf(MATTER_TYPE_TOKENS, matter.type)
+                        ? t(`matters.type.${matter.type}`)
+                        : <NodeWords>{matter.type.replace(/_/g, " ")}</NodeWords>}
+                    </td>
                     <td className="mono">{when(matter.openedAt)}</td>
                     <td>
                       {matter.closedAt === null
@@ -257,7 +263,7 @@ export function Matters() {
                       {hold.mailboxId}
                       {/* A hold on a mailbox that no longer exists still preserves; saying so avoids a
                           reader concluding the row is stale and lifting it. */}
-                      {hold.mailboxExists ? null : <span className="dim">{" "}{t("matters.holds.gone")}</span>}
+                      {hold.mailboxExists ? null : <span className="dim">{t("join.sentence")}{t("matters.holds.gone")}</span>}
                     </td>
                     <td className="mono dim">{hold.matterId ?? t("matters.holds.noMatter")}</td>
                     <td className="mono">{when(hold.placedAt)}</td>
@@ -431,7 +437,7 @@ export function Matters() {
                     <td className="mono">{row.mailboxId}</td>
                     <td className="mono">{row.requestedBy}</td>
                     <td>
-                      <NodeWords>{row.state}</NodeWords>
+                      {oneOf(EXPORT_STATES, row.state) ? t(`matters.export.${row.state}`) : <NodeWords>{row.state}</NodeWords>}
                       {row.stateReason === null ? null : <span className="dim"> · <NodeWords>{row.stateReason}</NodeWords></span>}
                     </td>
                     <td className="num mono">{t("matters.exports.emitted", { emitted: row.messagesEmitted, max: row.maxMessages })}</td>

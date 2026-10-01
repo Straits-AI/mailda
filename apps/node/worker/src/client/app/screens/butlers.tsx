@@ -1,3 +1,4 @@
+import { BUTLER_PAUSE_REASONS, BUTLER_VERSION_STATES, oneOf } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -98,7 +99,11 @@ function Standing({ butler }: { butler: ButlerRow }) {
   if (butler.pause !== null) {
     return (
       <span className="bad">
-        {sentence("butlers.standing.paused", { reason: <NodeWords>{butler.pause.reason.replace(/_/g, " ")}</NodeWords> })}
+        {sentence("butlers.standing.paused", {
+          reason: oneOf(BUTLER_PAUSE_REASONS, butler.pause.reason)
+            ? t(`butlers.pauseReason.${butler.pause.reason}`)
+            : <NodeWords>{butler.pause.reason.replace(/_/g, " ")}</NodeWords>,
+        })}
       </span>
     );
   }
@@ -417,7 +422,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
           {versions.map((row) => (
             <tr key={row.id}>
               <td className="mono">{row.version ?? "—"}</td>
-              <td><NodeWords>{row.state}</NodeWords></td>
+              <td>{oneOf(BUTLER_VERSION_STATES, row.state) ? t(`butlers.version.${row.state}`) : <NodeWords>{row.state}</NodeWords>}</td>
               <td className="mono">{when(row.published_at)}</td>
               <td className="mono">{row.published_by ?? "—"}</td>
               <td className="mono dim">{row.ast_sha256.slice(0, 12)}</td>

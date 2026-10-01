@@ -233,7 +233,7 @@ export function ProgressList({ steps }: { steps: Step[] }) {
     <section className="onboarding" aria-label={t("onboarding.progress.label")}>
       <p className="dim">
         {next === undefined ? sentence("onboarding.progress.done", tally) : sentence("onboarding.progress.next", { ...tally, next: next.phrase })}
-        {counted.length < steps.length ? <>{" "}{t("onboarding.progress.optional")}</> : null}
+        {counted.length < steps.length ? <>{t("join.sentence")}{t("onboarding.progress.optional")}</> : null}
       </p>
       <ol>
         {steps.map((step) => (

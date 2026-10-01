@@ -21,8 +21,8 @@ import {
  * must find the one planted defect (AGENTS.md §2b).
  */
 
-/** Layer 2b's rows (1 October 2026), proposed for the owner's next review (`docs/i18n.md`). */
-const PROPOSED = [
+/** Layer 2b's rows (1 October 2026), confirmed in the owner's round three (`docs/i18n.md`). */
+const ROUND_THREE = [
   "team", "mint", "capability", "approve", "routing-rule", "pause", "supervised-read", "export", "breaker", "vouch", "lift",
   "administrator", "receipt.measured", "onboard", "zone", "apex", "token", "delivery-event", "subscription", "consumer",
 ];
@@ -148,18 +148,17 @@ describe("the glossary", () => {
   it("lets only a preview ship a proposed word; a released locale needs the owner's confirmation", () => {
     expect(confirmedBeforeShipping(WORLD)).toEqual([]);
     const released = (concepts: readonly Concept[]): World => ({ ...planted({}, { preview: false }), concepts });
-    // Released today, zh-Hans would ship layer 2b's proposed words: every finding names one of them, and every one of
-    // them that governs a key is found.
-    const found = new Set(confirmedBeforeShipping(released(CONCEPTS)).map((line) => line.split(": ")[1]!.split(" ")[0]));
-    expect([...found].sort()).toEqual(PROPOSED.filter((id) => id !== "capability").sort());
-    // The rows the owner has confirmed: round one (30 September 2026), its two held rows answered and round two's
-    // three new rows (1 October 2026). None of them stops zh-Hans being released; layer 2b's rows, T4 and the
-    // owner's review of them still do.
-    const ruled = CONCEPTS.filter((concept) => concept.status !== "proposed");
-    expect(confirmedBeforeShipping(released(ruled))).toEqual([]);
-    // Put back to proposed, a round-two row is reported on every key it governs, so the empty list above is the
-    // check finding nothing, not a check that cannot find anything.
-    const back = (id: string) => ruled.map((concept) => (concept.id === id ? { ...concept, status: "proposed" as const } : concept));
+    // Every row is confirmed: round one (30 September 2026), its two held rows answered and round two's three new rows
+    // (1 October 2026), and layer 2b's twenty in round three. No glossary word stops zh-Hans being released; T4 and
+    // `UNMIGRATED` (layer 3) still do.
+    expect(confirmedBeforeShipping(released(CONCEPTS))).toEqual([]);
+    // Put back to proposed, a row is reported on every key it governs, so the empty list above is the check finding
+    // nothing, not a check that cannot find anything.
+    const back = (id: string) => CONCEPTS.map((concept) => (concept.id === id ? { ...concept, status: "proposed" as const } : concept));
+    expect(confirmedBeforeShipping(released(back("breaker")))).toEqual([
+      "zh-Hans limits.col.breaker: breaker is proposed, not confirmed",
+      "zh-Hans limits.breakers: breaker is proposed, not confirmed",
+    ]);
     expect(confirmedBeforeShipping(released(back("recall")))).toEqual([
       "zh-Hans composer.sendNote: recall is proposed, not confirmed",
       "zh-Hans composer.how.body: recall is proposed, not confirmed",
@@ -177,15 +176,17 @@ describe("the glossary", () => {
     expect(confirmedBeforeShipping(released(confirmed))).toEqual([]);
   });
 
-  it("records the owner's review against rows that exist, and leaves proposed only the rows the owner has not seen", () => {
+  it("records the owner's review against rows that exist, and leaves no row proposed", () => {
     const ids = new Set(CONCEPTS.map((concept) => concept.id));
     expect([...CONFIRMED].filter((id) => !ids.has(id))).toEqual([]);
-    // Every row the owner has seen is confirmed; the proposed ones are exactly layer 2b's, waiting for the owner's
-    // next review. A confirmed row put back to proposed, or a new row added, is an edit here.
-    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual(PROPOSED);
-    // Round two's three rows carry round two's record, not round one's.
-    expect(CONCEPTS.filter((concept) => typeof concept.status === "object" && concept.status.record.includes("round two"))
-      .map((concept) => concept.id)).toEqual(["send.denied", "recall", "vault"]);
+    // Every row the owner has seen is confirmed, and the owner has seen every row. A confirmed row put back to
+    // proposed, or a new row added, is an edit here.
+    expect(CONCEPTS.filter((concept) => concept.status === "proposed").map((concept) => concept.id)).toEqual([]);
+    // Each round's rows carry that round's record, not another's.
+    const recorded = (round: string) => CONCEPTS
+      .filter((concept) => typeof concept.status === "object" && concept.status.record.includes(round)).map((concept) => concept.id);
+    expect(recorded("round two")).toEqual(["send.denied", "recall", "vault"]);
+    expect(recorded("round three")).toEqual(ROUND_THREE);
   });
 });
 

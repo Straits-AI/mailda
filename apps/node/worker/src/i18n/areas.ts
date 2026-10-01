@@ -13,7 +13,7 @@ import type { Message } from "./format.ts";
  */
 export const AREAS = {
   preauth: ["brand", "preauth"],
-  common: ["route", "title"],
+  common: ["route", "title", "join"],
   language: ["language"],
   chrome: ["chrome", "health"],
   palette: ["palette"],

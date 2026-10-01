@@ -128,7 +128,7 @@ export const setup: Twin<typeof source> = {
   "setup.outcomes.title": "投递结果",
   "setup.outcomes.heading": "5. 投递结果",
   "setup.outcomes.about":
-    "只有当某个订阅把投递事件发布到本节点的队列时，发信域名才会报告每封邮件的结果（已受理、退信、投诉）。没有订阅，每次发送的结果都会一直未观测到。该域名必须先为发信接入。",
+    "只有当某个订阅把投递事件发布到本节点的 Cloudflare 队列时，发信域名才会报告每封邮件的结果：已受理（Cloudflare 的 {delivered}）、退信或投诉。没有订阅，每次发送的结果都会一直未观测到。该域名必须先为发信接入。",
   "setup.outcomes.propose": "看看订阅它会做什么",
   "setup.outcomes.carriedBy": "由 {domain} 承载，它是覆盖这个名称的已接入域名；订阅是为那个域名创建的。",
   "setup.outcomes.subscribed": "已订阅，订阅名为 {name}。",

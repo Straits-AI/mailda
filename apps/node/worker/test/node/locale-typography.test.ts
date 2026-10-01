@@ -109,6 +109,10 @@ describe("the Simplified Chinese type", () => {
     expect(property(`${ZH} td button`, "word-break")).toBe("keep-all");
     expect(property(`${ZH} td a`, "word-break")).toBe("keep-all");
   });
+
+  it("gives a table cell four Han characters' width under Chinese, so a cell's prose is not one character per line (G16)", () => {
+    expect(property(`${ZH} td`, "min-width")).toBe("4em");
+  });
 });
 
 describe("a plain-text body's type", () => {

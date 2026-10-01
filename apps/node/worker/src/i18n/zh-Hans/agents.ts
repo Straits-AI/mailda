@@ -15,7 +15,7 @@ export const agents: Twin<typeof source> = {
 
   "agents.standing.revoked": "已吊销",
   "agents.standing.expired": "已过期",
-  "agents.standing.live": "有效",
+  "agents.standing.live": "生效中",
   "agents.held.partial": "{held}/{total}",
   "agents.unnamed": "本节点已不再命名的 {n} 条固定路由：",
   "agents.noMailbox": "没有邮箱",
