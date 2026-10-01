@@ -46,7 +46,7 @@ function send(id: string, extra: Record<string, unknown>) {
   return {
     id, subject: `subject ${id}`, envelope_to: JSON.stringify(["a@example.test"]), state: "handed_over", state_at: AT,
     release_at: AT, attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 0,
-    state_reason: null, policy_outcome: "allow", retry: { mode: null, why: "" }, recipients: [], ...extra,
+    state_reason: null, policy_outcome: "allow", retry: { mode: null, why: "acceptance_observed" }, recipients: [], ...extra,
   };
 }
 
@@ -62,8 +62,8 @@ const SENDS = [
       recipient("to", "d@example.test", "accepted"),
     ],
   }),
-  send("snd_unknown", { state: "outcome_unknown", retry: { mode: "resend-may-duplicate", why: "" }, last_error: "the transport timed out" }),
-  send("snd_refused", { state: "refused", retry: { mode: "retry-effect", why: "" }, fidelity: "reconstructed" }),
+  send("snd_unknown", { state: "outcome_unknown", retry: { mode: "resend-may-duplicate", duplicatePossible: true }, last_error: "the transport timed out" }),
+  send("snd_refused", { state: "refused", retry: { mode: "retry-effect", proof: "refused" }, fidelity: "reconstructed" }),
   send("snd_withheld", { state: "withheld", state_reason: "approval_expired", recipients: [recipient("to", "a@example.test", "deferred")] }),
 ];
 

@@ -2,7 +2,7 @@ import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react
 import { apiFetch } from "/app/session.js";
 import { t } from "/app/locale.js";
 import type {
-  AddressRemoval, AddressRouting, MatterType, ProviderRoutingRules, ProviderVerifiedDestinations,
+  AddressRemoval, AddressRouting, MatterType, ProviderRoutingRules, ProviderVerifiedDestinations, RetryOffer,
 } from "@mailda/contract/schemas";
 export type { AddressRemoval, AddressRouting };
 import {
@@ -257,8 +257,8 @@ export function useThread(conversationId: string | null) {
 }
 
 export interface SendRow {
-  /** Which retry the Node offers this send, and why (ADR 40). `mode` null means none. */
-  retry: { mode: string | null; why: string };
+  /** Which retry the Node offers this send (ADR 40): a mode and its grounds, or `mode` null and why none. */
+  retry: RetryOffer;
   id: string;
   subject: string;
   envelope_to: string;

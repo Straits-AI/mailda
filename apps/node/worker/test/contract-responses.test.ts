@@ -2025,6 +2025,16 @@ describe("the routes that only exist once mail has landed", () => {
     expect(bytes.status).toBe(200);
     expect(await bytes.text()).toContain("From:");
 
+    /*
+     * The listing of a send that earns a retry. Every earlier listing held only `held` sends, whose offer is
+     * `{ mode: null, why }`, so the contract's `retry` described that arm alone and an offered mode, which
+     * carries its proof instead, was never parsed.
+     */
+    const listed = await answers("GET", "/api/sends", { cookie: held }) as {
+      sends: Array<{ id: string; retry: unknown }>;
+    };
+    expect(listed.sends.find((one) => one.id === sealed.id)?.retry).toEqual({ mode: "retry-effect", proof: "refused" });
+
     const retried = await answers("POST", "/api/sends/:sendId/retry", {
       params: { sendId: sealed.id }, body: { mode: "retry-effect" }, cookie: held,
     }) as { detail: string };

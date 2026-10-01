@@ -36,7 +36,7 @@ function send(state_reason: string) {
     id: `snd_${state_reason}`, subject: `on ${state_reason}`, envelope_to: JSON.stringify(["a@b.test"]),
     state: "awaiting", state_at: "2026-09-26T09:00:00.000Z", release_at: "2026-09-26T09:00:00.000Z",
     attempts: 0, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 0,
-    state_reason, policy_outcome: "allow", recipients: [], retry: { mode: null, why: "" },
+    state_reason, policy_outcome: "allow", recipients: [], retry: { mode: null, why: "acceptance_observed" },
   };
 }
 

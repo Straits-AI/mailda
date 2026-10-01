@@ -4350,3 +4350,10 @@ array on the wire, and the Outbox parsed it while the thread printed it. Both no
 **The Outbox's When column showed a clock only**, so yesterday's send read `17:09:00`. The Audit and Log ledgers'
 At column had the same cell. All three now show `format.ts`'s `stamp`: the clock for a row from today, the date and
 the clock for any other day, in the viewer's locale.
+
+**The Outbox's Retry and Resend buttons had an empty title.** It read `retry.why`, which `apps/node/worker/src/outbound/retry.ts` sends
+only when no mode is offered: an offered mode carries its `proof` (`retry-effect`) or `duplicatePossible`
+(`resend-may-duplicate`), and the button shows only then. The contract described the `mode: null` arm alone, as
+`.strict()`, so a listing with a retryable send did not satisfy it, and no test had listed one. `retry` is now the
+union the Node sends (`RetryOffer` in `packages/contract/src/schemas.ts`), `apps/node/worker/test/contract-responses.test.ts` lists a
+refused send, and the title is gone: the state beside the button already says what the proof would.

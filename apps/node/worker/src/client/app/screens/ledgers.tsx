@@ -322,7 +322,7 @@ export function Outbox() {
                         <>
                           {send.retry.mode === null ? null : (
                             <>
-                              <button type="button" className="linkish" title={send.retry.why} onClick={() => void retry(send)}>
+                              <button type="button" className="linkish" onClick={() => void retry(send)}>
                                 {send.retry.mode === "retry-effect" ? t("ledgers.outbox.retry") : t("ledgers.outbox.resend")}
                               </button>
                               {/* A separator only between two things: an authored send never submitted has no .eml. */}
