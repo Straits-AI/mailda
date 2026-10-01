@@ -13,8 +13,8 @@ stale_when: >
   until the interface is migrated; or `/app/locale.js` starts carrying an `app` table, which
   `test/catalog-served.test.ts` refuses
 values:
-  shell.bundle_bytes: 762699
-  shell.bundle_gzip_bytes: 216350
+  shell.bundle_bytes: 762939
+  shell.bundle_gzip_bytes: 216442
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
   shell.pre_auth_locale_bytes: 15903
@@ -33,11 +33,12 @@ the framework-free scripts before sign-in (`app.client.js`, `session.client.js`,
 `UNMIGRATED`; keyed the Doctor's check titles, a capability's description and a body's problem by the contract's
 lists; and gave every locale's `preauth` table the claim, recovery, sign-in, invitation and passkey screens and the
 eighteen headlines of `PREAUTH_ERRORS`. `pnpm build:client` (the build step `wrangler deploy --dry-run` runs) printed,
-on branch `i18n-l3` from `f876780`, after the layer's last catalog change:
+on branch `i18n-l3` from `f876780`, after the layer's last change (the four defects T4 and the screenshots found
+included, which moved the shell 240 bytes):
 
 | | 1 October (layer 2a) | 2 October (layers 2b and 3) | delta |
 |:--|--:|--:|--:|
-| shell bundle | 761,502 raw / 219,307 gzip | **762,699 / 216,350** | +1,197 (+0.16%) / −2,957 (−1.35%) |
+| shell bundle | 761,502 raw / 219,307 gzip | **762,939 / 216,442** | +1,437 (+0.19%) / −2,865 (−1.31%) |
 | `/app/locale.js`, loaded before sign-in | 3,348 / 1,657 | **15,903 / 6,470** | +12,555 (4.75×) |
 | the `en` app table | 49,074 / 13,559 | **92,568 / 25,722** | +43,494 (1.9×) |
 | the `zh-Hans` app table | 49,428 / 15,778 | **92,909 / 29,365** | +43,481 (1.9×) |
