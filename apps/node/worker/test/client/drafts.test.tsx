@@ -120,7 +120,7 @@ describe("the list's states", () => {
 
   it("says where a capped list stopped", async () => {
     mount([REPLY], true);
-    expect(await screen.findByText("Showing the newest 1 drafts. Older ones exist and are not listed.")).toBeTruthy();
+    expect(await screen.findByText("Showing the newest one. Older ones exist and are not listed.")).toBeTruthy();
   });
   describe("in Chinese", () => {
     afterEach(() => install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app }));

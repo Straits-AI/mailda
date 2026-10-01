@@ -41,14 +41,14 @@ export const delivery = {
   "send.state.held.note": "Not handed over yet. You can still stop this.",
   "send.state.awaiting": "awaiting",
   "send.state.awaiting.note":
-    "Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is " +
+    "Not handed over yet. A rule gated this send, and it is waiting for somebody to clear the gate. Which gate is " +
     "in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval " +
     "only an approver can give.",
   "send.state.cancelled": "cancelled",
   "send.state.cancelled.note": "Stopped before it left.",
   "send.state.withheld": "withheld",
   "send.state.withheld.note":
-    "Not handed over: this Node declined, and the reason beside it says why — a policy denied it, " +
+    "Not handed over: this Node declined, and the reason beside it says why — a rule denied it, " +
     "an approver denied it, or something it was approved on had changed by the time it was due to go. " +
     "Nobody cancelled it and the mail service was never asked.",
   "send.state.throttled": "throttled",
@@ -69,17 +69,21 @@ export const delivery = {
     "duplicate can result from sending it again.",
 
   "send.reason.policy_hold": "policy hold",
+  /**
+   * D1 (`docs/i18n.md`): the notes said "a policy", and the interface's word for one is a rule (Rules). The labels
+   * keep "policy" (`policy hold` is the glossary's confirmed English) until the owner takes a label change.
+   */
   "send.reason.policy_hold.note":
-    "A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no " +
+    "A rule holds this send. It has not left. Anybody who may send as this mailbox can release it — no " +
     "approver is needed, which is what makes a hold the lesser of the two gates.",
   "send.reason.policy_approval_required": "approval required",
   "send.reason.policy_approval_required.note":
-    "A policy requires this send to be approved. It has not left. Only somebody holding approval.decide " +
+    "A rule requires this send to be approved. It has not left. Only somebody holding approval.decide " +
     "on this mailbox can approve it, which is why this is the stricter gate.",
   "send.reason.policy_denied": "policy denied",
   "send.reason.policy_denied.note":
-    "A policy denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
-    "service was never asked. There is no act that clears a denial — compose again, or change the policy.",
+    "A rule denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
+    "service was never asked. There is no act that clears a denial — compose again, or change the rule.",
   "send.reason.authority_lost": "authority lost",
   "send.reason.authority_lost.note":
     "The author's authority to send as this mailbox was withdrawn before hand-over, so this Node declined " +
@@ -97,9 +101,9 @@ export const delivery = {
     "decision was taken. Grant the relation again, or compose again so eligible approvers can decide it.",
   "send.reason.policy_stricter": "policy is stricter now",
   "send.reason.policy_stricter.note":
-    "Policy changed between the approval and the hand-over, and it is stricter than what this send was " +
+    "The rules changed between the approval and the hand-over, and they are stricter than what this send was " +
     "approved under — so it fails closed rather than going out under a rule that no longer applies. " +
-    "Compose again and it will be judged, and approved if needed, under the policy in force now.",
+    "Compose again and it will be judged, and approved if needed, under the rules in force now.",
   "send.reason.approval_expired": "approval expired",
   "send.reason.approval_expired.note":
     "The approval for this send passed its deadline before it was handed over. That is final: an approval " +
@@ -137,15 +141,15 @@ export const delivery = {
     "person saying they did not want this.",
   "send.reason.domain_paused": "domain paused",
   "send.reason.domain_paused.note":
-    "Two administrators stopped every send from this domain, and the reason they gave is on the message. " +
+    "Two administrators paused every send from this domain, and the reason they gave is on the message. " +
     "This Node declined to hand it over; nobody cancelled it and the mail service was never asked. Any " +
-    "one administrator can restart the domain on their own — the harm of a wrongly paused domain grows " +
+    "one administrator can lift the pause on their own — the harm of a wrongly paused domain grows " +
     "every minute — and after that the message has to be composed again, because a sealed send is never " +
     "edited.",
   "send.reason.approval_unsatisfiable": "approval impossible",
   "send.reason.approval_unsatisfiable.note":
-    "A policy required an approval that nobody can give: too few people hold approval.decide on this " +
-    "mailbox for the stages the policy asks for, and the author of a send is never eligible to approve it. " +
+    "A rule required an approval that nobody can give: too few people hold approval.decide on this " +
+    "mailbox for the stages the rule asks for, and the author of a send is never eligible to approve it. " +
     "This is not waiting for somebody — nobody can clear it. An administrator has to grant approval.decide " +
     "to enough distinct people, and then the message has to be composed again.",
   "send.reason.butler_release_required": "waiting for a person",

@@ -1,10 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Nothing, Scroller, Truncated } from "../chrome.tsx";
+import { dateTime } from "../format.ts";
+import { NodeWords, marked } from "../words.tsx";
 import {
   liftDomainPause, liftSuppression, requestDomainPause, useBreakers, useDomainPauses, useSuppressions,
-  type BreakerReading,
+  type BreakerReading, type Said,
 } from "../api.ts";
 
 /**
@@ -34,36 +37,33 @@ import {
  */
 
 function percentage(reading: BreakerReading): string {
-  if (!reading.armed) return "not enough traffic to judge";
-  if (reading.percent === null) return `${reading.observed} of ${reading.limit}`;
-  return `${reading.percent.toFixed(1)}% of ${reading.limit}%`;
+  if (!reading.armed) return t("limits.reading.unarmed");
+  if (reading.percent === null) return t("limits.reading.count", { observed: reading.observed, limit: reading.limit });
+  return t("limits.reading.percent", { percent: reading.percent.toFixed(1), limit: reading.limit });
 }
 
 function windowWords(seconds: number): string {
-  if (seconds % 86_400 === 0) return `${seconds / 86_400} day${seconds === 86_400 ? "" : "s"}`;
-  if (seconds % 3_600 === 0) return `${seconds / 3_600} hour${seconds === 3_600 ? "" : "s"}`;
-  return `${Math.round(seconds / 60)} minutes`;
+  if (seconds % 86_400 === 0) return t("limits.window.days", { n: seconds / 86_400 });
+  if (seconds % 3_600 === 0) return t("limits.window.hours", { n: seconds / 3_600 });
+  return t("limits.window.minutes", { n: Math.round(seconds / 60) });
 }
 
 function Breakers() {
   const breakers = useBreakers();
   if (breakers.isPending) return <Nothing kind="loading" />;
-  if (breakers.isError) return <Nothing kind="failed" detail={breakers.error.message} />;
+  if (breakers.isError) return <Nothing kind="failed" detail={marked(breakers.error)} />;
 
   return (
-    <Scroller label="Breakers">
+    <Scroller label={t("limits.breakers")}>
       <table>
-        <caption className="dim">
-          Rates this Node applies to itself. Every limit is a measured budget, not a setting — changing one
-          means changing its receipt.
-        </caption>
+        <caption className="dim">{t("limits.breakers.caption")}</caption>
         <thead>
           <tr>
-            <th scope="col">Breaker</th>
-            <th scope="col">Now</th>
-            <th scope="col">Over</th>
-            <th scope="col">Seen</th>
-            <th scope="col">State</th>
+            <th scope="col">{t("limits.col.breaker")}</th>
+            <th scope="col">{t("limits.col.now")}</th>
+            <th scope="col">{t("limits.col.over")}</th>
+            <th scope="col">{t("limits.col.seen")}</th>
+            <th scope="col">{t("limits.col.state")}</th>
           </tr>
         </thead>
         <tbody>
@@ -73,17 +73,21 @@ function Breakers() {
                 <span className="mono">{reading.breaker.replace(/_/g, " ")}</span>
                 <br />
                 {/* The Node's own sentence, so a person reads the same words here and on a stopped send. */}
-                <span className="dim">{reading.sentence}</span>
+                <span className="dim"><NodeWords>{reading.sentence}</NodeWords></span>
               </td>
               <td className="mono">{percentage(reading)}</td>
               <td className="mono dim">{windowWords(reading.windowSeconds)}</td>
               <td className="mono num">{reading.observations}</td>
               <td>
                 {reading.tripped
-                  ? <span className="bad">stopping mail</span>
+                  ? <span className="bad">{t("limits.state.tripped")}</span>
                   : reading.armed
-                    ? <span className="dim">armed</span>
-                    : <span className="dim">unarmed — {reading.unarmedReason?.replace(/_/g, " ")}</span>}
+                    ? <span className="dim">{t("limits.state.armed")}</span>
+                    : (
+                      <span className="dim">
+                        {reading.unarmedReason === null ? t("limits.state.unarmed") : t(`limits.state.unarmed.${reading.unarmedReason}`)}
+                      </span>
+                    )}
               </td>
             </tr>
           ))}
@@ -98,7 +102,7 @@ function Pauses() {
   const queryClient = useQueryClient();
   const [domain, setDomain] = useState("");
   const [reason, setReason] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
 
   async function refresh() {
@@ -110,40 +114,38 @@ function Pauses() {
     setProblem(null);
     setAsked(null);
     const outcome = await requestDomainPause(domain.trim(), reason.trim());
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setDomain("");
     setReason("");
     // Not "paused". Two other administrators have to agree first, and saying it stopped when it has not is
     // the §5C mistake in the one place it would matter most — somebody would stop watching.
-    setAsked("Asked. Two other administrators have to agree before this domain's mail stops.");
+    setAsked(t("limits.pauses.asked"));
     await refresh();
   }
 
   async function lift(id: string) {
     setProblem(null);
     const outcome = await liftDomainPause(id);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await refresh();
   }
 
   return (
-    <section className="limits-pauses" aria-label="Paused domains">
-      <h2>Stopped domains</h2>
+    <section className="limits-pauses" aria-label={t("limits.pauses")}>
+      <h2>{t("limits.pauses")}</h2>
       {/*
-        The asymmetry is the design and it is worth stating on the screen: stopping a customer's mail needs
-        three people, restarting it needs one. Getting it wrong in the safe direction should be easy to undo.
+        The asymmetry is the design and it is worth stating on the screen: pausing a customer's mail needs two
+        administrators besides whoever asks, lifting it needs one. Getting it wrong in the safe direction should be
+        easy to undo.
       */}
-      <p className="dim">
-        Stopping a domain takes three administrators — you and two who agree. Restarting one takes a single
-        administrator, alone, because a mistake in the cautious direction should be easy to undo.
-      </p>
+      <p className="dim">{t("limits.pauses.lead")}</p>
 
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
       {asked === null ? null : <p className="notice" role="status">{asked}</p>}
 
       <div className="limits-ask">
         <label className="field-row" htmlFor="pause-domain">
-          <span>Domain</span>
+          <span>{t("limits.pauses.domain")}</span>
           <input
             id="pause-domain"
             className="mono"
@@ -153,7 +155,7 @@ function Pauses() {
           />
         </label>
         <label className="field-row" htmlFor="pause-reason">
-          <span>Why</span>
+          <span>{t("limits.why")}</span>
           <input
             id="pause-reason"
             value={reason}
@@ -165,17 +167,17 @@ function Pauses() {
           onClick={() => void ask()}
           disabled={domain.trim() === "" || reason.trim() === ""}
         >
-          Ask to stop this domain
+          {t("limits.pauses.act")}
         </button>
       </div>
 
       {pauses.isSuccess && pauses.data.pauses.length > 0 ? (
-        <Scroller label="Stopped domains">
+        <Scroller label={t("limits.pauses")}>
           <table>
             <thead>
               <tr>
-                <th scope="col">Domain</th><th scope="col">Why</th>
-                <th scope="col">Since</th><th scope="col">Restart</th>
+                <th scope="col">{t("limits.pauses.domain")}</th><th scope="col">{t("limits.why")}</th>
+                <th scope="col">{t("limits.since")}</th><th scope="col">{t("limits.pauses.lift")}</th>
               </tr>
             </thead>
             <tbody>
@@ -183,10 +185,10 @@ function Pauses() {
                 <tr key={pause.id}>
                   <td className="mono">{pause.domain}</td>
                   <td>{pause.reason}</td>
-                  <td className="mono">{new Date(pause.placedAt).toLocaleString()}</td>
+                  <td className="mono">{dateTime(pause.placedAt)}</td>
                   <td>
                     <button type="button" className="linkish" onClick={() => void lift(pause.id)}>
-                      Let it send again
+                      {t("limits.pauses.liftAct")}
                     </button>
                   </td>
                 </tr>
@@ -195,7 +197,7 @@ function Pauses() {
           </table>
         </Scroller>
       ) : (
-        <Nothing kind="empty" detail="No domain is stopped." />
+        <Nothing kind="empty" detail={t("limits.pauses.empty")} />
       )}
     </section>
   );
@@ -210,54 +212,50 @@ function Suppressions() {
   const suppressed = useSuppressions();
   const queryClient = useQueryClient();
   const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
 
   async function lift(address: string) {
     setProblem(null);
     const outcome = await liftSuppression(address, (reasons[address] ?? "").trim());
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await queryClient.invalidateQueries({ queryKey: ["suppressions"] });
   }
 
   return (
-    <section className="limits-pauses" aria-label="Suppressed recipients">
-      <h2>Recipients this Node will not send to</h2>
-      <p className="dim">
-        An address the provider hard-bounced, or that marked a message as spam. A send naming one is refused at
-        the seal, by name. Nothing is added here by hand; an administrator can vouch for an address with a reason,
-        and a later bounce puts it back.
-      </p>
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
-      {suppressed.isError ? <p className="notice dim">{suppressed.error.message}</p> : null}
+    <section className="limits-pauses" aria-label={t("limits.suppressed")}>
+      <h2>{t("limits.suppressed.heading")}</h2>
+      <p className="dim">{t("limits.suppressed.lead")}</p>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
+      {suppressed.isError ? <p className="notice dim">{marked(suppressed.error)}</p> : null}
       {suppressed.isSuccess
-        ? <Truncated when={suppressed.data.truncated} shown={suppressed.data.suppressed.length} noun="addresses" />
+        ? <Truncated when={suppressed.data.truncated} shown={suppressed.data.suppressed.length} noun={t("limits.suppressed.noun")} />
         : null}
       {suppressed.isSuccess && suppressed.data.suppressed.length > 0 ? (
-        <Scroller label="Recipients this Node will not send to">
+        <Scroller label={t("limits.suppressed.heading")}>
           <table>
             <thead>
               <tr>
-                <th scope="col">Address</th><th scope="col">Why</th>
-                <th scope="col">Since</th><th scope="col">Vouch</th>
+                <th scope="col">{t("limits.suppressed.address")}</th><th scope="col">{t("limits.why")}</th>
+                <th scope="col">{t("limits.since")}</th><th scope="col">{t("limits.vouch")}</th>
               </tr>
             </thead>
             <tbody>
               {suppressed.data.suppressed.map((row) => (
                 <tr key={row.address}>
                   <td className="mono">{row.address}</td>
-                  <td>{row.cause === "complaint" ? "marked as spam" : "hard bounce"}{row.detail === null ? "" : ` — ${row.detail}`}</td>
+                  <td>{t(`limits.cause.${row.cause}`)}{row.detail === null ? null : <> — <NodeWords>{row.detail}</NodeWords></>}</td>
                   <td className="mono dim">{row.observedAt.slice(0, 16).replace("T", " ")}</td>
                   <td>
                     <label className="target-edit">
-                      <span className="dim mono">Why</span>
+                      <span className="dim mono">{t("limits.why")}</span>
                       <input
                         value={reasons[row.address] ?? ""}
-                        aria-label={`Why ${row.address} is good again`}
+                        aria-label={t("limits.vouch.why", { address: row.address })}
                         onChange={(event) => setReasons({ ...reasons, [row.address]: event.target.value })}
                       />
                     </label>{" "}
                     <button type="button" className="linkish" disabled={(reasons[row.address] ?? "").trim() === ""} onClick={() => void lift(row.address)}>
-                      Vouch
+                      {t("limits.vouch")}
                     </button>
                   </td>
                 </tr>
@@ -265,7 +263,7 @@ function Suppressions() {
             </tbody>
           </table>
         </Scroller>
-      ) : suppressed.isSuccess ? <Nothing kind="empty" detail="No address is suppressed on this Node." /> : null}
+      ) : suppressed.isSuccess ? <Nothing kind="empty" detail={t("limits.suppressed.empty")} /> : null}
     </section>
   );
 }
@@ -274,7 +272,7 @@ export function Limits() {
   return (
     <>
       <header className="ledger-head">
-        <h1>Sending limits</h1>
+        <h1>{t("limits.title")}</h1>
       </header>
       <Breakers />
       <Pauses />

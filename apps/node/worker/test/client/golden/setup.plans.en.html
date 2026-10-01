@@ -1,0 +1,301 @@
+<!-- receiving: a subdomain, refused, no records, no address -->
+<h3>What would happen to mail.example.com</h3>
+<pre class="notice bad butler-findings" role="alert">E_PROVIDER_ZONE_NOT_FOUND  no zone in this account holds mail.example.com
+  fix      add the zone first</pre>
+<p class="dim">No records would be created.</p>
+<p class="dim">mail.example.com is a subdomain, so each address gets its own rule; adding an address later writes one the same way.</p>
+<button type="button" class="primary" disabled="">Do this</button>
+<p class="dim">An address to route here is needed before this can be applied.</p>
+
+<!-- receiving: an apex with no catch-all, its own rules unread -->
+<h3>What would happen to example.com</h3>
+<div class="scroller" tabindex="0" role="region" aria-label="What would happen to example.com">
+<table>
+<thead>
+<tr>
+<th scope="col">Type</th>
+<th scope="col">Name</th>
+<th scope="col">Points at</th>
+<th scope="col">Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">MX</td>
+<td class="mono">example.com</td>
+<td class="mono">route1.mx.cloudflare.net</td>
+<td class="mono num">9</td>
+</tr>
+<tr>
+<td class="mono">TXT</td>
+<td class="mono">example.com</td>
+<td class="mono">v=spf1 include:_spf.mx.cloudflare.net ~all</td>
+<td class="mono num">—</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="dim">Already there: route2.mx.cloudflare.net</p>
+<div class="setup-catch-all">
+<label class="field-row" for="setup-receive-catch-all">
+<input id="setup-receive-catch-all" type="checkbox">
+<span>Route every address at example.com without a rule of its own to this Node (catch-all)</span>
+</label>
+<p class="dim">No catch-all is set on this zone today. Addresses are then managed on this Node, and an address it does not know bounces.</p>
+<p class="notice bad" role="alert">Which addresses at example.com have a routing rule of their own could not be read, so what the catch-all would not reach is unknown: 10000 Authentication error</p>
+</div>
+<button type="button" class="primary" disabled="">Do this</button>
+<p class="dim">An address to route here is needed before this can be applied.</p>
+
+<!-- receiving: an apex whose catch-all goes nowhere, no address with a rule of its own -->
+<h3>What would happen to example.com</h3>
+<div class="scroller" tabindex="0" role="region" aria-label="What would happen to example.com">
+<table>
+<thead>
+<tr>
+<th scope="col">Type</th>
+<th scope="col">Name</th>
+<th scope="col">Points at</th>
+<th scope="col">Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">MX</td>
+<td class="mono">example.com</td>
+<td class="mono">route1.mx.cloudflare.net</td>
+<td class="mono num">9</td>
+</tr>
+<tr>
+<td class="mono">TXT</td>
+<td class="mono">example.com</td>
+<td class="mono">v=spf1 include:_spf.mx.cloudflare.net ~all</td>
+<td class="mono num">—</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="dim">Already there: route2.mx.cloudflare.net</p>
+<div class="setup-catch-all">
+<label class="field-row" for="setup-receive-catch-all">
+<input id="setup-receive-catch-all" type="checkbox">
+<span>Route every address at example.com without a rule of its own to this Node (catch-all)</span>
+</label>
+<p class="dim">Currently: drop, enabled. Addresses are then managed on this Node, and an address it does not know bounces.</p>
+<p class="dim">No address at example.com has a routing rule of its own.</p>
+</div>
+<button type="button" class="primary" disabled="">Do this</button>
+<p class="dim">An address to route here is needed before this can be applied.</p>
+
+<!-- sending: already onboarded -->
+<h3>mail.example.com</h3>
+<p class="notice" role="status">Already onboarded for sending.</p>
+<button type="button" class="primary" disabled="">Onboard this domain</button>
+
+<!-- sending: refused -->
+<h3>mail.example.com</h3>
+<pre class="notice bad butler-findings" role="alert">mail.example.com is not in a zone of this account</pre>
+<button type="button" class="primary" disabled="">Onboard this domain</button>
+
+<!-- delivery outcomes: already subscribed -->
+<h3>mail.example.com</h3>
+<p class="notice" role="status">Already subscribed, as <span class="mono">mailda-sending-events-mail.example.com</span>.</p>
+<button type="button" class="primary" disabled="">Subscribe this domain</button>
+
+<!-- delivery outcomes: refused -->
+<h3>mail.example.com</h3>
+<pre class="notice bad butler-findings" role="alert">mail.example.com is not onboarded for sending — onboard it first: POST /api/provider/sending</pre>
+<button type="button" class="primary" disabled="">Subscribe this domain</button>
+
+<!-- rules: none on the zone -->
+<h3>Rules already on a zone</h3>
+<p class="dim">A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is listed and left alone.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-rules-domain">
+<span>Domain</span>
+<input id="setup-rules-domain" class="mono" placeholder="example.com" value="example.com">
+</label>
+<button class="quiet" type="button">List the rules on this zone</button>
+</div>
+<p class="dim">No routing rules on example.com.</p>
+
+<!-- rules: unreadable -->
+<h3>Rules already on a zone</h3>
+<p class="dim">A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is listed and left alone.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-rules-domain">
+<span>Domain</span>
+<input id="setup-rules-domain" class="mono" placeholder="example.com" value="example.com">
+</label>
+<button class="quiet" type="button">List the rules on this zone</button>
+</div>
+<pre class="notice bad butler-findings" role="alert">10000 Authentication error</pre>
+
+<!-- rules: putting one back -->
+<h3>Rules already on a zone</h3>
+<p class="dim">A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is listed and left alone.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-rules-domain">
+<span>Domain</span>
+<input id="setup-rules-domain" class="mono" placeholder="example.com" value="example.com">
+</label>
+<button class="quiet" type="button">List the rules on this zone</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Routing rules on example.com">
+<table>
+<caption class="dim table-caption">Routing rules on example.com.</caption>
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Goes to</th>
+<th scope="col">
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">
+<span class="dim">catch-all</span>
+</td>
+<td class="mono">worker → butler</td>
+<td>
+</td>
+</tr>
+<tr>
+<td class="mono">off@example.com<span class="dim"> (disabled)</span>
+</td>
+<td class="mono">forward → someone@gmail.test</td>
+<td>
+<span class="dim">the rule for off@example.com is disabled: enable it in the Cloudflare dashboard</span>
+</td>
+</tr>
+<tr>
+<td class="mono">back@example.com</td>
+<td class="mono">this Node</td>
+<td>
+<button type="button" class="primary">Yes, put it back</button>
+</td>
+</tr>
+<tr>
+<td class="mono">drop@example.com</td>
+<td class="mono">drop</td>
+<td>
+<button type="button" class="quiet">receive here</button>
+</td>
+</tr>
+<tr>
+<td class="mono">hello@example.com</td>
+<td class="mono">forward → someone@gmail.test</td>
+<td>
+<button type="button" class="quiet">receive here only</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- rules: a rule asking no mailbox, the only one named -->
+<h3>Rules already on a zone</h3>
+<p class="dim">A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is listed and left alone.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-rules-domain">
+<span>Domain</span>
+<input id="setup-rules-domain" class="mono" placeholder="example.com" value="example.com">
+</label>
+<button class="quiet" type="button">List the rules on this zone</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Routing rules on example.com">
+<table>
+<caption class="dim table-caption">Routing rules on example.com.</caption>
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Goes to</th>
+<th scope="col">
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">
+<span class="dim">catch-all</span>
+</td>
+<td class="mono">worker → butler</td>
+<td>
+</td>
+</tr>
+<tr>
+<td class="mono">off@example.com<span class="dim"> (disabled)</span>
+</td>
+<td class="mono">forward → someone@gmail.test</td>
+<td>
+<span class="dim">the rule for off@example.com is disabled: enable it in the Cloudflare dashboard</span>
+</td>
+</tr>
+<tr>
+<td class="mono">back@example.com</td>
+<td class="mono">this Node</td>
+<td>
+<button type="button" class="quiet">Put back</button>
+</td>
+</tr>
+<tr>
+<td class="mono">drop@example.com</td>
+<td class="mono">drop</td>
+<td>
+<p>drop@example.com stops being dropped.</p>
+<p>Files into Support.</p>
+<button type="button" class="primary">Yes, point drop@example.com here</button>
+</td>
+</tr>
+<tr>
+<td class="mono">hello@example.com</td>
+<td class="mono">forward → someone@gmail.test</td>
+<td>
+<button type="button" class="quiet">receive here only</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- rules: an address too long to name a mailbox -->
+<h3>Rules already on a zone</h3>
+<p class="dim">A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is listed and left alone.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-rules-domain">
+<span>Domain</span>
+<input id="setup-rules-domain" class="mono" placeholder="example.com" value="example.com">
+</label>
+<button class="quiet" type="button">List the rules on this zone</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Routing rules on example.com">
+<table>
+<caption class="dim table-caption">Routing rules on example.com.</caption>
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Goes to</th>
+<th scope="col">
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com</td>
+<td class="mono">forward → someone@gmail.test</td>
+<td>
+<p>someone@gmail.test gets nothing more for hello@example.com.</p>
+<label class="field-row" for="setup-rules-mailbox-r1">
+<span>Into mailbox</span>
+<select id="setup-rules-mailbox-r1" class="mono">
+<option value="">choose a mailbox…</option>
+<option value="mbx_test">Support</option>
+</select>
+</label>
+<button type="button" class="primary">Yes, point aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com here</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

@@ -1,3 +1,4 @@
+import { t } from "/app/locale.js";
 import type { MessageRow } from "../api.ts";
 
 /**
@@ -52,14 +53,14 @@ export const deterministicNextSteps: NextStepsProvider = ({ message, canSend, cl
    * reader without it is a button that can only fail (the application-shell doc: what the reader offers follows what
    * the Node will allow).
    */
-  if (canSend && message.case_state === "open") steps.push({ id: "claim", label: "Claim", run: claim });
-  if (canSend && message.case_mine === 1) steps.push({ id: "release", label: "Release", run: release });
+  if (canSend && message.case_state === "open") steps.push({ id: "claim", label: t("queue.act.claim"), run: claim });
+  if (canSend && message.case_mine === 1) steps.push({ id: "release", label: t("queue.act.release"), run: release });
   /*
    * The envelope sender, because that is what the `from` filter matches. The label says "this sender" rather
    * than naming the display name: the name is whatever the sender typed, and the filter does not look at it.
    */
   const sender = message.envelope_from;
-  if (sender !== "") steps.push({ id: "more-from-sender", label: "More from this sender", run: () => showFromSender(sender) });
+  if (sender !== "") steps.push({ id: "more-from-sender", label: t("ui.nextSteps.fromSender"), run: () => showFromSender(sender) });
   return { steps, finding: null };
 };
 
@@ -67,8 +68,8 @@ export const deterministicNextSteps: NextStepsProvider = ({ message, canSend, cl
 export function NextSteps({ steps, finding }: { steps: NextStep[]; finding: AiFinding | null }) {
   if (steps.length === 0 && finding === null) return null;
   return (
-    <section className="next-steps" aria-label="Next steps">
-      <span className="next-steps-label">Next steps</span>
+    <section className="next-steps" aria-label={t("ui.nextSteps")}>
+      <span className="next-steps-label">{t("ui.nextSteps")}</span>
       {steps.map((step) => (
         <button key={step.id} type="button" className="chip-action" onClick={step.run}>{step.label}</button>
       ))}
@@ -78,9 +79,12 @@ export function NextSteps({ steps, finding }: { steps: NextStep[]; finding: AiFi
          * judging it needs to know which profile, which model and which run returned it before reading it.
          */
         <div className="ai-finding">
-          <span className="ai-label">AI</span>{" "}
+          <span className="ai-label">{t("ui.nextSteps.ai")}</span>{" "}
           <span className="ai-provenance">
-            {finding.provenance.profile} · {finding.provenance.model} · run {finding.provenance.runId} · {finding.provenance.at}
+            {t("ui.nextSteps.provenance", {
+              profile: finding.provenance.profile, model: finding.provenance.model,
+              runId: finding.provenance.runId, at: finding.provenance.at,
+            })}
           </span>{" "}
           {finding.text}
         </div>

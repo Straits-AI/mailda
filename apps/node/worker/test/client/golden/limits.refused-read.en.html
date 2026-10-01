@@ -1,0 +1,23 @@
+<h1>Sending limits</h1>
+<p class="notice bad" role="alert">You do not hold org.admin.</p>
+<section class="limits-pauses" aria-label="Paused domains">
+<h2>Paused domains</h2>
+<p class="dim">Pausing a domain takes the agreement of two other administrators; whoever asks is never one of them. Lifting a pause takes a single administrator, alone, because a mistake in the cautious direction should be easy to undo.</p>
+<div class="limits-ask">
+<label class="field-row" for="pause-domain">
+<span>Domain</span>
+<input id="pause-domain" class="mono" placeholder="example.com" value="">
+</label>
+<label class="field-row" for="pause-reason">
+<span>Why</span>
+<input id="pause-reason" value="">
+</label>
+<button class="quiet" type="button" disabled="">Ask to pause this domain</button>
+</div>
+<p class="notice">No domain is paused.</p>
+</section>
+<section class="limits-pauses" aria-label="Suppressed recipients">
+<h2>Recipients this Node will not send to</h2>
+<p class="dim">An address the provider hard-bounced, or that marked a message as spam. A send naming one is refused at the seal, by name. Nothing is added here by hand; an administrator can vouch for an address with a reason, and a later bounce puts it back.</p>
+<p class="notice dim">You do not hold org.admin.</p>
+</section>

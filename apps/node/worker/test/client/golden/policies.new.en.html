@@ -1,0 +1,52 @@
+<h2>New rule</h2>
+<label class="field-row" for="policy-name">
+<span>What is this rule called?</span>
+<input id="policy-name" value="new rule">
+</label>
+<label class="field-row" for="policy-mailbox">
+<span>Which mailbox?</span>
+<select id="policy-mailbox">
+<option value="">any mailbox</option>
+<option value="mbx_test">Support</option>
+</select>
+</label>
+<label class="field-row" for="policy-external">
+<span>Who is it going to?</span>
+<select id="policy-external">
+<option value="">anyone — not part of this rule</option>
+<option value="true">anyone outside this organization</option>
+<option value="false">colleagues only</option>
+</select>
+</label>
+<label class="field-row" for="policy-reply">
+<span>Is it a reply?</span>
+<select id="policy-reply">
+<option value="">either — not part of this rule</option>
+<option value="true">only replies</option>
+<option value="false">only new messages</option>
+</select>
+</label>
+<label class="field-row" for="policy-reply-dmarc">
+<span>Answering mail its sender's domain disowned?</span>
+<select id="policy-reply-dmarc">
+<option value="">either — not part of this rule</option>
+<option value="true">only replies to a message whose DMARC failed</option>
+<option value="false">everything else</option>
+</select>
+</label>
+<label class="field-row" for="policy-outcome">
+<span>Then the message…</span>
+<select id="policy-outcome">
+<option value="allow">goes as normal</option>
+<option value="hold">is held for a person to release</option>
+<option value="require_approval">needs an approval before it goes</option>
+<option value="deny">is refused</option>
+</select>
+</label>
+<label class="field-row" for="policy-approvals">
+<span>How many people must approve?</span>
+<input id="policy-approvals" min="1" type="number" value="1">
+</label>
+<p class="policy-actions">
+<button type="button" class="primary">Save draft</button> <button class="quiet" type="button">Cancel</button>
+</p>

@@ -1,13 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
   createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
   replayButlerRun, runFacts, simulateButler,
-  type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Simulation,
+  type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Said, type Simulation,
 } from "../api.ts";
+import { count, dateTime } from "../format.ts";
+import { marked, NodeWords, sentence } from "../words.tsx";
 
 /**
  * The Butler screen (#78): what is automated here, and what it has done.
@@ -81,7 +84,7 @@ nodes:
 `;
 
 function when(at: string | null): string {
-  return at === null ? "—" : new Date(at).toLocaleString();
+  return at === null ? "—" : dateTime(at);
 }
 
 /**
@@ -95,12 +98,14 @@ function Standing({ butler }: { butler: ButlerRow }) {
   if (butler.pause !== null) {
     return (
       <span className="bad">
-        stopped — {butler.pause.reason.replace(/_/g, " ")}
+        {sentence("butlers.standing.paused", { reason: <NodeWords>{butler.pause.reason.replace(/_/g, " ")}</NodeWords> })}
       </span>
     );
   }
-  if (butler.live_version !== null) return <span>live · v{butler.live_version}</span>;
-  return <span className="dim">draft only, never published</span>;
+  if (butler.live_version !== null) {
+    return <span>{t("butlers.standing.live", { version: String(butler.live_version) })}</span>;
+  }
+  return <span className="dim">{t("butlers.standing.draftOnly")}</span>;
 }
 
 /** The editor for one Butler: its versions, its draft, and the two acts. */
@@ -110,7 +115,8 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
   const [source, setSource] = useState<string | null>(null);
   const [format, setFormat] = useState<ButlerSourceFormat | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  /** The Node's refusal or the checker's findings (`Said`), or this screen's own sentence, shown through `marked()`. */
+  const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
 
   /*
@@ -155,7 +161,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
     setProblem(null);
     const outcome = await saveButlerDraft(butler.id, editing, editingFormat);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setSource(null);
     setFormat(null);
     await refresh();
@@ -178,11 +184,11 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
       const inspected = await runFacts(runId);
       if (inspected.facts === null) {
         // A run opened before migration 0030 recorded no facts. Said rather than shown as an empty report.
-        setProblem("That run recorded no trigger facts, so there is nothing to walk over. Pick a later run.");
+        setProblem({ message: t("butlers.dry.noFacts"), fromNode: false });
         return;
       }
       const outcome = await simulateButler(butler.id, inspected.facts);
-      if (!outcome.ok) { setProblem(outcome.message); return; }
+      if (!outcome.ok) { setProblem(outcome); return; }
       setSimulation(outcome.value.simulation);
     } finally {
       setBusy(false);
@@ -194,21 +200,21 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
     setProblem(null);
     const outcome = await publishButlerVersion(butler.id);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await refresh();
   }
 
   return (
-    <section className="butler-detail" aria-label={`Butler ${butler.name}`}>
+    <section className="butler-detail" aria-label={t("butlers.detail.label", { name: butler.name })}>
       <header className="ledger-head">
         <h2>{butler.name}</h2>
-        <button type="button" className="linkish" onClick={onDone}>Close</button>
+        <button type="button" className="linkish" onClick={onDone}>{t("butlers.close")}</button>
       </header>
 
       {problem === null ? null : (
         // The Node's own four-part message, verbatim: the checker names the node and says what is wrong
         // with it, and a paraphrase would drop the half that says what to do.
-        <pre className="notice bad butler-findings" role="alert">{problem}</pre>
+        <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>
       )}
 
       {/*
@@ -221,8 +227,9 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         it. That is the axe best-practice advisory this screen would otherwise carry.
       */}
       <fieldset className="field-row butler-format">
-        <legend>Format</legend>
-        {(["yaml", "json"] as const).map((option) => (
+        <legend>{t("butlers.format")}</legend>
+        {/* The format's own name, an identifier, in every locale: the Node's `sourceFormat` token. */}
+        {(["yaml", "json"] as const satisfies readonly ButlerSourceFormat[]).map((option) => (
           <label key={option} htmlFor={`butler-format-${option}`}>
             <input
               type="radio"
@@ -243,13 +250,11 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
           every comment in it — so converting is a thing an author does to their own text, and this sentence
           is what stops them expecting the button to do it.
         */}
-        <span className="dim">
-          which parser reads the source below. Switching it does not rewrite your text
-        </span>
+        <span className="dim">{t("butlers.format.hint")}</span>
       </fieldset>
 
       <label className="field-row" htmlFor="butler-source">
-        <span>Source</span>
+        <span>{t("butlers.source")}</span>
         <textarea
           id="butler-source"
           className="butler-source mono"
@@ -260,7 +265,9 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         />
       </label>
       <p className="butler-actions">
-        <button className="quiet" type="button" onClick={() => void save()} disabled={busy}>Save draft</button>
+        <button className="quiet" type="button" onClick={() => void save()} disabled={busy}>
+          {t("butlers.saveDraft")}
+        </button>
         {" "}
         <button
           type="button"
@@ -268,7 +275,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
           onClick={() => void publish()}
           disabled={busy || draft === null}
         >
-          Publish
+          {t("butlers.publish")}
         </button>
         {/*
           Which program is in the box, said rather than left to be inferred. "Nothing unpublished to publish"
@@ -278,12 +285,13 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         {draft === null
           ? (
             <span className="dim">
+              {" "}
               {live === null
-                ? " nothing saved yet"
-                : ` showing live v${live.version ?? "?"} — save a draft to change it`}
+                ? t("butlers.draft.none")
+                : t("butlers.draft.showingLive", { version: String(live.version ?? "?") })}
             </span>
           )
-          : <span className="dim"> unpublished draft</span>}
+          : <span className="dim">{" "}{t("butlers.draft.unpublished")}</span>}
       </p>
 
       {/*
@@ -293,8 +301,8 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         program, you ask what it would do, and only then do you publish. Putting it after the history would
         have made it a report about the past, which is the one thing it is not.
       */}
-      <section className="butler-dry" aria-label="Dry run">
-        <h3>Dry run</h3>
+      <section className="butler-dry" aria-label={t("butlers.dry")}>
+        <h3>{t("butlers.dry")}</h3>
         {ranButler.length === 0
           ? (
             /*
@@ -302,26 +310,19 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
              * facts, those are not typeable by hand, and the honest answer to "why can I not test this" is
              * that nothing has arrived for it yet.
              */
-            <p className="dim">
-              A dry run walks this program over what a real delivery gave a real run, and this Butler has not
-              run yet. Publish it and send it something, then come back — the walk below causes nothing, so
-              it is safe to do afterwards as often as you like.
-            </p>
+            <p className="dim">{t("butlers.dry.notRun")}</p>
           )
           : (
             <>
-              <p className="dim">
-                Walks the draft — or the live version if there is no draft — over a past run’s input. Reads
-                real rows and asks the real authority questions; writes nothing.
-              </p>
+              <p className="dim">{t("butlers.dry.explain")}</p>
               <ul className="butler-dry-runs">
                 {ranButler.slice(0, 5).map((row) => (
                   <li key={row.id}>
                     <button className="quiet" type="button" onClick={() => void dryRun(row.id)} disabled={busy}>
-                      Dry run over {when(row.started_at)}
+                      {t("butlers.dry.over", { at: when(row.started_at) })}
                     </button>
                     {" "}
-                    <span className="dim">{row.trigger_event} · {row.state}</span>
+                    <span className="dim"><NodeWords>{row.trigger_event} · {row.state}</NodeWords></span>
                   </li>
                 ))}
               </ul>
@@ -331,30 +332,31 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         {simulation === null ? null : (
           <div className="butler-dry-result">
             <p>
-              <strong>{simulation.state}</strong>
-              {simulation.reason === null ? null : <> — {simulation.reason}</>}
+              <strong><NodeWords>{simulation.state}</NodeWords></strong>
+              {simulation.reason === null ? null : <> — <NodeWords>{simulation.reason}</NodeWords></>}
               {" "}
               <span className="dim">
-                {simulation.version === null ? "draft" : `v${simulation.version}`}
-                {" · "}{simulation.nodesExecuted} node(s){" · "}
-                would spend {simulation.wouldSpend}
+                {t("butlers.dry.summary", {
+                  program: simulation.version === null
+                    ? t("butlers.dry.draft")
+                    : t("butlers.dry.version", { version: String(simulation.version) }),
+                  nodes: t("butlers.dry.nodes", { n: simulation.nodesExecuted }),
+                  spend: simulation.wouldSpend,
+                })}
               </span>
             </p>
 
             {simulation.effects.length === 0
-              ? <p className="dim">No effect node was reached.</p>
+              ? <p className="dim">{t("butlers.dry.noEffect")}</p>
               : (
                 <table>
-                  <caption className="dim">
-                    “would” is a write this Node declined to make. Every other outcome is a real answer from
-                    a real read — the same one a live run would have recorded.
-                  </caption>
+                  <caption className="dim">{t("butlers.dry.caption")}</caption>
                   <thead>
                     <tr>
-                      <th scope="col">Node</th>
-                      <th scope="col">Type</th>
-                      <th scope="col">Outcome</th>
-                      <th scope="col">Detail</th>
+                      <th scope="col">{t("butlers.dry.col.node")}</th>
+                      <th scope="col">{t("butlers.dry.col.type")}</th>
+                      <th scope="col">{t("butlers.dry.col.outcome")}</th>
+                      <th scope="col">{t("butlers.dry.col.detail")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -365,8 +367,8 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
                         <td className={effect.outcome === "refused" || effect.outcome === "failed"
                           ? "bad"
                           : undefined}>
-                          {effect.outcome}
-                          {effect.reason === null ? null : <> — {effect.reason}</>}
+                          <NodeWords>{effect.outcome}</NodeWords>
+                          {effect.reason === null ? null : <> — <NodeWords>{effect.reason}</NodeWords></>}
                         </td>
                         {/*
                           The detail verbatim, as JSON. It is the recipients a reply would go to and the
@@ -391,7 +393,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
                 and none of them ran.
               */
               <ul className="butler-dry-limits">
-                {simulation.limits.map((limit) => <li key={limit}>{limit}</li>)}
+                {simulation.limits.map((limit) => <li key={limit}><NodeWords>{limit}</NodeWords></li>)}
               </ul>
             )}
           </div>
@@ -399,23 +401,23 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
       </section>
 
       <table>
-        <caption className="dim">Versions — publication is the versioning event, and a published one is frozen</caption>
+        <caption className="dim">{t("butlers.versions.caption")}</caption>
         <thead>
           {/* `scope="col"` on every header, as the ledgers do: it is what tells a screen reader which
               header announces a cell, and a table this wide is unreadable without it. */}
           <tr>
-            <th scope="col">Version</th>
-            <th scope="col">State</th>
-            <th scope="col">Published</th>
-            <th scope="col">By</th>
-            <th scope="col">AST sha256</th>
+            <th scope="col">{t("butlers.versions.col.version")}</th>
+            <th scope="col">{t("butlers.col.state")}</th>
+            <th scope="col">{t("butlers.col.published")}</th>
+            <th scope="col">{t("butlers.versions.col.by")}</th>
+            <th scope="col">{t("butlers.versions.col.ast")}</th>
           </tr>
         </thead>
         <tbody>
           {versions.map((row) => (
             <tr key={row.id}>
               <td className="mono">{row.version ?? "—"}</td>
-              <td>{row.state}</td>
+              <td><NodeWords>{row.state}</NodeWords></td>
               <td className="mono">{when(row.published_at)}</td>
               <td className="mono">{row.published_by ?? "—"}</td>
               <td className="mono dim">{row.ast_sha256.slice(0, 12)}</td>
@@ -431,13 +433,13 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
 function Paused({ butler }: { butler: ButlerRow }) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   if (butler.pause === null) return null;
 
   async function resume() {
     setProblem(null);
     const outcome = await resumeButler(butler.pause!.pauseId, reason);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setReason("");
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
   }
@@ -446,10 +448,10 @@ function Paused({ butler }: { butler: ButlerRow }) {
     <div className="butler-pause notice bad">
       {/* The detector's own sentence. Somebody deciding whether to re-arm a Butler needs what it counted,
           not the word "paused". */}
-      <p>{butler.pause.detail}</p>
-      <p className="dim mono">placed by {butler.pause.trippedBy} · {when(butler.pause.placedAt)}</p>
+      <p><NodeWords>{butler.pause.detail}</NodeWords></p>
+      <p className="dim mono">{t("butlers.pause.placed", { by: butler.pause.trippedBy, at: when(butler.pause.placedAt) })}</p>
       <label className="field-row" htmlFor={`resume-${butler.id}`}>
-        <span>Why is it safe to resume?</span>
+        <span>{t("butlers.pause.why")}</span>
         <input
           id={`resume-${butler.id}`}
           value={reason}
@@ -457,59 +459,57 @@ function Paused({ butler }: { butler: ButlerRow }) {
         />
       </label>
       <button className="quiet" type="button" onClick={() => void resume()} disabled={reason.trim() === ""}>
-        Resume
+        {t("butlers.pause.resume")}
       </button>
-      {problem === null ? null : <p role="alert">{problem}</p>}
+      {problem === null ? null : <p role="alert">{marked(problem)}</p>}
     </div>
   );
 }
 
 function Runs({ runs, onRunAgain }: { runs: ButlerRunRow[]; onRunAgain: (runId: string) => void }) {
   if (runs.length === 0) {
-    return <Nothing kind="empty" detail="No Butler has run yet. A run comes from a delivery." />;
+    return <Nothing kind="empty" detail={t("butlers.runs.none")} />;
   }
   return (
-    <Scroller label="Runs">
+    <Scroller label={t("butlers.runs")}>
       {/*
         Said plainly, because "replay" invites the reading that nothing happens. A re-run is a new run whose
         writes are real; what makes it safe to offer is the gate, not the word — a Butler's send waits in the
         outbox for a person, so this button on its own moves no mail. See `replayButlerRun`.
       */}
-      <p className="dim">
-        <em>Run again</em> starts a new run of the same published version over what this run was given, judged
-        under today&rsquo;s rules. Its effects are real; any send it proposes waits in the outbox until a person
-        releases it, so nothing leaves this Node by itself.
-      </p>
+      <p className="dim">{sentence("butlers.runs.explain", { again: <em>{t("butlers.runs.again")}</em> })}</p>
       <table>
         <thead>
           <tr>
-            <th scope="col">Started</th>
-            <th scope="col">State</th>
-            <th scope="col">Why it ended</th>
-            <th scope="col" className="num">Nodes</th>
-            <th scope="col" className="num">Effects</th>
-            <th scope="col" className="num">Refusals</th>
-            <th scope="col" className="num">Spent</th>
-            <th scope="col">Again</th>
+            <th scope="col">{t("butlers.runs.col.started")}</th>
+            <th scope="col">{t("butlers.col.state")}</th>
+            <th scope="col">{t("butlers.runs.col.why")}</th>
+            <th scope="col" className="num">{t("butlers.runs.col.nodes")}</th>
+            <th scope="col" className="num">{t("butlers.runs.col.effects")}</th>
+            <th scope="col" className="num">{t("butlers.runs.col.refusals")}</th>
+            <th scope="col" className="num">{t("butlers.runs.col.spent")}</th>
+            <th scope="col">{t("butlers.runs.col.again")}</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((run) => (
             <tr key={run.id}>
               <td className="mono">{when(run.started_at)}</td>
-              <td className={run.state === "failed" ? "bad" : undefined}>{run.state}</td>
+              <td className={run.state === "failed" ? "bad" : undefined}><NodeWords>{run.state}</NodeWords></td>
               {/* The reason is the deliverable: `stopped` alone does not distinguish a Butler that decided
                   nothing needed doing from one a budget killed. */}
-              <td>{run.outcome_reason ?? <span className="dim">—</span>}</td>
-              <td className="mono num">{run.nodes_executed}</td>
-              <td className="mono num">{run.effects}</td>
-              <td className="mono num">{run.refusals}</td>
-              <td className="mono num">{run.subrequests_spent}</td>
+              <td>{run.outcome_reason === null ? <span className="dim">—</span> : <NodeWords>{run.outcome_reason}</NodeWords>}</td>
+              <td className="mono num">{count(run.nodes_executed)}</td>
+              <td className="mono num">{count(run.effects)}</td>
+              <td className="mono num">{count(run.refusals)}</td>
+              <td className="mono num">{count(run.subrequests_spent)}</td>
               <td>
                 {/* Offered on every finished run: whether it *can* be re-run (input recorded, version still
                     published, Butler not paused) is the Node's answer, and its refusal names which. */}
                 {run.finished_at === null ? <span className="dim">—</span> : (
-                  <button type="button" className="linkish" onClick={() => onRunAgain(run.id)}>Run again</button>
+                  <button type="button" className="linkish" onClick={() => onRunAgain(run.id)}>
+                    {t("butlers.runs.again")}
+                  </button>
                 )}
               </td>
             </tr>
@@ -525,14 +525,14 @@ export function Butlers() {
   const runs = useButlerRuns();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [ranAgain, setRanAgain] = useState<string | null>(null);
 
   async function runAgain(runId: string) {
     setProblem(null);
     setRanAgain(null);
     const outcome = await replayButlerRun(runId);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setRanAgain(outcome.value.runId);
     await queryClient.invalidateQueries({ queryKey: ["butler-runs"] });
   }
@@ -540,16 +540,16 @@ export function Butlers() {
   async function create() {
     setProblem(null);
     const outcome = await createButler("new butler", STARTER, "yaml");
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
     setEditing(outcome.value.butler.butlerId);
   }
 
   const heading = (
     <header className="ledger-head">
-      <h1>Butlers</h1>
+      <h1>{t("route./butlers")}</h1>
       <p className="new-message">
-        <button type="button" className="primary" onClick={() => void create()}>New butler</button>
+        <button type="button" className="primary" onClick={() => void create()}>{t("butlers.new")}</button>
       </p>
     </header>
   );
@@ -564,10 +564,7 @@ export function Butlers() {
     return (
       <>
         {heading}
-        <Nothing
-          kind="empty"
-          detail="No Butlers here, or you do not hold org.admin. Writing one is an administrator's act."
-        />
+        <Nothing kind="empty" detail={t("butlers.notAdmin")} />
       </>
     );
   }
@@ -578,12 +575,12 @@ export function Butlers() {
   return (
     <>
       {heading}
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
 
       {rows.length === 0 ? (
-        <Nothing kind="empty" detail="Nothing is automated on this Node yet." />
+        <Nothing kind="empty" detail={t("butlers.empty")} />
       ) : (
-        <Scroller label="Butlers">
+        <Scroller label={t("route./butlers")}>
           <table>
             <thead>
               {/*
@@ -592,11 +589,11 @@ export function Butlers() {
                 it announce with nothing, so the "open" control belongs to no column a reader can hear.
               */}
               <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Standing</th>
-                <th scope="col">Published</th>
-                <th scope="col">Draft</th>
-                <th scope="col">Editor</th>
+                <th scope="col">{t("butlers.col.name")}</th>
+                <th scope="col">{t("butlers.col.standing")}</th>
+                <th scope="col">{t("butlers.col.published")}</th>
+                <th scope="col">{t("butlers.col.draft")}</th>
+                <th scope="col">{t("butlers.col.editor")}</th>
               </tr>
             </thead>
             <tbody>
@@ -605,10 +602,10 @@ export function Butlers() {
                   <td>{row.name}</td>
                   <td><Standing butler={row} /></td>
                   <td className="mono">{when(row.published_at)}</td>
-                  <td className="dim">{row.draft_version_id === null ? "—" : "unpublished changes"}</td>
+                  <td className="dim">{row.draft_version_id === null ? "—" : t("butlers.unpublishedChanges")}</td>
                   <td>
                     <button type="button" className="linkish" onClick={() => setEditing(row.id)}>
-                      Open
+                      {t("butlers.open")}
                     </button>
                   </td>
                 </tr>
@@ -624,12 +621,14 @@ export function Butlers() {
 
       {current === null ? null : <Editing butler={current} onDone={() => setEditing(null)} />}
 
-      <h2 className="butler-runs-heading">Runs</h2>
+      <h2 className="butler-runs-heading">{t("butlers.runs")}</h2>
       {ranAgain === null ? null : (
-        <p className="notice" role="status">Started again as <span className="mono">{ranAgain}</span>.</p>
+        <p className="notice" role="status">
+          {sentence("butlers.startedAgain", { run: <span className="mono">{ranAgain}</span> })}
+        </p>
       )}
       {runs.isPending ? <Nothing kind="loading" />
-        : runs.isError ? <Nothing kind="failed" detail={runs.error.message} />
+        : runs.isError ? <Nothing kind="failed" detail={marked(runs.error)} />
           : <Runs runs={runs.data.runs} onRunAgain={(runId) => void runAgain(runId)} />}
     </>
   );

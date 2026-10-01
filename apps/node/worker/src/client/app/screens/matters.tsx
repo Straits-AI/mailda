@@ -1,15 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
+import { dateTime } from "../format.ts";
+import { NodeWords, marked } from "../words.tsx";
 import {
-  type ExportManifest, MATTER_TYPES, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
+  type ExportManifest, type Refused, type Said, MATTER_TYPES, ReadFailure, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
   placeHold, readExportManifest, requestExport, runExport, useExports, useHolds, useMailboxes, useMatters,
   useSupervised,
 } from "../api.ts";
 
 /**
- * Investigations, and everything they authorise (#63, #64, #65, #81).
+ * Matters, and everything they authorise (#63, #64, #65, #81). A matter is not an investigation (D9).
  *
  * ## Why four things share one screen
  *
@@ -35,13 +38,12 @@ import {
  */
 
 function when(at: string | null): string {
-  return at === null ? "—" : new Date(at).toLocaleString();
+  return at === null ? "—" : dateTime(at);
 }
 
-const SCOPES = [
-  { scope: "metadata", what: "Senders, subjects and dates. Not the messages." },
-  { scope: "content", what: "The messages themselves." },
-] as const;
+/** The read scopes the Node takes, each shown as `matters.scope.<scope>`. */
+type Scope = "metadata" | "content";
+const SCOPES: readonly Scope[] = ["metadata", "content"];
 
 export function Matters() {
   const matters = useMatters();
@@ -51,7 +53,8 @@ export function Matters() {
   const mailboxes = useMailboxes();
   const queryClient = useQueryClient();
 
-  const [problem, setProblem] = useState<string | null>(null);
+  /** The Node's refusal, or this interface's fallback when it said nothing (`Said`), shown through `marked()`. */
+  const [problem, setProblem] = useState<Said | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
   const [type, setType] = useState<string>(MATTER_TYPES[0].type);
   const [description, setDescription] = useState("");
@@ -61,7 +64,7 @@ export function Matters() {
   const [exportMatter, setExportMatter] = useState("");
   const [exportMax, setExportMax] = useState("100");
   const [readMailbox, setReadMailbox] = useState("");
-  const [readScope, setReadScope] = useState<string>("metadata");
+  const [readScope, setReadScope] = useState<Scope>("metadata");
   const [readHours, setReadHours] = useState(24);
   const [readMatter, setReadMatter] = useState("");
   /** Manifests read so far, by export id. Read on request: a manifest is a download the trail must not see twice. */
@@ -77,7 +80,7 @@ export function Matters() {
     try {
       manifest = await readExportManifest(exportId);
     } catch (error) {
-      setProblem(error instanceof Error ? error.message : String(error));
+      setProblem(error instanceof ReadFailure ? error : { message: error instanceof Error ? error.message : String(error), fromNode: false });
       return;
     }
     setObjects((known) => ({ ...known, [exportId]: manifest }));
@@ -89,11 +92,11 @@ export function Matters() {
     }
   }
 
-  async function run(act: () => Promise<{ ok: true } | { ok: false; message: string }>, said: string) {
+  async function run(act: () => Promise<{ ok: true } | Refused>, said: string) {
     setProblem(null);
     setAsked(null);
     const outcome = await act();
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setAsked(said);
     await refresh();
   }
@@ -103,25 +106,21 @@ export function Matters() {
   return (
     <>
       <header className="ledger-head">
-        <h1>Matters</h1>
-        {matters.isSuccess ? <p className="dim mono">{open.length} open</p> : null}
+        <h1>{t("route./matters")}</h1>
+        {matters.isSuccess ? <p className="dim mono">{t("matters.open", { n: open.length })}</p> : null}
       </header>
 
-      <p className="dim">
-        An investigation, and what it authorises. Mail is held so it cannot be deleted, a colleague&rsquo;s
-        mailbox may be read for a bounded time, a copy may be taken. Closing the matter is what makes the
-        notice to the person who was read about fall due (§7).
-      </p>
+      <p className="dim">{t("matters.lead")}</p>
 
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
       {asked === null ? null : <p className="notice" role="status">{asked}</p>}
 
       {/* ------------------------------------------------------------------ matters ----------------- */}
-      <section className="matter-block" aria-label="Open a matter">
-        <h2>Matters</h2>
+      <section className="matter-block" aria-label={t("matters.new")}>
+        <h2>{t("route./matters")}</h2>
         <div className="limits-ask">
           <label className="field-row" htmlFor="matter-type">
-            <span>What kind</span>
+            <span>{t("matters.new.kind")}</span>
             <select id="matter-type" value={type} onChange={(event) => setType(event.target.value)}>
               {MATTER_TYPES.map((entry) => (
                 <option key={entry.type} value={entry.type}>{entry.what}</option>
@@ -129,7 +128,7 @@ export function Matters() {
             </select>
           </label>
           <label className="field-row" htmlFor="matter-description">
-            <span>Describe it</span>
+            <span>{t("matters.new.describe")}</span>
             <input
               id="matter-description"
               value={description}
@@ -141,36 +140,36 @@ export function Matters() {
             disabled={description.trim() === ""}
             onClick={() => void run(
               () => openMatter(type, description.trim()),
-              "Matter opened.",
+              t("matters.new.asked"),
             )}
           >
-            Open a matter
+            {t("matters.new")}
           </button>
         </div>
 
         {matters.isError ? (
-          <Nothing kind="empty" detail="No matters, or you do not hold org.admin." />
+          <Nothing kind="empty" detail={t("matters.refused")} />
         ) : (matters.data?.matters ?? []).length === 0 ? (
-          <Nothing kind="empty" detail="No matters. Nothing is under investigation." />
+          <Nothing kind="empty" detail={t("matters.empty")} />
         ) : (
-          <Scroller label="Matters">
+          <Scroller label={t("route./matters")}>
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Matter</th><th scope="col">Kind</th><th scope="col">Opened</th>
-                  <th scope="col">State</th><th scope="col">Close</th>
+                  <th scope="col">{t("matters.col.matter")}</th><th scope="col">{t("matters.col.kind")}</th><th scope="col">{t("matters.col.opened")}</th>
+                  <th scope="col">{t("matters.col.state")}</th><th scope="col">{t("matters.close")}</th>
                 </tr>
               </thead>
               <tbody>
                 {(matters.data?.matters ?? []).map((matter) => (
                   <tr key={matter.id}>
                     <td>{matter.description}<br /><span className="dim mono">{matter.id}</span></td>
-                    <td>{matter.type.replace(/_/g, " ")}</td>
+                    <td><NodeWords>{matter.type.replace(/_/g, " ")}</NodeWords></td>
                     <td className="mono">{when(matter.openedAt)}</td>
                     <td>
                       {matter.closedAt === null
-                        ? <span>open</span>
-                        : <span className="dim">closed {when(matter.closedAt)}</span>}
+                        ? <span>{t("matters.state.open")}</span>
+                        : <span className="dim">{t("matters.state.closed", { at: when(matter.closedAt) })}</span>}
                     </td>
                     <td>
                       {matter.closedAt === null ? (
@@ -179,10 +178,10 @@ export function Matters() {
                           className="linkish"
                           onClick={() => void run(
                             () => closeMatter(matter.id),
-                            "Matter closed. The people whose mail was read will be told.",
+                            t("matters.close.asked"),
                           )}
                         >
-                          Close
+                          {t("matters.close")}
                         </button>
                       ) : <span className="dim">—</span>}
                     </td>
@@ -195,35 +194,32 @@ export function Matters() {
       </section>
 
       {/* ------------------------------------------------------------------ holds ------------------- */}
-      <section className="matter-block" aria-label="Legal holds">
-        <h2>Held mail</h2>
-        <p className="dim">
-          While a mailbox is held, nothing in it can be deleted — not by a person, not by the reconciler.
-          Lifting a hold takes two other people.
-        </p>
+      <section className="matter-block" aria-label={t("matters.holds")}>
+        <h2>{t("matters.holds.heading")}</h2>
+        <p className="dim">{t("matters.holds.lead")}</p>
         <div className="limits-ask">
           <label className="field-row" htmlFor="hold-mailbox">
-            <span>Mailbox</span>
+            <span>{t("matters.field.mailbox")}</span>
             <select
               id="hold-mailbox"
               value={holdMailbox}
               onChange={(event) => setHoldMailbox(event.target.value)}
             >
-              <option value="">choose…</option>
+              <option value="">{t("matters.choose")}</option>
               {(mailboxes.data?.mailboxes ?? []).map((box) => (
                 <option key={box.id} value={box.id}>{box.name}</option>
               ))}
             </select>
           </label>
           <label className="field-row" htmlFor="hold-matter">
-            <span>Under which matter</span>
+            <span>{t("matters.field.matter")}</span>
             <select id="hold-matter" value={holdMatter} onChange={(event) => setHoldMatter(event.target.value)}>
               {/*
                 "None" is a real option, not an oversight. #63 settled that the realistic first act precedes
                 any matter — somebody preserves mail before anybody has written down why — so a hold cites a
                 matter **or nothing**, and forcing one here would make people invent one.
               */}
-              <option value="">no matter yet</option>
+              <option value="">{t("matters.noMatterYet")}</option>
               {open.map((matter) => (
                 <option key={matter.id} value={matter.id}>{matter.description}</option>
               ))}
@@ -234,24 +230,24 @@ export function Matters() {
             disabled={holdMailbox === ""}
             onClick={() => void run(
               () => placeHold(holdMailbox, holdMatter === "" ? null : holdMatter),
-              "Hold placed. Nothing in that mailbox can be deleted now.",
+              t("matters.holds.asked"),
             )}
           >
-            Hold this mailbox
+            {t("matters.holds.act")}
           </button>
         </div>
 
         {holds.isError ? (
-          <Nothing kind="empty" detail="No holds, or you do not hold org.admin." />
+          <Nothing kind="empty" detail={t("matters.holds.refused")} />
         ) : (holds.data?.holds ?? []).length === 0 ? (
-          <Nothing kind="empty" detail="Nothing is held." />
+          <Nothing kind="empty" detail={t("matters.holds.empty")} />
         ) : (
-          <Scroller label="Holds">
+          <Scroller label={t("matters.holds.list")}>
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Mailbox</th><th scope="col">Matter</th>
-                  <th scope="col">Since</th><th scope="col">Lift</th>
+                  <th scope="col">{t("matters.field.mailbox")}</th><th scope="col">{t("matters.col.matter")}</th>
+                  <th scope="col">{t("matters.holds.since")}</th><th scope="col">{t("matters.holds.lift")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -261,23 +257,23 @@ export function Matters() {
                       {hold.mailboxId}
                       {/* A hold on a mailbox that no longer exists still preserves; saying so avoids a
                           reader concluding the row is stale and lifting it. */}
-                      {hold.mailboxExists ? null : <span className="dim"> (mailbox gone)</span>}
+                      {hold.mailboxExists ? null : <span className="dim">{" "}{t("matters.holds.gone")}</span>}
                     </td>
-                    <td className="mono dim">{hold.matterId ?? "none"}</td>
+                    <td className="mono dim">{hold.matterId ?? t("matters.holds.noMatter")}</td>
                     <td className="mono">{when(hold.placedAt)}</td>
                     <td>
                       {hold.pendingLift !== null ? (
-                        <span className="dim">a lift is waiting on two approvals</span>
+                        <span className="dim">{t("matters.holds.liftWaiting")}</span>
                       ) : (
                         <button
                           type="button"
                           className="linkish"
                           onClick={() => void run(
                             () => askToLiftHold(hold.id, "no longer required"),
-                            "Asked. Two other people have to agree before this hold lifts.",
+                            t("matters.holds.liftAsked"),
                           )}
                         >
-                          Ask to lift
+                          {t("matters.holds.liftAct")}
                         </button>
                       )}
                     </td>
@@ -290,33 +286,33 @@ export function Matters() {
       </section>
 
       {/* ------------------------------------------------------------------ supervised reads -------- */}
-      <section className="matter-block" aria-label="Supervised reading">
-        <h2>Reading somebody else&rsquo;s mail</h2>
-        <p className="dim">
-          A time-boxed grant to read a mailbox you hold nothing on. Two people have to approve it, neither of
-          them you, and it stops at its expiry — renewal is a new request, because time is part of what was
-          approved.
-        </p>
+      <section className="matter-block" aria-label={t("matters.read")}>
+        <h2>{t("matters.read.heading")}</h2>
+        <p className="dim">{t("matters.read.lead")}</p>
         <div className="limits-ask">
           <label className="field-row" htmlFor="read-mailbox">
-            <span>Mailbox</span>
+            <span>{t("matters.field.mailbox")}</span>
             <select id="read-mailbox" value={readMailbox} onChange={(event) => setReadMailbox(event.target.value)}>
-              <option value="">choose…</option>
+              <option value="">{t("matters.choose")}</option>
               {(mailboxes.data?.mailboxes ?? []).map((box) => (
                 <option key={box.id} value={box.id}>{box.name}</option>
               ))}
             </select>
           </label>
           <label className="field-row" htmlFor="read-scope">
-            <span>How much</span>
-            <select id="read-scope" value={readScope} onChange={(event) => setReadScope(event.target.value)}>
-              {SCOPES.map((entry) => (
-                <option key={entry.scope} value={entry.scope}>{entry.what}</option>
+            <span>{t("matters.read.howMuch")}</span>
+            <select
+              id="read-scope"
+              value={readScope}
+              onChange={(event) => setReadScope(SCOPES.find((scope) => scope === event.target.value) ?? "metadata")}
+            >
+              {SCOPES.map((scope) => (
+                <option key={scope} value={scope}>{t(`matters.scope.${scope}`)}</option>
               ))}
             </select>
           </label>
           <label className="field-row" htmlFor="read-hours">
-            <span>For how long (hours)</span>
+            <span>{t("matters.read.hours")}</span>
             <input
               id="read-hours"
               type="number"
@@ -326,9 +322,9 @@ export function Matters() {
             />
           </label>
           <label className="field-row" htmlFor="read-matter">
-            <span>Under which matter</span>
+            <span>{t("matters.field.matter")}</span>
             <select id="read-matter" value={readMatter} onChange={(event) => setReadMatter(event.target.value)}>
-              <option value="">no matter yet</option>
+              <option value="">{t("matters.noMatterYet")}</option>
               {open.map((matter) => (
                 <option key={matter.id} value={matter.id}>{matter.description}</option>
               ))}
@@ -339,22 +335,22 @@ export function Matters() {
             disabled={readMailbox === ""}
             onClick={() => void run(
               () => askToRead(readMailbox, readScope, readHours * 3600, readMatter === "" ? null : readMatter),
-              "Asked. Two people have to approve before you can read anything.",
+              t("matters.read.asked"),
             )}
           >
-            Ask to read
+            {t("matters.read.act")}
           </button>
         </div>
 
         {(supervised.data?.supervised ?? []).length === 0 ? (
-          <Nothing kind="empty" detail="Nobody has been granted a supervised read." />
+          <Nothing kind="empty" detail={t("matters.read.empty")} />
         ) : (
-          <Scroller label="Supervised reads">
+          <Scroller label={t("matters.read.list")}>
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Who</th><th scope="col">Mailbox</th><th scope="col">How much</th>
-                  <th scope="col">Until</th><th scope="col">State</th>
+                  <th scope="col">{t("matters.read.who")}</th><th scope="col">{t("matters.field.mailbox")}</th><th scope="col">{t("matters.read.howMuch")}</th>
+                  <th scope="col">{t("matters.read.until")}</th><th scope="col">{t("matters.col.state")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -362,7 +358,7 @@ export function Matters() {
                   <tr key={row.id}>
                     <td className="mono">{row.subjectId}</td>
                     <td className="mono">{row.mailboxId}</td>
-                    <td>{row.scope}</td>
+                    <td><NodeWords>{row.scope}</NodeWords></td>
                     <td className="mono">{when(row.expiresAt)}</td>
                     <td>
                       {/*
@@ -371,10 +367,10 @@ export function Matters() {
                         investigator they may read when they may not.
                       */}
                       {row.live
-                        ? <span>reading now</span>
+                        ? <span>{t("matters.read.live")}</span>
                         : row.grantedAt === null
-                          ? <span className="dim">waiting on two approvals</span>
-                          : <span className="dim">expired</span>}
+                          ? <span className="dim">{t("matters.read.waiting")}</span>
+                          : <span className="dim">{t("matters.read.expired")}</span>}
                     </td>
                   </tr>
                 ))}
@@ -385,50 +381,47 @@ export function Matters() {
       </section>
 
       {/* ------------------------------------------------------------------ exports ----------------- */}
-      <section className="matter-block" aria-label="Exports">
-        <h2>Copies taken out</h2>
-        <p className="dim">
-          An export produces mail that leaves this Node&rsquo;s controls. It cites a matter, it is approved
-          before it runs, and what it emitted is counted.
-        </p>
+      <section className="matter-block" aria-label={t("matters.exports")}>
+        <h2>{t("matters.exports.heading")}</h2>
+        <p className="dim">{t("matters.exports.lead")}</p>
         <div className="limits-ask">
           <label className="field-row" htmlFor="export-mailbox">
-            <span>Mailbox</span>
+            <span>{t("matters.field.mailbox")}</span>
             <select id="export-mailbox" value={exportMailbox} onChange={(event) => setExportMailbox(event.target.value)}>
-              <option value="">choose…</option>
+              <option value="">{t("matters.choose")}</option>
               {(mailboxes.data?.mailboxes ?? []).map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
             </select>
           </label>
           <label className="field-row" htmlFor="export-matter">
-            <span>Under which matter</span>
+            <span>{t("matters.field.matter")}</span>
             <select id="export-matter" value={exportMatter} onChange={(event) => setExportMatter(event.target.value)}>
-              <option value="">choose…</option>
+              <option value="">{t("matters.choose")}</option>
               {open.map((matter) => <option key={matter.id} value={matter.id}>{matter.description}</option>)}
             </select>
           </label>
           <label className="field-row" htmlFor="export-max">
-            <span>At most</span>
+            <span>{t("matters.exports.atMost")}</span>
             <input id="export-max" className="mono" type="number" min={1} inputMode="numeric" value={exportMax} onChange={(event) => setExportMax(event.target.value)} />
           </label>
           <button className="quiet" type="button" disabled={exportMailbox === "" || exportMatter === "" || Number(exportMax) < 1}
             onClick={() => void run(
               () => requestExport({ mailboxId: exportMailbox, matterId: exportMatter, maxMessages: Number(exportMax) }),
-              "Asked. Two other administrators have to agree before it runs; then run it here, and download from its manifest.",
+              t("matters.exports.asked"),
             )}
           >
-            Ask to export
+            {t("matters.exports.act")}
           </button>
         </div>
         {(exports.data?.exports ?? []).length === 0 ? (
-          <Nothing kind="empty" detail="No exports have been requested." />
+          <Nothing kind="empty" detail={t("matters.exports.empty")} />
         ) : (
-          <Scroller label="Copies taken out">
+          <Scroller label={t("matters.exports.heading")}>
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Matter</th><th scope="col">Mailbox</th><th scope="col">Asked by</th>
-                  <th scope="col">State</th><th scope="col" className="num">Messages</th>
-                  <th scope="col">Run</th>
+                  <th scope="col">{t("matters.col.matter")}</th><th scope="col">{t("matters.field.mailbox")}</th><th scope="col">{t("matters.exports.askedBy")}</th>
+                  <th scope="col">{t("matters.col.state")}</th><th scope="col" className="num">{t("matters.exports.messages")}</th>
+                  <th scope="col">{t("matters.exports.run")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -438,10 +431,10 @@ export function Matters() {
                     <td className="mono">{row.mailboxId}</td>
                     <td className="mono">{row.requestedBy}</td>
                     <td>
-                      {row.state}
-                      {row.stateReason === null ? null : <span className="dim"> · {row.stateReason}</span>}
+                      <NodeWords>{row.state}</NodeWords>
+                      {row.stateReason === null ? null : <span className="dim"> · <NodeWords>{row.stateReason}</NodeWords></span>}
                     </td>
-                    <td className="num mono">{row.messagesEmitted} of {row.maxMessages}</td>
+                    <td className="num mono">{t("matters.exports.emitted", { emitted: row.messagesEmitted, max: row.maxMessages })}</td>
                     <td>
                       {/*
                         An export runs in pages and is resumable, so "run" is offered while it is unfinished
@@ -452,9 +445,9 @@ export function Matters() {
                         <button
                           type="button"
                           className="linkish"
-                          onClick={() => void run(() => runExport(row.id), "Export run.")}
+                          onClick={() => void run(() => runExport(row.id), t("matters.exports.ran"))}
                         >
-                          Run
+                          {t("matters.exports.run")}
                         </button>
                       ) : (
                         <>
@@ -465,7 +458,7 @@ export function Matters() {
                           {" · "}
                           {objects[row.id] === undefined ? (
                             <button type="button" className="linkish" onClick={() => void listObjects(row.id)}>
-                              Objects
+                              {t("matters.exports.objects")}
                             </button>
                           ) : (
                             <ul className="export-objects">
@@ -473,7 +466,7 @@ export function Matters() {
                                 <li key={entry.object}>
                                   <a className="mono" href={exportObjectHref(row.id, entry.object)}>{entry.object}</a>
                                   {" "}
-                                  <span className="dim mono">{entry.bytes} bytes</span>
+                                  <span className="dim mono">{t("matters.exports.bytes", { n: entry.bytes })}</span>
                                 </li>
                               ))}
                             </ul>

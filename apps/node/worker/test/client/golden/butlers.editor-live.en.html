@@ -1,0 +1,193 @@
+<header class="ledger-head">
+<h1>Butlers</h1>
+<p class="new-message">
+<button type="button" class="primary">New butler</button>
+</p>
+</header>
+<div class="scroller" tabindex="0" role="region" aria-label="Butlers">
+<table>
+<thead>
+<tr>
+<th scope="col">Name</th>
+<th scope="col">Standing</th>
+<th scope="col">Published</th>
+<th scope="col">Draft</th>
+<th scope="col">Editor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>triage</td>
+<td>
+<span class="bad">paused — loop detected</span>
+</td>
+<td class="mono">[clock]</td>
+<td class="dim">unpublished changes</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>auto-ack</td>
+<td>
+<span>live · v3</span>
+</td>
+<td class="mono">[clock]</td>
+<td class="dim">—</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>new butler</td>
+<td>
+<span class="dim">draft only, never published</span>
+</td>
+<td class="mono">—</td>
+<td class="dim">—</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="butler-pause notice bad">
+<p>This Butler ran 40 times on one conversation in ten minutes.</p>
+<p class="dim mono">placed by loop-detector · [clock]</p>
+<label class="field-row" for="resume-btl_paused">
+<span>Why is it safe to resume?</span>
+<input id="resume-btl_paused" value="">
+</label>
+<button class="quiet" type="button" disabled="">Resume</button>
+</div>
+<section class="butler-detail" aria-label="Butler auto-ack">
+<header class="ledger-head">
+<h2>auto-ack</h2>
+<button type="button" class="linkish">Close</button>
+</header>
+<pre class="notice bad butler-findings" role="alert">That run recorded no trigger facts, so there is nothing to walk over. Pick a later run.</pre>
+<fieldset class="field-row butler-format">
+<legend>Format</legend>
+<label for="butler-format-yaml">
+<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> yaml</label>
+<label for="butler-format-json">
+<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> json</label>
+<span class="dim">which parser reads the source below. Switching it does not rewrite your text</span>
+</fieldset>
+<label class="field-row" for="butler-source">
+<span>Source</span>
+<textarea id="butler-source" class="butler-source mono" rows="18" spellcheck="false">entry: ack
+</textarea>
+</label>
+<p class="butler-actions">
+<button class="quiet" type="button">Save draft</button> <button type="button" class="primary" disabled="">Publish</button>
+<span class="dim"> showing live v3 — save a draft to change it</span>
+</p>
+<section class="butler-dry" aria-label="Dry run">
+<h3>Dry run</h3>
+<p class="dim">Walks the draft — or the live version if there is no draft — over a past run’s input. Reads real rows and asks the real authority questions; writes nothing.</p>
+<ul class="butler-dry-runs">
+<li>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · failed</span>
+</li>
+<li>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · running</span>
+</li>
+</ul>
+</section>
+<table>
+<caption class="dim">Versions — publication is the versioning event, and a published one is frozen</caption>
+<thead>
+<tr>
+<th scope="col">Version</th>
+<th scope="col">State</th>
+<th scope="col">Published</th>
+<th scope="col">By</th>
+<th scope="col">AST sha256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">3</td>
+<td>published</td>
+<td class="mono">[clock]</td>
+<td class="mono">usr_me</td>
+<td class="mono dim">a1b2c3d4e5f6</td>
+</tr>
+</tbody>
+</table>
+</section>
+<h2 class="butler-runs-heading">Runs</h2>
+<div class="scroller" tabindex="0" role="region" aria-label="Runs">
+<p class="dim">
+<em>Run again</em> starts a new run of the same published version over what this run was given, judged under today’s rules. Its effects are real; any send it proposes waits in the outbox until a person releases it, so nothing leaves this Node by itself.</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Started</th>
+<th scope="col">State</th>
+<th scope="col">Why it ended</th>
+<th scope="col" class="num">Nodes</th>
+<th scope="col" class="num">Effects</th>
+<th scope="col" class="num">Refusals</th>
+<th scope="col" class="num">Spent</th>
+<th scope="col">Again</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">[clock]</td>
+<td>completed</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>stopped</td>
+<td>nothing needed doing</td>
+<td class="mono num">3</td>
+<td class="mono num">0</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td class="bad">failed</td>
+<td>budget exhausted</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">2</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>running</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<span class="dim">—</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

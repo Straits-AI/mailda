@@ -43,7 +43,7 @@ beforeEach(() => { reset(); });
 describe("a capped list says where it stopped", () => {
   it("names the cap when the Node says older rows exist", async () => {
     mount(true);
-    await waitFor(() => { expect(screen.getByText(/Showing the newest 1 entries\. Older ones exist/)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/Showing the newest one\. Older ones exist/)).toBeDefined(); });
   });
 
   it("says nothing when the list is whole", async () => {

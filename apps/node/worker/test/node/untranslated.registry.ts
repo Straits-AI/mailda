@@ -23,20 +23,6 @@
 
 export const UNMIGRATED: Readonly<Record<string, number>> = {
   "src/client/app.client.js": 245,
-  "src/client/app/onboarding.tsx": 72,
-  "src/client/app/screens/agents.tsx": 56,
-  "src/client/app/screens/approvals.tsx": 37,
-  "src/client/app/screens/butlers.tsx": 97,
-  "src/client/app/screens/first-run.tsx": 17,
-  "src/client/app/screens/limits.tsx": 67,
-  "src/client/app/screens/matters.tsx": 119,
-  "src/client/app/screens/next-steps.tsx": 7,
-  "src/client/app/screens/people.tsx": 125,
-  "src/client/app/screens/policies.tsx": 73,
-  "src/client/app/screens/setup.tsx": 185,
-  "src/client/app/ui/menu.tsx": 2,
-  "src/client/app/ui/popover.tsx": 6,
-  "src/client/app/ui/section-tabs.tsx": 1,
   "src/client/session.client.js": 23,
   "src/client/theme.client.js": 7,
 };
@@ -83,10 +69,53 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   ],
   "src/client/app/health.ts": [],
   "src/client/app/main.tsx": [],
-  "src/client/app/onboarding.tsx": [],
-  "src/client/app/screens/agents.tsx": [],
-  "src/client/app/screens/approvals.tsx": [],
-  "src/client/app/screens/butlers.tsx": [],
+  "src/client/app/onboarding.tsx": [
+    ...["verdict-ok", "severity-degraded", "state-outcome_unknown", "severity-report"]
+      .map((text) => ({ text, reason: "a class name, a step state's chip colour (`CHIP`)" })),
+    { text: "/setup", reason: "a route path, the notice's Link `to` and the path it hides on" },
+  ],
+  "src/client/app/screens/agents.tsx": [
+    { text: "agents", reason: "a react-query key" },
+    { text: "col", reason: "a <th> scope token" },
+  ],
+  "src/client/app/screens/approvals.tsx": [
+    ...["approvals", "sends", "notifications"].map((text) => ({ text, reason: "a react-query key: invalidated, never shown" })),
+  ],
+  "src/client/app/screens/butlers.tsx": [
+    {
+      text: [
+        "# A new Butler. It does nothing yet — the one node below stops immediately.",
+        "#",
+        "# Delete these comments or keep them: the text you write is stored exactly as you write it, and",
+        "# comments are the reason this is YAML rather than JSON. Switch the format to json above if you",
+        "# would rather write it that way; nothing here rewrites your text for you.",
+        "apiVersion: mailda/v1",
+        "kind: Butler",
+        "metadata:",
+        "  name: new butler",
+        "  # A team rather than a person, so a leaver does not strand the Butler.",
+        "  owner: team:support",
+        "",
+        "# Nothing is permitted until it is listed here. An empty list is a Butler that can read its trigger",
+        "# and decide, and can cause no effect at all.",
+        "capabilities: []",
+        "",
+        "trigger:",
+        "  event: mail.received",
+        "  mailbox: support@example.com",
+        "",
+        "entry: halt",
+        "nodes:",
+        "  - id: halt",
+        "    type: stop",
+        "    reason: not doing anything yet",
+      ].join("\n"),
+      reason: "STARTER, a new Butler's source, written into the Node as the Butler's own text and edited by its author: data, not this screen's words, in the author's hands whatever the interface's language (docs/i18n.md, never persist a t() string)",
+    },
+    { text: "new butler", reason: "a new Butler's name, written into the Node with its source: data, as STARTER is" },
+    ...["butlers", "butler", "butler-runs"].map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
+    { text: "col", reason: "a <th> scope token" },
+  ],
   "src/client/app/screens/composer.tsx": [
     {
       text: "Re:",
@@ -109,7 +138,11 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     })),
   ],
   "src/client/app/screens/drafts.tsx": [],
-  "src/client/app/screens/first-run.tsx": [],
+  "src/client/app/screens/first-run.tsx": [
+    { text: "curl -fsSL https://mailda.site/update.sh | bash", reason: "a shell command, copied and run as it is; shown in mono" },
+    { text: "mailda.first-run.override", reason: "a sessionStorage key" },
+    { text: "/setup", reason: "a route path, the Link's `to`" },
+  ],
   "src/client/app/screens/inbox.tsx": [
     { text: "(max-width: 767.98px)", reason: "a media query, the single-pane breakpoint" },
     { text: "button.message-row", reason: "a CSS selector for the list's row buttons" },
@@ -151,14 +184,48 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: ".eml", reason: "the submitted bytes' file format, the link's label in every locale, as a file name is" },
     { text: "Email Sending: Edit", reason: "Cloudflare's own name for the API token permission, as its dashboard shows it; in mono, not ours to translate" },
   ],
-  "src/client/app/screens/limits.tsx": [],
-  "src/client/app/screens/matters.tsx": [],
+  "src/client/app/screens/limits.tsx": [
+    ...["domain-pauses", "approvals", "suppressions"]
+      .map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
+    { text: "col", reason: "a <th> scope token" },
+    { text: "example.com", reason: "an input's placeholder that is a domain, the shape the field takes (RFC 2606's example domain), the same in every locale" },
+    {
+      text: "T",
+      reason: "the ISO 8601 date-time separator, replaced by a space in the wire's `observedAt`: a UTC instant's own form, not words",
+    },
+  ],
+  "src/client/app/screens/matters.tsx": [
+    ...["matters", "holds", "supervised", "exports", "approvals"]
+      .map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
+    { text: "col", reason: "a <th> scope token" },
+    {
+      text: "no longer required",
+      reason: "the reason sent with a hold lift, persisted by the Node and read by the approvers: data in its writer's language, never a t() string (docs/i18n.md, L10)",
+    },
+    { text: "manifest.json", reason: "an export object's file name, the link's label in every locale, as a file name is" },
+  ],
   "src/client/app/screens/next-steps.tsx": [],
   "src/client/app/screens/people.tsx": [
     { text: "new-address", reason: "a document id, handed to AddressField, which sets it on its input" },
     { text: "invite-mailbox-address", reason: "a document id, handed to AddressField, which sets it on its input" },
+    { text: "hello@example.com", reason: "an example address in an address field's placeholder: an address is Latin in every locale" },
+    { text: "hello", reason: "an example local part in an address field's placeholder, beside the fixed domain: Latin in every locale" },
+    { text: "grant---", reason: "a checkbox id's fixed parts (`grant-<person>-<object>-<relation>`), never shown" },
+    { text: "team--", reason: "a checkbox id's fixed parts (`team-<team>-<person>`), never shown" },
+    {
+      text: "passkey",
+      reason: "the label a passkey is stored under when none is typed: data written into the Node, so never a t() string (docs/i18n.md, critic L10)",
+    },
+    ...["teams", "team-members", "passkeys", "audit", "people", "invitations", "mailboxes"]
+      .map((text) => ({ text, reason: "a react-query key: invalidated, never shown" })),
+    { text: "col", reason: "a <th> scope token" },
   ],
-  "src/client/app/screens/policies.tsx": [],
+  "src/client/app/screens/policies.tsx": [
+    { text: "new rule", reason: "a new rule's name, prefilled and written into the Node by createPolicy: data, never a t() string (docs/i18n.md)" },
+    ...["true", "false"].map((text) => ({ text, reason: "a three-state condition's <option> value, parsed back to a boolean, never shown" })),
+    { text: "policies", reason: "a TanStack Query cache key: invalidated, never shown" },
+    { text: "col", reason: "a <th> scope token" },
+  ],
   "src/client/app/screens/queue.tsx": [
     { text: "cases", reason: "a react-query key" },
     { text: "mailboxes", reason: "a react-query key" },
@@ -185,7 +252,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   "src/client/app/format.ts": [
     ...["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((text) => ({
       text,
-      reason: "English's own month table, read only when the interface is English (`monthDay`); every other locale's "
+      reason: "English's own month table, read only when the interface is English (`monthDay`, `recordDay`); every other locale's "
         + "dates come from Intl. Words, registered because they are the en formatter's data, not a message: a catalog "
         + "key would give each locale a table nothing reads",
     })),
@@ -193,6 +260,13 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   "src/client/app/screens/setup.tsx": [
     { text: "new", reason: "a select's value meaning a new mailbox named after the address, never shown; never a mailbox id" },
     { text: "mailboxes", reason: "a react-query key, invalidated after a take-over made a mailbox" },
+    ...["provider", "provider-routing"].map((text) => ({ text, reason: "a react-query key, invalidated after a write" })),
+    { text: "col", reason: "a <th> scope token" },
+    { text: "E_PROVIDER_ACCOUNT_AMBIGUOUS", reason: "the Node's error code, compared to decide whether to ask for an account id; never shown by this file" },
+    ...["mail.example.com", "inbox@mail.example.com", "example.com"]
+      .map((text) => ({ text, reason: "a placeholder's example domain or address: the field's format, the same in every locale" })),
+    { text: "mailda setup", reason: "a CLI command, in mono: identifiers stay Latin (docs/i18n.md, Register)" },
+    { text: "curl -fsSL https://mailda.site/update.sh | bash", reason: "the update command, in mono, run as written in every locale" },
   ],
   "src/client/app/shell-context.tsx": [
     { text: "commands", reason: "a Symbol's description, seen only in a debugger" },
@@ -205,7 +279,10 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   "src/client/app/ui/icons.tsx": [
     { text: "img", reason: "an ARIA role in a spread of attributes, where the role attribute's own rule cannot see it" },
   ],
-  "src/client/app/ui/menu.tsx": [],
+  "src/client/app/ui/menu.tsx": [
+    { text: "[role=menuitem]:not([aria-disabled=true])", reason: "a CSS selector" },
+    { text: "-note-", reason: "a document id's middle part, between useId() and the item's index" },
+  ],
   "src/client/app/ui/palette.tsx": [
     { text: "compose", reason: "an option's React key" },
     { text: "go", reason: "an option's React key, with the route after it" },
@@ -213,8 +290,17 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "C", reason: "a key cap, shown in <kbd>" },
     { text: "palette-option-", reason: "a document id prefix" },
   ],
-  "src/client/app/ui/popover.tsx": [],
-  "src/client/app/ui/section-tabs.tsx": [],
+  "src/client/app/ui/popover.tsx": [
+    { text: "popover-end", reason: "a class name, read with classList.contains" },
+    { text: "px", reason: "a CSS unit, in an inline style" },
+    { text: "auto", reason: "a CSS value, in an inline style" },
+    { text: "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),", reason: "a CSS selector (FOCUSABLE's first line)" },
+    { text: "textarea:not([disabled]), [tabindex]:not([tabindex='-1'])", reason: "a CSS selector (FOCUSABLE's second line)" },
+    { text: "input:not([disabled]), select:not([disabled]), textarea:not([disabled])", reason: "a CSS selector" },
+  ],
+  "src/client/app/ui/section-tabs.tsx": [
+    { text: "section-tab current", reason: "a class name, in activeProps" },
+  ],
   "src/client/app/ui/shortcuts.ts": [
     { text: "mailda.shortcuts", reason: "a localStorage key" },
     { text: "on", reason: "a stored value" },

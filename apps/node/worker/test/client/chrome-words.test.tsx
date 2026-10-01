@@ -40,7 +40,7 @@ describe("the notices band", () => {
           body: {
             readerEmail: "legal@example.test", mailboxName: "Support", scope: "read", grantedAt: "2026-09-26T09:00:00Z",
             expiresAt: "2026-09-27T09:00:00Z", matterId: "mat_1", matterType: "legal_hold", grantId: "sgr_1",
-            acts: { queries: 1, listed: 12, opened: 3, attachments: 2 },
+            acts: { queries: 1, listed: 1, opened: 3, attachments: 1 },
           },
         },
         {
@@ -62,9 +62,9 @@ describe("the notices band", () => {
     const band = await screen.findByRole("region", { name: "Notifications" });
     expect([...band.querySelectorAll(".notice.told")].map((notice) => notice.textContent)).toEqual([
       "legal@example.test was granted a supervised read of Support, 2026-09-26T09:00:00Z to 2026-09-27T09:00:00Z. "
-        + "1 query listing 12 message(s) · 3 opened · 2 raw message(s) read · matter mat_1 (legal_hold) · grant sgr_1",
+        + "1 query listing 1 message · 3 opened · 1 raw message read · matter mat_1 (legal_hold) · grant sgr_1",
       "somebody was granted a supervised read of a mailbox, at an unrecorded instant to an unrecorded instant. "
-        + "4 queries listing 0 message(s) · 0 opened · 0 raw message(s) read · matter none cited · grant sgr_2",
+        + "4 queries listing 0 messages · 0 opened · 0 raw messages read · matter none cited · grant sgr_2",
       "You were asked to decide an approval (send). request apr_1 · asked by ops@example.test · 2026-09-26T10:00:00Z",
       "You were asked to decide an approval (an act). request apr_2 · asked by somebody · an unrecorded instant",
     ]);
@@ -179,6 +179,7 @@ describe("the shared states", () => {
           <Nothing kind="empty" />
           <Nothing kind="empty" unfiltered />
           <Truncated when shown={50} noun="drafts" />
+          <Truncated when shown={1} noun="drafts" />
           <Copyable text="mailda upgrade" label="command" />
         </div>
       </QueryClientProvider>,
@@ -189,6 +190,7 @@ describe("the shared states", () => {
       "Nothing here yet.",
       "Nothing here yet. An empty ledger. Not a filtered one: nothing has been hidden from you.",
       "Showing the newest 50 drafts. Older ones exist and are not listed.",
+      "Showing the newest one. Older ones exist and are not listed.",
       "mailda upgradeCopy command",
     ]);
   });

@@ -1,3 +1,5 @@
+import { render } from "@testing-library/react";
+import { createElement, Fragment, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 
 import { onboardingSteps, readinessOf, type Sources } from "../../src/client/app/onboarding.tsx";
@@ -28,6 +30,8 @@ const delivery = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
   subscription: "sub", subscriptionId: "s1", enabled: true, events: ["email.sending"], queueId: "q", queueName: "mailda-sending-events",
   consumers: ["mailda"], error: null, ...over,
 });
+/** A step's detail as a reader sees it: the text, whichever parts of it are the Node's own words. */
+const text = (detail: ReactNode) => render(createElement(Fragment, null, detail)).container.textContent;
 const byId = (sources: Sources) => Object.fromEntries(onboardingSteps(sources).map((step) => [step.id, step.state]));
 const NONE: Provisioned = { receiving: null, sending: null, deliveryEvents: null };
 const RECORD: Provisioned = {
@@ -59,8 +63,8 @@ describe("onboarding steps", () => {
     const steps = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: RECORD });
     const routed = steps.find((step) => step.id === "routed")!;
     expect(routed.state).toBe("done");
-    expect(routed.detail).toContain("at install");
-    expect(routed.detail).toContain("a record, not a live read");
+    expect(text(routed.detail)).toContain("at install");
+    expect(text(routed.detail)).toContain("a record, not a live read");
     expect(steps.find((step) => step.id === "sending")!.state).toBe("done");
     // Nothing recorded for delivery events is to do, not unknown: the record was read and had nothing.
     expect(steps.find((step) => step.id === "outcomes")!.state).toBe("todo");
@@ -76,7 +80,7 @@ describe("onboarding steps", () => {
     const elsewhere = withRouting({ state: "routed_elsewhere", detail: "admin@whymelabs.com has an Email Routing rule of its own, named \"info\": worker to info-worker." });
     const routed = onboardingSteps({ provider: noToken, doctor: doctor(true), provisioned: elsewhere }).find((step) => step.id === "routed")!;
     expect(routed.state).toBe("todo");
-    expect(routed.detail).toContain("worker to info-worker");
+    expect(text(routed.detail)).toContain("worker to info-worker");
     expect(readinessOf(onboardingSteps({ provider: noToken, doctor: doctor(true), provisioned: elsewhere }))).toBe("not-ready");
     expect(byId({ provider: noToken, doctor: doctor(true), provisioned: withRouting({ state: "unconfirmed", detail: "not confirmed" }) }).routed).toBe("unknown");
     expect(byId({ provider: noToken, doctor: doctor(true), provisioned: withRouting({ state: "catch_all", detail: "the catch-all routes it here" }) }).routed).toBe("done");
@@ -92,7 +96,7 @@ describe("onboarding steps", () => {
     const sending = onboardingSteps({ provider: binding({ state: "no_token", accountId: null, accountName: null }), doctor: doctor(true), provisioned: observed })
       .find((step) => step.id === "sending")!;
     expect(sending.state).toBe("done");
-    expect(sending.detail).toBe("whymelabs.com, in place on Cloudflare before this Node, observed on 25 Sept 2026 (a record, not a live read)");
+    expect(text(sending.detail)).toBe("whymelabs.com, in place on Cloudflare before this Node, observed on 25 Sep 2026 (a record, not a live read)");
   });
 
   it("lets a live read win over the record once connected", () => {
@@ -108,7 +112,13 @@ describe("onboarding steps", () => {
   });
 
   it("does not call a domain routed while a record is still required or routing is off", () => {
-    expect(byId({ provider: binding(), doctor: doctor(true), routing: [routing({ required: [{ type: "MX", name: "x", content: "y", priority: 1 }] })] }).routed).toBe("todo");
+    const record = { type: "MX", name: "x", content: "y", priority: 1 };
+    expect(byId({ provider: binding(), doctor: doctor(true), routing: [routing({ required: [record] })] }).routed).toBe("todo");
+    // How many are still required is a plural on the count (a D-row of layer 2b: it said "1 record(s)").
+    const still = (n: number) => text(onboardingSteps({ provider: binding(), doctor: doctor(true), routing: [routing({ required: Array(n).fill(record) })] })
+      .find((step) => step.id === "routed")!.detail);
+    expect(still(1)).toBe("mail.example.test: 1 record still required");
+    expect(still(2)).toBe("mail.example.test: 2 records still required");
     expect(byId({ provider: binding(), doctor: doctor(true), routing: [routing({ enabled: false })] }).routed).toBe("todo");
   });
 
@@ -117,7 +127,7 @@ describe("onboarding steps", () => {
     expect(steps.sending).toBe("done");
     expect(steps.outcomes).toBe("todo");
     const detail = onboardingSteps({ provider: binding(), doctor: doctor(true), delivery: [delivery({ consumers: [] })] }).find((s) => s.id === "outcomes")!.detail;
-    expect(detail).toContain("no consumer");
+    expect(text(detail)).toContain("no consumer");
   });
 });
 

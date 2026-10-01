@@ -1,0 +1,128 @@
+<header class="ledger-head">
+<h1>Approvals</h1>
+<p class="dim mono">6 waiting on you</p>
+</header>
+<div class="approval-list">
+<article class="approval" aria-label="A message waiting to go out">
+<h2>A message waiting to go out</h2>
+<p>A rule asked for a second pair of eyes before this leaves.</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_send</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">does not lapse</dd>
+<dt>Needs</dt>
+<dd>one approval needed</dd>
+</dl>
+<p class="notice bad" role="alert">Refused, for the test.</p>
+<p class="approval-actions">
+<button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
+</p>
+</article>
+<article class="approval" aria-label="Lifting a legal hold">
+<h2>Lifting a legal hold</h2>
+<p>Approving this ends the hold, and the mail it preserved becomes deletable again.</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_hold</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">[clock]</dd>
+<dt>Needs</dt>
+<dd>1 approval needed</dd>
+</dl>
+<blockquote class="approval-reason">The matter closed on Friday.</blockquote>
+<p class="approval-actions">
+<button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
+</p>
+</article>
+<article class="approval" aria-label="Reading somebody else's mail">
+<h2>Reading somebody else's mail</h2>
+<p>Approving this lets the requester read a mailbox they hold no standing relation to. The person whose mailbox it is will be told when the matter closes (§7).</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_read</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">[clock]</dd>
+<dt>Needs</dt>
+<dd>stage 1 of 2 · 3 approvals in total</dd>
+</dl>
+<blockquote class="approval-reason">Investigating a complaint.</blockquote>
+<p class="dim mono">scope metadata · subject usr_cleo · no matter cited</p>
+<p class="approval-actions">
+<button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
+</p>
+</article>
+<article class="approval" aria-label="Reading somebody else's mail">
+<h2>Reading somebody else's mail</h2>
+<p>Approving this lets the requester read a mailbox they hold no standing relation to. The person whose mailbox it is will be told when the matter closes (§7).</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_read2</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">[clock]</dd>
+<dt>Needs</dt>
+<dd>stage 2 of 2 · 2 approvals in total</dd>
+</dl>
+<p class="dim mono">scope content · subject usr_dan · matter mtr_1</p>
+<p class="approval-actions">
+<button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
+</p>
+</article>
+<article class="approval" aria-label="Exporting mail out of this Node">
+<h2>Exporting mail out of this Node</h2>
+<p>Approving this produces a copy of matching mail that leaves the system's own controls.</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_export</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">[clock]</dd>
+<dt>Needs</dt>
+<dd>2 approvals needed</dd>
+</dl>
+<p class="approval-actions">
+<span class="dim">You have decided this. </span>
+<button class="quiet" type="button">Take my decision back</button>
+</p>
+</article>
+<article class="approval" aria-label="Pausing a domain's mail">
+<h2>Pausing a domain's mail</h2>
+<p>Approving this pauses every message to that domain until somebody lifts the pause.</p>
+<dl class="headers">
+<dt>Subject</dt>
+<dd class="mono">sub_apr_pause</dd>
+<dt>Asked by</dt>
+<dd class="mono">usr_bob</dd>
+<dt>Asked</dt>
+<dd class="mono">[clock]</dd>
+<dt>Lapses</dt>
+<dd class="mono">[clock]</dd>
+<dt>Needs</dt>
+<dd>one approval needed</dd>
+</dl>
+<blockquote class="approval-reason">Bouncing everything.</blockquote>
+<p class="dim mono">domain example.org</p>
+<p class="approval-actions">
+<button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
+</p>
+</article>
+</div>

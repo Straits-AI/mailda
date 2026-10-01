@@ -1,11 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
   createPolicy, publishPolicyVersion, savePolicyDraft, useMailboxes, usePolicies,
-  type PolicyConditions, type PolicyVersionRow,
+  type PolicyConditions, type PolicyVersionRow, type Said,
 } from "../api.ts";
+import { dateTime } from "../format.ts";
+import { marked } from "../words.tsx";
 
 /**
  * The rules that decide what happens to a message before it leaves (#60, #81).
@@ -38,40 +41,40 @@ import {
  * manifest; that is the answer, and it is one the outbox already shows.
  */
 
-const OUTCOMES = ["allow", "hold", "require_approval", "deny"] as const;
+type Outcome = PolicyVersionRow["outcome"];
 
-const OUTCOME_WORDS: Record<PolicyVersionRow["outcome"], string> = {
-  allow: "goes as normal",
-  hold: "is held for a person to release",
-  require_approval: "needs an approval before it goes",
-  deny: "is refused",
-};
+const OUTCOMES = ["allow", "hold", "require_approval", "deny"] as const satisfies readonly Outcome[];
+
+/** What a rule does to the message it matches, as the end of a sentence: `policies.outcome.<token>`. */
+const outcomeWords = (outcome: Outcome) => t(`policies.outcome.${outcome}`);
 
 /** The rule as a sentence, built from the same columns the evaluator reads. */
-function sentence(row: PolicyVersionRow, mailboxName: (id: string) => string): string {
+function ruleSentence(row: PolicyVersionRow, mailboxName: (id: string) => string): string {
   const when: string[] = [];
-  if (row.when_mailbox_id !== null) when.push(`from ${mailboxName(row.when_mailbox_id)}`);
-  if (row.when_actor_user_id !== null) when.push(`written by ${row.when_actor_user_id}`);
+  if (row.when_mailbox_id !== null) when.push(t("policies.when.mailbox", { mailbox: mailboxName(row.when_mailbox_id) }));
+  if (row.when_actor_user_id !== null) when.push(t("policies.when.actor", { user: row.when_actor_user_id }));
   if (row.when_recipient_external !== null) {
-    when.push(row.when_recipient_external === 1 ? "to anyone outside" : "to colleagues only");
+    when.push(row.when_recipient_external === 1 ? t("policies.when.external") : t("policies.when.internal"));
   }
-  if (row.when_is_reply !== null) when.push(row.when_is_reply === 1 ? "as a reply" : "as a new message");
+  if (row.when_is_reply !== null) {
+    when.push(row.when_is_reply === 1 ? t("policies.when.reply") : t("policies.when.newMessage"));
+  }
   if (row.when_reply_to_dmarc_fail !== null) {
-    when.push(row.when_reply_to_dmarc_fail === 1
-      ? "answering mail its sender's domain disowned"
-      : "not answering disowned mail");
+    when.push(row.when_reply_to_dmarc_fail === 1 ? t("policies.when.dmarcFail") : t("policies.when.notDmarcFail"));
   }
   if (row.when_org_daily_volume_min !== null) {
-    when.push(`once this Node has sent ${row.when_org_daily_volume_min} today`);
+    when.push(t("policies.when.volume", { count: row.when_org_daily_volume_min }));
   }
   // No conditions is a rule that matches everything, and saying so plainly is the point: it is the most
   // consequential shape a policy can have and the easiest to write by accident.
-  const clause = when.length === 0 ? "Every message" : `Mail ${when.join(", ")}`;
-  return `${clause} ${OUTCOME_WORDS[row.outcome]}.`;
+  const outcome = outcomeWords(row.outcome);
+  return when.length === 0
+    ? t("policies.rule.every", { outcome })
+    : t("policies.rule.when", { conditions: when.join(t("policies.when.join")), outcome });
 }
 
 function when(at: string | null): string {
-  return at === null ? "—" : new Date(at).toLocaleString();
+  return at === null ? "—" : dateTime(at);
 }
 
 /** The editor. One draft per policy, so this is *the* draft rather than one of several. */
@@ -83,7 +86,7 @@ function Editing({
   draft: PolicyVersionRow | null;
   onDone: () => Promise<void>;
 }) {
-  const [outcome, setOutcome] = useState<string>(draft?.outcome ?? "require_approval");
+  const [outcome, setOutcome] = useState<Outcome>(draft?.outcome ?? "require_approval");
   const [title, setTitle] = useState(name);
   const [conditions, setConditions] = useState<PolicyConditions>({
     mailboxId: draft?.when_mailbox_id ?? null,
@@ -96,7 +99,7 @@ function Editing({
       : draft.when_reply_to_dmarc_fail === 1,
   });
   const [approvals, setApprovals] = useState(1);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
   const mailboxes = useMailboxes();
 
@@ -110,24 +113,27 @@ function Editing({
       ? await createPolicy(title, outcome, conditions, stages)
       : await savePolicyDraft(policyId, outcome, conditions, stages);
     setBusy(false);
-    if (!outcomeOf.ok) { setProblem(outcomeOf.message); return; }
+    if (!outcomeOf.ok) { setProblem(outcomeOf); return; }
     await onDone();
   }
 
   return (
-    <section className="policy-editor" aria-label={policyId === null ? "New rule" : `Rule ${name}`}>
-      <h2>{policyId === null ? "New rule" : name}</h2>
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+    <section
+      className="policy-editor"
+      aria-label={policyId === null ? t("policies.new") : t("policies.editor.label", { name })}
+    >
+      <h2>{policyId === null ? t("policies.new") : name}</h2>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
 
       {policyId === null ? (
         <label className="field-row" htmlFor="policy-name">
-          <span>What is this rule called?</span>
+          <span>{t("policies.editor.name")}</span>
           <input id="policy-name" value={title} onChange={(event) => setTitle(event.target.value)} />
         </label>
       ) : null}
 
       <label className="field-row" htmlFor="policy-mailbox">
-        <span>Which mailbox?</span>
+        <span>{t("policies.editor.mailbox")}</span>
         <select
           id="policy-mailbox"
           value={conditions.mailboxId ?? ""}
@@ -135,7 +141,7 @@ function Editing({
             ...c, mailboxId: event.target.value === "" ? null : event.target.value,
           }))}
         >
-          <option value="">any mailbox</option>
+          <option value="">{t("policies.editor.mailbox.any")}</option>
           {(mailboxes.data?.mailboxes ?? []).map((box) => (
             <option key={box.id} value={box.id}>{box.name}</option>
           ))}
@@ -148,7 +154,7 @@ function Editing({
         two-state control would silently turn every unticked box into a condition the evaluator now reads.
       */}
       <label className="field-row" htmlFor="policy-external">
-        <span>Who is it going to?</span>
+        <span>{t("policies.editor.to")}</span>
         <select
           id="policy-external"
           value={conditions.recipientExternal === null ? "" : String(conditions.recipientExternal)}
@@ -156,14 +162,14 @@ function Editing({
             ...c, recipientExternal: event.target.value === "" ? null : event.target.value === "true",
           }))}
         >
-          <option value="">anyone — not part of this rule</option>
-          <option value="true">anyone outside this organization</option>
-          <option value="false">colleagues only</option>
+          <option value="">{t("policies.editor.to.any")}</option>
+          <option value="true">{t("policies.editor.to.external")}</option>
+          <option value="false">{t("policies.editor.to.internal")}</option>
         </select>
       </label>
 
       <label className="field-row" htmlFor="policy-reply">
-        <span>Is it a reply?</span>
+        <span>{t("policies.editor.reply")}</span>
         <select
           id="policy-reply"
           value={conditions.isReply === null ? "" : String(conditions.isReply)}
@@ -171,14 +177,14 @@ function Editing({
             ...c, isReply: event.target.value === "" ? null : event.target.value === "true",
           }))}
         >
-          <option value="">either — not part of this rule</option>
-          <option value="true">only replies</option>
-          <option value="false">only new messages</option>
+          <option value="">{t("policies.editor.either")}</option>
+          <option value="true">{t("policies.editor.reply.only")}</option>
+          <option value="false">{t("policies.editor.reply.new")}</option>
         </select>
       </label>
 
       <label className="field-row" htmlFor="policy-reply-dmarc">
-        <span>Answering mail its sender's domain disowned?</span>
+        <span>{t("policies.editor.dmarc")}</span>
         <select
           id="policy-reply-dmarc"
           value={conditions.replyToDmarcFail === null ? "" : String(conditions.replyToDmarcFail)}
@@ -186,24 +192,28 @@ function Editing({
             ...c, replyToDmarcFail: event.target.value === "" ? null : event.target.value === "true",
           }))}
         >
-          <option value="">either — not part of this rule</option>
-          <option value="true">only replies to a message whose DMARC failed</option>
-          <option value="false">everything else</option>
+          <option value="">{t("policies.editor.either")}</option>
+          <option value="true">{t("policies.editor.dmarc.only")}</option>
+          <option value="false">{t("policies.editor.dmarc.else")}</option>
         </select>
       </label>
 
       <label className="field-row" htmlFor="policy-outcome">
-        <span>Then the message…</span>
-        <select id="policy-outcome" value={outcome} onChange={(event) => setOutcome(event.target.value)}>
+        <span>{t("policies.editor.then")}</span>
+        <select
+          id="policy-outcome"
+          value={outcome}
+          onChange={(event) => setOutcome(OUTCOMES.find((value) => value === event.target.value) ?? outcome)}
+        >
           {OUTCOMES.map((value) => (
-            <option key={value} value={value}>{OUTCOME_WORDS[value]}</option>
+            <option key={value} value={value}>{outcomeWords(value)}</option>
           ))}
         </select>
       </label>
 
       {outcome === "require_approval" ? (
         <label className="field-row" htmlFor="policy-approvals">
-          <span>How many people must approve?</span>
+          <span>{t("policies.editor.approvals")}</span>
           <input
             id="policy-approvals"
             type="number"
@@ -216,10 +226,12 @@ function Editing({
 
       <p className="policy-actions">
         <button type="button" className="primary" onClick={() => void save()} disabled={busy}>
-          Save draft
+          {t("policies.editor.save")}
         </button>
         {" "}
-        <button className="quiet" type="button" onClick={() => void onDone()} disabled={busy}>Cancel</button>
+        <button className="quiet" type="button" onClick={() => void onDone()} disabled={busy}>
+          {t("shell.cancel")}
+        </button>
         {/*
           Publishing is refused unless somebody holds `approval.decide` on a mailbox the rule applies to
           (#61) — a `require_approval` rule nobody can satisfy is a rule that stops mail for ever. The
@@ -235,7 +247,7 @@ export function Policies() {
   const mailboxes = useMailboxes();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<{ policyId: string | null; name: string } | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
 
   const nameOf = (id: string) =>
     mailboxes.data?.mailboxes.find((box) => box.id === id)?.name ?? id;
@@ -248,20 +260,20 @@ export function Policies() {
   async function publish(policyId: string) {
     setProblem(null);
     const outcome = await publishPolicyVersion(policyId);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await refresh();
   }
 
   const heading = (
     <header className="ledger-head">
-      <h1>Rules</h1>
+      <h1>{t("route./rules")}</h1>
       <p className="new-message">
         <button
           type="button"
           className="primary"
           onClick={() => setEditing({ policyId: null, name: "new rule" })}
         >
-          New rule
+          {t("policies.new")}
         </button>
       </p>
     </header>
@@ -274,10 +286,7 @@ export function Policies() {
     return (
       <>
         {heading}
-        <Nothing
-          kind="empty"
-          detail="No rules here, or you do not hold org.admin. Writing one is an administrator's act."
-        />
+        <Nothing kind="empty" detail={t("policies.notAdmin")} />
       </>
     );
   }
@@ -289,7 +298,7 @@ export function Policies() {
   return (
     <>
       {heading}
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
 
       {rows.length === 0 ? (
         /*
@@ -297,29 +306,26 @@ export function Policies() {
          * bounded by relations, breakers and the hold window. Saying "nothing is gated" would be a claim
          * about the whole outbound path made from one table.
          */
-        <Nothing kind="empty" detail="No rules yet. Every message goes as the mailbox and its relations allow." />
+        <Nothing kind="empty" detail={t("policies.empty")} />
       ) : (
-        <Scroller label="Rules">
+        <Scroller label={t("route./rules")}>
           <table>
-            <caption className="dim">
-              What each rule does, in the order a reader meets it. A message is decided by the strictest rule
-              that matches it, not the first.
-            </caption>
+            <caption className="dim">{t("policies.caption")}</caption>
             <thead>
               <tr>
-                <th scope="col">Rule</th>
-                <th scope="col">What it does</th>
-                <th scope="col">Version</th>
-                <th scope="col">Since</th>
-                <th scope="col">Edit</th>
+                <th scope="col">{t("policies.col.rule")}</th>
+                <th scope="col">{t("policies.col.does")}</th>
+                <th scope="col">{t("policies.col.version")}</th>
+                <th scope="col">{t("policies.col.since")}</th>
+                <th scope="col">{t("policies.col.edit")}</th>
               </tr>
             </thead>
             <tbody>
               {live.map((row) => (
                 <tr key={row.version_id}>
                   <td>{row.name}</td>
-                  <td>{sentence(row, nameOf)}</td>
-                  <td className="mono">v{row.version}</td>
+                  <td>{ruleSentence(row, nameOf)}</td>
+                  <td className="mono">{t("policies.version", { version: String(row.version ?? "") })}</td>
                   <td className="mono">{when(row.published_at)}</td>
                   <td>
                     <button
@@ -327,7 +333,7 @@ export function Policies() {
                       className="linkish"
                       onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
                     >
-                      Open
+                      {t("policies.open")}
                     </button>
                   </td>
                 </tr>
@@ -336,23 +342,23 @@ export function Policies() {
                 <tr key={row.version_id}>
                   <td>{row.name}</td>
                   <td>
-                    {sentence(row, nameOf)}
+                    {ruleSentence(row, nameOf)}
                     {" "}
-                    <span className="dim">(unpublished — it decides nothing yet)</span>
+                    <span className="dim">{t("policies.unpublished")}</span>
                   </td>
-                  <td className="dim">draft</td>
+                  <td className="dim">{t("policies.draft")}</td>
                   <td className="mono">{when(row.created_at)}</td>
                   <td>
                     <span className="inline-actions">
                       <button type="button" className="primary" onClick={() => void publish(row.policy_id)}>
-                        Publish
+                        {t("policies.publish")}
                       </button>
                       <button
                         type="button"
                         className="linkish"
                         onClick={() => setEditing({ policyId: row.policy_id, name: row.name })}
                       >
-                        Open
+                        {t("policies.open")}
                       </button>
                     </span>
                   </td>

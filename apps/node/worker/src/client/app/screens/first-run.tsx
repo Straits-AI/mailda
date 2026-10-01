@@ -1,7 +1,9 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Copyable, Nothing } from "../chrome.tsx";
+import { sentence } from "../words.tsx";
 import { ProgressList, useReadiness, type Step } from "../onboarding.tsx";
 
 /**
@@ -31,37 +33,30 @@ function override(): void {
 
 export function FirstRun({ steps, next, onOpenAnyway }: { steps: Step[]; next: Step | null; onOpenAnyway: () => void }) {
   return (
-    <section className="first-run" aria-label="Setup needed">
-      <header className="ledger-head"><h1>This Node is not ready to use yet</h1></header>
-      <p className="dim">
-        It has been deployed and claimed. Before it can be used as an inbox it needs an address and mail
-        routed to it; this is where that stands.
-      </p>
+    <section className="first-run" aria-label={t("ui.firstRun")}>
+      <header className="ledger-head"><h1>{t("ui.firstRun.heading")}</h1></header>
+      <p className="dim">{t("ui.firstRun.lead")}</p>
       <ProgressList steps={steps} />
       {next === null ? null : (
-        <section className="first-run-next" aria-label="Next step">
-          <h2>Next: {next.label.toLowerCase()}</h2>
+        <section className="first-run-next" aria-label={t("ui.firstRun.next")}>
+          <h2>{t("ui.firstRun.next.heading", { step: next.phrase })}</h2>
           <p className="dim">{next.detail}</p>
-          <h3>From a terminal (recommended, no token)</h3>
+          <h3>{t("ui.firstRun.terminal")}</h3>
           <p>
-            <Copyable text={UPDATE} label="command" />
+            <Copyable text={UPDATE} label={t("ui.firstRun.terminal.what")} />
           </p>
+          <p className="dim">{t("ui.firstRun.terminal.body")}</p>
+          <h3>{t("ui.firstRun.browser")}</h3>
           <p className="dim">
-            Run it in the directory the install made. After the deploy it asks which domain this Node
-            receives at and sets up receiving, sending and delivery outcomes with the consent wrangler
-            already has.
-          </p>
-          <h3>From this screen</h3>
-          <p className="dim">
-            The browser has no wrangler, so this way needs the Node's own credential:{" "}
-            <Link to="/setup" className="linkish">connect this Node with one API token, then set up receiving there</Link>.
-            On an apex domain the catch-all is one act, and addresses are then managed on this Node.
+            {sentence("ui.firstRun.browser.body", {
+              link: <Link to="/setup" className="linkish">{t("ui.firstRun.browser.link")}</Link>,
+            })}
           </p>
         </section>
       )}
       <p className="dim first-run-anyway">
-        <button type="button" className="linkish" onClick={onOpenAnyway}>Open the app anyway</button>
-        {" "}(this tab only; sending will refuse until an address is routed)
+        <button type="button" className="linkish" onClick={onOpenAnyway}>{t("ui.firstRun.anyway")}</button>
+        {" "}{t("ui.firstRun.anyway.note")}
       </p>
     </section>
   );

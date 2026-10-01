@@ -1,0 +1,173 @@
+<h1>Sending limits</h1>
+<div class="scroller" tabindex="0" role="region" aria-label="Breakers">
+<table>
+<caption class="dim">Rates this Node applies to itself. Every limit is a measured budget, not a setting — changing one means changing its receipt.</caption>
+<thead>
+<tr>
+<th scope="col">Breaker</th>
+<th scope="col">Now</th>
+<th scope="col">Over</th>
+<th scope="col">Seen</th>
+<th scope="col">State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<span class="mono">bounce rate</span>
+<br>
+<span class="dim">The Node's own sentence for bounce_rate.</span>
+</td>
+<td class="mono">7.3% of 5%</td>
+<td class="mono dim">1 day</td>
+<td class="mono num">120</td>
+<td>
+<span class="bad">stopping mail</span>
+</td>
+</tr>
+<tr>
+<td>
+<span class="mono">complaint rate</span>
+<br>
+<span class="dim">The Node's own sentence for complaint_rate.</span>
+</td>
+<td class="mono">2.5% of 5%</td>
+<td class="mono dim">2 days</td>
+<td class="mono num">120</td>
+<td>
+<span class="dim">armed</span>
+</td>
+</tr>
+<tr>
+<td>
+<span class="mono">sends per hour</span>
+<br>
+<span class="dim">The Node's own sentence for sends_per_hour.</span>
+</td>
+<td class="mono">40 of 200</td>
+<td class="mono dim">1 hour</td>
+<td class="mono num">120</td>
+<td>
+<span class="dim">armed</span>
+</td>
+</tr>
+<tr>
+<td>
+<span class="mono">sends per day</span>
+<br>
+<span class="dim">The Node's own sentence for sends_per_day.</span>
+</td>
+<td class="mono">3 of 5</td>
+<td class="mono dim">2 hours</td>
+<td class="mono num">120</td>
+<td>
+<span class="dim">armed</span>
+</td>
+</tr>
+<tr>
+<td>
+<span class="mono">unknown rate</span>
+<br>
+<span class="dim">The Node's own sentence for unknown_rate.</span>
+</td>
+<td class="mono">not enough traffic to judge</td>
+<td class="mono dim">15 minutes</td>
+<td class="mono num">0</td>
+<td>
+<span class="dim">unarmed — no observations</span>
+</td>
+</tr>
+<tr>
+<td>
+<span class="mono">burst</span>
+<br>
+<span class="dim">The Node's own sentence for burst.</span>
+</td>
+<td class="mono">2.5% of 5%</td>
+<td class="mono dim">1 minute</td>
+<td class="mono num">120</td>
+<td>
+<span class="dim">armed</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<section class="limits-pauses" aria-label="Paused domains">
+<h2>Paused domains</h2>
+<p class="dim">Pausing a domain takes the agreement of two other administrators; whoever asks is never one of them. Lifting a pause takes a single administrator, alone, because a mistake in the cautious direction should be easy to undo.</p>
+<div class="limits-ask">
+<label class="field-row" for="pause-domain">
+<span>Domain</span>
+<input id="pause-domain" class="mono" placeholder="example.com" value="">
+</label>
+<label class="field-row" for="pause-reason">
+<span>Why</span>
+<input id="pause-reason" value="">
+</label>
+<button class="quiet" type="button" disabled="">Ask to pause this domain</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Paused domains">
+<table>
+<thead>
+<tr>
+<th scope="col">Domain</th>
+<th scope="col">Why</th>
+<th scope="col">Since</th>
+<th scope="col">Lift</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">customer.example</td>
+<td>a compromised account</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Let it send again</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section class="limits-pauses" aria-label="Suppressed recipients">
+<h2>Recipients this Node will not send to</h2>
+<p class="dim">An address the provider hard-bounced, or that marked a message as spam. A send naming one is refused at the seal, by name. Nothing is added here by hand; an administrator can vouch for an address with a reason, and a later bounce puts it back.</p>
+<p class="notice dim">Showing the newest 2 addresses. Older ones exist and are not listed.</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Recipients this Node will not send to">
+<table>
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Why</th>
+<th scope="col">Since</th>
+<th scope="col">Vouch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">gone@example.test</td>
+<td>hard bounce — 550 no such user</td>
+<td class="mono dim">2026-09-28 04:36</td>
+<td>
+<label class="target-edit">
+<span class="dim mono">Why</span>
+<input aria-label="Why gone@example.test is good again" value="">
+</label> <button type="button" class="linkish" disabled="">Vouch</button>
+</td>
+</tr>
+<tr>
+<td class="mono">angry@example.test</td>
+<td>marked as spam</td>
+<td class="mono dim">2026-09-29 10:00</td>
+<td>
+<label class="target-edit">
+<span class="dim mono">Why</span>
+<input aria-label="Why angry@example.test is good again" value="">
+</label> <button type="button" class="linkish" disabled="">Vouch</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>

@@ -1,0 +1,14 @@
+Matter opened.
+Matter closed. The people whose mail was read will be told.
+Hold placed. Nothing in that mailbox can be deleted now.
+Asked. Two other people have to agree before this hold lifts.
+Asked. Two people have to approve before you can read anything.
+Asked. Two other people have to agree before it runs; then run it here, and download from its manifest.
+Export run.
+<pre class="notice bad butler-findings" role="alert">Refused, for the test.</pre>
+Preserving mail for a legal obligation.
+Investigating a compromise or a misuse of an account.
+Passing on the work of somebody who has left.
+Answering a regulator.
+Senders, subjects and dates. Not the messages.
+The messages themselves.

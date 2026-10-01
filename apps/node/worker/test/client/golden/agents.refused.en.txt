@@ -1,0 +1,3 @@
+Refused, for the test.
+This agent will hold 1 capability across 0 mailbox relations, until it expires or is withdrawn.Every one of them also stops the moment the sponsor loses that access — an agent is bounded by the person it acts for, checked on each request rather than at this moment.
+Refused, for the test.
