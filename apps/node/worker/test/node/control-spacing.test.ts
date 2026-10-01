@@ -46,7 +46,7 @@ function px(selector: string, property: string): number[] {
  */
 const CONTROL_ROWS = [
   ".row-actions", ".policy-actions", ".approval-actions", ".inline-actions", ".reader-actions", ".next-steps",
-  ".hand-to", ".details-actions", ".butler-actions", ".dock-send", ".pager",
+  ".hand-to", ".details-actions", ".butler-actions", ".dock-send", ".pager", ".butler-dry-runs",
 ] as const;
 
 /** A second control after the field in a field row: the rule that answers the complaint. */
