@@ -770,7 +770,8 @@ function Acknowledge() {
         <input id="ack-scope" value={scope} onChange={(event) => setScope(event.target.value)} /></label>
       <label className="field-row" htmlFor="ack-conclusion"><span>{t("ledgers.conflict.conclusion")}</span>
         <input id="ack-conclusion" value={conclusion} onChange={(event) => setConclusion(event.target.value)} /></label>
-      <OneAct label={t("ledgers.conflict.act")} run={async () => {
+      {/* No act without the id its path is built from: an empty one throws before any request (found by T4). */}
+      <OneAct label={t("ledgers.conflict.act")} disabled={restoreId.trim() === ""} run={async () => {
         const outcome = await acknowledgeConflict(restoreId.trim(), scope, conclusion);
         if (!outcome.ok) return outcome;
         const { acknowledged } = outcome.value;

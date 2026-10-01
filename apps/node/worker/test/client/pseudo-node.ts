@@ -94,7 +94,7 @@ const DOCTOR = {
     // Each with a remedy beside it (`Remedy` in `ledgers.tsx`), so the refusal pass has the Doctor's acts to press.
     finding("recovery_escrow", true),
     finding("evidence_present", true),
-    ...["migrations_applied", "evidence_key_generation", "evidence_orphans", "body_index_failed", "preview_backlog"]
+    ...["migrations_applied", "evidence_key_generation", "evidence_orphans", "body_index_failed", "preview_backlog", "recovery_key_conflicts"]
       .map((check) => finding(check, false, { fix: NODE_SAYS.fix })),
     // A name this client does not know, as a newer Node may send: shown raw, which is the Node's word.
     finding("check_from_a_newer_node", false),

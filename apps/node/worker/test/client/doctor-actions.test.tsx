@@ -197,6 +197,21 @@ describe("the fix buttons", () => {
       .toEqual([["/api/recovery/conflicts/rst_9/acknowledge", { scope: "mail of Q3", conclusion: "nothing of value" }]]);
   });
 
+  /*
+   * Found by the pseudo-locale (T4, 2 October 2026): pressed with no restore id, the act built its path with an empty
+   * parameter, which throws before any request, so the press was an unhandled rejection and the button stayed busy.
+   */
+  it("offers no acknowledgement until a restore id is typed, so a press never throws", async () => {
+    mount([finding("recovery_key_conflicts", false)]);
+    const act = await screen.findByRole("button", { name: "Record the assessment" }) as HTMLButtonElement;
+    expect(act.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Restore id"), { target: { value: "   " } });
+    expect(act.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Restore id"), { target: { value: "rst_9" } });
+    expect(act.disabled).toBe(false);
+    expect(posts()).toEqual([]);
+  });
+
   it("lists the body index's failures with their reasons and requeues only the ticked ones", async () => {
     mount([finding("body_index_failed", false)], {
       "GET /api/search/failed": { body: { failed: [
