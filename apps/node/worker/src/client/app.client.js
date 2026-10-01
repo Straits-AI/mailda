@@ -234,8 +234,6 @@ function renderClaim() {
         }),
       });
       if (response.ok) {
-        adopt();
-        startSessionTicker();
         /*
          * The response body is read, and that is the fix (#134).
          *
@@ -251,9 +249,12 @@ function renderClaim() {
          * ever been obtainable. `doctor` had been saying so since the claim.
          */
         const claimed = await response.json().catch(() => ({}));
-        if (Array.isArray(claimed.recoveryCodes) && claimed.recoveryCodes.length > 0) {
-          return renderRecoveryCodes(claimed.recoveryCodes);
-        }
+        // Held before the session is adopted: adopting says "signed-in", which hands the page to the shell, and the
+        // shell took the codes off the screen before anybody could copy them (found on screen, 2 October 2026).
+        holdingCodes = Array.isArray(claimed.recoveryCodes) && claimed.recoveryCodes.length > 0;
+        adopt();
+        startSessionTicker();
+        if (holdingCodes) return renderRecoveryCodes(claimed.recoveryCodes);
         return route();
       }
       const body = await response.json().catch(() => ({}));
@@ -294,11 +295,14 @@ function renderClaim() {
  * while somebody copies ten strings into a password manager, so a slow, careful reader does not come back to
  * an expired session. Nothing here needs the session; it is the *next* screen that would.
  */
+/** While the codes are on screen, a "signed-in" does not hand the page to the shell; the acknowledgement does. */
+let holdingCodes = false;
+
 export function renderRecoveryCodes(codes) {
   const acknowledged = el("button", {
     class: "primary", type: "button", text: t("preauth.codes.saved"),
   });
-  acknowledged.addEventListener("click", () => route());
+  acknowledged.addEventListener("click", () => { holdingCodes = false; void route(); });
 
   show(
     el("div", { class: "split" }, [
@@ -668,7 +672,7 @@ onSessionChange((event) => {
     document.body.classList.remove("shell");
     renderSignIn(ended(event));
   }
-  if (event.type === "signed-in") {
+  if (event.type === "signed-in" && !holdingCodes) {
     // No ticker: the shell's Settings screen carries the countdown from here on.
     void handOverToShell();
   }

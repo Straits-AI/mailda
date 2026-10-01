@@ -4360,3 +4360,9 @@ defects that were not about language, each fixed in its own change with a test t
 a refusal as "Chain broken at entry undefined", Doctor's Acknowledge threw on an empty field and stayed busy, and the
 first-run gate re-read the provider about once a second for a member, whose read is refused. Twenty-five new glossary
 rows are proposed for the owner, and zh-Hans stays a preview until that review.
+
+**The screenshots found one more, older than the layer: the claim's recovery codes were taken off the screen at
+once.** The claim adopts the session, adopting says "signed-in", and the page's listener hands a signed-in page to
+the shell, which replaced the ten codes (#134: shown once, never again) before anybody could copy them. The tests
+never saw it, because their session stub's adopt is silent. The claim now holds the codes before it adopts, and only
+"I have saved these" hands the page over.

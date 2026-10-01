@@ -67,6 +67,26 @@ describe("the pre-authentication pages, in English, equal their goldens", () => 
     await expect(page()).toMatchFileSnapshot("./golden/preauth.recovery.en.html");
   });
 
+  /*
+   * Found on screen in layer 3's verification (2 October 2026), older than the layer: the claim adopts the session,
+   * whose "signed-in" event hands the page to the shell, so the codes (shown once, never again: #134, ADR 29) were
+   * replaced by the app before anybody could copy them. The stub's adopt() is silent, so the event is sent here, as
+   * the real one sends it.
+   */
+  it("keeps the recovery codes on screen when the session says signed in, until they are acknowledged", async () => {
+    await claimScreen();
+    answer("/api/claim", () => {
+      session.signedIn = true;
+      return Response.json({ claimed: true, recoveryCodes: ["aaaa-bbbb-cccc", "dddd-eeee-ffff"] });
+    });
+    fillClaim();
+    app().querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+    await until(() => app().querySelector("ol.codes") !== null, "the codes never showed");
+    session.listener!({ type: "signed-in" });
+    await new Promise((done) => setTimeout(done, 200));
+    expect(app().querySelector("ol.codes"), "the codes were taken off the screen").not.toBeNull();
+  });
+
   it("the strip, when the session renews", async () => {
     session.signedIn = true;
     session.expiresAt = Date.now() + 125_500;
