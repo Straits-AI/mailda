@@ -42,9 +42,9 @@ function held(id: string, reason: string, fields: Record<string, unknown> = {}) 
 }
 
 /** The Node: GETs answered from the fixtures; every other call refused, unless `acted` answers it. */
-function node(acted: (path: string) => Response | undefined = () => undefined) {
+function node(acted: (path: string) => Response | undefined = () => undefined, target = 30) {
   const mailbox = {
-    id: "mbx_test", name: "Support", unclaimed: 1, claimed: 0, mine: 1, first_response_minutes: 30,
+    id: "mbx_test", name: "Support", unclaimed: 1, claimed: 0, mine: 1, first_response_minutes: target,
     quarantine_dmarc_fail: 1, quarantine_dangerous_attachments: 0, quarantined: 7, breached: 2,
     addresses: "support@example.test", attachment_max_bytes: null, attachment_allowed_types: null,
   };
@@ -87,8 +87,10 @@ function node(acted: (path: string) => Response | undefined = () => undefined) {
   });
 }
 
-async function mounted(acted?: (path: string) => Response | undefined): Promise<{ cases: HTMLTableElement; held: HTMLTableElement }> {
-  node(acted);
+async function mounted(
+  acted?: (path: string) => Response | undefined, target?: number,
+): Promise<{ cases: HTMLTableElement; held: HTMLTableElement }> {
+  node(acted, target);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><Queue /></QueryClientProvider>);
   const held = await screen.findByRole<HTMLTableElement>("table", { name: /Held back|已隔离/ });
@@ -176,6 +178,17 @@ describe("the Queue in English, unchanged by the catalog", () => {
   });
 });
 
+describe("the Queue's counts in English, one and many (D11)", () => {
+  it("says one minute and one message in the singular", async () => {
+    await mounted((path) => (path === "/api/conversations/merge" ? Response.json({ merged: true, messagesMoved: 1 }) : undefined), 1);
+    expect(document.querySelector(".queue-target")!.textContent).toBe("First response promised within 1 minute. Minutes2 overdue");
+    const boxes = screen.getAllByRole("checkbox", { name: /^Pick / });
+    await act(async () => { boxes[0]!.click(); boxes[1]!.click(); });
+    await act(async () => { screen.getByRole("button", { name: "Merge them" }).click(); });
+    await waitFor(() => { expect(screen.getByRole("status").textContent).toBe("Merged. 1 message moved."); });
+  });
+});
+
 describe("the Queue's confirmations in English, unchanged by the catalog", () => {
   it("says what each act did", async () => {
     const { held } = await mounted((path) => path === "/api/conversations/merge" ? Response.json({ merged: true, messagesMoved: 3 })
@@ -188,6 +201,7 @@ describe("the Queue's confirmations in English, unchanged by the catalog", () =>
     };
     const minutes = screen.getByRole("spinbutton", { name: "First response target in minutes; empty promises nothing" });
     await said(() => { fireEvent.change(minutes, { target: { value: "45" } }); fireEvent.blur(minutes); }, "First response promised within 45 minutes. Clocks start on the next message.");
+    await said(() => { fireEvent.change(minutes, { target: { value: "1" } }); fireEvent.blur(minutes); }, "First response promised within 1 minute. Clocks start on the next message.");
     await said(() => { fireEvent.change(minutes, { target: { value: "" } }); fireEvent.blur(minutes); }, "This mailbox now promises nothing, so its cases carry no clock.");
     await said(() => screen.getByRole("checkbox", { name: "Hold back deliveries carrying a dangerous attachment" }).click(), "From now on, a delivery carrying an executable, a script, or a program under a document's name is held back here for an administrator.");
     await said(() => screen.getByRole("checkbox", { name: "Hold back deliveries whose sender's domain disowns them" }).click(), "That is off. Deliveries already held stay held until released.");
@@ -196,7 +210,7 @@ describe("the Queue's confirmations in English, unchanged by the catalog", () =>
     await said(() => within(held).getAllByRole("button", { name: "Release" })[0]!.click(), "Released. It is in the queue now, with the case it would have had.");
     const boxes = screen.getAllByRole("checkbox", { name: /^Pick / });
     await act(async () => { boxes[0]!.click(); boxes[1]!.click(); });
-    await said(() => screen.getByRole("button", { name: "Merge them" }).click(), "Merged. 3 message(s) moved.");
+    await said(() => screen.getByRole("button", { name: "Merge them" }).click(), "Merged. 3 messages moved.");
     await act(async () => { screen.getByRole("button", { name: "Hand to…" }).click(); });
     fireEvent.change(screen.getByRole("textbox", { name: "Colleague's sign-in address" }), { target: { value: "wang@example.test" } });
     await said(() => screen.getByRole("button", { name: "Hand over" }).click(), "Handed to wang@example.test. It is in their queue now, and the trail names you both.");

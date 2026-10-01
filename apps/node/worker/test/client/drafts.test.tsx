@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { install } from "/app/locale.js";
+import { CATALOGS } from "../../src/i18n/catalog.ts";
 import { answerWith, calls, reset } from "./session-stub.ts";
 
 /**
@@ -119,6 +121,15 @@ describe("the list's states", () => {
   it("says where a capped list stopped", async () => {
     mount([REPLY], true);
     expect(await screen.findByText("Showing the newest 1 drafts. Older ones exist and are not listed.")).toBeTruthy();
+  });
+  describe("in Chinese", () => {
+    afterEach(() => install({ locale: "en", formatLocale: undefined, source: "default" }, { ...CATALOGS.en.preauth, ...CATALOGS.en.app }));
+
+    it("counts drafts with 份, the noun's own measure word, not the 条 a shared template would give it (F5)", async () => {
+      install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
+      mount([REPLY, NEW], true);
+      expect((await screen.findByText(/^仅显示最新的/)).textContent).toBe("仅显示最新的 2 份草稿。更早的仍然存在，但未列出。");
+    });
   });
 });
 

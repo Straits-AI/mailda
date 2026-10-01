@@ -10,15 +10,16 @@ import type { Locale } from "./locales.ts";
  * A concept is an id, not an English word (AGENTS.md §4): "held" names five concepts and each gets its own
  * row and its own Chinese word. Within a locale, code, UI and docs use the row's one word.
  *
- * ## Status: every row is proposed, and only the owner confirms one
+ * ## Status: every row starts proposed, and only the owner confirms one
  *
  * A row's `status` is `"proposed"` until the repository's owner confirms that word, and then it becomes
  * `{ confirmedBy, record }`, where `record` links the owner's own written confirmation and says when it was
  * made (a PR review comment, an issue comment, or a decision the owner recorded on a review page). An author,
  * human or agent, never writes a `confirmedBy` for somebody else: the only edit to a row's status is copying
- * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026. The check cannot
- * tell who typed the field, so **the real gate is the owner's approval of the pull request that carries the
- * edit**, and `docs/i18n.md` says so.
+ * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026 (and `ANSWERED` and
+ * `ROUND_TWO` for the answers and the second round of 1 October 2026). The check cannot tell who typed the
+ * field, so **the real gate is the owner's approval of the pull request that carries the edit**, and
+ * `docs/i18n.md` says so.
  *
  * What the status gates: a locale that is **not** a preview may not ship a key bound to a proposed row. A
  * preview locale may, because reviewing proposed words in place is what a preview is for, and a preview is
@@ -74,6 +75,15 @@ const OWNER_ANSWER = {
   record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, answered 1 October 2026 in the working session",
 } as const;
 const ANSWERED: ReadonlySet<string> = new Set(["passkey", "place.delete"]);
+/**
+ * Round two, on the same review page: the three rows layer 2a added (`send.denied`, `recall`, `vault`), each
+ * confirmed by the owner's recorded decision of 1 October 2026 with the word as proposed.
+ */
+const OWNER_ROUND_TWO = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "https://claude.ai/artifact/6aZKXUkQsES5KYLZvRzGzn, round two, decisions recorded 1 October 2026",
+} as const;
+const ROUND_TWO: ReadonlySet<string> = new Set(["send.denied", "recall", "vault"]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -205,7 +215,7 @@ export const CONCEPTS: readonly Concept[] = [
   }),
   row("send.denied", "denied", "否决", {
     sentences: ["send.reason.policy_denied", "send.reason.approval_denied"], avoid: { "zh-Hans": ["拒绝"] },
-    note: "a rule or an approver decided against a send (layer 2a, proposed). 拒绝 is the refusal family (拒收, 投递前被拒), which is somebody else's server",
+    note: "a rule or an approver decided against a send (layer 2a; confirmed in round two, 1 Oct 2026). 拒绝 is the refusal family (拒收, 投递前被拒), which is somebody else's server",
   }),
   row("send.outcome_unknown", "outcome unknown", "结果未知", {
     // `never_submitted` is this state read with one more column (`describeSend`): the same label, a stronger note.
@@ -248,7 +258,7 @@ export const CONCEPTS: readonly Concept[] = [
     // Not `composer.bodyUnavailable.unreadable`: its "sealed under a key" is encryption (加密), not this act. The
     // button's "Seal and send" (定稿并发送) is held by `composer-words.test.tsx`: a binding matches English by case.
   }),
-  // Layer 2a, proposed: the composer's two words that no row had.
+  // Layer 2a: the composer's two words that no row had, confirmed in round two (1 Oct 2026).
   row("recall", "recall", "撤回", {
     sentences: ["composer.sendNote", "composer.how.body"], avoid: { "zh-Hans": ["召回"] },
     note: "taking a message back after it left, which no Node can do: named only to say there is none. The word revoke, withdraw, undo and held keep clear of",
@@ -262,7 +272,8 @@ export const CONCEPTS: readonly Concept[] = [
     note: "a place, not a deletion. 删除 stays honest on a real deletion (critic M4). The owner confirmed 移到废纸篓 (30 Sep 2026), renamed Trash 回收站, and confirmed 移到回收站 (1 Oct 2026)",
   }),
 ].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
-  : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER } : concept));
+  : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER }
+  : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only

@@ -193,7 +193,7 @@ export function Outbox() {
     <section className="ledger" aria-label={t("route./outbox")}>
       <header className="ledger-head">
         <h1>{t("route./outbox")}</h1>
-        <p className="dim mono">{t("ledgers.outbox.count", { count: String(rows.length) })}</p>
+        <p className="dim mono">{t("ledgers.outbox.count", { n: rows.length })}</p>
       </header>
       {resendTarget === null ? null : (
         <p className="notice" role="status">
@@ -732,7 +732,9 @@ function Collect() {
         return {
           ok: true,
           text: t("ledgers.collect.done", {
-            orphans: String(orphansDeleted), drafts: String(draftBodiesDeleted), exports: String(exportObjectsDeleted),
+            orphans: t("ledgers.collect.orphans", { n: orphansDeleted }),
+            drafts: t("ledgers.collect.drafts", { n: draftBodiesDeleted }),
+            exports: t("ledgers.collect.exports", { n: exportObjectsDeleted }),
           }),
         };
       }} />
@@ -908,7 +910,7 @@ function SearchRepair() {
       </table>
       <p className="dim">{t("ledgers.search.advice")}</p>
       {/* Mounted whether or not anything is ticked, so the answer outlives the selection it was about. */}
-      <OneAct label={t("ledgers.search.requeue", { count: String(chosen.size) })} disabled={chosen.size === 0} run={async () => {
+      <OneAct label={t("ledgers.search.requeue", { n: chosen.size })} disabled={chosen.size === 0} run={async () => {
         const outcome = await repairSearch([...chosen]);
         if (!outcome.ok) return outcome;
         setChosen(new Set());
@@ -923,15 +925,17 @@ function SearchRepair() {
  * Verifying evidence, one bounded batch at a time. The verdict says what it covered, and the next
  * batch starts where this one stopped rather than from the beginning again.
  */
-/** What a batch read and what it found, in the one sentence of four that fits it. */
+/** What a batch read and what it found: one plural per count, filled into the sentence that fits it. */
 function batchRead(verdict: EvidenceVerdict): string {
-  const counts = { checked: String(verdict.checked), bytes: String(verdict.bytesRead) };
-  const faults = String(verdict.faults.length);
-  if (verdict.table === null) {
-    return verdict.intact ? t("ledgers.evidence.intact", counts) : t("ledgers.evidence.faults", { ...counts, faults });
-  }
-  const where = { ...counts, table: verdict.table };
-  return verdict.intact ? t("ledgers.evidence.intactIn", where) : t("ledgers.evidence.faultsIn", { ...where, faults });
+  const counts = {
+    checked: verdict.table === null
+      ? t("ledgers.evidence.checked", { n: verdict.checked })
+      : t("ledgers.evidence.checkedIn", { n: verdict.checked, table: verdict.table }),
+    bytes: String(verdict.bytesRead),
+  };
+  return verdict.intact
+    ? t("ledgers.evidence.intact", counts)
+    : t("ledgers.evidence.faults", { ...counts, faults: t("ledgers.evidence.faultCount", { n: verdict.faults.length }) });
 }
 
 function EvidenceVerify() {

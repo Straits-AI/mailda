@@ -9,16 +9,16 @@ import type { Twin } from "../catalog.ts";
  */
 export const delivery: Twin<typeof source> = {
   "send.state.held": "暂留",
-  "send.state.held.note": "尚未发送。你仍可以停止它。",
+  "send.state.held.note": "尚未移交。你仍可以停止它。",
   "send.state.awaiting": "待放行",
   "send.state.awaiting.note":
-    "未发送。一条规则拦下了这封邮件，它正在等人放行。是哪一道关卡，见旁边的原因：规则暂扣，任何可以用此邮箱发送的人都能放行；" +
+    "尚未移交。一条规则拦下了这封邮件，它正在等人放行。是哪一道关卡，见旁边的原因：规则暂扣，任何可以用此邮箱发送的人都能放行；" +
     "或者审批，只有审批人能给出。",
   "send.state.cancelled": "已取消",
   "send.state.cancelled.note": "在发出前已停止。",
   "send.state.withheld": "扣发",
   "send.state.withheld.note":
-    "未发送。本节点没有移交它，旁边的原因说明了为什么：规则否决了它，审批人否决了它，或者它获批时依据的条件在该发出时已经改变。" +
+    "未移交。本节点决定不移交它，旁边的原因说明了为什么：规则否决了它，审批人否决了它，或者它获批时依据的条件在该发出时已经改变。" +
     "没有人取消它，也从未向邮件服务商提交。",
   "send.state.throttled": "限流中",
   "send.state.throttled.note": "被邮件服务商限流。它尚未发出，稍后会重试。",

@@ -54,12 +54,14 @@ export const queue = {
   "queue.act.close": "Close",
   "queue.act.take": "Take",
 
-  // "message(s)" and "1 minutes" are the English as it was; fixing them is a D-row, not a migration.
-  "queue.merged": "Merged. {n} message(s) moved.",
+  "queue.merged": { one: "Merged. {n} message moved.", other: "Merged. {n} messages moved." },
   "queue.target.cleared": "This mailbox now promises nothing, so its cases carry no clock.",
-  "queue.target.set": "First response promised within {n} minutes. Clocks start on the next message.",
+  "queue.target.set": {
+    one: "First response promised within {n} minute. Clocks start on the next message.",
+    other: "First response promised within {n} minutes. Clocks start on the next message.",
+  },
   "queue.target.none": "This mailbox promises no response time, so no case here carries a clock.",
-  "queue.target.promised": "First response promised within {n} minutes.",
+  "queue.target.promised": { one: "First response promised within {n} minute.", other: "First response promised within {n} minutes." },
   "queue.target.minutes": "Minutes",
   "queue.target.label": "First response target in minutes; empty promises nothing",
   "queue.overdue": { one: "{n} overdue", other: "{n} overdue" },

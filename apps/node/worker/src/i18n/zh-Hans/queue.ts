@@ -77,7 +77,7 @@ export const queue: Twin<typeof source> = {
   "queue.noMailbox": "你还不能处理本节点上的任何邮箱。管理员可以在某个邮箱上授予 send.propose。",
 
   "queue.held.count": "{n} 封已隔离",
-  "queue.held.noun": "本节点上的隔离来信",
+  "queue.held.noun": "封本节点上的隔离来信",
   "queue.held.table": "已隔离",
   "queue.held.col.at": "隔离时间",
   "queue.held.col.why": "原因",

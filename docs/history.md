@@ -4238,3 +4238,13 @@ now in a named `Scroller`. And the sweeps' locators for the reader, composer and
 which the migration made untrue under `--locale zh-Hans`; they now read the catalog, as the first six did. On a local
 Node with nine messages and eight seeded sends, both locales: axe found no AA violation in 146 views each, and
 spacing no pair under 8px in 132 views each.
+
+**The owner's second review answered all of it the same day, and changed three things.** The three new rows were
+confirmed as proposed, with that round's own record (`ROUND_TWO` in `glossary.ts`), so every one of the 84 rows is
+confirmed and only `UNMIGRATED` and the pseudo-locale render stand between zh-Hans and release. Eight of the ten
+flags were confirmed as they ship. F5 moved a measure word: `chrome.truncated` put 条 before every noun, so the
+Drafts cap read 2 条草稿; each noun passed to it now carries its own (份草稿, 条通知, 条记录, 条发件记录, 封…来信) and
+the template none. F9 fixed the English a migration had held still: "1 sends", "1 message(s) moved", "within 1
+minutes" and the Doctor's "(s)" counts are plurals, a sentence with three counts being three plurals filled into it
+rather than one plural over three numbers (D10 to D12), and the held, awaiting and withheld notes say "Not handed
+over" (尚未移交), ADR 39's word, where they said "Not sent" (D13).

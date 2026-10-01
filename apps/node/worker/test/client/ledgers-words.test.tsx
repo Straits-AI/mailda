@@ -101,6 +101,12 @@ describe("the Outbox in English", () => {
     await expect(html(container)).toMatchFileSnapshot("./golden/ledgers.outbox-empty.en.html");
   });
 
+  it("counts one send as one send; the goldens hold 0 and 6 (D10)", async () => {
+    answerSends({ sends: SENDS.slice(0, 1), truncated: false, daily: DAILY, capability: CAN });
+    mount(<Outbox />);
+    expect((await screen.findByText(/^1 send/)).textContent).toBe("1 send");
+  });
+
   it("says why a stop, a release, a gate release or a retry did not happen, in its own words when the Node gave none", async () => {
     answerSends({ sends: SENDS, truncated: false, daily: DAILY, capability: CAN }, (path) => {
       if (path.endsWith("/cancel")) return Response.json({ cancelled: false });
@@ -292,7 +298,7 @@ describe("the Doctor's remedies in English", () => {
     mount(<Doctor />);
     expect((await screen.findByText("The failed list is empty now.")).textContent).toBe("The failed list is empty now.");
     fireEvent.click(await screen.findByRole("button", { name: "Verify a batch" }));
-    expect((await screen.findByRole("status")).textContent).toBe("0 object(s) checked, 0 bytes read: intact. That was the last batch.");
+    expect((await screen.findByRole("status")).textContent).toBe("0 objects checked, 0 bytes read: intact. That was the last batch.");
   });
 });
 
@@ -403,10 +409,10 @@ describe("the rest of the ledgers' English", () => {
       if (call.path.startsWith("/api/evidence/verify")) {
         batch += 1;
         return Response.json(batch === 1
-          ? { checked: 3, table: null, intact: false, resumeAfter: "x", bytesRead: 9, faults: [
+          ? { checked: 1, table: null, intact: false, resumeAfter: "x", bytesRead: 9, faults: [
             { rowId: "r_1", table: "drafts", column: "body_key", blobKey: "k", kind: "unreadable", detail: "cannot open" },
           ] }
-          : { checked: 4, table: "drafts", intact: true, resumeAfter: null, bytesRead: 7, faults: [] });
+          : { checked: 1, table: "drafts", intact: true, resumeAfter: null, bytesRead: 7, faults: [] });
       }
       return undefined;
     });
@@ -417,10 +423,11 @@ describe("the rest of the ledgers' English", () => {
     expect((await screen.findByText(/^Recorded against/)).textContent)
       .toBe(`Recorded against rst_9 (generations 3,4) at ${fullTime("2026-09-28T04:36:51.379Z")}. The collision is not repaired; the alarm is discharged.`);
     fireEvent.click(screen.getByRole("button", { name: "Verify a batch" }));
-    const first = await screen.findByText(/^3 object/);
-    expect(first.textContent).toBe("3 object(s) checked, 9 bytes read: 1 fault(s). More remains.unreadable drafts.body_key r_1: cannot open");
+    // One object and one fault, in a batch with no table and in one with a table; the goldens hold the many (D12).
+    const first = await screen.findByText(/^1 object checked,/);
+    expect(first.textContent).toBe("1 object checked, 9 bytes read: 1 fault. More remains.unreadable drafts.body_key r_1: cannot open");
     fireEvent.click(screen.getByRole("button", { name: "Continue from where it stopped" }));
-    expect((await screen.findByText(/^4 object/)).textContent).toBe("4 object(s) checked in drafts, 7 bytes read: intact. That was the last batch.");
+    expect((await screen.findByText(/^1 object checked in/)).textContent).toBe("1 object checked in drafts, 7 bytes read: intact. That was the last batch.");
   });
 });
 

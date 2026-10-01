@@ -18,10 +18,10 @@ export type DeliveryKey =
  * The sending vocabulary: what this Node did with a send (`send.state.*`), why a gate or a refusal stopped it
  * (`send.reason.*`), and what the receiving world did with each recipient (`delivery.*`). ADR 39's two scales
  * stay two sets of words: no state here says accepted, bounced or delivered, and no state says a send was sent. A
- * state's note may say it was not ("Not sent yet."): a negation claims no outcome, and the furthest this scale goes
- * is handed over (`docs/i18n.md`, beside D5). Two breaker reasons still say what this Node "sent" in the past
- * tense about earlier mail (`breaker_bounce_rate`, `breaker_complaint_rate`); "handed over" there is an English
- * change the owner has not taken.
+ * state that has not left says so in this scale's own word ("Not handed over yet.", D13 in `docs/i18n.md`); only
+ * `never_submitted` says "Nothing was sent", a negation that claims no outcome. Two breaker reasons still say
+ * what this Node "sent" in the past tense about earlier mail (`breaker_bounce_rate`, `breaker_complaint_rate`);
+ * "handed over" there is an English change the owner has not taken.
  *
  * `src/client/delivery.client.js` decides which token a reader is shown; `src/client/app/delivery-words.ts`
  * looks the words up.
@@ -38,17 +38,17 @@ export type DeliveryKey =
  */
 export const delivery = {
   "send.state.held": "held",
-  "send.state.held.note": "Not sent yet. You can still stop this.",
+  "send.state.held.note": "Not handed over yet. You can still stop this.",
   "send.state.awaiting": "awaiting",
   "send.state.awaiting.note":
-    "Not sent. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is " +
+    "Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is " +
     "in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval " +
     "only an approver can give.",
   "send.state.cancelled": "cancelled",
   "send.state.cancelled.note": "Stopped before it left.",
   "send.state.withheld": "withheld",
   "send.state.withheld.note":
-    "Not sent. This Node declined to hand it over, and the reason beside it says why — a policy denied it, " +
+    "Not handed over: this Node declined, and the reason beside it says why — a policy denied it, " +
     "an approver denied it, or something it was approved on had changed by the time it was due to go. " +
     "Nobody cancelled it and the mail service was never asked.",
   "send.state.throttled": "throttled",

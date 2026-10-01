@@ -5,9 +5,10 @@ import type { Area } from "../areas.ts";
  * remedies. The send and delivery vocabulary the Outbox shows is the `delivery` area's; the headings are the
  * routes' names (`route.*`); the Doctor's states are `health.status.*`.
  *
- * A count glued to a noun with `(s)` ("orphan(s)") or a count that reads "1 sends" is kept as it was: making it a
- * plural would change the English, and that is a D-fix the owner has not taken (`docs/i18n.md`). The counts are
- * passed as strings for the same reason: a number parameter is grouped (`1,024`), and these were not.
+ * A count that governs a noun is a plural on `n` ("1 send", "2 sends"). A sentence with several counts is
+ * assembled from one plural per count (`ledgers.collect.*`, `ledgers.evidence.checked`), never one plural over
+ * two numbers (D10 to D12, `docs/i18n.md`). The Node's other counts are passed as strings: a number parameter is
+ * grouped (`1,024`), and these were not.
  */
 export const ledgers = {
   /** A table's time column, in every ledger. */
@@ -21,7 +22,7 @@ export const ledgers = {
   /** A remedy's answer: the Node's count, then the Node's own sentence. */
   "ledgers.requeued": "{count} requeued. {message}",
 
-  "ledgers.outbox.count": "{count} sends",
+  "ledgers.outbox.count": { one: "{n} send", other: "{n} sends" },
   "ledgers.outbox.noun": "sends",
   /**
    * D5 (`docs/i18n.md`): this said "Nothing has been sent from this Node yet", which reads the Outbox as a record
@@ -122,7 +123,11 @@ export const ledgers = {
   "ledgers.collect.warning":
     "This deletes every object the reconciler finds no referent for — orphaned raw mail past the grace period, stranded draft bodies and export residue. It is refused for the whole organization while a legal hold stands.",
   "ledgers.collect.act": "Delete them now",
-  "ledgers.collect.done": "Deleted {orphans} orphan(s), {drafts} draft body/bodies, {exports} export object(s).",
+  /** Three counts, so three plurals, filled into one sentence. */
+  "ledgers.collect.done": "Deleted {orphans}, {drafts}, {exports}.",
+  "ledgers.collect.orphans": { one: "{n} orphan", other: "{n} orphans" },
+  "ledgers.collect.drafts": { one: "{n} draft body", other: "{n} draft bodies" },
+  "ledgers.collect.exports": { one: "{n} export object", other: "{n} export objects" },
   "ledgers.conflict.restore": "Restore id",
   "ledgers.conflict.scope": "What was examined",
   "ledgers.conflict.conclusion": "What was concluded",
@@ -148,15 +153,17 @@ export const ledgers = {
   "ledgers.search.state.retryable": "retryable",
   "ledgers.search.state.unindexable": "unindexable",
   "ledgers.search.advice": "Tick the ones worth retrying — fix the cause first.",
-  "ledgers.search.requeue": "Requeue {count} message(s)",
+  "ledgers.search.requeue": { one: "Requeue {n} message", other: "Requeue {n} messages" },
   "ledgers.evidence.verify": "Verify a batch",
   "ledgers.evidence.continue": "Continue from where it stopped",
   /** A batch's verdict: what was read, then whether more remains. Two sentences, joined as the locale joins them. */
   "ledgers.evidence.verdict": "{head} {tail}",
-  "ledgers.evidence.intact": "{checked} object(s) checked, {bytes} bytes read: intact.",
-  "ledgers.evidence.intactIn": "{checked} object(s) checked in {table}, {bytes} bytes read: intact.",
-  "ledgers.evidence.faults": "{checked} object(s) checked, {bytes} bytes read: {faults} fault(s).",
-  "ledgers.evidence.faultsIn": "{checked} object(s) checked in {table}, {bytes} bytes read: {faults} fault(s).",
+  /** `{checked}` is `ledgers.evidence.checked` or `.checkedIn`, `{faults}` is `ledgers.evidence.faultCount`. */
+  "ledgers.evidence.intact": "{checked}, {bytes} bytes read: intact.",
+  "ledgers.evidence.faults": "{checked}, {bytes} bytes read: {faults}.",
+  "ledgers.evidence.checked": { one: "{n} object checked", other: "{n} objects checked" },
+  "ledgers.evidence.checkedIn": { one: "{n} object checked in {table}", other: "{n} objects checked in {table}" },
+  "ledgers.evidence.faultCount": { one: "{n} fault", other: "{n} faults" },
   "ledgers.evidence.last": "That was the last batch.",
   "ledgers.evidence.more": "More remains.",
   /** One fault: its kind, where (`receipts.blob_key rcpt_7`), and the Node's words for it. */

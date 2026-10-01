@@ -306,11 +306,18 @@ describe("the Outbox's words keep to their scale", () => {
   });
 
   it("says sent about a send only to say it was not", () => {
-    // "Not sent yet." and "Nothing was sent" claim no outcome; "Sent to the mail service" would claim one.
+    // "Nothing was sent" claims no outcome; "Sent to the mail service" would claim one.
     const words = (key: (typeof sendStateKeys)[number]) => String(en.app[key]);
     const said = sendStateKeys.filter((key) => /\bsent\b/i.test(words(key)));
-    expect(said.length, "anti-vacuity: the held, awaiting, withheld and never_submitted notes negate it").toBeGreaterThanOrEqual(4);
+    expect(said, "anti-vacuity: never_submitted's note negates it").toEqual(["send.state.never_submitted.note"]);
     for (const key of said) expect(words(key).replace(/\b(?:not|nothing was) sent\b/gi, ""), key).not.toMatch(/\bsent\b/i);
+  });
+
+  it("says a send that has not left was not handed over, this scale's word, not that it was not sent (D13)", () => {
+    // The owner's review of 1 October 2026 (F9). Held and awaiting may still go, so "yet"; withheld will not.
+    const notes = ["send.state.held.note", "send.state.awaiting.note", "send.state.withheld.note"] as const;
+    expect(notes.map((key) => en.app[key].split(/[.:]/)[0])).toEqual(["Not handed over yet", "Not handed over yet", "Not handed over"]);
+    expect(notes.map((key) => zhHans.app[key].split("。")[0])).toEqual(["尚未移交", "尚未移交", "未移交"]);
   });
 
   it("never says the send scale's 拒收 about what the receiving world did", () => {
