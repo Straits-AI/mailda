@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { install } from "/app/locale.js";
 import { CATALOGS } from "../../src/i18n/catalog.ts";
-import { clock, fullTime } from "../../src/client/app/format.ts";
+import { clock, fullTime, stamp } from "../../src/client/app/format.ts";
 import { answerWith, reset } from "./session-stub.ts";
 
 /**
@@ -14,8 +14,8 @@ import { answerWith, reset } from "./session-stub.ts";
  * before the migration, with D5 and D8 already applied, so a key whose English differs by a letter, a sentence
  * split into fragments that no longer read as one, or an element lost from inside a sentence, shows as a diff.
  *
- * A time of day is the viewer's zone and locale, so it is replaced by `[clock]` before comparing: what is held
- * is that the cell shows `format.ts`'s clock for that instant, and the rest byte for byte.
+ * A time is the viewer's zone and locale, so it is replaced by `[stamp]` (a row's time) or `[clock]` (the doctor's)
+ * before comparing: what is held is that the cell shows `format.ts`'s form for that instant, and the rest byte for byte.
  */
 
 vi.mock("@tanstack/react-router", () => ({
@@ -34,7 +34,7 @@ function mount(element: ReactNode) {
 }
 
 function html(container: HTMLElement): string {
-  return container.innerHTML.replaceAll(clock(AT), "[clock]").replaceAll("><", ">\n<") + "\n";
+  return container.innerHTML.replaceAll(stamp(AT), "[stamp]").replaceAll(clock(AT), "[clock]").replaceAll("><", ">\n<") + "\n";
 }
 
 const recipient = (kind: string, address: string, delivery_state: string | null, extra: Record<string, unknown> = {}) => ({
@@ -299,6 +299,28 @@ describe("the Doctor's remedies in English", () => {
     expect((await screen.findByText("The failed list is empty now.")).textContent).toBe("The failed list is empty now.");
     fireEvent.click(await screen.findByRole("button", { name: "Verify a batch" }));
     expect((await screen.findByRole("status")).textContent).toBe("0 objects checked, 0 bytes read: intact. That was the last batch.");
+  });
+});
+
+/**
+ * A ledger's time column dated nothing, so yesterday's send read `17:09:00` as if it were today's. A row from today
+ * shows the clock; any other day shows the date with it, in each locale's own form.
+ */
+describe("a ledger's time column dates a row that is not from today", () => {
+  it("shows the clock for today and the date and the clock for yesterday, in English and in Chinese", async () => {
+    const today = new Date().toISOString();
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    for (const locale of ["en", "zh-Hans"] as const) {
+      install({ locale, formatLocale: locale === "en" ? undefined : locale, source: "flag" }, { ...CATALOGS[locale].preauth, ...CATALOGS[locale].app });
+      answerSends({ sends: [send("snd_today", { state_at: today }), send("snd_yesterday", { state_at: yesterday })], truncated: false, daily: DAILY, capability: CAN });
+      const { container, unmount } = mount(<Outbox />);
+      await screen.findByRole("button", { name: "subject snd_today" });
+      const when = (id: string) => container.querySelector(`#detail-${id}`)!.previousElementSibling!.querySelector("td.num")!.textContent;
+      expect(when("snd_today"), locale).toBe(clock(today));
+      expect(when("snd_yesterday"), locale).toBe(fullTime(yesterday));
+      expect(fullTime(yesterday), locale).not.toBe(clock(yesterday));
+      unmount();
+    }
   });
 });
 

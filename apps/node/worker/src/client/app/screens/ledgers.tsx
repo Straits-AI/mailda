@@ -7,7 +7,7 @@ import { t } from "/app/locale.js";
 
 import { Nothing, Scroller, Truncated } from "../chrome.tsx";
 import { deliveryWords, sendReasonWords, sendStateWords, shown } from "../delivery-words.ts";
-import { clock, fullTime, recipients } from "../format.ts";
+import { clock, fullTime, recipients, stamp } from "../format.ts";
 import { marked, NodeWords, sentence } from "../words.tsx";
 import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
@@ -269,7 +269,7 @@ export function Outbox() {
                       )}
                       <DeliveryChips send={send} />
                     </td>
-                    <td className="num mono dim">{clock(send.state_at)}</td>
+                    <td className="num mono dim">{stamp(send.state_at)}</td>
                     <td className="num">
                       {send.state === "held" || send.state === "awaiting" ? (
                         <>
@@ -450,7 +450,7 @@ export function Audit() {
                   <span className={`state state-audit-${entry.outcome}`}>{entry.outcome}</span>
                 </td>
                 <td className="mono dim">{entry.subject ?? "—"}</td>
-                <td className="num mono dim">{clock(entry.at)}</td>
+                <td className="num mono dim">{stamp(entry.at)}</td>
               </tr>
             ))}
           </tbody>
@@ -510,7 +510,7 @@ export function Log() {
                   </td>
                   <td className="mono">{entry.event}</td>
                   <td><NodeWords>{entry.message}</NodeWords></td>
-                  <td className="num mono dim">{clock(entry.at)}</td>
+                  <td className="num mono dim">{stamp(entry.at)}</td>
                 </tr>
               ))}
             </tbody>

@@ -4346,3 +4346,7 @@ one 4px gap. The list is now a column with the 8px gap every row of controls has
 **A send in the reader's conversation showed its recipients as stored**, `→ ["a@b.test"]`: `envelope_to` is a JSON
 array on the wire, and the Outbox parsed it while the thread printed it. Both now go through `format.ts`'s
 `recipients`, a list as the viewer's language joins one (`a and b`, `a和b`).
+
+**The Outbox's When column showed a clock only**, so yesterday's send read `17:09:00`. The Audit and Log ledgers'
+At column had the same cell. All three now show `format.ts`'s `stamp`: the clock for a row from today, the date and
+the clock for any other day, in the viewer's locale.

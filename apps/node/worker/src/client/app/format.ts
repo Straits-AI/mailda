@@ -33,6 +33,14 @@ export function clock(at: string | number): string {
   return new Date(at).toLocaleTimeString(current().formatLocale, { hour12: false });
 }
 
+/**
+ * When a ledger's row happened: the `clock` today, the `fullTime` on any other day (`15:09:02`, `9/26/2026, 15:09:02` /
+ * `2026/9/26 15:09:02`). A clock alone read yesterday's send as today's.
+ */
+export function stamp(at: string, now: Date = new Date()): string {
+  return new Date(at).toDateString() === now.toDateString() ? clock(at) : fullTime(at);
+}
+
 /** How long ago `at` was, in the coarsest unit that reads naturally: `now`, `5 minutes ago`, `3 hours ago`. */
 export function ago(at: string | number, now: number = Date.now()): string {
   const seconds = Math.round((new Date(at).getTime() - now) / 1000);

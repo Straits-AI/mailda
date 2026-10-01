@@ -32,7 +32,7 @@
 <span class="state state-held" title="Not handed over yet. You can still stop this.">held</span>
 <span class="state state-reason delivery-chip" title="A rule holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.">rule hold</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish">Let it go</button> · <button type="button" class="linkish">Stop</button>
 </td>
@@ -60,7 +60,7 @@
 <span class="state state-awaiting" title="Not handed over yet. A rule gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.">awaiting</span>
 <span class="state state-reason delivery-chip" title="A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority that composed it would have needed — and releasing it puts it back in the ordinary hold window, where it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point of this gate is that a program does not get to decide that a person agreed.">waiting for a person</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish" title="A Butler wrote this. Releasing it puts it in the ordinary hold window, where it can still be stopped.">Release</button> · <button type="button" class="linkish">Stop</button>
 </td>
@@ -88,7 +88,7 @@
 <span class="state delivery-verified_destination delivery-chip" title="No outcome is reported for verified destinations. A read of this Node's Cloudflare account showed this address as a verified Email Routing destination, verified before this message was handed over, and Cloudflare published no delivery event for mail to a verified destination in the one case measured. So nothing is expected here. The silence is not a fault in this Node, and it says nothing about whether this message arrived. An address removed from the account's list after the latest read still shows this until the list is read again.">1 verified destination</span>
 <span class="state delivery-accepted delivery-chip" title="The receiving mail server accepted this message and returned a 250. That is not the same as a person having read it — nothing here can know that.">2 accepted</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <a class="mono" href="/api/sends/snd_over/submitted">.eml</a>
 </td>
@@ -138,7 +138,7 @@
 <td>
 <span class="state state-outcome_unknown" title="It never left. This Node stores the submitted bytes before asking the mail service, and there are none — so the attempt failed before the mail service was contacted. Nothing was sent, and no duplicate can result from sending it again.">outcome unknown</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish" title="">Resend…</button>
 </td>
@@ -163,7 +163,7 @@
 <td>
 <span class="state state-refused" title="The mail service would not accept it. It never left.">refused</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <button type="button" class="linkish" title="">Retry</button>
 </td>
@@ -188,7 +188,7 @@
 <span class="state state-reason delivery-chip" title="The approval for this send passed its deadline before it was handed over. That is final: an approval is bound to these exact bytes, and one that could be revived indefinitely would be a standing permission rather than a decision. Compose again and the new message gets its own approval.">approval expired</span>
 <span class="state delivery-deferred delivery-chip" title="A temporary failure, and the mail service is still retrying. The outcome is genuinely not known yet.">deferred</span>
 </td>
-<td class="num mono dim">[clock]</td>
+<td class="num mono dim">[stamp]</td>
 <td class="num">
 <span class="dim mono">—</span>
 </td>
