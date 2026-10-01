@@ -1,7 +1,7 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
 import { t } from "/app/locale.js";
-import type { AddressRemoval, AddressRouting, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+import type { AddressRemoval, AddressRouting, ProviderRoutingRules, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
 export type { AddressRemoval, AddressRouting };
 import {
   EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
@@ -2268,29 +2268,12 @@ export const onboardReceiving = (domain: string, digest: string, address: string
     domain, digest, address, ...(mailboxId === undefined ? {} : { mailboxId }), ...(catchAll ? { catchAll: true } : {}),
   });
 
-/** A routing rule already on a zone (#258). `digest` is what a take-over quotes. */
-export interface RoutingRule {
-  id: string;
-  name: string;
-  enabled: boolean;
-  to: string;
-  action: string;
-  destinations: string[];
-  catchAll: boolean;
-  ours: boolean;
-  digest: string;
-  /** What the Node would do with the rule if asked; null with `refusal` when the act would refuse. */
-  offer: "take_over" | "put_back" | null;
-  refusal: { code: string; what: string; why: string; fix: string } | null;
-}
-
-export interface RoutingRules {
-  domain: string;
-  zone: string | null;
-  zoneId: string | null;
-  rules: RoutingRule[];
-  error: string | null;
-}
+/**
+ * The routing rules already on a zone (#258), as the contract says: `digest` is what a take-over quotes, `offer` what
+ * the Node would do, and `takeOver` its words for what that changes (1 October 2026).
+ */
+export type RoutingRules = ProviderRoutingRules;
+export type RoutingRule = ProviderRoutingRules["rules"][number];
 
 export interface RoutingRuleOutcome {
   ruleId: string;
@@ -2299,6 +2282,8 @@ export interface RoutingRuleOutcome {
   after: { action: string; destinations: string[] };
   /** The mailbox a take-over's address files into; null on a put-back. */
   mailbox: { id: string; name: string } | null;
+  /** Whether the rule's name reads back recording where it went; null on a put-back, absent from an older Node. */
+  nameRecorded?: boolean | null;
 }
 
 export const routingRulesOn = (domain: string) =>

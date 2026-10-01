@@ -1,14 +1,17 @@
+import { MAX_MAILBOX_NAME_CHARS } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "/app/locale.js";
 
 import { Nothing, Scroller } from "../chrome.tsx";
 import { OnboardingProgress } from "../onboarding.tsx";
+import { NodeWords } from "../words.tsx";
 import {
   forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, recordVerifiedDestinations,
-  registerProviderToken, routingRulesOn, takeOverRule,
+  createMailbox, registerProviderToken, routingRulesOn, takeOverRule,
   sendingProposal, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
-  type Permission, type ProviderBinding, type ReceivingProposal, type RoutingRules, type SendingProposal,
+  type Permission, type ProviderBinding, type ReceivingProposal, type RoutingRule, type RoutingRules, type SendingProposal,
   type SubscriptionProposal, type VerifiedDestinationsState,
 } from "../api.ts";
 
@@ -436,10 +439,14 @@ function OwnRules({ domain, rules }: { domain: string; rules: ReceivingProposal[
 /**
  * The rules already on a zone, and taking one over (#258).
  *
- * A zone that received mail before this Node existed has rules that forward elsewhere, and onboarding an
+ * A zone that received mail before this Node existed has rules that send it elsewhere, and onboarding an
  * address with such a rule keeps the rule. So the rules are shown with where each goes, and one can be
  * pointed here in two clicks. A rule holds one action (measured), so this replaces; the action it had is on
- * the audit entry and "put back" restores it.
+ * the audit entry and in the rule's own name, and "put back" restores it.
+ *
+ * The choice and what it changes are the Node's words (`takeOver`, 1 October 2026), the ones `mailda setup` and
+ * `mailda upgrade` print for the same rule, so the two cannot say different things. A forward rule's address files
+ * only into a mailbox chosen for it, a new one named after it offered first, never into the only one by default.
  */
 function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: string }>; refresh: () => Promise<void> }) {
   const [domain, setDomain] = useState("");
@@ -461,32 +468,53 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     setListing(answer.value.routing);
   }
 
-  async function act(ruleId: string, digest: string | null) {
+  function arm(rule: RoutingRule) {
+    setArming(rule.id);
+    // The mailbox already named after the address first, then (a forward) a new one, else the only one, else none yet.
+    const { named, fresh } = namedAfter(rule, boxes);
+    setMailboxId(named?.id ?? (rule.takeOver?.asksMailbox ? (fresh ? NEW_MAILBOX : "") : boxes.length === 1 ? boxes[0]!.id : ""));
+  }
+
+  async function act(rule: RoutingRule) {
     if (listing === null) return;
     setProblem(null);
     setBusy(true);
-    const answer = digest === null
-      ? await putBackRule(listing.domain, ruleId)
-      : await takeOverRule(listing.domain, ruleId, digest, mailboxId === "" ? undefined : mailboxId);
+    let into = mailboxId === "" ? undefined : mailboxId;
+    let made: string | null = null;
+    if (rule.offer === "take_over" && into === NEW_MAILBOX) {
+      const created = await createMailbox(rule.to);
+      if (!created.ok) { setBusy(false); setProblem(created.message); return; }
+      into = created.mailboxId;
+      made = rule.to;
+      // Listed from now on, so a take-over refused below is retried into this mailbox, never by making a second.
+      await refresh();
+    }
+    const answer = rule.offer === "put_back"
+      ? await putBackRule(listing.domain, rule.id)
+      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined);
     setBusy(false);
     setArming(null);
-    if (!answer.ok) { setProblem(answer.message); return; }
+    if (!answer.ok) {
+      setProblem(made === null ? answer.message : `${answer.message}\n\n${t("setup.rules.mailboxStays", { name: made })}`);
+      return;
+    }
     const done = answer.value.outcome;
     const said = (one: { action: string; destinations: string[] }) =>
       `${one.action}${one.destinations.length === 0 ? "" : ` → ${one.destinations.join(", ")}`}`;
     await refresh();
     // The listing again first, since listing clears the last outcome, which used to wipe this line as it appeared.
     await list();
-    setOutcome(`${done.to}: was ${said(done.before)}, now ${said(done.after)}.${done.mailbox === null ? "" : ` It files into ${done.mailbox.name}.`}`);
+    setOutcome(`${done.to}: was ${said(done.before)}, now ${said(done.after)}.${done.mailbox === null ? "" : ` It files into ${done.mailbox.name}.`}`
+      + (done.nameRecorded === false ? ` ${t("setup.rules.nameNotRecorded")}` : ""));
   }
 
   return (
     <div className="setup-plan">
       <h3>Rules already on a zone</h3>
       <p className="dim">
-        A zone that was receiving mail before this Node has rules that send it elsewhere. Pointing one here
-        replaces where that address goes; the previous destination is kept on the audit trail, and put back
-        restores it. The catch-all is listed and left alone.
+        A zone that was receiving mail before this Node has rules that send it elsewhere. Nothing changes unless you
+        choose it here. Every rule can be pointed back; mail that arrived here meanwhile stays here. The catch-all is
+        listed and left alone.
       </p>
       <Refusal said={problem} />
       {outcome === null ? null : <p className="notice" role="status">{outcome}</p>}
@@ -498,15 +526,6 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
             onChange={(event) => setDomain(event.target.value)}
           />
         </label>
-        {boxes.length > 1 ? (
-          <label className="field-row" htmlFor="setup-rules-mailbox">
-            <span>Into mailbox</span>
-            <select id="setup-rules-mailbox" className="mono" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
-              <option value="">choose a mailbox…</option>
-              {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
-            </select>
-          </label>
-        ) : null}
         <button className="quiet" type="button" onClick={() => void list()} disabled={busy || domain.trim() === ""}>
           List the rules on this zone
         </button>
@@ -536,12 +555,21 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                     {rule.catchAll ? null : rule.offer === null ? (
                       <span className="dim">{rule.refusal === null ? null : `${rule.refusal.what}: ${rule.refusal.fix}`}</span>
                     ) : arming === rule.id ? (
-                      <button type="button" className="primary" disabled={busy} onClick={() => void act(rule.id, rule.offer === "put_back" ? null : rule.digest)}>
-                        {busy ? "Working…" : rule.offer === "put_back" ? "Yes, put it back" : `Yes, point ${rule.to} here`}
-                      </button>
+                      <>
+                        {rule.takeOver === null ? null : <p><NodeWords>{rule.takeOver.says}.</NodeWords></p>}
+                        {rule.takeOver === null ? null : rule.takeOver.filesInto !== null || (!rule.takeOver.asksMailbox && boxes.length === 1) ? (
+                          // No choice to make, so the mailbox is named before the confirm, as `mailda setup`'s plan names it.
+                          <p>{t("setup.rules.filesInto", { name: rule.takeOver.filesInto?.name ?? boxes[0]!.name })}</p>
+                        ) : (
+                          <MailboxChoice rule={rule} boxes={boxes} value={mailboxId} onChange={setMailboxId} />
+                        )}
+                        <button type="button" className="primary" disabled={busy} onClick={() => void act(rule)}>
+                          {busy ? "Working…" : rule.offer === "put_back" ? "Yes, put it back" : `Yes, point ${rule.to} here`}
+                        </button>
+                      </>
                     ) : (
-                      <button type="button" className="quiet" disabled={busy} onClick={() => setArming(rule.id)}>
-                        {rule.offer === "put_back" ? "Put back" : "Point here"}
+                      <button type="button" className="quiet" disabled={busy} onClick={() => arm(rule)}>
+                        {rule.offer === "put_back" ? "Put back" : <NodeWords>{rule.takeOver?.label ?? "?"}</NodeWords>}
                       </button>
                     )}
                   </td>
@@ -552,6 +580,36 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
         </Scroller>
       )}
     </div>
+  );
+}
+
+/** The mailbox choice that makes a new one named after the address, which is never a mailbox id. */
+const NEW_MAILBOX = "new";
+
+/**
+ * The mailbox already named after the rule's address (made by a take-over refused after it), and whether a new one
+ * may be offered: only while none has the name, and while the address fits a mailbox name. `mailda setup` offers the same.
+ */
+function namedAfter(rule: RoutingRule, boxes: Array<{ id: string; name: string }>) {
+  const named = boxes.find((box) => box.name.toLowerCase() === rule.to.toLowerCase()) ?? null;
+  return { named, fresh: named === null && rule.to.length <= MAX_MAILBOX_NAME_CHARS };
+}
+
+/** Which mailbox a taken-over address files into: the one named after it first, a new one while it may be made. */
+function MailboxChoice({ rule, boxes, value, onChange }: {
+  rule: RoutingRule; boxes: Array<{ id: string; name: string }>; value: string; onChange: (id: string) => void;
+}) {
+  const { named, fresh } = namedAfter(rule, boxes);
+  const ordered = named === null ? boxes : [named, ...boxes.filter((box) => box !== named)];
+  return (
+    <label className="field-row" htmlFor={`setup-rules-mailbox-${rule.id}`}>
+      <span>Into mailbox</span>
+      <select id={`setup-rules-mailbox-${rule.id}`} className="mono" value={value} onChange={(event) => onChange(event.target.value)}>
+        {rule.takeOver?.asksMailbox && (named !== null || fresh) ? null : <option value="">choose a mailbox…</option>}
+        {fresh ? <option value={NEW_MAILBOX}>{t("setup.rules.newMailbox", { address: rule.to })}</option> : null}
+        {ordered.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -851,6 +909,8 @@ export function Setup() {
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["provider"] });
     await queryClient.invalidateQueries({ queryKey: ["provider-routing"] });
+    // A take-over can make a mailbox named after its address.
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
   }
 
   // The heading is rendered before the branches, as the inbox does: a screen's name must not depend on

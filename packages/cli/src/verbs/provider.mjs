@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
-import { catchAllLine, outcomeRoutesHere, ownRulesLines } from "./provision.mjs";
+import { signInAndChooseAccount } from "./install.mjs";
+import { catchAllLine, outcomeRoutesHere, ownRulesLines, wranglerToken } from "./provision.mjs";
+import { needsMailbox, putBackWithoutNode } from "./routing-step.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -53,6 +55,19 @@ function printOutcome(outcome) {
  * The secret is read from **stdin**, never an argument: an argv is in the shell history and in `ps`.
  */
 export async function provider(argv) {
+  /*
+   * A put-back with no Node to ask (critic H1, 1 October 2026): the take-over wrote the rule's previous action into
+   * its name, and the operator's own wrangler login restores it from there. Before the sign-in below, which a
+   * deleted Node cannot answer.
+   */
+  if (argv.includes("--without-node")) {
+    const ruleId = flag(argv, "put-back");
+    const domain = flag(argv, "domain");
+    if (ruleId === null || domain === null) fail("--without-node puts one rule back: mailda provider --put-back <rule id> --domain <domain> --without-node");
+    await signInAndChooseAccount();
+    await putBackWithoutNode({ domain, ruleId, token: await wranglerToken(), accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "" });
+    return;
+  }
   const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
   if (origin === "") fail("pass `--url https://<your-node>`, or set MAILDA_URL.");
   const cookie = await sessionCookie(origin);
@@ -161,6 +176,16 @@ export async function provider(argv) {
     process.stdout.write(`\n   ${routing.domain}${routing.zone === null ? "" : `  (zone ${routing.zone})`}\n`);
     if (routing.error !== null) { process.stdout.write(`     unknown   ${routing.error}\n\n`); return; }
     if (routing.rules.length === 0) process.stdout.write("     no rules\n");
+    /*
+     * The mailboxes, when a rule is offered: a take-over of an address with no row of its own is refused among several
+     * (`E_RECEIVING_MAILBOX_AMBIGUOUS`), so its command names `--mailbox` then, and the ids to fill it with are listed.
+     * Null when they could not be read, which is said, and every such command names `--mailbox`.
+     */
+    const mailboxes = routing.rules.some((rule) => rule.offer === "take_over")
+      ? await fetch(`${origin}${api("GET", "/api/mailboxes")}`, { headers: { cookie } })
+        .then(async (response) => response.ok ? (await response.json()).mailboxes : null, () => null)
+      : null;
+    let namesMailbox = false;
     for (const rule of routing.rules) {
       const where = `${rule.action}${rule.destinations.length === 0 ? "" : ` -> ${rule.destinations.join(", ")}`}`;
       process.stdout.write(
@@ -168,13 +193,22 @@ export async function provider(argv) {
         + `               ${where}${rule.ours ? "  (this Node)" : ""}${rule.enabled ? "" : "  (disabled)"}\n`
         + `               id ${rule.id}  digest ${rule.digest}\n`
         + (rule.offer === "take_over"
-          ? `               take over: mailda provider --take-over ${rule.id} --domain ${routing.domain} --confirm ${rule.digest}\n`
+          ? `               take over: mailda provider --take-over ${rule.id} --domain ${routing.domain} --confirm ${rule.digest}`
+            + `${needsMailbox(rule, mailboxes) ? " --mailbox <mailbox id>" : ""}\n`
+            // What it changes, in the words the setup step and the Setup screen show (1 October 2026).
+            + (rule.takeOver == null ? "" : wrapAt(`${rule.takeOver.label}: ${rule.takeOver.says}`, 60)
+              .map((line) => `                          ${line}\n`).join(""))
           : rule.offer === "put_back"
             ? `               put back:  mailda provider --put-back ${rule.id} --domain ${routing.domain}\n`
             : rule.refusal == null ? "" // a Node from before 30 September 2026 lists no offer
               : wrapAt(`${rule.refusal.code}: ${rule.refusal.what}; ${rule.refusal.fix}`, 60)
               .map((line, i) => `               ${i === 0 ? "refused:   " : "           "}${line}\n`).join("")),
       );
+      namesMailbox ||= rule.offer === "take_over" && needsMailbox(rule, mailboxes);
+    }
+    if (namesMailbox) {
+      process.stdout.write(mailboxes === null ? "\n   the mailboxes, for <mailbox id>, could not be listed (GET /api/mailboxes)\n"
+        : `\n   the mailboxes, for <mailbox id>:\n${mailboxes.map((box) => `     ${box.id}  ${box.name}\n`).join("")}`);
     }
     process.stdout.write("\n");
     return;
