@@ -103,7 +103,7 @@ describe("an Outbox row with no subject", () => {
 describe("running a Butler run again", () => {
   const RUN = {
     id: "run_1", butler_id: "btl_1", version_id: "bv_1", trigger_event: "delivery", trigger_key: "k",
-    state: "completed", outcome_reason: null, started_at: "2026-09-26T09:00:00.000Z",
+    state: "finished", outcome_reason: null, started_at: "2026-09-26T09:00:00.000Z",
     finished_at: "2026-09-26T09:00:01.000Z", nodes_executed: 3, effects: 1, refusals: 0,
     subrequests_spent: 2, replay_of: null, replayed_by: null,
   };

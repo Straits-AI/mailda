@@ -1,6 +1,6 @@
-import { BUTLER_PAUSE_REASONS, BUTLER_VERSION_STATES, oneOf } from "@mailda/contract/schemas";
+import { BUTLER_PAUSE_REASONS, BUTLER_RUN_STATES, BUTLER_VERSION_STATES, oneOf } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
@@ -95,6 +95,11 @@ function when(at: string | null): string {
  * meaning is the point: a published Butler that a breaker stopped is *live and not running*, which is not
  * what either word says alone.
  */
+/** A run's state in the viewer's words (`BUTLER_RUN_STATES`, H7); a token outside the list is the Node's, marked. */
+function runState(state: string): ReactNode {
+  return oneOf(BUTLER_RUN_STATES, state) ? t(`butlers.run.${state}`) : <NodeWords>{state}</NodeWords>;
+}
+
 function Standing({ butler }: { butler: ButlerRow }) {
   if (butler.pause !== null) {
     return (
@@ -327,7 +332,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
                       {t("butlers.dry.over", { at: when(row.started_at) })}
                     </button>
                     {" "}
-                    <span className="dim"><NodeWords>{row.trigger_event} · {row.state}</NodeWords></span>
+                    <span className="dim"><code>{row.trigger_event}</code> · {runState(row.state)}</span>
                   </li>
                 ))}
               </ul>
@@ -337,7 +342,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         {simulation === null ? null : (
           <div className="butler-dry-result">
             <p>
-              <strong><NodeWords>{simulation.state}</NodeWords></strong>
+              <strong>{runState(simulation.state)}</strong>
               {simulation.reason === null ? null : <> — <NodeWords>{simulation.reason}</NodeWords></>}
               {" "}
               <span className="dim">
@@ -500,7 +505,7 @@ function Runs({ runs, onRunAgain }: { runs: ButlerRunRow[]; onRunAgain: (runId: 
           {runs.map((run) => (
             <tr key={run.id}>
               <td className="mono">{when(run.started_at)}</td>
-              <td className={run.state === "failed" ? "bad" : undefined}><NodeWords>{run.state}</NodeWords></td>
+              <td className={run.state === "failed" ? "bad" : undefined}>{runState(run.state)}</td>
               {/* The reason is the deliverable: `stopped` alone does not distinguish a Butler that decided
                   nothing needed doing from one a budget killed. */}
               <td>{run.outcome_reason === null ? <span className="dim">—</span> : <NodeWords>{run.outcome_reason}</NodeWords>}</td>

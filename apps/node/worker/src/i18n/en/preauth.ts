@@ -55,7 +55,7 @@ export const preauth = {
   "preauth.claim.orgExample": "Acme Logistics",
   "preauth.claim.email": "Owner email",
   "preauth.claim.emailHint": "You sign in with this email. Mail goes out from a mailbox's address, which setup chooses.",
-  "preauth.claim.secret": "Bootstrap secret",
+  "preauth.claim.secret": "Claim secret",
   "preauth.claim.secretHint": "Shown once, by `mailda claim-secret`.",
   "preauth.claim.submit": "Claim this Node",
   "preauth.claim.busy": "Claiming…",

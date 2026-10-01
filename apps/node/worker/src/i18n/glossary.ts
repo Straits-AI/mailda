@@ -13,13 +13,14 @@ import type { Locale } from "./locales.ts";
  * ## Status: every row starts proposed, and only the owner confirms one
  *
  * A row's `status` is `"proposed"` until the repository's owner confirms that word, and then it becomes
- * `{ confirmedBy, record }`, where `record` links the owner's own written confirmation and says when it was
- * made (a PR review comment, an issue comment, or a decision the owner recorded on a review page). An author,
- * human or agent, never writes a `confirmedBy` for somebody else: the only edit to a row's status is copying
- * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026 (and `ANSWERED` and
- * `ROUND_TWO` for the answers and the second round of 1 October 2026, `ROUND_THREE` for the third). The check cannot tell who typed the
- * field, so **the real gate is the owner's approval of the pull request that carries the edit**, and
- * `docs/i18n.md` says so.
+ * `{ confirmedBy, record }`, where `record` says where and when the owner confirmed it: a link to the owner's own
+ * written confirmation (a PR review comment, an issue comment, or a decision the owner recorded on a review page),
+ * or, where there is none, the words the owner said and where. An author, human or agent, never writes a
+ * `confirmedBy` for somebody else: the only edit to a row's status is copying that record in, which `CONFIRMED`
+ * below does for the owner's review of 30 September 2026 (and `ANSWERED` and `ROUND_TWO` for the answers and the
+ * second round of 1 October 2026, `ROUND_THREE` for the third, `ROUND_FOUR` for the fourth, which has no review page).
+ * The check cannot tell who typed the field, so **the real gate is the owner's approval of the pull request that
+ * carries the edit**, and `docs/i18n.md` says so.
  *
  * What the status gates: a locale that is **not** a preview may not ship a key bound to a proposed row. A
  * preview locale may, because reviewing proposed words in place is what a preview is for, and a preview is
@@ -97,6 +98,21 @@ const ROUND_THREE: ReadonlySet<string> = new Set([
   "team", "mint", "capability", "approve", "routing-rule", "pause", "supervised-read", "export", "breaker", "vouch", "lift",
   "administrator", "receipt.measured", "onboard", "zone", "apex", "token", "delivery-event", "subscription", "consumer",
 ]);
+/**
+ * Round four, with no review page: layer 3's twenty-five rows, and the reviewer's questions H1 to H14 on its strings,
+ * accepted by the owner in the working session on 2 October 2026 ("just accept them"), every row and question as
+ * proposed, without reviewing them. The record says so, because a review that did not happen is not one. The same
+ * acceptance took H7's words for a Butler run's state, so `butler-run.stopped` (已终止, never 已停止) is here too.
+ */
+const OWNER_ROUND_FOUR = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "round four: the owner accepted every proposed row and question as proposed, in the working session on 2 October 2026, without a review page",
+} as const;
+const ROUND_FOUR: ReadonlySet<string> = new Set([
+  "node.listening", "organization", "owner", "operator", "renew", "passkey-sign-in", "doctor.check", "credential-key", "signing-key",
+  "key-generation", "evidence", "evidence-bucket", "catalog-db", "migration", "backlog", "stranded", "orphaned", "supervision-notice",
+  "transport", "reduced-report", "sanitise", "classifier", "triage", "audit.refused", "workers-paid", "butler-run.stopped",
+]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -168,7 +184,9 @@ export const CONCEPTS: readonly Concept[] = [
       "ledgers.doctor.claimed", "ledgers.doctor.unclaimed", "preauth.claim.title", "preauth.claim.submit", "preauth.refusal.already_claimed",
       "preauth.refusal.not_claimed",
     ], avoid: { "zh-Hans": ["注册", "激活"] } }),
-  row("claim-secret", "claim secret", "认领码", { avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
+  row("claim-secret", "claim secret", "认领码", {
+    // The claim's field says "Claim secret" since round four (H1, D35); the Node's own messages still say bootstrap.
+    sentences: ["preauth.claim.secret"], avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
   row("invitation-secret", "invitation secret", "邀请码", { sentences: ["preauth.join.secret"], avoid: { "zh-Hans": ["邀请密钥"] } }),
   row("grant", "grant", "授权", { avoid: { "zh-Hans": ["许可"] } }),
   row("provider", "provider", "服务商", { avoid: { "zh-Hans": ["供应商"] } }),
@@ -429,8 +447,7 @@ export const CONCEPTS: readonly Concept[] = [
   }),
 
   // Layer 3 (2 October 2026): the words the pages before sign-in, the Doctor's check titles, a capability's
-  // description and a body's problem needed that no row had. Proposed until the owner's next review
-  // (`docs/i18n.md`); zh-Hans is a preview, which may carry them.
+  // description and a body's problem needed that no row had. Accepted as proposed in round four (`OWNER_ROUND_FOUR`).
   row("node.listening", "listening", "接收中", {
     keys: ["preauth.status.listening"], note: "a claimed Node's state in the strip before sign-in, beside 未认领",
   }),
@@ -500,10 +517,17 @@ export const CONCEPTS: readonly Concept[] = [
   row("workers-paid", "Workers Paid", "Workers Paid 套餐", {
     sentences: ["doctor.check.workers_paid_plan"], avoid: { "zh-Hans": ["付费版"] }, note: "Cloudflare's plan, by its own name",
   }),
+  // H7 (round four): a Butler run's state, keyed over `BUTLER_RUN_STATES` (`butlers.run.*`). Only `stopped` is a row,
+  // because only it had a word to keep clear of: the other five are status words, keys and not rows, as G12's are.
+  row("butler-run.stopped", "stopped", "已终止", {
+    keys: ["butlers.run.stopped"], avoid: { "zh-Hans": ["停止"] },
+    note: "a `stop` node ended the run, or its release gate timed out. Not 已停止: 停止 is the pause row's avoided word (D3)",
+  }),
 ].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
   : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER }
   : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO }
-  : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE } : concept));
+  : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE }
+  : ROUND_FOUR.has(concept.id) ? { ...concept, status: OWNER_ROUND_FOUR } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only

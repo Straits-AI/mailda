@@ -294,8 +294,8 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
     },
     "GET /api/butler-runs": {
       runs: list([
-        { id: "ρυν_1", butler_id: "βτλ_1", version_id: "βω_2", trigger_event: "message.received", trigger_key: "ρψπτ_1", state: "completed", outcome_reason: null, started_at: AT, finished_at: AT, nodes_executed: 4, effects: 1, refusals: 0, subrequests_spent: 2, replay_of: null, replayed_by: null },
-        { id: "ρυν_2", butler_id: "βτλ_1", version_id: "βω_2", trigger_event: "message.received", trigger_key: "ρψπτ_2", state: "aborted", outcome_reason: "budget_exceeded", started_at: AT, finished_at: AT, nodes_executed: 2, effects: 0, refusals: 1, subrequests_spent: 1, replay_of: null, replayed_by: null },
+        { id: "ρυν_1", butler_id: "βτλ_1", version_id: "βω_2", trigger_event: "message.received", trigger_key: "ρψπτ_1", state: "finished", outcome_reason: null, started_at: AT, finished_at: AT, nodes_executed: 4, effects: 1, refusals: 0, subrequests_spent: 2, replay_of: null, replayed_by: null },
+        { id: "ρυν_2", butler_id: "βτλ_1", version_id: "βω_2", trigger_event: "message.received", trigger_key: "ρψπτ_2", state: "refused", outcome_reason: "budget_exhausted", started_at: AT, finished_at: AT, nodes_executed: 2, effects: 0, refusals: 1, subrequests_spent: 1, replay_of: null, replayed_by: null },
       ]),
     },
     "GET /api/breakers": {

@@ -13,13 +13,13 @@ stale_when: >
   until the interface is migrated; or `/app/locale.js` starts carrying an `app` table, which
   `test/catalog-served.test.ts` refuses
 values:
-  shell.bundle_bytes: 762939
-  shell.bundle_gzip_bytes: 216442
+  shell.bundle_bytes: 763056
+  shell.bundle_gzip_bytes: 216488
   shell.pre_auth_bundle_bytes: 0
   shell.font_bytes: 96744
-  shell.pre_auth_locale_bytes: 15903
-  shell.catalog_bytes_en: 92568
-  shell.catalog_bytes_zh_hans: 92909
+  shell.pre_auth_locale_bytes: 15900
+  shell.catalog_bytes_en: 92778
+  shell.catalog_bytes_zh_hans: 93122
 ---
 
 The authenticated application's bundle, measured because ADR 30 traded a build step and a bundle for the
@@ -34,14 +34,15 @@ the framework-free scripts before sign-in (`app.client.js`, `session.client.js`,
 lists; and gave every locale's `preauth` table the claim, recovery, sign-in, invitation and passkey screens and the
 eighteen headlines of `PREAUTH_ERRORS`. `pnpm build:client` (the build step `wrangler deploy --dry-run` runs) printed,
 on branch `i18n-l3` from `f876780`, after the layer's last change (the four defects T4 and the screenshots found
-included, which moved the shell 240 bytes):
+included, and round four's two screen changes, "Claim secret" and a Butler run's state keyed, which moved the shell 117
+bytes and the app tables about 210 each):
 
 | | 1 October (layer 2a) | 2 October (layers 2b and 3) | delta |
 |:--|--:|--:|--:|
-| shell bundle | 761,502 raw / 219,307 gzip | **762,939 / 216,442** | +1,437 (+0.19%) / −2,865 (−1.31%) |
-| `/app/locale.js`, loaded before sign-in | 3,348 / 1,657 | **15,903 / 6,470** | +12,555 (4.75×) |
-| the `en` app table | 49,074 / 13,559 | **92,568 / 25,722** | +43,494 (1.9×) |
-| the `zh-Hans` app table | 49,428 / 15,778 | **92,909 / 29,365** | +43,481 (1.9×) |
+| shell bundle | 761,502 raw / 219,307 gzip | **763,056 / 216,488** | +1,554 (+0.20%) / −2,819 (−1.29%) |
+| `/app/locale.js`, loaded before sign-in | 3,348 / 1,657 | **15,900 / 6,472** | +12,552 (4.75×) |
+| the `en` app table | 49,074 / 13,559 | **92,778 / 25,766** | +43,704 (1.9×) |
+| the `zh-Hans` app table | 49,428 / 15,778 | **93,122 / 29,415** | +43,694 (1.9×) |
 
 `/app/locale.js` moved past the 10% clause, and is the one the pre-authentication pages pay for: it now carries every
 pre-sign-in word in both locales, where layer 1 carried the wordmark and the language section's few. 6.5 KB gzip,

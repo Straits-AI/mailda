@@ -4366,3 +4366,12 @@ once.** The claim adopts the session, adopting says "signed-in", and the page's 
 the shell, which replaced the ten codes (#134: shown once, never again) before anybody could copy them. The tests
 never saw it, because their session stub's adopt is silent. The claim now holds the codes before it adopts, and only
 "I have saved these" hands the page over.
+
+**Round four was accepted, not reviewed.** In the working session on 2 October 2026 the owner said "just accept them",
+so every proposed row and every question was taken as proposed, with no review page, and the glossary's record for the
+round says exactly that rather than linking a review (`OWNER_ROUND_FOUR`). No row is proposed now. Two questions changed
+the screen: the claim's field says "Claim secret", as the CLI and the glossary do (the Node's own two messages still say
+bootstrap, a later change), and a Butler run's state is keyed, stopped as 已终止 rather than 已停止 because 停止 is the
+pause row's avoided word. Five questions older than or beside this layer (a supervised headline, the lockout's plural, a
+text-only body's problem, a failed read shown as "not an administrator", CLI commands in `<code>`) are accepted
+follow-ups, each its own change, in `docs/i18n.md`. Ending the preview is not one of them yet.
