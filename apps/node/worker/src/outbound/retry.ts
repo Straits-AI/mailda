@@ -258,9 +258,12 @@ export interface RetryResult {
  * of the four states has already been claimed once, and the claim required `release_at <= now`, so the window
  * has elapsed by construction and rewriting it would restart a clock that has nothing left to protect.
  *
- * `last_error` is left alone too. It is the account of why the send is in the state it is in, and clearing it
- * before the retry has an answer would leave a send with no reason at all if this invocation died in between —
- * which is the gap `recordUnexplainedDispatch` exists to close. `applyOutcome` overwrites it either way.
+ * `last_error` is left alone here, but only across the gap between this `UPDATE` and the claim in `dispatchOne`
+ * below. If the invocation dies in that gap the send reads `held` with the refusal's words, and the next
+ * sweep's claim clears them. The claim clears `last_error` before it submits, because the refusal's words under
+ * `outcome_unknown` would explain an outcome they had nothing to do with. So a death after the claim leaves
+ * `outcome_unknown` with a NULL `last_error`, which honestly reads "unexplained", and a thrown error there is
+ * recorded by `recordUnexplainedDispatch`, which writes only where `last_error` is NULL.
  *
  * ## The proof is in the `UPDATE`'s predicate, not in the read above it
  *
