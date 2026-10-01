@@ -1,3 +1,4 @@
+import { MATTER_TYPES, type MatterType } from "@mailda/contract/schemas";
 import type { Ctx } from "@mailda/runtime";
 
 import { isAdmin } from "./access.ts";
@@ -69,16 +70,11 @@ import { noticesDueOnMatterClose } from "./notifications.ts";
  *                        of these.
  *
  * A fifth type is a one-line change *and* a decision about what the notice to the employee says, which is why
- * the set is closed rather than free.
+ * the set is closed rather than free. The list is declared in the contract (`MATTER_TYPES` in
+ * `packages/contract/src/schemas.ts`), so the interface keys a type's words by it (G12).
  */
-export const MATTER_TYPES = [
-  "legal_hold",
-  "security_incident",
-  "departure_handover",
-  "regulatory_request",
-] as const;
-
-export type MatterType = (typeof MATTER_TYPES)[number];
+export { MATTER_TYPES };
+export type { MatterType };
 
 /** Narrows a string from the wire. A type not declared above is refused, never stored. */
 export function isMatterType(value: string): value is MatterType {

@@ -1,0 +1,53 @@
+<section class="first-run" aria-label="Setup needed">
+<header class="ledger-head">
+<h1>This Node is not ready to use yet</h1>
+</header>
+<p class="dim">It has been deployed and claimed. Before it can be used as an inbox it needs an address and mail routed to it; this is where that stands.</p>
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">0</span> of <span class="mono num">4</span> steps done; next: an address to receive at. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">no address is configured; add one on People</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+<section class="first-run-next" aria-label="Next step">
+<h2>Next: an address to receive at</h2>
+<p class="dim">no address is configured; add one on People</p>
+<h3>From a terminal (recommended, no token)</h3>
+<p>
+<span class="setup-copy">
+<code class="mono">curl -fsSL https://mailda.site/update.sh | bash</code>
+<button type="button" class="linkish">Copy command</button>
+</span>
+</p>
+<p class="dim">Run it in the directory the install made. After the deploy it asks which domain this Node receives at and sets up receiving, sending and delivery outcomes with the consent wrangler already has.</p>
+<h3>From this screen</h3>
+<p class="dim">The browser has no wrangler, so this way needs the Node's own credential: <a href="/setup" class="linkish">connect this Node with one API token, then set up receiving there</a>. On an apex domain the catch-all is one act, and addresses are then managed on this Node.</p>
+</section>
+<p class="dim first-run-anyway">
+<button type="button" class="linkish">Open the app anyway</button> (this tab only; sending will refuse until an address is routed)</p>
+</section>

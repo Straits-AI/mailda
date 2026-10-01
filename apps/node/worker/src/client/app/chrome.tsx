@@ -691,7 +691,7 @@ export function Scroller({ label, children }: { label: string; children: React.R
 
 export function Truncated({ when, shown, noun }: { when: boolean; shown: number; noun: string }) {
   if (!when) return null;
-  return <p className="notice dim">{t("chrome.truncated", { shown, noun })}</p>;
+  return <p className="notice dim">{t("chrome.truncated", { n: shown, noun })}</p>;
 }
 
 export function Nothing(
@@ -800,7 +800,7 @@ function noticeText(notice: NotificationRow): { headline: string; meta: string }
     // The counts are the part that makes this actionable rather than ceremonial: the difference between a
     // grant nobody used and one under which everything was opened.
     meta: [
-      t("chrome.notice.queries", { n: tally(acts.queries), listed: tally(acts.listed) }),
+      t("chrome.notice.queries", { n: tally(acts.queries), listed: t("chrome.notice.listed", { n: tally(acts.listed) }) }),
       t("chrome.notice.opened", { n: tally(acts.opened) }),
       t("chrome.notice.raw", { n: tally(acts.attachments) }),
       type === null ? t("chrome.notice.matter", { matter }) : t("chrome.notice.matter.typed", { matter, type }),

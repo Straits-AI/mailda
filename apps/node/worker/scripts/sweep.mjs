@@ -339,16 +339,16 @@ export const STATES = [
     await page.getByRole("button", { name: words["chrome.drawer.open"] }).click();
     await page.waitForSelector("dialog.drawer", { timeout: 10_000 });
   }],
-  ["/rules", "rule editor", async (page) => {
-    await page.getByRole("button", { name: "New rule", exact: true }).click();
+  ["/rules", "rule editor", async (page, words) => {
+    await page.getByRole("button", { name: words["policies.new"], exact: true }).click();
     await page.waitForSelector(".policy-editor", { timeout: 10_000 });
   }],
-  ["/butlers", "butler editor", async (page) => {
+  ["/butlers", "butler editor", async (page, words) => {
     if ((await butlers(page)).length === 0) {
       console.log("      (no Butler on this Node: pressing New butler, which creates an unpublished draft)");
-      await page.getByRole("button", { name: "New butler", exact: true }).click();
+      await page.getByRole("button", { name: words["butlers.new"], exact: true }).click();
     } else {
-      await page.getByRole("button", { name: "Open", exact: true }).first().click();
+      await page.getByRole("button", { name: words["butlers.open"], exact: true }).first().click();
     }
     await page.waitForSelector(".butler-source", { timeout: 10_000 });
   }],

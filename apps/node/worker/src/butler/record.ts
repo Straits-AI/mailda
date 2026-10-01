@@ -1,3 +1,4 @@
+import { BUTLER_RUN_STATES, type ButlerRunState } from "@mailda/contract/schemas";
 import type { Ctx } from "@mailda/runtime";
 
 /**
@@ -49,26 +50,12 @@ import type { Ctx } from "@mailda/runtime";
  * twice.
  */
 
-/** Every state a run can be in. */
-export const RUN_STATES = [
-  /** The interpreter is walking the graph. */
-  "running",
-  /** Parked on `step.waitForEvent` for a human to release a send it proposed. */
-  "awaiting_release",
-  /** The graph ran out of nodes. */
-  "finished",
-  /** A `stop` node ended it, or a release gate timed out. The reason says which. */
-  "stopped",
-  /**
-   * The run stopped **itself**: its AST no longer checks, a `validate` did not hold, it ran out of pot, or
-   * its Butler was paused (#75) while it was in flight — in which case the counts on the row are the ones the
-   * run last wrote, because `abandonRun` and not `closeRun` is what ends it.
-   */
-  "refused",
-  /** A fault: an unresolvable path, a schema this engine cannot honour, a loop past its own bound. */
-  "failed",
-] as const;
-export type RunState = (typeof RUN_STATES)[number];
+/**
+ * Every state a run can be in, declared in the contract (`BUTLER_RUN_STATES`, each state's meaning beside it) so
+ * the interface can key its words by the same list this file writes.
+ */
+export const RUN_STATES = BUTLER_RUN_STATES;
+export type RunState = ButlerRunState;
 
 /** The states from which a run can still move. Everything else is written once and never again. */
 const LIVE: readonly RunState[] = ["running", "awaiting_release"];

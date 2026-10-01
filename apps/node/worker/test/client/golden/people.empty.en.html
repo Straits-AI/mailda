@@ -1,0 +1,61 @@
+<header class="ledger-head">
+<h1>People</h1>
+<p class="dim mono">0</p>
+</header>
+<p class="dim">Everybody with an account on this Node.</p>
+<section class="people-mailbox" aria-label="Administering the organization">
+<h2>The organization</h2>
+<div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
+<table>
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col">May</th>
+</tr>
+</thead>
+<tbody>
+</tbody>
+</table>
+</div>
+</section>
+<section class="people-teams" aria-label="Invite somebody">
+<h2>Invite somebody</h2>
+<p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
+<p class="field-row">
+<label for="invite-email">Address</label> <input id="invite-email" class="mono" value="">
+</p>
+<p class="field-row">
+<label for="invite-mailbox">
+<input id="invite-mailbox" type="checkbox"> Also give them a mailbox at</label> <span class="address-field">
+<input id="invite-mailbox-address" class="mono" disabled="" aria-label="Their mailbox's address" aria-describedby="invite-mailbox-address-domain" placeholder="hello" value="">
+<span id="invite-mailbox-address-domain" class="mono address-domain">@example.test</span>
+</span>
+</p>
+<p>
+<button class="quiet" type="button" disabled="">Mint an invitation</button>
+</p>
+</section>
+<section class="people-teams" aria-label="A new mailbox">
+<h2>Mailboxes</h2>
+<p class="dim">A shared inbox with its own queue. You may read and send from it as soon as it exists; grant others below, and add the addresses it receives at.</p>
+<p class="field-row">
+<label for="new-mailbox-name">Name</label> <input id="new-mailbox-name" placeholder="Invoices" value=""> <button class="quiet" type="button" disabled="">Create a mailbox</button>
+</p>
+</section>
+<section class="people-teams" aria-label="A new address">
+<h3>Add an address</h3>
+<p class="field-row">
+<label for="new-address">Address</label> <span class="address-field">
+<input id="new-address" class="mono" aria-describedby="new-address-domain" placeholder="hello" value="">
+<span id="new-address-domain" class="mono address-domain">@example.test</span>
+</span>  <button class="quiet" type="button" disabled="">Add the address</button>
+</p>
+</section>
+<section class="people-teams" aria-label="Teams">
+<h2>Teams</h2>
+<p class="dim">A team is a group an approval stage can require a decision from — one from finance, then one from legal. A team nothing cites changes nothing.</p>
+<p class="field-row">
+<label for="new-team-name">New team</label> <input id="new-team-name" value=""> <button class="quiet" type="button" disabled="">Create</button>
+</p>
+<p class="notice">No teams. Approval stages can name one once it exists.</p>
+</section>

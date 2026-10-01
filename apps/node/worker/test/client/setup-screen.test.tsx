@@ -511,8 +511,8 @@ describe("reading which recipients are verified destinations", () => {
   it("posts once to the route the contract names, and says how many", async () => {
     mount({ verified: { status: 200, body: read() } });
     await press();
-    const said = (await screen.findByText(/address\(es\) this Node has handed mail to/)).textContent;
-    expect(said).toContain("1 of the 2 address(es) this Node has handed mail to is a verified destination");
+    const said = (await screen.findByText(/addresses this Node has handed mail to/)).textContent;
+    expect(said).toContain("1 of the 2 addresses this Node has handed mail to is a verified destination");
     // Not "marks those recipients": a hand-over made before an address was verified carries no mark, and the
     // count above includes that address.
     expect(said).toContain("the Outbox marks their hand-overs made while they were verified.");
@@ -524,7 +524,7 @@ describe("reading which recipients are verified destinations", () => {
     mount({ verified: { status: 200, body: read({ recipients: 3, verified: 2 }) } });
     await press();
     expect((await screen.findByRole("status")).textContent)
-      .toContain("2 of the 3 address(es) this Node has handed mail to are verified destinations");
+      .toContain("2 of the 3 addresses this Node has handed mail to are verified destinations");
   });
 
   it("says a failed read could not read, and never counts it", async () => {
@@ -541,7 +541,8 @@ describe("reading which recipients are verified destinations", () => {
     mount({ verified: { status: 200, body: read({ error: "fixture: refused for the test", recipients: 0, verified: 0 }) } });
     await press();
     const said = await screen.findByText(/The read did not succeed/);
-    expect(said.textContent).toContain("The read of 2026-09-28T05:00:00.000Z still stands.");
+    // In the viewer's zone and locale, as every other time on this screen (the owner's round three, G4).
+    expect(said.textContent).toContain(`The read of ${new Date("2026-09-28T05:00:00.000Z").toLocaleString()} still stands.`);
     expect(said.textContent).not.toContain("nothing to compare");
     expect(screen.queryByRole("status")).toBeNull();
   });

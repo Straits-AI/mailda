@@ -1,0 +1,3 @@
+Asked. Two other administrators have to agree before this domain is paused.
+<pre class="notice bad butler-findings" role="alert">Refused, for the test.</pre>
+<pre class="notice bad butler-findings" role="alert">Refused, for the test.</pre>

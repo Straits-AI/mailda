@@ -1,0 +1,47 @@
+<section class="ledger" aria-label="Agents">
+<header class="ledger-head">
+<h1>Agents</h1>
+</header>
+<p class="dim">A machine identity acting under a named person's authority. It can never hold more than that person holds, and every act it takes lands in the audit trail under both.</p>
+<p class="notice">No agent has been minted on this Node.</p>
+<h2>Mint an agent</h2>
+<form class="stack">
+<label class="field-row">
+<span>Acting for</span>
+<select>
+<option value="usr_ana">ana@example.test</option>
+<option value="usr_bob">bob@example.test</option>
+</select>
+<span class="dim">The agent can never exceed this person, and stops when their access does.</span>
+</label>
+<label class="field-row">
+<span>Name</span>
+<input placeholder="what this agent is for" required="" value="">
+</label>
+<fieldset>
+<legend>What it may do</legend>
+<label class="check">
+<input type="checkbox">
+<span class="mono">mail.read</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Read mail: list it, open a message, and fetch the original bytes.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">hold.read</span>
+<span class="dim">Read the legal holds in force.</span>
+</label>
+</fieldset>
+<fieldset>
+<legend>Which mailboxes, and how</legend>
+<p class="dim">Nothing is granted by default, and an agent can never exceed its sponsor: a relation the sponsor does not hold is refused when you mint, rather than written and silently never matching.</p>
+<p class="dim">No mailbox on this Node yet.</p>
+</fieldset>
+<label class="field-row">
+<span>Expires after (days)</span>
+<input min="1" type="number" value="30">
+</label>
+<p class="dim">There is no refresh and no way to widen a ceiling later — re-minting is the renewal, and it issues a new token.</p>
+<button class="quiet" type="submit" disabled="">Mint agent</button>
+</form>
+</section>

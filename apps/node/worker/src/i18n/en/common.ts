@@ -29,4 +29,10 @@ export const common = {
   "route./settings": "Settings",
   /** The document title on every signed-in screen: the screen, then the product. */
   "title.route": "{screen} · {brand}",
+  /**
+   * The gap where a screen sets two sentences side by side, or a sentence and its aside: a space in English, nothing
+   * in Chinese, whose full-width 。 and （ carry their own (the owner's round three, G14). Not for the gap after a
+   * control or a Latin token, which stays a space in every locale.
+   */
+  "join.sentence": " ",
 } as const satisfies RouteWords & Area<"common">;

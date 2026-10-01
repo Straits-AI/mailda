@@ -1,9 +1,153 @@
 import type { setup as source } from "../en/setup.ts";
 import type { Twin } from "../catalog.ts";
 
+/**
+ * 配置。Cloudflare's own names stay Latin (Email Routing, MX, SPF, wrangler, a permission's name), as its dashboard
+ * shows them; a zone is 区域 and its apex 根域名, Cloudflare's own Chinese. Onboarding a domain for sending is 为发信接入.
+ */
 export const setup: Twin<typeof source> = {
+  "setup.connected": "已连接。",
+  "setup.unconnected": "本节点没有自己的 Cloudflare 凭据。",
+  "setup.unconnected.why":
+    "接收、发信和投递结果会在安装时借助 wrangler 已获得的授权配置好，也可以之后用 {command} 配置。在下方连接本节点后，你就可以在此页面更改它们。",
+  "setup.buying": "此页面还不能通过这个凭据购买域名。购买会花钱，而谁可以按下那个按钮，本节点还没有得到决定。",
+  "setup.inert": "需要先完成上方的连接，或者运行终端命令：{command}，它会借助 wrangler 已获得的授权完成这项配置。",
+
+  "setup.working": "处理中…",
+  "setup.domain": "域名",
+  "setup.intoMailbox": "归入邮箱",
+  "setup.chooseMailbox": "选择一个邮箱…",
+  "setup.thisNode": "本节点",
+  "setup.rule.disabled": "{rule}，已停用",
+
+  "setup.connection.label": "可选连接",
+  "setup.connection.title": "可选：在此页面把本节点连接到 Cloudflare",
+  "setup.connection.why":
+    "安装程序已借助 wrangler 已获得的授权配置好接收、发信和投递结果，所以本节点无需自己的凭据也能工作。连接它只是为了在这里更改这些配置：再添加一个接收域名、一个发信域名，或者接管一条路由规则。",
+  "setup.connection.held": "已连接到账户 {account}（{id}）。",
+  "setup.connection.heldSince": "自 {at}起已连接到账户 {account}（{id}）。",
+  "setup.connection.unnamed": "未命名",
+  "setup.connection.forgetting": "正在移除…",
+  "setup.connection.forget": "移除此令牌",
+  "setup.connection.forgetNote": "在这里移除它不会在 Cloudflare 中删除它；那需要你在令牌页面上自己完成。",
+  "setup.connection.create":
+    "在 Cloudflare 中创建一个 API 令牌，只授予下列权限，并限定在此账户，然后粘贴到下方。本节点会用它的凭据密钥封装保存这个令牌，之后不会再显示它。",
+  "setup.connection.permissions": "令牌需要的权限",
+  "setup.connection.col.permission": "权限",
+  "setup.connection.col.scope": "范围",
+  "setup.connection.col.why": "本节点用它做什么",
+  "setup.connection.optional": "可选。",
+  "setup.connection.tokenPage": "打开令牌页面",
+  "setup.connection.token": "API 令牌",
+  "setup.connection.accountId": "账户 ID",
+  "setup.connection.connecting": "正在连接…",
+  "setup.connection.connect": "连接",
+
+  "setup.receiving.title": "接收",
+  "setup.receiving.label": "接收邮件",
+  "setup.receiving.heading": "3. 接收",
+  "setup.receiving.about":
+    "这个 Cloudflare 账户中某个区域的子域名。把它指向这里会写入 Cloudflare 要求的 MX 记录，再读回确认，之后才会把一个邮件地址路由到本节点。",
+  "setup.receiving.routed": "本节点已在路由的域名",
+  "setup.receiving.routedCaption": "Cloudflare 对本节点已在路由的域名的说明。",
+  "setup.receiving.col.zone": "区域",
+  "setup.receiving.col.receiving": "接收",
+  "setup.receiving.col.records": "Cloudflare 要求的记录",
+  "setup.receiving.noZone": "未找到区域",
+  "setup.receiving.unread": "无法读取",
+  "setup.receiving.on": "已开启",
+  "setup.receiving.onStatus": "已开启 — {status}",
+  "setup.receiving.off": "未开启",
+  "setup.receiving.subdomain": "子域名",
+  "setup.receiving.address": "要路由到这里的邮件地址",
+  "setup.receiving.propose": "看看把它指向这里会做什么",
+  "setup.receiving.plan": "{domain} 会发生哪些变化",
+  "setup.receiving.enablesZone":
+    "这还会为 {zone} 开启 Email Routing，在该区域的根域名写入 MX 和 SPF。这决定了整个域名的邮件去向，而不只是这个子域名。下面的记录要在那之后才能读取，所以这个列表很短，是因为现在还读不到任何东西——而不是因为改动很小。",
+  "setup.receiving.noRecords": "不会创建任何记录。",
+  "setup.receiving.col.type": "类型",
+  "setup.receiving.col.name": "名称",
+  "setup.receiving.col.pointsAt": "指向",
+  "setup.receiving.col.priority": "优先级",
+  "setup.receiving.present": "已存在：{records}",
+  "setup.receiving.catchAll": "把 {domain} 上没有专属规则的每个邮件地址都路由到本节点（Catch-all 地址）",
+  "setup.receiving.catchAll.none": "此区域目前没有设置 Catch-all 地址。",
+  "setup.receiving.catchAll.enabled": "当前：{rule}，已启用。",
+  "setup.receiving.catchAll.disabled": "当前：{rule}，已停用。",
+  "setup.receiving.catchAll.then": "此后邮件地址由本节点管理，发往本节点不认识的地址的邮件会被退信。",
+  "setup.receiving.subdomainNote": "{domain} 是子域名，所以每个邮件地址都有自己的规则；之后添加邮件地址时也会以同样的方式写入一条规则。",
+  "setup.receiving.apply": "执行",
+  "setup.receiving.needsAddress": "需要先填写要路由到这里的邮件地址，才能执行。",
+  "setup.receiving.done.catchAll":
+    "{domain} 的 Catch-all 地址现在路由到本节点（之前：{before}）。没有专属规则的邮件地址从此由本节点在这里管理；可以在路由规则中把它恢复原样。",
+  "setup.receiving.done.nothing": "{domain} 在 DNS 中没有任何记录得到确认，所以没有创建路由规则。",
+  "setup.receiving.done.routed": "{domain} 现在有 {n} 条已确认的记录，邮件会路由到 {rule}。",
+  "setup.receiving.done.notRouted": "{domain} 现在有 {n} 条已确认的记录，但没有规则把这个邮件地址路由到这里。",
+
+  "setup.ownRules.unread": "无法读取 {domain} 上哪些邮件地址有专属的路由规则，所以不知道 Catch-all 地址覆盖不到哪些地址：{said}",
+  "setup.ownRules.none": "{domain} 上没有邮件地址拥有专属的路由规则。",
+  "setup.ownRules.some":
+    "{domain} 上有专属路由规则的邮件地址（{n} 个）。已启用的规则优先于 Catch-all 地址，所以 Catch-all 地址覆盖不到这些地址；本节点会让这些规则保持原样。",
+  "setup.ownRules.row": "{address}：{goes}",
+  "setup.ownRules.disabled": "已停用（启用时它会是 {where}）；Cloudflare 没有说明那时 Catch-all 地址是否适用",
+
+  "setup.rules.title": "区域上已有的规则",
+  "setup.rules.about":
+    "在本节点之前就在接收邮件的区域，会有把邮件发往别处的规则。除非你在这里选择，否则什么都不会改变。每条规则都可以恢复原样；期间到达这里的邮件会留在这里。Catch-all 地址会列出，但不会被改动。",
+  "setup.rules.list": "列出此区域上的规则",
+  "setup.rules.none": "{zone} 上没有路由规则。",
+  "setup.rules.on": "{zone} 上的路由规则",
+  "setup.rules.caption": "{zone} 上的路由规则。",
+  "setup.rules.col.address": "邮件地址",
+  "setup.rules.col.goesTo": "去向",
+  "setup.rules.catchAll": "Catch-all 地址",
+  "setup.rules.disabled": "（已停用）",
+  "setup.rules.putBack": "恢复原样",
+  "setup.rules.putBack.confirm": "是，恢复原样",
+  "setup.rules.takeOver.confirm": "是，把 {address} 指向这里",
+  "setup.rules.done": "{address}：原为 {before}，现为 {after}。",
+  "setup.rules.filedInto": "它归入 {name}。",
   "setup.rules.newMailbox": "新建邮箱，名为 {address}",
   "setup.rules.mailboxStays": "已为它新建邮箱 {name}，该邮箱会保留。",
   "setup.rules.filesInto": "将归入 {name}。",
   "setup.rules.nameNotRecorded": "它的名称没有记录原来的去向，因此只有本节点能把它恢复：请在删除本节点之前完成。",
+
+  "setup.sending.title": "发信",
+  "setup.sending.label": "发送邮件",
+  "setup.sending.heading": "4. 发信",
+  "setup.sending.about": "为发信接入一个域名，就是告诉 Cloudflare 此账户可以用它的名义发信。这与接收是分开的，一个域名可以只有其中之一。",
+  "setup.sending.propose": "看看接入它会做什么",
+  "setup.sending.coveredBy": "已被 {domain} 覆盖，它已接入。这个名称本身没有接入，所以如果移除那个域名，它就不再被覆盖。",
+  "setup.sending.onboarded": "已为发信接入。",
+  "setup.sending.creates": "将创建：{records}",
+  "setup.sending.leavesBehind": "会留下以下内容，且本节点无法移除：{said}",
+  "setup.sending.apply": "接入此域名",
+  "setup.sending.done": "{domain} 已为发信接入。",
+  "setup.sending.notDone": "{domain} 仍未接入。",
+
+  "setup.outcomes.title": "投递结果",
+  "setup.outcomes.heading": "5. 投递结果",
+  "setup.outcomes.about":
+    "只有当某个订阅把投递事件发布到本节点的 Cloudflare 队列时，发信域名才会报告每封邮件的结果：已受理（Cloudflare 的 {delivered}）、退信或投诉。没有订阅，每次发送的结果都会一直未观测到。该域名必须先为发信接入。",
+  "setup.outcomes.propose": "看看订阅它会做什么",
+  "setup.outcomes.carriedBy": "由 {domain} 承载，它是覆盖这个名称的已接入域名；订阅是为那个域名创建的。",
+  "setup.outcomes.subscribed": "已订阅，订阅名为 {name}。",
+  "setup.outcomes.publish": "将把 {n} 种事件类型发布到 {queue}。",
+  "setup.outcomes.noConsumer": "目前没有任何程序读取 {queue}——事件会一直无人观测。订阅会把本节点挂接为它的消费者。",
+  "setup.outcomes.apply": "订阅此域名",
+  "setup.outcomes.done": "{domain} 的投递事件现在会到达本节点。",
+  "setup.outcomes.notDone": "{domain} 仍未订阅。",
+
+  "setup.verified.title": "已验证的目标地址",
+  "setup.verified.about":
+    "在测量过的唯一一例中，Cloudflare 没有为发往此账户已验证目标地址的邮件报告任何投递结果。读取本节点的哪些收件人是已验证的目标地址，可以让发件箱和诊断如实说明，而不是一直等待。这需要本节点的令牌拥有可选权限 Email Routing Addresses: Read；{command} 则改用 wrangler 的登录来读取。",
+  "setup.verified.read": "读取已验证的目标地址",
+  "setup.verified.failed":
+    "读取没有成功：{said}。如果 Cloudflare 因缺少权限而拒绝，令牌需要 Email Routing Addresses: Read 权限：在 Cloudflare 控制台中添加它，或者新建一个令牌并在上方注册（如果编辑后控制台显示了新的值，请注册那个值）。",
+  "setup.verified.failed.never": "在读取成功之前，这些收件人显示为未观测到。",
+  "setup.verified.failed.stands": "{at} 的那次读取仍然有效。",
+  "setup.verified.nobody": "已于 {at} 从账户 {account} 读取。本节点还没有向任何人移交过邮件，所以没有可比较的内容。",
+  "setup.verified.some":
+    "已于 {at} 从账户 {account} 读取。本节点移交过邮件的 {recipients}中，有 {n} 个是已验证的目标地址。已验证的目标地址不会报告投递结果；发件箱会标记在它们处于已验证状态时完成的移交。",
+  "setup.verified.recipients": "{n} 个邮件地址",
 };

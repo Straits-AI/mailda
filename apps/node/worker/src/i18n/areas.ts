@@ -13,7 +13,7 @@ import type { Message } from "./format.ts";
  */
 export const AREAS = {
   preauth: ["brand", "preauth"],
-  common: ["route", "title"],
+  common: ["route", "title", "join"],
   language: ["language"],
   chrome: ["chrome", "health"],
   palette: ["palette"],
@@ -28,6 +28,15 @@ export const AREAS = {
   queue: ["queue"],
   ledgers: ["ledgers"],
   delivery: ["send", "delivery"],
+  onboarding: ["onboarding"],
+  people: ["people"],
+  agents: ["agents"],
+  approvals: ["approvals"],
+  matters: ["matters"],
+  limits: ["limits"],
+  butlers: ["butlers"],
+  policies: ["policies"],
+  ui: ["ui"],
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 
 export type AreaName = keyof typeof AREAS;

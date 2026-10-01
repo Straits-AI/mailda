@@ -1,0 +1,137 @@
+<header class="ledger-head">
+<h1>Butlers</h1>
+<p class="new-message">
+<button type="button" class="primary">New butler</button>
+</p>
+</header>
+<div class="scroller" tabindex="0" role="region" aria-label="Butlers">
+<table>
+<thead>
+<tr>
+<th scope="col">Name</th>
+<th scope="col">Standing</th>
+<th scope="col">Published</th>
+<th scope="col">Draft</th>
+<th scope="col">Editor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>triage</td>
+<td>
+<span class="bad">paused — loop detected</span>
+</td>
+<td class="mono">[clock]</td>
+<td class="dim">unpublished changes</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>auto-ack</td>
+<td>
+<span>live · v3</span>
+</td>
+<td class="mono">[clock]</td>
+<td class="dim">—</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>new butler</td>
+<td>
+<span class="dim">draft only, never published</span>
+</td>
+<td class="mono">—</td>
+<td class="dim">—</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="butler-pause notice bad">
+<p>This Butler ran 40 times on one conversation in ten minutes.</p>
+<p class="dim mono">placed by loop-detector · [clock]</p>
+<label class="field-row" for="resume-btl_paused">
+<span>Why is it safe to resume?</span>
+<input id="resume-btl_paused" value="">
+</label>
+<button class="quiet" type="button" disabled="">Resume</button>
+</div>
+<h2 class="butler-runs-heading">Runs</h2>
+<p class="notice" role="status">Started again as <span class="mono">run_again</span>.</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Runs">
+<p class="dim">
+<em>Run again</em> starts a new run of the same published version over what this run was given, judged under today’s rules. Its effects are real; any send it proposes waits in the outbox until a person releases it, so nothing leaves this Node by itself.</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Started</th>
+<th scope="col">State</th>
+<th scope="col">Why it ended</th>
+<th scope="col" class="num">Nodes</th>
+<th scope="col" class="num">Effects</th>
+<th scope="col" class="num">Refusals</th>
+<th scope="col" class="num">Spent</th>
+<th scope="col">Again</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">[clock]</td>
+<td>completed</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>stopped</td>
+<td>nothing needed doing</td>
+<td class="mono num">3</td>
+<td class="mono num">0</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td class="bad">failed</td>
+<td>budget exhausted</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">2</td>
+<td class="mono num">4</td>
+<td>
+<button type="button" class="linkish">Run again</button>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>running</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<span class="dim">—</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

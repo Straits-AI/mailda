@@ -3,12 +3,15 @@ import { useState } from "react";
 
 import { shortfall } from "@mailda/contract/capability";
 
+import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
+import { dateTime, list } from "../format.ts";
 import {
   AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMe, usePeople,
   useSponsorMailboxes,
-  type AgentRelation, type AgentRow, type CapabilityRow,
+  type AgentRelation, type AgentRow, type CapabilityRow, type Said,
 } from "../api.ts";
+import { NodeWords, marked, sentence } from "../words.tsx";
 
 /**
  * The machine identities this Node has issued (#109).
@@ -46,10 +49,12 @@ import {
  */
 
 /** Live, expired or revoked — the three states an operator needs to tell apart at a glance. */
-function standing(agent: AgentRow, now: number): { label: string; state: string } {
-  if (agent.revokedAt !== null) return { label: "revoked", state: "revoked" };
-  if (Date.parse(agent.expiresAt) <= now) return { label: "expired", state: "expired" };
-  return { label: "live", state: "live" };
+type Standing = "revoked" | "expired" | "live";
+
+function standing(agent: AgentRow, now: number): Standing {
+  if (agent.revokedAt !== null) return "revoked";
+  if (Date.parse(agent.expiresAt) <= now) return "expired";
+  return "live";
 }
 
 /**
@@ -118,10 +123,10 @@ function Minting({ onMinted }: { onMinted: () => void }) {
   /** Chosen resource authority, keyed `mailboxId::relation` so a set is the whole state. */
   const [reach, setReach] = useState<Set<string>>(new Set());
   const [token, setToken] = useState<{ value: string; notice: string } | null>(null);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<Said | null>(null);
 
   if (capabilities.isPending) return <Nothing kind="loading" />;
-  if (capabilities.isError) return <Nothing kind="failed" detail={capabilities.error.message} />;
+  if (capabilities.isError) return <Nothing kind="failed" detail={marked(capabilities.error)} />;
 
   async function mint() {
     setRefusal(null);
@@ -144,7 +149,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       setReach(new Set());
       onMinted();
     } else {
-      setRefusal(outcome.message);
+      setRefusal(outcome);
     }
   }
 
@@ -162,7 +167,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         * always sent the signed-in user, so the wider half of the route was unreachable from the product.
         */}
       <label className="field-row">
-        <span>Acting for</span>
+        <span>{t("agents.mint.actingFor")}</span>
         <select
           value={chosenSponsor ?? ""}
           onChange={(event) => setSponsor(event.target.value)}
@@ -173,23 +178,21 @@ function Minting({ onMinted }: { onMinted: () => void }) {
             ))
             : <option value={chosenSponsor ?? ""}>{me.data?.userId ?? "…"}</option>}
         </select>
-        <span className="dim">
-          The agent can never exceed this person, and stops when their access does.
-        </span>
+        <span className="dim">{t("agents.mint.actingFor.note")}</span>
       </label>
 
       <label className="field-row">
-        <span>Name</span>
+        <span>{t("agents.mint.name")}</span>
         <input
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="what this agent is for"
+          placeholder={t("agents.mint.name.placeholder")}
           required
         />
       </label>
 
       <fieldset>
-        <legend>What it may do</legend>
+        <legend>{t("agents.mint.may")}</legend>
         {/*
           * The description is beside each name rather than behind a tooltip, because this is the moment the
           * decision is made and a capability whose consequence is one hover away is one nobody reads.
@@ -206,15 +209,16 @@ function Minting({ onMinted }: { onMinted: () => void }) {
                 setChosen(next);
               }}
             />
-            <span className="mono">{capability.id}</span>
+            <span className="mono"><NodeWords>{capability.id}</NodeWords></span>
             {/*
               * Marked, not inferred from the name. §7's whole authorization model turns on metadata against
               * content, and `export.read` reaches message bytes while sounding administrative.
               */}
             {capability.reachesContent
-              ? <span className="state state-audit-warn">reaches message content</span>
+              ? <span className="state state-audit-warn">{t("agents.mint.reachesContent")}</span>
               : null}
-            <span className="dim">{capability.says}</span>
+            {/* The capability's description is the Node's (`GET /api/agent-capabilities`), so it stays English. */}
+            <span className="dim"><NodeWords>{capability.says}</NodeWords></span>
           </label>
         ))}
       </fieldset>
@@ -228,21 +232,18 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         * takes no effort to get wrong, not the thing that takes effort to get right.
         */}
       <fieldset>
-        <legend>Which mailboxes, and how</legend>
-        <p className="dim">
-          Nothing is granted by default, and an agent can never exceed its sponsor: a relation the sponsor
-          does not hold is refused when you mint, rather than written and silently never matching.
-        </p>
+        <legend>{t("agents.mint.which")}</legend>
+        <p className="dim">{t("agents.mint.which.note")}</p>
         {mailboxes.isPending ? <Nothing kind="loading" /> : null}
-        {mailboxes.isError ? <Nothing kind="failed" detail={mailboxes.error.message} /> : null}
+        {mailboxes.isError ? <Nothing kind="failed" detail={marked(mailboxes.error)} /> : null}
         {mailboxes.isSuccess && mailboxes.data.mailboxes.length === 0
-          ? <p className="dim">No mailbox on this Node yet.</p>
+          ? <p className="dim">{t("agents.mint.noMailbox")}</p>
           : null}
         {mailboxes.isSuccess ? mailboxes.data.mailboxes.map((box) => (
           <div key={box.mailboxId} className="stack">
             <strong>{box.mailboxName}</strong>
             {box.relations.length === 0
-              ? <span className="dim">this person holds nothing here</span>
+              ? <span className="dim">{t("agents.mint.holdsNothing")}</span>
               : null}
             {AGENT_RELATIONS.map((one) => {
               const key = `${box.mailboxId}::${one.relation}`;
@@ -265,9 +266,9 @@ function Minting({ onMinted }: { onMinted: () => void }) {
                       setReach(next);
                     }}
                   />
-                  <span className="mono">{one.relation}</span>
+                  <span className="mono"><NodeWords>{one.relation}</NodeWords></span>
                   {one.reachesContent
-                    ? <span className="state state-audit-warn">reaches message content</span>
+                    ? <span className="state state-audit-warn">{t("agents.mint.reachesContent")}</span>
                     : null}
                   <span className="dim">{one.says}</span>
                 </label>
@@ -278,7 +279,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       </fieldset>
 
       <label className="field-row">
-        <span>Expires after (days)</span>
+        <span>{t("agents.mint.days")}</span>
         <input
           type="number"
           min="1"
@@ -295,26 +296,20 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       {chosen.size === 0 && reach.size === 0 ? null : (
         <div className="notice">
           <p>
-            {`This agent will hold ${chosen.size} capability(s) across ${reach.size} mailbox relation(s), `}
-            {"until it expires or is withdrawn."}
+            {t("agents.review", {
+              capabilities: t("agents.review.capabilities", { n: chosen.size }),
+              relations: t("agents.review.relations", { n: reach.size }),
+            })}
           </p>
-          <p className="dim">
-            Every one of them also stops the moment the sponsor loses that access — an agent is bounded by the
-            person it acts for, checked on each request rather than at this moment.
-          </p>
+          <p className="dim">{t("agents.review.bounded")}</p>
           {unmet(capabilities.data.capabilities, chosen, reach).map((one) => (
             <p key={one.id}>
-              <span className="mono">{one.id}</span>
-              {` needs ${one.missing.join(" and ")} on the same mailbox as its other relations — no mailbox `}
-              {"here carries all of them, so the agent will authenticate and be refused."}
+              {sentence("agents.review.unmet", { capability: <span className="mono">{one.id}</span>, missing: list(one.missing) })}
             </p>
           ))}
         </div>
       )}
-      <p className="dim">
-        There is no refresh and no way to widen a ceiling later — re-minting is the renewal, and it issues a
-        new token.
-      </p>
+      <p className="dim">{t("agents.mint.renewal")}</p>
 
       {/*
         * Disabled on the shortfall too, not only on the empty name.
@@ -330,13 +325,14 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         disabled={name.trim() === "" || chosen.size === 0
           || unmet(capabilities.data?.capabilities ?? [], chosen, reach).length > 0}
       >
-        Mint agent
+        {t("agents.mint.submit")}
       </button>
 
-      {refusal === null ? null : <p className="notice">{refusal}</p>}
+      {refusal === null ? null : <p className="notice">{marked(refusal)}</p>}
       {token === null ? null : (
         <div className="notice">
-          <p>{token.notice}</p>
+          {/* The Node's own notice about the token, so it stays English. */}
+          <p><NodeWords>{token.notice}</NodeWords></p>
           <p className="mono">{token.value}</p>
         </div>
       )}
@@ -347,58 +343,56 @@ function Minting({ onMinted }: { onMinted: () => void }) {
 export function Agents() {
   const agents = useAgents();
   const client = useQueryClient();
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<Said | null>(null);
   const now = Date.now();
+  const title = t("route./agents");
 
   if (agents.isPending) {
     return (
-      <section className="ledger" aria-label="Agents">
-        <header className="ledger-head"><h1>Agents</h1></header>
+      <section className="ledger" aria-label={title}>
+        <header className="ledger-head"><h1>{title}</h1></header>
         <Nothing kind="loading" />
       </section>
     );
   }
   if (agents.isError) {
     return (
-      <section className="ledger" aria-label="Agents">
-        <header className="ledger-head"><h1>Agents</h1></header>
-        <Nothing kind="failed" detail={agents.error.message} />
+      <section className="ledger" aria-label={title}>
+        <header className="ledger-head"><h1>{title}</h1></header>
+        <Nothing kind="failed" detail={marked(agents.error)} />
       </section>
     );
   }
 
   async function withdraw(agentId: string) {
     const outcome = await revokeAgent(agentId);
-    if (!outcome.ok) setRefusal(outcome.message);
+    if (!outcome.ok) setRefusal(outcome);
     await client.invalidateQueries({ queryKey: ["agents"] });
   }
 
   return (
-    <section className="ledger" aria-label="Agents">
+    <section className="ledger" aria-label={title}>
       <header className="ledger-head">
-        <h1>Agents</h1>
+        <h1>{title}</h1>
       </header>
 
-      <p className="dim">
-        A machine identity acting under a named person's authority. It can never hold more than that person
-        holds, and every act it takes lands in the audit trail under both.
-      </p>
+      <p className="dim">{t("agents.lede")}</p>
 
-      {refusal === null ? null : <p className="notice">{refusal}</p>}
+      {refusal === null ? null : <p className="notice">{marked(refusal)}</p>}
 
       {agents.data.agents.length === 0 ? (
-        <Nothing kind="empty" detail="No agent has been minted on this Node." />
+        <Nothing kind="empty" detail={t("agents.none")} />
       ) : (
         <table>
           <thead>
             <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Sponsor</th>
-              <th scope="col">May do</th>
-              <th scope="col">Where</th>
-              <th scope="col">Standing</th>
-              <th scope="col" className="num">Expires</th>
-              <th scope="col"><span className="sr-only">Withdraw</span></th>
+              <th scope="col">{t("agents.col.name")}</th>
+              <th scope="col">{t("agents.col.sponsor")}</th>
+              <th scope="col">{t("agents.col.may")}</th>
+              <th scope="col">{t("agents.col.where")}</th>
+              <th scope="col">{t("agents.col.standing")}</th>
+              <th scope="col" className="num">{t("agents.col.expires")}</th>
+              <th scope="col"><span className="sr-only">{t("agents.col.withdraw")}</span></th>
             </tr>
           </thead>
           <tbody>
@@ -415,20 +409,20 @@ export function Agents() {
                     <ul className="bare">
                       {agent.held.map((one) => (
                         <li key={one.id}>
-                          <span className="mono">{one.id}</span>
+                          <span className="mono"><NodeWords>{one.id}</NodeWords></span>
                           {/*
                             * Only shown when it is partial, so a whole capability reads as a name and a
                             * partial one cannot be mistaken for it.
                             */}
                           {one.held === one.total
                             ? null
-                            : <span className="dim">{` ${one.held} of ${one.total}`}</span>}
+                            : <span className="dim">{" "}{t("agents.held.partial", { held: one.held, total: one.total })}</span>}
                         </li>
                       ))}
                       {agent.unnamed.length === 0 ? null : (
                         <li className="dim">
-                          {`${agent.unnamed.length} pinned route(s) this Node no longer names: `}
-                          <span className="mono">{agent.unnamed.join(", ")}</span>
+                          {t("agents.unnamed", { n: agent.unnamed.length })}{" "}
+                          <span className="mono"><NodeWords>{agent.unnamed.join(", ")}</NodeWords></span>
                         </li>
                       )}
                     </ul>
@@ -442,36 +436,34 @@ export function Agents() {
                       * one.
                       */}
                     {agent.grants.length === 0
-                      ? <span className="dim">no mailbox</span>
+                      ? <span className="dim">{t("agents.noMailbox")}</span>
                       : (
                         <ul className="bare">
                           {agent.grants.map((grant) => (
                             <li key={`${grant.mailboxId}:${grant.relation}`}>
                               <span>{grant.mailboxName ?? grant.mailboxId}</span>
-                              <span className="mono dim">{` ${grant.relation}`}</span>
+                              <span className="mono dim">{" "}<NodeWords>{grant.relation}</NodeWords></span>
                               {grant.effective
                                 ? null
                                 : (
-                                  <span className="state state-audit-warn">
-                                    not effective — the sponsor no longer holds this
-                                  </span>
+                                  <span className="state state-audit-warn">{t("agents.notEffective")}</span>
                                 )}
                             </li>
                           ))}
                         </ul>
                       )}
                   </td>
-                  <td><span className={`state state-audit-${where.state}`}>{where.label}</span></td>
-                  <td className="num mono dim">{agent.expiresAt}</td>
+                  <td><span className={`state state-audit-${where}`}>{t(`agents.standing.${where}`)}</span></td>
+                  <td className="num mono dim">{dateTime(agent.expiresAt)}</td>
                   <td>
                     {/*
                       * Offered only while there is something to withdraw. A button that answers "already
                       * revoked" is an offer nobody can complete, and the Node's own revoke is deliberately
                       * silent about that case — it writes no audit entry when nothing changed.
                       */}
-                    {where.state === "live" ? (
+                    {where === "live" ? (
                       <button type="button" className="linkish" onClick={() => void withdraw(agent.id)}>
-                        Withdraw
+                        {t("agents.withdraw")}
                       </button>
                     ) : null}
                   </td>
@@ -482,7 +474,7 @@ export function Agents() {
         </table>
       )}
 
-      <h2>Mint an agent</h2>
+      <h2>{t("agents.mint.heading")}</h2>
       <Minting onMinted={() => void client.invalidateQueries({ queryKey: ["agents"] })} />
     </section>
   );

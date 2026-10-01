@@ -1,9 +1,14 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { Fragment, type ReactNode } from "react";
+import { t } from "/app/locale.js";
 
+import type { Text } from "../../i18n/format.ts";
 import {
   useDeliveryEvents, useDoctor, useProvider, useRouting,
   type DeliveryRow, type DoctorReport, type ProviderBinding, type Provisioned, type ProvisionedAct, type RoutingRow,
 } from "./api.ts";
+import { count, recordDay } from "./format.ts";
+import { NodeWords, sentence } from "./words.tsx";
 
 /**
  * Onboarding progress, derived and never stored.
@@ -47,10 +52,12 @@ export type StepState = "done" | "todo" | "unknown" | "optional";
 
 export interface Step {
   id: "connected" | "address" | "routed" | "sending" | "outcomes";
-  label: string;
+  label: Text;
+  /** The label inside a sentence ("next: mail routed to this Node"): English lowercases its first word, and only that. */
+  phrase: Text;
   state: StepState;
-  /** What makes it that state, in the source's own terms; shown beside the label. */
-  detail: string;
+  /** What makes it that state, in the source's own terms; shown beside the label. A source's own words are in `<NodeWords>`. */
+  detail: ReactNode;
 }
 
 export interface Sources {
@@ -66,100 +73,124 @@ export interface Sources {
   delivery?: DeliveryRow[] | null;
 }
 
-const notAsked = (why: string): Pick<Step, "state" | "detail"> => ({ state: "unknown", detail: why });
+type Reading = Pick<Step, "state" | "detail">;
+const reading = (state: StepState, detail: ReactNode): Reading => ({ state, detail });
+const notAsked = (why: ReactNode): Reading => reading("unknown", why);
+
+/** One domain and what is true of it: this interface's words, or the source's own inside `<NodeWords>`. */
+const ofDomain = (domain: string, said: ReactNode): ReactNode => sentence("onboarding.domain", { domain, said });
+const nodeSaid = (words: string): ReactNode => <NodeWords>{words}</NodeWords>;
+
+/** Each domain's line, joined as the locale joins clauses. */
+function joined(lines: ReactNode[]): ReactNode {
+  return lines.map((line, index) => <Fragment key={index}>{index === 0 ? null : t("onboarding.join")}{line}</Fragment>);
+}
 
 /** A provisioning act from the audit trail, said as what it is: a dated record, not a live read. */
-const recorded = (act: ProvisionedAct | null, absent: string): Pick<Step, "state" | "detail"> => act === null
-  ? { state: "todo", detail: absent }
-  : {
-    state: "done",
-    // An observation says who did not do it: this Node found it in place, and claims no more than that.
-    detail: `${act.domain}, ${act.observed
-      ? "in place on Cloudflare before this Node, observed"
-      : `set up ${act.authority === "operator" ? "at install" : "through the held token"}`} on `
-      + `${new Date(act.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} (a record, not a live read)`,
-  };
+const recorded = (act: ProvisionedAct | null): Reading => {
+  if (act === null) return reading("todo", t("onboarding.record.none"));
+  // An observation says who did not do it: this Node found it in place, and claims no more than that.
+  const how: "observed" | "install" | "token" = act.observed ? "observed" : act.authority === "operator" ? "install" : "token";
+  return reading("done", t(`onboarding.record.${how}`, { domain: act.domain, date: recordDay(act.at) }));
+};
 
 /**
  * The receiving record, with its outcome (28 September 2026): an onboard whose address a rule of its own sends
  * elsewhere, or that could not be written, is not mail routed here however the intent reads; one that could not be
  * checked is unknown. An onboard from before outcomes were recorded has none and reads as the record it is.
  */
-const recordedReceiving = (act: ProvisionedAct | null): Pick<Step, "state" | "detail"> => {
+const recordedReceiving = (act: ProvisionedAct | null): Reading => {
   const routing = act?.routing ?? null;
-  if (act === null || routing === null || routing.state === "catch_all" || routing.state === "rule_written") {
-    return recorded(act, "not set up; the installer or the Setup screen does it");
-  }
-  return { state: routing.state === "unconfirmed" ? "unknown" : "todo", detail: `${act.domain}: ${routing.detail}` };
+  if (act === null || routing === null || routing.state === "catch_all" || routing.state === "rule_written") return recorded(act);
+  return reading(routing.state === "unconfirmed" ? "unknown" : "todo", ofDomain(act.domain, nodeSaid(routing.detail)));
 };
+
+const required = (n: number): Text => t("onboarding.required", { n });
+
+/** Why a routed domain is not ready: Cloudflare's error, else what is missing. */
+const routingGap = (row: RoutingRow): ReactNode => row.error !== null
+  ? nodeSaid(row.error)
+  : row.enabled === true ? required(row.required.length) : t("onboarding.routed.off");
+
+/** Why a domain is not ready to send. */
+const sendingGap = (row: DeliveryRow): ReactNode => row.sending === null
+  ? t("onboarding.sending.notOnboarded")
+  : row.sending.error !== null
+    ? nodeSaid(row.sending.error)
+    : row.sending.enabled === true ? required(row.sending.required.length) : t("onboarding.sending.off");
+
+/** Why a domain's delivery outcomes are not observed. */
+const outcomesGap = (row: DeliveryRow): ReactNode => row.error !== null
+  ? nodeSaid(row.error)
+  : row.subscription === null ? t("onboarding.outcomes.noSubscription")
+  : row.enabled !== true ? t("onboarding.outcomes.off")
+  : row.queueId === null ? t("onboarding.outcomes.noQueue")
+  : t("onboarding.outcomes.noConsumer");
 
 export function onboardingSteps(sources: Sources): Step[] {
   const { provider, doctor, routing, delivery } = sources;
   const provisioned = sources.provisioned ?? null;
 
   const connected = provider === null
-    ? notAsked("the connection state could not be read")
+    ? notAsked(t("onboarding.connected.unread"))
     : provider.state === "token_held"
-      ? { state: "done" as const, detail: `account ${provider.accountName ?? provider.accountId ?? "?"}` }
-      : { state: "optional" as const, detail: "only for changing the Cloudflare setup from this screen" };
+      ? reading("done", t("onboarding.connected.account", { account: provider.accountName ?? provider.accountId ?? "?" }))
+      : reading("optional", t("onboarding.connected.optional"));
   // Without a token the account cannot be read, so nothing live was asked for; the audit trail's record of
   // the install's acts stands in. Live reads only exist once connected, which is why this needs no second guard.
   const record = connected.state !== "done" && provisioned !== null;
+  const unasked = (): Reading => notAsked(connected.state === "done" ? t("onboarding.notRead") : t("onboarding.needsConnection"));
 
   const inbound = doctor?.findings.find((one) => one.check === "inbound_routing") ?? null;
   const address = doctor === null
-    ? notAsked("doctor could not be read")
+    ? notAsked(t("onboarding.address.unread"))
     : inbound === null
-      ? notAsked("doctor did not report on inbound routing")
+      ? notAsked(t("onboarding.address.unreported"))
       : inbound.ok
-        ? { state: "done" as const, detail: "an address is configured" }
-        : { state: "todo" as const, detail: "no address is configured; add one on People" };
+        ? reading("done", t("onboarding.address.done"))
+        : reading("todo", t("onboarding.address.todo"));
 
+  const routedRows = (routing ?? []).filter((row) => row.enabled === true && row.required.length === 0 && row.error === null);
   const routed = record
     ? recordedReceiving(provisioned.receiving)
     : routing === undefined
-    ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
+    ? unasked()
     : routing === null
-      ? notAsked("routing could not be read with the held token")
+      ? notAsked(t("onboarding.routed.unread"))
       : routing.length === 0
-        ? { state: "todo" as const, detail: "no domain to route yet" }
-        : routing.some((row) => row.enabled === true && row.required.length === 0 && row.error === null)
-          ? { state: "done" as const, detail: routing.filter((row) => row.enabled === true && row.required.length === 0 && row.error === null).map((row) => row.domain).join(", ") }
-          : { state: "todo" as const, detail: routing.map((row) => `${row.domain}: ${row.error ?? (row.enabled === true ? `${row.required.length} record(s) still required` : "routing not enabled")}`).join("; ") };
+        ? reading("todo", t("onboarding.routed.none"))
+        : routedRows.length > 0
+          ? reading("done", routedRows.map((row) => row.domain).join(", "))
+          : reading("todo", joined(routing.map((row) => ofDomain(row.domain, routingGap(row)))));
 
   const sendingRows = (delivery ?? []).filter((row) => row.sending !== null && row.sending.enabled === true && row.sending.required.length === 0 && row.sending.error === null);
   const sending = record
-    ? recorded(provisioned.sending, "not set up; the installer or the Setup screen does it")
+    ? recorded(provisioned.sending)
     : delivery === undefined
-    ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
+    ? unasked()
     : delivery === null
-      ? notAsked("delivery events could not be read with the held token")
+      ? notAsked(t("onboarding.delivery.unread"))
       : sendingRows.length > 0
-        ? { state: "done" as const, detail: sendingRows.map((row) => row.domain).join(", ") }
-        : { state: "todo" as const, detail: delivery.length === 0 ? "no domain onboarded for sending yet" : delivery.map((row) => `${row.domain}: ${row.sending === null ? "not onboarded for sending" : row.sending.error ?? (row.sending.enabled === true ? `${row.sending.required.length} record(s) still required` : "sending not enabled")}`).join("; ") };
+        ? reading("done", sendingRows.map((row) => row.domain).join(", "))
+        : reading("todo", delivery.length === 0 ? t("onboarding.sending.none") : joined(delivery.map((row) => ofDomain(row.domain, sendingGap(row)))));
 
   const observedRows = (delivery ?? []).filter((row) => row.subscription !== null && row.enabled === true && row.queueId !== null && row.consumers.length > 0);
   const outcomes = record
-    ? recorded(provisioned.deliveryEvents, "not set up; the installer or the Setup screen does it")
+    ? recorded(provisioned.deliveryEvents)
     : delivery === undefined
-    ? notAsked(connected.state === "done" ? "not read" : "needs the connection first")
+    ? unasked()
     : delivery === null
-      ? notAsked("delivery events could not be read with the held token")
+      ? notAsked(t("onboarding.delivery.unread"))
       : observedRows.length > 0
-        ? { state: "done" as const, detail: observedRows.map((row) => row.domain).join(", ") }
-        : { state: "todo" as const, detail: delivery.length === 0 ? "nothing to subscribe yet" : delivery.map((row) => `${row.domain}: ${row.error ?? (row.subscription === null ? "no subscription" : row.enabled !== true ? "subscription not enabled" : row.queueId === null ? "no queue" : "no consumer on the queue")}`).join("; ") };
+        ? reading("done", observedRows.map((row) => row.domain).join(", "))
+        : reading("todo", delivery.length === 0 ? t("onboarding.outcomes.none") : joined(delivery.map((row) => ofDomain(row.domain, outcomesGap(row)))));
 
-  return [
-    { id: "address", label: "An address to receive at", ...address },
-    { id: "routed", label: "Mail routed to this Node", ...routed },
-    { id: "sending", label: "A domain onboarded for sending", ...sending },
-    { id: "outcomes", label: "Delivery outcomes observed", ...outcomes },
-    { id: "connected", label: "Connected to Cloudflare", ...connected },
-  ];
+  const step = (id: Step["id"], how: Reading): Step =>
+    ({ id, label: t(`onboarding.step.${id}`), phrase: t(`onboarding.step.${id}.phrase`), ...how });
+  return [step("address", address), step("routed", routed), step("sending", sending), step("outcomes", outcomes), step("connected", connected)];
 }
 
 const CHIP: Record<StepState, string> = { done: "verdict-ok", todo: "severity-degraded", unknown: "state-outcome_unknown", optional: "severity-report" };
-const WORD: Record<StepState, string> = { done: "done", todo: "to do", unknown: "unknown", optional: "optional" };
 
 /**
  * Whether this Node can be used as an inbox: an address exists and mail is routed to it. Those two are what
@@ -197,17 +228,17 @@ export function ProgressList({ steps }: { steps: Step[] }) {
   const counted = steps.filter((step) => step.state !== "optional");
   const done = counted.filter((step) => step.state === "done").length;
   const next = counted.find((step) => step.state !== "done");
+  const tally = { done: <span className="mono num">{count(done)}</span>, total: <span className="mono num">{count(counted.length)}</span> };
   return (
-    <section className="onboarding" aria-label="Setup progress">
+    <section className="onboarding" aria-label={t("onboarding.progress.label")}>
       <p className="dim">
-        <span className="mono num">{done}</span> of <span className="mono num">{counted.length}</span> steps done
-        {next === undefined ? "." : `; next: ${next.label.toLowerCase()}.`}
-        {counted.length < steps.length ? " The fifth is optional." : ""}
+        {next === undefined ? sentence("onboarding.progress.done", tally) : sentence("onboarding.progress.next", { ...tally, next: next.phrase })}
+        {counted.length < steps.length ? <>{t("join.sentence")}{t("onboarding.progress.optional")}</> : null}
       </p>
       <ol>
         {steps.map((step) => (
           <li key={step.id}>
-            <span className={`state ${CHIP[step.state]}`}>{WORD[step.state]}</span>
+            <span className={`state ${CHIP[step.state]}`}>{t(`onboarding.state.${step.state}`)}</span>
             <span className="onboarding-label">{step.label}</span>
             <span className="dim onboarding-detail">{step.detail}</span>
           </li>
@@ -251,13 +282,13 @@ export function SetupUnfinished() {
   const address = steps.find((step) => step.id === "address")!;
   const routed = steps.find((step) => step.id === "routed")!;
   const said = address.state === "todo"
-    ? `${address.label.toLowerCase()} (${address.detail})`
-    : routed.state === "todo" ? "mail is not routed to this Node yet" : null;
+    ? sentence("onboarding.unfinished.address", { step: address.phrase, detail: address.detail })
+    : routed.state === "todo" ? t("onboarding.unfinished.routed") : null;
   if (said === null) return null;
   return (
     <p className="notice setup-unfinished" role="status">
-      Setup is unfinished: {said}.{" "}
-      <Link to="/setup" className="linkish">Go to Setup</Link>
+      {said}{" "}
+      <Link to="/setup" className="linkish">{t("onboarding.unfinished.go")}</Link>
     </p>
   );
 }

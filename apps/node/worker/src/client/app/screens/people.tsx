@@ -1,15 +1,19 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
+import { t } from "/app/locale.js";
+import type { Key } from "../../../i18n/catalog.ts";
 import { Nothing, Scroller } from "../chrome.tsx";
+import { count, date, dateTime } from "../format.ts";
 import {
   GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam,
   revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
   type PersonRow, type TeamRow,
-  type AddressRemoval, type AddressRouting, type MailboxQueue,
+  type AddressRemoval, type AddressRouting, type MailboxQueue, type Said,
 } from "../api.ts";
+import { NodeWords, marked, sentence } from "../words.tsx";
 import { addressFrom, arrivals, nodeDomains, ownAddressOn } from "./people-derive.ts";
 
 /**
@@ -85,7 +89,7 @@ function relationsFor(person: PersonRow, objectId: string): Set<string> {
  */
 function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
   const [name, setName] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [made, setMade] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -95,33 +99,33 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
     setMade(null);
     const outcome = await createMailbox(name);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setMade(name.trim());
     setName("");
     await onCreated();
   }
 
   return (
-    <section className="people-teams" aria-label="A new mailbox">
-      <h2>Mailboxes</h2>
-      <p className="dim">
-        A shared inbox with its own queue. You may read and send from it as soon as it exists; grant others
-        below, and add the addresses it receives at.
-      </p>
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
-      {made === null ? null : <p className="notice" role="status">{made} exists. Add an address to it below.</p>}
+    <section className="people-teams" aria-label={t("people.mailboxes.label")}>
+      <h2>{t("people.mailboxes.heading")}</h2>
+      <p className="dim">{t("people.mailboxes.lede")}</p>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
+      {made === null ? null : <p className="notice" role="status">{t("people.mailboxes.made", { name: made })}</p>}
       <p className="field-row">
-        <label htmlFor="new-mailbox-name">Name</label>
+        <label htmlFor="new-mailbox-name">{t("people.mailboxes.name")}</label>
         {" "}
-        <input id="new-mailbox-name" value={name} placeholder="Invoices" onChange={(event) => setName(event.target.value)} />
+        <input id="new-mailbox-name" value={name} placeholder={t("people.mailboxes.placeholder")} onChange={(event) => setName(event.target.value)} />
         {" "}
         <button className="quiet" type="button" onClick={() => void create()} disabled={busy || name.trim() === ""}>
-          Create a mailbox
+          {t("people.mailboxes.create")}
         </button>
       </p>
     </section>
   );
 }
+
+/** The keys of an address's routing and removal outcomes, each a phrase with no parameters. */
+type OutcomeKey = Extract<Key, `people.routing.${string}` | `people.removal.${string}`>;
 
 /**
  * An address on a mailbox, in one act (25 September 2026). The Node writes the routing rule in the same
@@ -131,17 +135,25 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
  * sends the address somewhere else, `rule_disabled` the disabled rule this Node left alone, and `unconfirmed`
  * says what could not be checked, never that all is well.
  */
-const ROUTING_WORDS: Record<AddressRouting["state"], string | null> = {
-  catch_all: "routed by the domain's catch-all; nothing to do in Cloudflare",
-  rule_written: "routing rule written",
+const ROUTING_WORDS: Record<AddressRouting["state"], OutcomeKey | null> = {
+  catch_all: "people.routing.catch_all",
+  rule_written: "people.routing.rule_written",
   routed_elsewhere: null,
   rule_disabled: null,
   unconfirmed: null,
   not_written: null,
 };
 
-/** An address's routing in the Node's words: the state's own when it has one, the Node's detail whole otherwise. */
-const routingSaid = (routing: AddressRouting) => ROUTING_WORDS[routing.state] ?? routing.detail;
+/**
+ * An outcome's words: the state's own when it has some, the Node's detail whole otherwise, in `<NodeWords>`.
+ * `trim` drops the detail's own closing full stop, for a sentence that goes on after it.
+ */
+function outcomeSaid(key: OutcomeKey | null, detail: string, trim = false): ReactNode {
+  return key !== null ? t(key) : <NodeWords>{trim ? detail.replace(/\.$/, "") : detail}</NodeWords>;
+}
+
+/** An address's routing: the state's own words when it has some, the Node's detail whole otherwise. */
+const routingSaid = (routing: AddressRouting, trim = false) => outcomeSaid(ROUTING_WORDS[routing.state], routing.detail, trim);
 
 /**
  * An address typed as its local part, with the domain fixed beside it (28 September 2026): shown when this Node
@@ -180,7 +192,7 @@ function AddressField({
         : (
           <span className="address-pick">
             <span className="mono address-domain" aria-hidden="true">@</span>
-            <select aria-label={label === undefined ? "Domain" : `${label}: domain`} value={domain} disabled={disabled} onChange={(event) => onDomain(event.target.value)}>
+            <select aria-label={label === undefined ? t("people.address.domain") : t("people.address.domainOf", { label })} value={domain} disabled={disabled} onChange={(event) => onDomain(event.target.value)}>
               {domains.map((one) => <option key={one} value={one}>{one}</option>)}
             </select>
           </span>
@@ -193,7 +205,7 @@ function NewAddress({ boxes, domains, onAdded }: { boxes: MailboxQueue[]; domain
   const [local, setLocal] = useState("");
   const [picked, setPicked] = useState("");
   const [mailboxId, setMailboxId] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [routing, setRouting] = useState<{ address: string; routing: AddressRouting } | null>(null);
   const [busy, setBusy] = useState(false);
   // A domain picked before the list changed stays picked only while it is still on the list.
@@ -206,35 +218,35 @@ function NewAddress({ boxes, domains, onAdded }: { boxes: MailboxQueue[]; domain
     const chosen = mailboxId !== "" ? mailboxId : boxes.length === 1 ? boxes[0]!.id : undefined;
     const outcome = await addAddress(addressFrom(local, domain), chosen);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setRouting({ address: outcome.value.address.address, routing: outcome.value.routing });
     setLocal("");
     await onAdded();
   }
 
   return (
-    <section className="people-teams" aria-label="A new address">
-      <h3>Add an address</h3>
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+    <section className="people-teams" aria-label={t("people.address.label")}>
+      <h3>{t("people.address.heading")}</h3>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
       {routing === null ? null : (
         <p className="notice" role="status">
-          {routing.address}: {routingSaid(routing.routing)}
+          {sentence("people.address.outcome", { address: routing.address, outcome: routingSaid(routing.routing) })}
         </p>
       )}
       <p className="field-row">
-        <label htmlFor="new-address">Address</label>
+        <label htmlFor="new-address">{t("people.address.address")}</label>
         {" "}
         <AddressField id="new-address" domains={domains} local={local} domain={domain} onLocal={setLocal} onDomain={setPicked} />
         {" "}
         {boxes.length > 1 ? (
-          <select aria-label="Mailbox" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
-            <option value="">mailbox…</option>
+          <select aria-label={t("people.address.mailbox")} value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
+            <option value="">{t("people.address.pickMailbox")}</option>
             {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
           </select>
         ) : null}
         {" "}
         <button className="quiet" type="button" onClick={() => void add()} disabled={busy || local.trim() === "" || (boxes.length > 1 && mailboxId === "")}>
-          Add the address
+          {t("people.address.add")}
         </button>
       </p>
     </section>
@@ -248,16 +260,16 @@ function NewAddress({ boxes, domains, onAdded }: { boxes: MailboxQueue[]; domain
  * From choice; nothing new is read. Removing one says what became of its rule, in the same words adding
  * does, because an address gone from the Node while a rule still routes it is mail arriving for nobody.
  */
-const REMOVAL_WORDS: Record<AddressRemoval["state"], string | null> = {
-  catch_all: "removed; the domain's catch-all needed nothing",
-  rule_removed: "removed, and its routing rule deleted",
+const REMOVAL_WORDS: Record<AddressRemoval["state"], OutcomeKey | null> = {
+  catch_all: "people.removal.catch_all",
+  rule_removed: "people.removal.rule_removed",
   not_removed: null,
 };
 
 function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => Promise<void> }) {
   const [name, setName] = useState(box.name);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [said, setSaid] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
+  const [said, setSaid] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
   const addresses = box.addresses === null ? [] : box.addresses.split(",");
 
@@ -267,8 +279,8 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
     setSaid(null);
     const outcome = await renameMailbox(box.id, name);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setSaid(`renamed to ${name.trim()}`);
+    if (!outcome.ok) { setProblem(outcome); return; }
+    setSaid(t("people.mailbox.renamed", { name: name.trim() }));
     await onChanged();
   }
 
@@ -278,34 +290,37 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
     setSaid(null);
     const outcome = await removeAddress(address);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
-    setSaid(`${outcome.value.address.address}: ${REMOVAL_WORDS[outcome.value.routing.state] ?? outcome.value.routing.detail}`);
+    if (!outcome.ok) { setProblem(outcome); return; }
+    const { routing } = outcome.value;
+    setSaid(sentence("people.address.outcome", {
+      address: outcome.value.address.address, outcome: outcomeSaid(REMOVAL_WORDS[routing.state], routing.detail),
+    }));
     await onChanged();
   }
 
   return (
     <>
       <h2>{box.name}</h2>
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
       {said === null ? null : <p className="notice" role="status">{said}</p>}
       <p className="field-row">
-        <label htmlFor={`rename-${box.id}`}>Name</label>
+        <label htmlFor={`rename-${box.id}`}>{t("people.mailboxes.name")}</label>
         {" "}
         <input id={`rename-${box.id}`} value={name} onChange={(event) => setName(event.target.value)} />
         {" "}
         <button className="quiet" type="button" onClick={() => void rename()} disabled={busy || name.trim() === "" || name.trim() === box.name}>
-          Rename
+          {t("people.mailbox.rename")}
         </button>
       </p>
       {addresses.length === 0
-        ? <p className="dim">No address yet: nothing is routed here, and a send from it is refused until one is.</p>
+        ? <p className="dim">{t("people.mailbox.noAddress")}</p>
         : (
-          <ul className="grant-list" aria-label={`Addresses of ${box.name}`}>
+          <ul className="grant-list" aria-label={t("people.mailbox.addresses", { name: box.name })}>
             {addresses.map((address) => (
               <li key={address}>
                 <span className="mono">{address}</span>
                 {" "}
-                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>Remove</button>
+                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
               </li>
             ))}
           </ul>
@@ -315,7 +330,7 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
 }
 
 /** What became of the mailbox beside an invitation: made with its address and routing, or where it stopped. */
-type Beside = { ok: boolean; said: string };
+type Beside = { ok: boolean; said: ReactNode };
 
 /**
  * The invite bundle's second and third acts. Each refusal comes back as a sentence saying what did happen before
@@ -323,15 +338,13 @@ type Beside = { ok: boolean; said: string };
  */
 async function mailboxBeside(email: string, address: string): Promise<Beside> {
   const made = await createMailbox(email);
-  if (!made.ok) return { ok: false, said: `No mailbox was made: ${made.message}` };
+  if (!made.ok) return { ok: false, said: sentence("people.beside.noMailbox", { why: marked(made) }) };
   const added = await addAddress(address, made.mailboxId);
-  if (!added.ok) return { ok: false, said: `The mailbox ${email} was made, and has no address: ${added.message}` };
-  // The Node's detail ends in its own full stop; the words of a state with words of their own do not.
-  const routed = routingSaid(added.value.routing).replace(/\.$/, "");
+  if (!added.ok) return { ok: false, said: sentence("people.beside.noAddress", { email, why: marked(added) }) };
   return {
     ok: true,
-    said: `The mailbox ${email} was made, at ${added.value.address.address}: ${routed}. `
-      + `${email} holds nothing on it until they arrive and you grant it; you may read and send from it, as its creator.`,
+    // The Node's detail ends in its own full stop, and the sentence goes on after it; a state's own words do not.
+    said: sentence("people.beside.made", { email, address: added.value.address.address, routed: routingSaid(added.value.routing, true) }),
   };
 }
 
@@ -342,7 +355,7 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
   // null follows the invitee's own address while it is on one of this Node's domains; typing takes over.
   const [local, setLocal] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [minted, setMinted] = useState<{ secret: string; email: string; expiresAt: string } | null>(null);
   const [beside, setBeside] = useState<Beside | null>(null);
   const [busy, setBusy] = useState(false);
@@ -355,7 +368,7 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
   async function withdraw(id: string) {
     setProblem(null);
     const outcome = await revokeInvitation(id);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await onInvited();
   }
 
@@ -366,7 +379,7 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
     setBeside(null);
     const address = also ? mailboxAddress : null;
     const outcome = await invite(email.trim());
-    if (!outcome.ok) { setBusy(false); setProblem(outcome.message); return; }
+    if (!outcome.ok) { setBusy(false); setProblem(outcome); return; }
     setMinted({ secret: outcome.secret, email: outcome.email, expiresAt: outcome.expiresAt });
     if (address !== null) setBeside(await mailboxBeside(outcome.email, address));
     setBusy(false);
@@ -378,17 +391,14 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
   }
 
   return (
-    <section className="people-teams" aria-label="Invite somebody">
-      <h2>Invite somebody</h2>
-      <p className="dim">
-        They choose their own password, so you never see it. Hand them the secret however you already trust —
-        nothing is emailed. They arrive holding nothing until you grant access below.
-      </p>
+    <section className="people-teams" aria-label={t("people.invite.heading")}>
+      <h2>{t("people.invite.heading")}</h2>
+      <p className="dim">{t("people.invite.lede")}</p>
 
-      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
 
       <p className="field-row">
-        <label htmlFor="invite-email">Address</label>
+        <label htmlFor="invite-email">{t("people.invite.address")}</label>
         {" "}
         <input
           id="invite-email"
@@ -400,12 +410,12 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
       <p className="field-row">
         <label htmlFor="invite-mailbox">
           <input id="invite-mailbox" type="checkbox" checked={also} onChange={(event) => setAlso(event.target.checked)} />
-          {" "}Also give them a mailbox at
+          {" "}{t("people.invite.also")}
         </label>
         {" "}
         <AddressField
           id="invite-mailbox-address"
-          label="Their mailbox's address"
+          label={t("people.invite.theirAddress")}
           domains={domains}
           local={mailboxLocal}
           domain={mailboxDomain}
@@ -421,7 +431,7 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
           onClick={() => void send()}
           disabled={busy || email.trim() === "" || (also && !mailboxAddress.includes("@"))}
         >
-          Mint an invitation
+          {t("people.invite.mint")}
         </button>
       </p>
 
@@ -432,26 +442,23 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
       {minted === null ? null : (
         <div className="notice invite-secret" role="status">
           <p>
-            Give this to <span className="mono">{minted.email}</span>. It works once, until{" "}
-            {new Date(minted.expiresAt).toLocaleString()}.
+            {sentence("people.invite.give", { email: <span className="mono">{minted.email}</span>, until: dateTime(minted.expiresAt) })}
           </p>
           {/* Selectable, monospaced, and on its own line: this is going to be copied by hand. */}
           <p className="mono invite-value">{minted.secret}</p>
-          <p className="dim">
-            Shown once — only its hash is stored, so nothing can recover it. Mint another if it is lost, which
-            invalidates this one.
-          </p>
+          <p className="dim">{t("people.invite.once")}</p>
         </div>
       )}
 
       {invitations.isSuccess && invitations.data.invitations.length > 0 ? (
-        <Scroller label="Invited, not yet arrived">
+        <Scroller label={t("people.invited.label")}>
           <table>
-            <caption className="dim">Invited, and not yet arrived.</caption>
+            <caption className="dim">{t("people.invited.caption")}</caption>
             <thead>
               <tr>
-                <th scope="col">Address</th><th scope="col">Invited by</th>
-                <th scope="col">Expires</th><th scope="col">State</th><th scope="col">Withdraw</th>
+                <th scope="col">{t("people.invited.address")}</th><th scope="col">{t("people.invited.by")}</th>
+                <th scope="col">{t("people.invited.expires")}</th><th scope="col">{t("people.invited.state")}</th>
+                <th scope="col">{t("people.invited.withdraw")}</th>
               </tr>
             </thead>
             <tbody>
@@ -459,12 +466,12 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
                 <tr key={row.id}>
                   <td className="mono">{row.email}</td>
                   <td className="mono dim">{row.invitedBy}</td>
-                  <td className="mono">{new Date(row.expiresAt).toLocaleString()}</td>
+                  <td className="mono">{dateTime(row.expiresAt)}</td>
                   {/* An expired invitation is kept and shown as expired, so an administrator can see what
                       went stale rather than wondering whether they ever sent it. */}
-                  <td>{row.expired ? <span className="dim">expired — mint another</span> : "waiting"}</td>
+                  <td>{row.expired ? <span className="dim">{t("people.invited.expired")}</span> : t("people.invited.waiting")}</td>
                   <td>
-                    <button type="button" className="linkish" onClick={() => void withdraw(row.id)}>Withdraw</button>
+                    <button type="button" className="linkish" onClick={() => void withdraw(row.id)}>{t("people.invited.withdraw")}</button>
                   </td>
                 </tr>
               ))}
@@ -497,7 +504,7 @@ const READ_AND_SEND = ["mailbox.content.read", "send.propose"] as const satisfie
 function Arrivals({ people, boxes, onChanged }: {
   people: PersonRow[]; boxes: MailboxQueue[]; onChanged: () => Promise<void>;
 }) {
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
   const asked = arrivals(people, boxes, new Set()).length > 0;
   const withdrawals = useWithdrawals(asked);
@@ -507,7 +514,10 @@ function Arrivals({ people, boxes, onChanged }: {
     setProblem(null);
     for (const relation of READ_AND_SEND) {
       const outcome = await grant(person.id, relation, box.id);
-      if (!outcome.ok) { setProblem(`${relation} on ${box.name} was not granted to ${person.email}: ${outcome.message}`); break; }
+      if (!outcome.ok) {
+        setProblem(sentence("people.arrival.refused", { relation, mailbox: box.name, email: person.email, why: marked(outcome) }));
+        break;
+      }
     }
     setBusy(false);
     await onChanged();
@@ -519,10 +529,7 @@ function Arrivals({ people, boxes, onChanged }: {
     return (
       <>
         {refused}
-        <p className="notice bad" role="alert">
-          People offers nobody the mailbox at their own address while the withdrawals of access cannot be read, so
-          as not to offer back one an administrator took away: {withdrawals.error.message}
-        </p>
+        <p className="notice bad" role="alert">{sentence("people.arrival.unread", { why: marked(withdrawals.error) })}</p>
       </>
     );
   }
@@ -531,21 +538,19 @@ function Arrivals({ people, boxes, onChanged }: {
     <>
       {refused}
       {withdrawals.data.truncated ? (
-        <p className="dim">
-          Only the newest withdrawals of access were read; a mailbox withdrawn from somebody before those may be
-          offered below again.
-        </p>
+        <p className="dim">{t("people.arrival.truncated")}</p>
       ) : null}
       {arrivals(people, boxes, withdrawals.data.withdrawn).map(({ person, box, address }) => (
         <div key={`${person.id}-${box.id}`} className="notice">
           <p>
-            <span className="mono">{person.email}</span> has an account and holds nothing directly on the mailbox at
-            that address. Give them the mailbox <span className="mono">{address}</span>?
+            {sentence("people.arrival.offer", {
+              email: <span className="mono">{person.email}</span>, address: <span className="mono">{address}</span>,
+            })}
           </p>
           <ul className="grant-list">
             {READ_AND_SEND.map((relation) => (
               <li key={relation}>
-                <span className="mono">{relation}</span>
+                <span className="mono"><NodeWords>{relation}</NodeWords></span>
                 {" — "}
                 <span className="dim">{GRANTABLE_RELATIONS.find((entry) => entry.relation === relation)?.what}</span>
               </li>
@@ -553,7 +558,7 @@ function Arrivals({ people, boxes, onChanged }: {
           </ul>
           <p>
             <button className="quiet" type="button" onClick={() => void give(person, box)} disabled={busy}>
-              Grant {READ_AND_SEND.join(" and ")} on {box.name}
+              {t("people.arrival.grant", { read: READ_AND_SEND[0], send: READ_AND_SEND[1], mailbox: box.name })}
             </button>
           </p>
         </div>
@@ -572,7 +577,7 @@ function Grants({
   relations: ReadonlyArray<(typeof GRANTABLE_RELATIONS)[number]>;
   onChanged: () => Promise<void>;
 }) {
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const held = relationsFor(person, objectId);
 
@@ -583,13 +588,13 @@ function Grants({
       ? await grant(person.id, relation, objectId)
       : await revokeAccess(person.id, relation, objectId);
     setBusy(null);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await onChanged();
   }
 
   return (
     <td>
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
       <ul className="grant-list">
         {relations.map((entry) => {
           /*
@@ -612,7 +617,7 @@ function Grants({
                   onChange={(event) => void toggle(entry.relation, event.target.checked)}
                 />
                 {" "}
-                <span className="mono">{entry.relation}</span>
+                <span className="mono"><NodeWords>{entry.relation}</NodeWords></span>
                 {" — "}
                 <span className="dim">{entry.what}</span>
               </label>
@@ -648,10 +653,10 @@ function Roster({
     <tr>
       <td>
         <label className="field-row" htmlFor={`rename-${team.id}`}>
-          <input id={`rename-${team.id}`} aria-label={`Name of ${team.name}`} value={name} onChange={(event) => setName(event.target.value)} />
+          <input id={`rename-${team.id}`} aria-label={t("people.teams.nameOf", { name: team.name })} value={name} onChange={(event) => setName(event.target.value)} />
           {" "}
           <button type="button" className="linkish" onClick={() => void onRename(team.id, name)} disabled={name.trim() === "" || name.trim() === team.name}>
-            Rename
+            {t("people.teams.rename")}
           </button>
         </label>
       </td>
@@ -688,7 +693,7 @@ function Teams({ people }: { people: PersonRow[] }) {
   const teams = useTeams();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["teams"] });
@@ -698,7 +703,7 @@ function Teams({ people }: { people: PersonRow[] }) {
   async function add() {
     setProblem(null);
     const outcome = await createTeam(name);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setName("");
     await refresh();
   }
@@ -706,44 +711,41 @@ function Teams({ people }: { people: PersonRow[] }) {
   async function member(teamId: string, userId: string, on: boolean) {
     setProblem(null);
     const outcome = await setTeamMember(teamId, userId, on);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await refresh();
   }
 
   async function rename(teamId: string, newName: string) {
     setProblem(null);
     const outcome = await renameTeam(teamId, newName);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await refresh();
   }
 
   return (
-    <section className="people-teams" aria-label="Teams">
-      <h2>Teams</h2>
+    <section className="people-teams" aria-label={t("people.teams.heading")}>
+      <h2>{t("people.teams.heading")}</h2>
       {/*
         Teams exist for one reason and saying it is more useful than a generic description: an approval stage
         can require somebody *from finance, then somebody from legal* (#73, §18). A team with no stage citing
         it changes nothing, which is why this sits below access rather than above it.
       */}
-      <p className="dim">
-        A team is a group an approval stage can require a decision from — one from finance, then one from
-        legal. A team nothing cites changes nothing.
-      </p>
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      <p className="dim">{t("people.teams.lede")}</p>
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
 
       <p className="field-row">
-        <label htmlFor="new-team-name">New team</label>
+        <label htmlFor="new-team-name">{t("people.teams.new")}</label>
         {" "}
         <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
         {" "}
-        <button className="quiet" type="button" onClick={() => void add()} disabled={name.trim() === ""}>Create</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={name.trim() === ""}>{t("people.teams.create")}</button>
       </p>
 
       {teams.isSuccess && teams.data.teams.length > 0 ? (
-        <Scroller label="Teams and their members">
+        <Scroller label={t("people.teams.label")}>
           <table>
             <thead>
-              <tr><th scope="col">Team</th><th scope="col">Members</th></tr>
+              <tr><th scope="col">{t("people.teams.team")}</th><th scope="col">{t("people.teams.members")}</th></tr>
             </thead>
             <tbody>
               {teams.data.teams.map((team) => (
@@ -753,7 +755,7 @@ function Teams({ people }: { people: PersonRow[] }) {
           </table>
         </Scroller>
       ) : (
-        <Nothing kind="empty" detail="No teams. Approval stages can name one once it exists." />
+        <Nothing kind="empty" detail={t("people.teams.none")} />
       )}
     </section>
   );
@@ -775,7 +777,7 @@ export function Passkeys() {
   const passkeys = usePasskeys();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function add() {
@@ -783,7 +785,7 @@ export function Passkeys() {
     setProblem(null);
     const outcome = await registerPasskey(label.trim() || "passkey");
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setLabel("");
     await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
   }
@@ -793,46 +795,41 @@ export function Passkeys() {
     setProblem(null);
     const outcome = await forgetPasskey(credentialId);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
   }
 
   const held = passkeys.data?.passkeys ?? [];
 
   return (
-    <section className="settings-block passkeys" aria-label="Your passkeys">
-      <h2>Your passkeys</h2>
-      <p className="dim">
-        A passkey signs you in with your device instead of a password. Your password still works — it is the
-        fallback, and it is what gets you back in if you lose every device.
-      </p>
+    <section className="settings-block passkeys" aria-label={t("people.passkeys.heading")}>
+      <h2>{t("people.passkeys.heading")}</h2>
+      <p className="dim">{t("people.passkeys.lede")}</p>
 
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
 
       {held.length === 0
-        ? <p className="dim">None yet. This account signs in with a password only.</p>
+        ? <p className="dim">{t("people.passkeys.none")}</p>
         : (
           <table>
-            <caption className="dim">
-              “Last used” is what tells you which of these you can remove without locking yourself out.
-            </caption>
+            <caption className="dim">{t("people.passkeys.caption")}</caption>
             <thead>
               <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Added</th>
-                <th scope="col">Last used</th>
-                <th scope="col">Remove</th>
+                <th scope="col">{t("people.passkeys.name")}</th>
+                <th scope="col">{t("people.passkeys.added")}</th>
+                <th scope="col">{t("people.passkeys.lastUsed")}</th>
+                <th scope="col">{t("people.passkeys.remove")}</th>
               </tr>
             </thead>
             <tbody>
               {held.map((passkey) => (
                 <tr key={passkey.id}>
                   <td>{passkey.label}</td>
-                  <td className="mono">{new Date(passkey.createdAt).toLocaleDateString()}</td>
+                  <td className="mono">{date(passkey.createdAt)}</td>
                   <td className="mono">
                     {passkey.lastUsedAt === null
-                      ? <span className="dim">never</span>
-                      : new Date(passkey.lastUsedAt).toLocaleDateString()}
+                      ? <span className="dim">{t("people.passkeys.never")}</span>
+                      : date(passkey.lastUsedAt)}
                   </td>
                   <td>
                     <button
@@ -841,7 +838,7 @@ export function Passkeys() {
                       onClick={() => void forget(passkey.id)}
                       disabled={busy}
                     >
-                      Remove
+                      {t("people.passkeys.remove")}
                     </button>
                   </td>
                 </tr>
@@ -851,16 +848,16 @@ export function Passkeys() {
         )}
 
       <label className="field-row" htmlFor="passkey-label">
-        <span>Name this device</span>
+        <span>{t("people.passkeys.device")}</span>
         <input
           id="passkey-label"
           value={label}
-          placeholder="work laptop"
+          placeholder={t("people.passkeys.placeholder")}
           onChange={(event) => setLabel(event.target.value)}
         />
       </label>
       <p>
-        <button className="quiet" type="button" onClick={() => void add()} disabled={busy}>Add a passkey</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy}>{t("people.passkeys.add")}</button>
       </p>
     </section>
   );
@@ -887,8 +884,8 @@ export function People() {
 
   const heading = (
     <header className="ledger-head">
-      <h1>People</h1>
-      {people.isSuccess ? <p className="dim mono">{people.data.people.length}</p> : null}
+      <h1>{t("route./people")}</h1>
+      {people.isSuccess ? <p className="dim mono">{count(people.data.people.length)}</p> : null}
     </header>
   );
 
@@ -897,10 +894,7 @@ export function People() {
     return (
       <>
         {heading}
-        <Nothing
-          kind="empty"
-          detail="No directory, or you do not hold org.admin. Granting access is an administrator's act."
-        />
+        <Nothing kind="empty" detail={t("people.forbidden")} />
       </>
     );
   }
@@ -915,17 +909,17 @@ export function People() {
   return (
     <>
       {heading}
-      <p className="dim">Everybody with an account on this Node.</p>
+      <p className="dim">{t("people.lede")}</p>
 
       <Arrivals people={rows} boxes={boxes} onChanged={refresh} />
 
       {boxes.map((box) => (
-        <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
+        <section key={box.id} className="people-mailbox" aria-label={t("people.mailbox.access", { name: box.name })}>
           <MailboxHead box={box} onChanged={refresh} />
-          <Scroller label={`Who may do what in ${box.name}`}>
+          <Scroller label={t("people.mailbox.who", { name: box.name })}>
             <table>
               <thead>
-                <tr><th scope="col">Person</th><th scope="col">May</th></tr>
+                <tr><th scope="col">{t("people.col.person")}</th><th scope="col">{t("people.col.may")}</th></tr>
               </thead>
               <tbody>
                 {rows.map((person) => (
@@ -946,12 +940,12 @@ export function People() {
         </section>
       ))}
 
-      <section className="people-mailbox" aria-label="Administering the organization">
-        <h2>The organization</h2>
-        <Scroller label="Who administers the organization">
+      <section className="people-mailbox" aria-label={t("people.org.label")}>
+        <h2>{t("people.org.heading")}</h2>
+        <Scroller label={t("people.org.who")}>
           <table>
             <thead>
-              <tr><th scope="col">Person</th><th scope="col">May</th></tr>
+              <tr><th scope="col">{t("people.col.person")}</th><th scope="col">{t("people.col.may")}</th></tr>
             </thead>
             <tbody>
               {rows.map((person) => (

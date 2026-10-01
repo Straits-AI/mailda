@@ -1,8 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
-import { decide, useApprovals, withdrawDecision, type ApprovalRow } from "../api.ts";
+import { dateTime } from "../format.ts";
+import { decide, useApprovals, withdrawDecision, type ApprovalRow, type Said } from "../api.ts";
+import { marked } from "../words.tsx";
 
 /**
  * What is waiting on you (#81).
@@ -34,99 +37,76 @@ import { decide, useApprovals, withdrawDecision, type ApprovalRow } from "../api
  * the domain and why.
  */
 
-/** Human words for a machine token. A reader should not have to learn the enum to use the screen. */
-const KIND_WORDS: Record<ApprovalRow["subjectKind"], { title: string; what: string }> = {
-  send_manifest: {
-    title: "A message waiting to go out",
-    what: "A policy asked for a second pair of eyes before this leaves.",
-  },
-  hold_lift: {
-    title: "Lifting a legal hold",
-    what: "Approving this ends the hold, and the mail it preserved becomes deletable again.",
-  },
-  supervised_read: {
-    title: "Reading somebody else's mail",
-    what: "Approving this lets the requester read a mailbox they hold no standing relation to. "
-      + "The person whose mailbox it is will be told when the matter closes (§7).",
-  },
-  ediscovery_export: {
-    title: "Exporting mail out of this Node",
-    what: "Approving this produces a copy of matching mail that leaves the system's own controls.",
-  },
-  domain_pause: {
-    title: "Stopping a domain's mail",
-    what: "Approving this stops every message to that domain until somebody lifts it.",
-  },
-};
-
 function when(at: string | null): string {
-  return at === null ? "—" : new Date(at).toLocaleString();
+  return at === null ? "—" : dateTime(at);
 }
 
 /** How far through the stages this request is, in words rather than a pair of numbers. */
 function progress(row: ApprovalRow): string {
-  if (row.stages.length === 0) return "one approval needed";
+  if (row.stages.length === 0) return t("approvals.needs.one");
   const total = row.stages.reduce((sum, stage) => sum + stage.count, 0);
   const stage = row.openStage === null ? row.stages.length : row.openStage;
-  const plural = total === 1 ? "" : "s";
   return row.stages.length === 1
-    ? `${total} approval${plural} needed`
-    : `stage ${stage} of ${row.stages.length} · ${total} approval${plural} in total`;
+    ? t("approvals.needs.single", { n: total })
+    : t("approvals.needs.staged", { n: total, stage, stages: row.stages.length });
 }
 
 function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void> }) {
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
-  const words = KIND_WORDS[row.subjectKind];
+  // Human words for the kind's token (`approvals.kind.<subjectKind>.*`): a reader should not have to learn the enum.
+  const title = t(`approvals.kind.${row.subjectKind}.title`);
 
   async function act(run: () => ReturnType<typeof decide>) {
     setBusy(true);
     setProblem(null);
     const outcome = await run();
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     await onDone();
   }
 
   return (
-    <article className="approval" aria-label={words.title}>
-      <h2>{words.title}</h2>
-      <p>{words.what}</p>
+    <article className="approval" aria-label={title}>
+      <h2>{title}</h2>
+      <p>{t(`approvals.kind.${row.subjectKind}.what`)}</p>
       <dl className="headers">
-        <dt>Subject</dt>
+        <dt>{t("approvals.subject")}</dt>
         <dd className="mono">{row.subjectId}</dd>
-        <dt>Asked by</dt>
+        <dt>{t("approvals.askedBy")}</dt>
         <dd className="mono">{row.actorUserId}</dd>
-        <dt>Asked</dt>
+        <dt>{t("approvals.asked")}</dt>
         <dd className="mono">{when(row.requestedAt)}</dd>
-        <dt>Lapses</dt>
+        <dt>{t("approvals.lapses")}</dt>
         {/*
           An approval can expire, and a send whose approval lapsed is refused terminally — "compose again,
           and the new message gets its own approval". Somebody deciding today needs to know they are the
           reason it will or will not make it, so the deadline is a header rather than a detail.
         */}
-        <dd className="mono">{row.expiresAt === null ? "does not lapse" : when(row.expiresAt)}</dd>
-        <dt>Needs</dt>
+        <dd className="mono">{row.expiresAt === null ? t("approvals.noLapse") : when(row.expiresAt)}</dd>
+        <dt>{t("approvals.needs")}</dt>
         <dd>{progress(row)}</dd>
       </dl>
 
-      {row.reason === null ? null : (
-        // The requester's own words. Present for a hold lift, a supervised read and a domain pause; a send
-        // carries none, because the reason it is being reviewed is the policy that matched.
-        <blockquote className="approval-reason">{row.reason}</blockquote>
+      {(row.reason ?? row.domainPause?.reason ?? null) === null ? null : (
+        // The requester's own words. Present for a hold lift and a supervised read; a domain pause's are on the pause
+        // (`src/approval-pending.ts` sends them as `domainPause.reason`); a send carries none, because the reason it is
+        // being reviewed is the rule that matched.
+        <blockquote className="approval-reason">{row.reason ?? row.domainPause?.reason}</blockquote>
       )}
 
       {row.supervised == null ? null : (
         <p className="dim mono">
-          scope {row.supervised.scope} · subject {row.supervised.subjectId}
-          {row.supervised.matterId === null ? " · no matter cited" : ` · matter ${row.supervised.matterId}`}
+          {row.supervised.matterId === null
+            ? t("approvals.supervised.noMatter", { scope: row.supervised.scope, subject: row.supervised.subjectId })
+            : t("approvals.supervised.matter", { scope: row.supervised.scope, subject: row.supervised.subjectId, matter: row.supervised.matterId })}
         </p>
       )}
-      {row.pause == null ? null : (
-        <p className="dim mono">domain {row.pause.domain}</p>
+      {row.domainPause == null ? null : (
+        <p className="dim mono">{t("approvals.domain", { domain: row.domainPause.domain })}</p>
       )}
 
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
 
       <p className="approval-actions">
         {row.decidedByMe ? (
@@ -137,9 +117,9 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
               stage twice, which `apd_one_per_person` refuses at the database anyway; showing it would be
               inviting a refusal.
             */}
-            <span className="dim">You have decided this. </span>
+            <span className="dim">{t("approvals.decided")}{" "}</span>
             <button className="quiet" type="button" onClick={() => void act(() => withdrawDecision(row.id))} disabled={busy}>
-              Take my decision back
+              {t("approvals.takeBack")}
             </button>
           </>
         ) : (
@@ -150,11 +130,11 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
               onClick={() => void act(() => decide(row.id, "approve"))}
               disabled={busy}
             >
-              Approve
+              {t("approvals.approve")}
             </button>
             {" "}
             <button className="quiet" type="button" onClick={() => void act(() => decide(row.id, "deny"))} disabled={busy}>
-              Deny
+              {t("approvals.deny")}
             </button>
           </>
         )}
@@ -177,16 +157,16 @@ export function Approvals() {
 
   const heading = (
     <header className="ledger-head">
-      <h1>Approvals</h1>
+      <h1>{t("route./approvals")}</h1>
       {approvals.isSuccess
-        ? <p className="dim mono">{approvals.data.approvals.length} waiting on you</p>
+        ? <p className="dim mono">{t("approvals.waiting", { n: approvals.data.approvals.length })}</p>
         : null}
     </header>
   );
 
   if (approvals.isPending) return <>{heading}<Nothing kind="loading" /></>;
   if (approvals.isError) {
-    return <>{heading}<Nothing kind="failed" detail={approvals.error.message} /></>;
+    return <>{heading}<Nothing kind="failed" detail={marked(approvals.error)} /></>;
   }
 
   const rows = approvals.data.approvals;
@@ -198,7 +178,7 @@ export function Approvals() {
      * about whether the organization has pending approvals — and claiming otherwise would be the interface
      * making §5C's mistake, where a refused read reads as an absent one.
      */
-    return <>{heading}<Nothing kind="empty" detail="Nothing is waiting on you to decide." /></>;
+    return <>{heading}<Nothing kind="empty" detail={t("approvals.empty")} /></>;
   }
 
   return (

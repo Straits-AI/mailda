@@ -3,8 +3,8 @@ import type { Twin } from "../catalog.ts";
 
 /**
  * The labels are the glossary's confirmed words (`glossary.ts`, the `send.*`, `delivery.*` and `policy-hold`
- * rows, bound to these keys). The notes are proposed. "policy" is 规则 here although the English notes still say
- * policy (D1, fixed in English with the Rules screen in layer 2b). "The mail service" is 邮件服务商, the provider,
+ * rows, bound to these keys). The notes are proposed. "policy" is 规则 here, the Rules screen's word, which the
+ * English notes say too since D1 (layer 2b). "The mail service" is 邮件服务商, the provider,
  * as in 服务商拒收. At the delivery scale a refusal by the receiving server is 退信, never 拒收.
  */
 export const delivery: Twin<typeof source> = {
@@ -87,7 +87,7 @@ export const delivery: Twin<typeof source> = {
   "send.reason.domain_paused": "域名已暂停",
   "send.reason.domain_paused.note":
     "两位管理员暂停了从此域名发出的所有邮件，他们给出的理由写在这封邮件上。本节点没有移交它；没有人取消它，也从未向邮件服务商提交。" +
-    "任何一位管理员都可以独自恢复这个域名（被错误暂停的域名，危害每分钟都在增加），之后需要重新撰写这封邮件，因为已定稿的邮件永远不会被修改。",
+    "任何一位管理员都可以独自解除暂停（被错误暂停的域名，危害每分钟都在增加），之后需要重新撰写这封邮件，因为已定稿的邮件永远不会被修改。",
   "send.reason.approval_unsatisfiable": "无法审批",
   "send.reason.approval_unsatisfiable.note":
     "一条规则要求的审批没有人能给出：在此邮箱上拥有 approval.decide 的人数不足以满足规则要求的各个阶段，而邮件的作者永远没有资格批准自己的邮件。" +

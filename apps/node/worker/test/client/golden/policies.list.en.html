@@ -1,0 +1,72 @@
+<header class="ledger-head">
+<h1>Rules</h1>
+<p class="new-message">
+<button type="button" class="primary">New rule</button>
+</p>
+</header>
+<pre class="notice bad butler-findings" role="alert">Refused, for the test: the four-part message the Node writes.</pre>
+<div class="scroller" tabindex="0" role="region" aria-label="Rules">
+<table>
+<caption class="dim">What each rule does, in the order a reader meets it. A message is decided by the strictest rule that matches it, not the first.</caption>
+<thead>
+<tr>
+<th scope="col">Rule</th>
+<th scope="col">What it does</th>
+<th scope="col">Version</th>
+<th scope="col">Since</th>
+<th scope="col">Edit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rule every</td>
+<td>Every message goes as normal.</td>
+<td class="mono">v4</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>rule outside</td>
+<td>Mail from Support, to anyone outside, as a new message needs an approval before it goes.</td>
+<td class="mono">v4</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>rule inside</td>
+<td>Mail from mbx_gone, written by usr_wang, to colleagues only, as a reply is held for a person to release.</td>
+<td class="mono">v4</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>rule dmarc</td>
+<td>Mail answering mail its sender's domain disowned, once this Node has handed over 500 today is denied by this rule.</td>
+<td class="mono">v4</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Open</button>
+</td>
+</tr>
+<tr>
+<td>rule clean</td>
+<td>Mail to anyone outside, not answering disowned mail is denied by this rule. <span class="dim">(unpublished — it decides nothing yet)</span>
+</td>
+<td class="dim">draft</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="inline-actions">
+<button type="button" class="primary">Publish</button>
+<button type="button" class="linkish">Open</button>
+</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

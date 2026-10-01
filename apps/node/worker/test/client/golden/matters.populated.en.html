@@ -1,0 +1,270 @@
+<header class="ledger-head">
+<h1>Matters</h1>
+<p class="dim mono">1 open</p>
+</header>
+<p class="dim">A matter, and what it authorises. Mail is held so it cannot be deleted, a colleague’s mailbox may be read for a bounded time, a copy may be taken. Closing the matter is what makes the notice to the person who was read about fall due (§7).</p>
+<section class="matter-block" aria-label="Open a matter">
+<h2>Matters</h2>
+<div class="limits-ask">
+<label class="field-row" for="matter-type">
+<span>What kind</span>
+<select id="matter-type">
+<option value="legal_hold">Preserving mail for a legal obligation.</option>
+<option value="security_incident">Investigating a compromise or a misuse of an account.</option>
+<option value="departure_handover">Passing on the work of somebody who has left.</option>
+<option value="regulatory_request">Answering a regulator.</option>
+</select>
+</label>
+<label class="field-row" for="matter-description">
+<span>Describe it</span>
+<input id="matter-description" value="">
+</label>
+<button class="quiet" type="button" disabled="">Open a matter</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Matters">
+<table>
+<thead>
+<tr>
+<th scope="col">Matter</th>
+<th scope="col">Kind</th>
+<th scope="col">Opened</th>
+<th scope="col">State</th>
+<th scope="col">Close</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Phished invoice<br>
+<span class="dim mono">mat_open</span>
+</td>
+<td>security incident</td>
+<td class="mono">[clock]</td>
+<td>
+<span>open</span>
+</td>
+<td>
+<button type="button" class="linkish">Close</button>
+</td>
+</tr>
+<tr>
+<td>Ana leaves<br>
+<span class="dim mono">mat_done</span>
+</td>
+<td>departure handover</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="dim">closed [clock]</span>
+</td>
+<td>
+<span class="dim">—</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section class="matter-block" aria-label="Legal holds">
+<h2>Held mail</h2>
+<p class="dim">While a mailbox is held, nothing in it can be deleted — not by a person, not by the reconciler. Lifting a hold takes two other people.</p>
+<div class="limits-ask">
+<label class="field-row" for="hold-mailbox">
+<span>Mailbox</span>
+<select id="hold-mailbox">
+<option value="">choose…</option>
+<option value="mbx_test">Support</option>
+</select>
+</label>
+<label class="field-row" for="hold-matter">
+<span>Under which matter</span>
+<select id="hold-matter">
+<option value="">no matter yet</option>
+<option value="mat_open">Phished invoice</option>
+</select>
+</label>
+<button class="quiet" type="button" disabled="">Hold this mailbox</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Holds">
+<table>
+<thead>
+<tr>
+<th scope="col">Mailbox</th>
+<th scope="col">Matter</th>
+<th scope="col">Since</th>
+<th scope="col">Lift</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">mbx_test</td>
+<td class="mono dim">mat_open</td>
+<td class="mono">[clock]</td>
+<td>
+<button type="button" class="linkish">Ask to lift</button>
+</td>
+</tr>
+<tr>
+<td class="mono">mbx_gone<span class="dim"> (mailbox gone)</span>
+</td>
+<td class="mono dim">none</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="dim">a lift is waiting on two approvals</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section class="matter-block" aria-label="Supervised reading">
+<h2>Reading somebody else’s mail</h2>
+<p class="dim">A time-boxed grant to read a mailbox you hold nothing on. Two people have to approve it, neither of them you, and it stops at its expiry — renewal is a new request, because time is part of what was approved.</p>
+<div class="limits-ask">
+<label class="field-row" for="read-mailbox">
+<span>Mailbox</span>
+<select id="read-mailbox">
+<option value="">choose…</option>
+<option value="mbx_test">Support</option>
+</select>
+</label>
+<label class="field-row" for="read-scope">
+<span>How much</span>
+<select id="read-scope">
+<option value="metadata">Senders, subjects and dates. Not the messages.</option>
+<option value="content">The messages themselves.</option>
+</select>
+</label>
+<label class="field-row" for="read-hours">
+<span>For how long (hours)</span>
+<input id="read-hours" min="1" type="number" value="24">
+</label>
+<label class="field-row" for="read-matter">
+<span>Under which matter</span>
+<select id="read-matter">
+<option value="">no matter yet</option>
+<option value="mat_open">Phished invoice</option>
+</select>
+</label>
+<button class="quiet" type="button" disabled="">Ask to read</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Supervised reads">
+<table>
+<thead>
+<tr>
+<th scope="col">Who</th>
+<th scope="col">Mailbox</th>
+<th scope="col">How much</th>
+<th scope="col">Until</th>
+<th scope="col">State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">usr_wang</td>
+<td class="mono">mbx_test</td>
+<td>content</td>
+<td class="mono">[clock]</td>
+<td>
+<span>reading now</span>
+</td>
+</tr>
+<tr>
+<td class="mono">usr_lee</td>
+<td class="mono">mbx_test</td>
+<td>metadata</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="dim">waiting on two approvals</span>
+</td>
+</tr>
+<tr>
+<td class="mono">usr_kim</td>
+<td class="mono">mbx_test</td>
+<td>metadata</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="dim">expired</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section class="matter-block" aria-label="Exports">
+<h2>Copies taken out</h2>
+<p class="dim">An export produces mail that leaves this Node’s controls. It cites a matter, it is approved before it runs, and what it emitted is counted.</p>
+<div class="limits-ask">
+<label class="field-row" for="export-mailbox">
+<span>Mailbox</span>
+<select id="export-mailbox">
+<option value="">choose…</option>
+<option value="mbx_test">Support</option>
+</select>
+</label>
+<label class="field-row" for="export-matter">
+<span>Under which matter</span>
+<select id="export-matter">
+<option value="">choose…</option>
+<option value="mat_open">Phished invoice</option>
+</select>
+</label>
+<label class="field-row" for="export-max">
+<span>At most</span>
+<input id="export-max" class="mono" min="1" inputmode="numeric" type="number" value="100">
+</label>
+<button class="quiet" type="button" disabled="">Ask to export</button>
+</div>
+<div class="scroller" tabindex="0" role="region" aria-label="Copies taken out">
+<table>
+<thead>
+<tr>
+<th scope="col">Matter</th>
+<th scope="col">Mailbox</th>
+<th scope="col">Asked by</th>
+<th scope="col">State</th>
+<th scope="col" class="num">Messages</th>
+<th scope="col">Run</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono dim">mat_open</td>
+<td class="mono">mbx_test</td>
+<td class="mono">usr_me</td>
+<td>approved</td>
+<td class="num mono">0 of 100</td>
+<td>
+<button type="button" class="linkish">Run</button>
+</td>
+</tr>
+<tr>
+<td class="mono dim">mat_open</td>
+<td class="mono">mbx_test</td>
+<td class="mono">usr_me</td>
+<td>running<span class="dim"> · paused at a page</span>
+</td>
+<td class="num mono">20 of 50</td>
+<td>
+<button type="button" class="linkish">Run</button>
+</td>
+</tr>
+<tr>
+<td class="mono dim">mat_open</td>
+<td class="mono">mbx_test</td>
+<td class="mono">usr_me</td>
+<td>completed</td>
+<td class="num mono">2 of 10</td>
+<td>
+<span class="dim">[clock]</span> · <a class="mono" href="/api/exports/exp_done/objects/manifest.json">manifest.json</a> · <ul class="export-objects">
+<li>
+<a class="mono" href="/api/exports/exp_done/objects/rcp_1.eml">rcp_1.eml</a> <span class="dim mono">1,024 bytes</span>
+</li>
+<li>
+<a class="mono" href="/api/exports/exp_done/objects/rcp_2.eml">rcp_2.eml</a> <span class="dim mono">1 byte</span>
+</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>

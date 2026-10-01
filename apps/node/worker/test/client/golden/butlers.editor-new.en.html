@@ -1,0 +1,39 @@
+<header class="ledger-head">
+<h2>new butler</h2>
+<button type="button" class="linkish">Close</button>
+</header>
+<fieldset class="field-row butler-format">
+<legend>Format</legend>
+<label for="butler-format-yaml">
+<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> yaml</label>
+<label for="butler-format-json">
+<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> json</label>
+<span class="dim">which parser reads the source below. Switching it does not rewrite your text</span>
+</fieldset>
+<label class="field-row" for="butler-source">
+<span>Source</span>
+<textarea id="butler-source" class="butler-source mono" rows="18" spellcheck="false">
+</textarea>
+</label>
+<p class="butler-actions">
+<button class="quiet" type="button">Save draft</button> <button type="button" class="primary" disabled="">Publish</button>
+<span class="dim"> nothing saved yet</span>
+</p>
+<section class="butler-dry" aria-label="Dry run">
+<h3>Dry run</h3>
+<p class="dim">A dry run walks this program over what a real delivery gave a real run, and this Butler has not run yet. Publish it and send it something, then come back — the walk below causes nothing, so it is safe to do afterwards as often as you like.</p>
+</section>
+<table>
+<caption class="dim">Versions — publication is the versioning event, and a published one is frozen</caption>
+<thead>
+<tr>
+<th scope="col">Version</th>
+<th scope="col">State</th>
+<th scope="col">Published</th>
+<th scope="col">By</th>
+<th scope="col">AST sha256</th>
+</tr>
+</thead>
+<tbody>
+</tbody>
+</table>

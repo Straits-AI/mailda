@@ -1,7 +1,9 @@
 import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
 import { t } from "/app/locale.js";
-import type { AddressRemoval, AddressRouting, ProviderRoutingRules, ProviderVerifiedDestinations } from "@mailda/contract/schemas";
+import type {
+  AddressRemoval, AddressRouting, MatterType, ProviderRoutingRules, ProviderVerifiedDestinations,
+} from "@mailda/contract/schemas";
 export type { AddressRemoval, AddressRouting };
 import {
   EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, PLACES, path as routePath, route,
@@ -1419,7 +1421,8 @@ export interface ApprovalRow {
   /** The requester's own words, where the subject kind carries any. NULL for a send. */
   reason: string | null;
   supervised?: { grantId: string; subjectId: string; scope: string; matterId: string | null } | null;
-  pause?: { pauseId: string; domain: string; reason: string } | null;
+  /** The field `src/approval-pending.ts` sends. Read as `pause` until 1 October 2026, so no card showed the domain. */
+  domainPause?: { pauseId: string; domain: string; reason: string } | null;
 }
 
 export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Error> {
@@ -1686,9 +1689,6 @@ export const liftSuppression = (address: string, reason: string) =>
   act(at("POST", "/api/suppressions/lift"), "POST", { address, reason });
 
 /* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
-
-/** `MATTER_TYPES` in `src/matters.ts`, which the Node refuses anything outside of. */
-type MatterType = "legal_hold" | "security_incident" | "departure_handover" | "regulatory_request";
 
 /** Each matter type and why one is opened; `what` is read from the catalog when shown, as `GRANTABLE_RELATIONS` does. */
 export const MATTER_TYPES = [

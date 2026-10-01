@@ -48,6 +48,11 @@ import { SUPERVISED_SCOPES } from "../../src/supervised.ts";
  */
 
 const workerDir = join(import.meta.dirname, "..", "..");
+/**
+ * Where `MATTER_TYPES` and `EXPORT_STATES` are declared since the owner's round three (G12): the contract, so the
+ * interface keys their words by the same list `src/matters.ts` and `src/exports.ts` import.
+ */
+const CONTRACT = "../../../packages/contract/src/schemas.ts";
 
 /** Every `.ts`/`.tsx` under a directory, recursively. Same shape as `content-deletion-world.test.ts`. */
 function sourceFiles(dir: string): string[] {
@@ -140,7 +145,7 @@ function writersOf(table: string): string[] {
 }
 
 describe("the matter type enum is a constraint rather than a convention", () => {
-  const declared = declaredIn("src/matters.ts", "MATTER_TYPES");
+  const declared = declaredIn(CONTRACT, "MATTER_TYPES");
 
   it("is extractable and agrees with the exported union", () => {
     // Anti-vacuity in both directions: if the extractor stops matching, every check below passes against an
@@ -289,15 +294,15 @@ describe("the supervised scope enum is a constraint rather than a convention", (
 /* ------------------------------------------------------------------ #65 ------------------------ */
 
 describe("the export state enum is a constraint rather than a convention", () => {
-  const declared = declaredIn("src/exports.ts", "EXPORT_STATES");
+  const declared = declaredIn(CONTRACT, "EXPORT_STATES");
 
   it("is extractable and names the four states an export can be in", () => {
     /*
      * **Extraction only, and unlike the three enums around it there is no import of the union beside it.**
      * `src/exports.ts` reaches `cloudflare:workers` through `evidence-store.ts` and the key vault, which the
      * Node pool cannot load — the same constraint that made `sql-statements.ts` a module with no `.sql`
-     * imports. Stated rather than worked around by shuffling the declaration into a module of its own, which
-     * would separate the state machine from the code that runs it for the benefit of one test.
+     * imports. The list itself is the contract's (`CONTRACT` above), which `src/exports.ts` imports, so the
+     * compiler holds the module to it and this reads the declaration where it is.
      *
      * What replaces the import is **behavioural** and lives in the workerd pool:
      * `test/ediscovery-export.test.ts` — *"reaches every state the union declares"* — drives a real export

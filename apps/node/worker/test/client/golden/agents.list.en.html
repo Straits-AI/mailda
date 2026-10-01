@@ -1,0 +1,250 @@
+<section class="ledger" aria-label="Agents">
+<header class="ledger-head">
+<h1>Agents</h1>
+</header>
+<p class="dim">A machine identity acting under a named person's authority. It can never hold more than that person holds, and every act it takes lands in the audit trail under both.</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Name</th>
+<th scope="col">Sponsor</th>
+<th scope="col">May do</th>
+<th scope="col">Where</th>
+<th scope="col">Standing</th>
+<th scope="col" class="num">Expires</th>
+<th scope="col">
+<span class="sr-only">Withdraw</span>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>agent agt_live<span class="mono dim block">agt_live</span>
+</td>
+<td class="mono dim">usr_ana</td>
+<td>
+<ul class="bare">
+<li>
+<span class="mono">mail.read</span>
+</li>
+</ul>
+</td>
+<td>
+<ul class="bare">
+<li>
+<span>Support</span>
+<span class="mono dim"> mailbox.content.read</span>
+</li>
+</ul>
+</td>
+<td>
+<span class="state state-audit-live">live</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td>
+<button type="button" class="linkish">Withdraw</button>
+</td>
+</tr>
+<tr>
+<td>agent agt_partial<span class="mono dim block">agt_partial</span>
+</td>
+<td class="mono dim">usr_ana</td>
+<td>
+<ul class="bare">
+<li>
+<span class="mono">mail.read</span>
+<span class="dim"> 3 of 4</span>
+</li>
+<li>
+<span class="mono">hold.read</span>
+</li>
+<li class="dim">2 pinned routes this Node no longer names: <span class="mono">GET /api/old, POST /api/older</span>
+</li>
+</ul>
+</td>
+<td>
+<ul class="bare">
+<li>
+<span>Support</span>
+<span class="mono dim"> mailbox.content.read</span>
+<span class="state state-audit-warn">not effective — the sponsor no longer holds this</span>
+</li>
+<li>
+<span>mbx_gone</span>
+<span class="mono dim"> message.export</span>
+</li>
+</ul>
+</td>
+<td>
+<span class="state state-audit-live">live</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td>
+<button type="button" class="linkish">Withdraw</button>
+</td>
+</tr>
+<tr>
+<td>agent agt_expired<span class="mono dim block">agt_expired</span>
+</td>
+<td class="mono dim">usr_ana</td>
+<td>
+<ul class="bare">
+<li>
+<span class="mono">mail.read</span>
+</li>
+</ul>
+</td>
+<td>
+<span class="dim">no mailbox</span>
+</td>
+<td>
+<span class="state state-audit-expired">expired</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td>
+</td>
+</tr>
+<tr>
+<td>agent agt_revoked<span class="mono dim block">agt_revoked</span>
+</td>
+<td class="mono dim">usr_ana</td>
+<td>
+<ul class="bare">
+<li>
+<span class="mono">mail.read</span>
+</li>
+</ul>
+</td>
+<td>
+<ul class="bare">
+<li>
+<span>Support</span>
+<span class="mono dim"> mailbox.content.read</span>
+</li>
+</ul>
+</td>
+<td>
+<span class="state state-audit-revoked">revoked</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td>
+</td>
+</tr>
+</tbody>
+</table>
+<h2>Mint an agent</h2>
+<form class="stack">
+<label class="field-row">
+<span>Acting for</span>
+<select>
+<option value="usr_ana">ana@example.test</option>
+<option value="usr_bob">bob@example.test</option>
+</select>
+<span class="dim">The agent can never exceed this person, and stops when their access does.</span>
+</label>
+<label class="field-row">
+<span>Name</span>
+<input placeholder="what this agent is for" required="" value="">
+</label>
+<fieldset>
+<legend>What it may do</legend>
+<label class="check">
+<input type="checkbox">
+<span class="mono">mail.read</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Read mail: list it, open a message, and fetch the original bytes.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">hold.read</span>
+<span class="dim">Read the legal holds in force.</span>
+</label>
+</fieldset>
+<fieldset>
+<legend>Which mailboxes, and how</legend>
+<p class="dim">Nothing is granted by default, and an agent can never exceed its sponsor: a relation the sponsor does not hold is refused when you mint, rather than written and silently never matching.</p>
+<div class="stack">
+<strong>Support</strong>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">mailbox.metadata.read</span>
+<span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">mailbox.content.read</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Read the messages themselves, including the original bytes.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">send.propose</span>
+<span class="dim">Draft and propose mail from this mailbox. Sealing a send is withheld from every machine.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">message.export</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Take copies of individual messages out of this mailbox.</span>
+</label>
+</div>
+<div class="stack">
+<strong>Billing</strong>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">mailbox.metadata.read</span>
+<span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
+</label>
+<label class="check">
+<input type="checkbox">
+<span class="mono">mailbox.content.read</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Read the messages themselves, including the original bytes.</span>
+</label>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">send.propose</span>
+<span class="dim">Draft and propose mail from this mailbox. Sealing a send is withheld from every machine.</span>
+</label>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">message.export</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Take copies of individual messages out of this mailbox.</span>
+</label>
+</div>
+<div class="stack">
+<strong>Legal</strong>
+<span class="dim">this person holds nothing here</span>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">mailbox.metadata.read</span>
+<span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
+</label>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">mailbox.content.read</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Read the messages themselves, including the original bytes.</span>
+</label>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">send.propose</span>
+<span class="dim">Draft and propose mail from this mailbox. Sealing a send is withheld from every machine.</span>
+</label>
+<label class="check dim">
+<input disabled="" type="checkbox">
+<span class="mono">message.export</span>
+<span class="state state-audit-warn">reaches message content</span>
+<span class="dim">Take copies of individual messages out of this mailbox.</span>
+</label>
+</div>
+</fieldset>
+<label class="field-row">
+<span>Expires after (days)</span>
+<input min="1" type="number" value="30">
+</label>
+<p class="dim">There is no refresh and no way to widen a ceiling later — re-minting is the renewal, and it issues a new token.</p>
+<button class="quiet" type="submit" disabled="">Mint agent</button>
+</form>
+</section>

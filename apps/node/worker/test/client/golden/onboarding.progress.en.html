@@ -1,0 +1,362 @@
+<!-- connected, all done -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">5</span> of <span class="mono num">5</span> steps done.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">mail.example.test</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">example.test</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">example.test</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">account Example Ltd</span>
+</li>
+</ol>
+</section>
+
+<!-- connected, account unnamed, nothing read -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">1</span> of <span class="mono num">5</span> steps done; next: an address to receive at.</p>
+<ol>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">doctor did not report on inbound routing</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">not read</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">not read</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">not read</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">account acc_one</span>
+</li>
+</ol>
+</section>
+
+<!-- connected, an unnamed account with no id, sources unreadable -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">1</span> of <span class="mono num">5</span> steps done; next: an address to receive at.</p>
+<ol>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">doctor could not be read</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">routing could not be read with the held token</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">delivery events could not be read with the held token</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">delivery events could not be read with the held token</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">account ?</span>
+</li>
+</ol>
+</section>
+
+<!-- connected, sources empty -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">1</span> of <span class="mono num">5</span> steps done; next: an address to receive at.</p>
+<ol>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">no address is configured; add one on People</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">no domain to route yet</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">no domain onboarded for sending yet</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">nothing to subscribe yet</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">account Example Ltd</span>
+</li>
+</ol>
+</section>
+
+<!-- connected, every way a domain is not ready -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">2</span> of <span class="mono num">5</span> steps done; next: mail routed to this Node.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">mail.example.test: 1 record still required; off.example.test: routing not enabled; bad.example.test: 10000 Authentication error</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">a.test: not onboarded for sending; b.test: zone not found; c.test: 1 record still required; d.test: sending not enabled; e.test: not onboarded for sending</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">a.test: no subscription; b.test: subscription not enabled; c.test: no queue; d.test: no consumer on the queue; e.test: the queue could not be read</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">account Example Ltd</span>
+</li>
+</ol>
+</section>
+
+<!-- no connection state -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">1</span> of <span class="mono num">5</span> steps done; next: mail routed to this Node.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">the connection state could not be read</span>
+</li>
+</ol>
+</section>
+
+<!-- no token, nothing recorded -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">0</span> of <span class="mono num">4</span> steps done; next: an address to receive at. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">no address is configured; add one on People</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">needs the connection first</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+
+<!-- no token, an empty record -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">1</span> of <span class="mono num">4</span> steps done; next: mail routed to this Node. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+
+<!-- no token, recorded -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">4</span> of <span class="mono num">4</span> steps done. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">mail.example.test, set up at install on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">whymelabs.com, in place on Cloudflare before this Node, observed on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">mail.example.test, set up through the held token on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+
+<!-- no token, the address routed elsewhere -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">3</span> of <span class="mono num">4</span> steps done; next: mail routed to this Node. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">whymelabs.com: admin@whymelabs.com has an Email Routing rule of its own, named "info": worker to info-worker.</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">whymelabs.com, in place on Cloudflare before this Node, observed on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">mail.example.test, set up through the held token on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+
+<!-- no token, the address unconfirmed -->
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">3</span> of <span class="mono num">4</span> steps done; next: mail routed to this Node. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">an address is configured</span>
+</li>
+<li>
+<span class="state state-outcome_unknown">unknown</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">whymelabs.com: not confirmed: the rules could not be read</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">whymelabs.com, in place on Cloudflare before this Node, observed on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state verdict-ok">done</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">mail.example.test, set up through the held token on [date] (a record, not a live read)</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>

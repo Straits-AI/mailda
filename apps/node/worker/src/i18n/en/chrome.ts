@@ -46,9 +46,13 @@ export const chrome = {
   /**
    * `{noun}` is the caller's plural noun (`Truncated`'s `noun`). In a language that counts with a measure word the
    * noun key carries its own (zh-Hans 份草稿, 条通知, 封…来信), because the word depends on the noun; the template
-   * carries none (F5, the owner's review of 1 October 2026).
+   * carries none (F5, the owner's review of 1 October 2026). A plural on the count shown, so one is never "1
+   * drafts": the noun is plural only, so the `one` form does not name it.
    */
-  "chrome.truncated": "Showing the newest {shown} {noun}. Older ones exist and are not listed.",
+  "chrome.truncated": {
+    one: "Showing the newest one. Older ones exist and are not listed.",
+    other: "Showing the newest {n} {noun}. Older ones exist and are not listed.",
+  },
   "chrome.nothing.loading": "Reading…",
   "chrome.nothing.failed": "This could not be read. That is different from it being empty.",
   "chrome.nothing.empty": "Nothing here yet.",
@@ -68,9 +72,11 @@ export const chrome = {
   /** `{scope}` is the grant's scope as the Node recorded it, or `chrome.notice.read`. */
   "chrome.notice.supervised": "{reader} was granted a supervised {scope} of {mailbox}, {from} to {to}.",
   "chrome.notice.read": "read",
-  "chrome.notice.queries": { one: "{n} query listing {listed} message(s)", other: "{n} queries listing {listed} message(s)" },
+  /** Two counts, so two plurals: `{listed}` is `chrome.notice.listed` on its own `n`. */
+  "chrome.notice.queries": { one: "{n} query listing {listed}", other: "{n} queries listing {listed}" },
+  "chrome.notice.listed": { one: "{n} message", other: "{n} messages" },
   "chrome.notice.opened": "{n} opened",
-  "chrome.notice.raw": "{n} raw message(s) read",
+  "chrome.notice.raw": { one: "{n} raw message read", other: "{n} raw messages read" },
   "chrome.notice.matter": "matter {matter}",
   "chrome.notice.matter.typed": "matter {matter} ({type})",
   "chrome.notice.none_cited": "none cited",

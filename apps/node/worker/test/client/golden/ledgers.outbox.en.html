@@ -30,7 +30,7 @@
 <td class="dim mono">a@example.test</td>
 <td>
 <span class="state state-held" title="Not handed over yet. You can still stop this.">held</span>
-<span class="state state-reason delivery-chip" title="A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.">policy hold</span>
+<span class="state state-reason delivery-chip" title="A rule holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.">rule hold</span>
 </td>
 <td class="num mono dim">[clock]</td>
 <td class="num">
@@ -43,7 +43,7 @@
 <dt>What this means</dt>
 <dd>Not handed over yet. You can still stop this.</dd>
 <dt>Why</dt>
-<dd>A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.</dd>
+<dd>A rule holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.</dd>
 <dt>Manifest</dt>
 <dd class="mono">snd_held</dd>
 </dl>
@@ -57,7 +57,7 @@
 </td>
 <td class="dim mono">a@example.test</td>
 <td>
-<span class="state state-awaiting" title="Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.">awaiting</span>
+<span class="state state-awaiting" title="Not handed over yet. A rule gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.">awaiting</span>
 <span class="state state-reason delivery-chip" title="A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority that composed it would have needed — and releasing it puts it back in the ordinary hold window, where it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point of this gate is that a program does not get to decide that a person agreed.">waiting for a person</span>
 </td>
 <td class="num mono dim">[clock]</td>
@@ -69,7 +69,7 @@
 <td colspan="5">
 <dl>
 <dt>What this means</dt>
-<dd>Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.</dd>
+<dd>Not handed over yet. A rule gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.</dd>
 <dt>Why</dt>
 <dd>A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority that composed it would have needed — and releasing it puts it back in the ordinary hold window, where it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point of this gate is that a program does not get to decide that a person agreed.</dd>
 <dt>Manifest</dt>
@@ -184,7 +184,7 @@
 </td>
 <td class="dim mono">a@example.test</td>
 <td>
-<span class="state state-withheld" title="Not handed over: this Node declined, and the reason beside it says why — a policy denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.">withheld</span>
+<span class="state state-withheld" title="Not handed over: this Node declined, and the reason beside it says why — a rule denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.">withheld</span>
 <span class="state state-reason delivery-chip" title="The approval for this send passed its deadline before it was handed over. That is final: an approval is bound to these exact bytes, and one that could be revived indefinitely would be a standing permission rather than a decision. Compose again and the new message gets its own approval.">approval expired</span>
 <span class="state delivery-deferred delivery-chip" title="A temporary failure, and the mail service is still retrying. The outcome is genuinely not known yet.">deferred</span>
 </td>
@@ -197,7 +197,7 @@
 <td colspan="5">
 <dl>
 <dt>What this means</dt>
-<dd>Not handed over: this Node declined, and the reason beside it says why — a policy denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.</dd>
+<dd>Not handed over: this Node declined, and the reason beside it says why — a rule denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.</dd>
 <dt>Why</dt>
 <dd>The approval for this send passed its deadline before it was handed over. That is final: an approval is bound to these exact bytes, and one that could be revived indefinitely would be a standing permission rather than a decision. Compose again and the new message gets its own approval.</dd>
 <dt>Recipients</dt>

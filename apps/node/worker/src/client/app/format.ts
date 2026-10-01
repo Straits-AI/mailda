@@ -39,6 +39,11 @@ export function dateTime(at: string | number): string {
   return new Date(at).toLocaleString(current().formatLocale);
 }
 
+/** A local date in the locale's own default form, no time: a passkey's Added and Last used. */
+export function date(at: string | number): string {
+  return new Date(at).toLocaleDateString(current().formatLocale);
+}
+
 /** A local date and a short time: `Sep 26, 2026, 5:00 PM` / `2026年9月26日 17:00`. A draft's row. */
 export function mediumDateTime(at: string | number): string {
   return new Date(at).toLocaleString(current().formatLocale, { dateStyle: "medium", timeStyle: "short" });
@@ -61,6 +66,17 @@ export function zonedTime(at: string): string {
  * short month for September changed to "Sept" across ICU versions, and a list is a place a date is scanned for.
  */
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * The day a provisioning record was written, with its year: `24 Sep 2026` / `2026年9月24日` (Setup's progress).
+ * English keeps its table (`MONTHS`), day first whatever the browser's locale, so no ICU can make it "Sept" (D28).
+ */
+export function recordDay(at: string): string {
+  const when = new Date(at);
+  return current().locale === "en"
+    ? `${when.getDate()} ${MONTHS[when.getMonth()]} ${when.getFullYear()}`
+    : when.toLocaleDateString(current().formatLocale, { day: "numeric", month: "short", year: "numeric" });
+}
 
 /** A day of the year with no year: `26 Sep` / `9月26日`. English keeps its table (`MONTHS`); others ask `Intl`. */
 export function monthDay(when: Date): string {

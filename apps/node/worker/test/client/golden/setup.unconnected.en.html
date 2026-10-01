@@ -1,0 +1,94 @@
+<header class="ledger-head">
+<h1>Setup</h1>
+<p class="dim">This Node holds no Cloudflare credential of its own.</p>
+</header>
+<section class="onboarding" aria-label="Setup progress">
+<p class="dim">
+<span class="mono num">0</span> of <span class="mono num">4</span> steps done; next: an address to receive at. The fifth is optional.</p>
+<ol>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">An address to receive at</span>
+<span class="dim onboarding-detail">no address is configured; add one on People</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Mail routed to this Node</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">A domain onboarded for sending</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-degraded">to do</span>
+<span class="onboarding-label">Delivery outcomes observed</span>
+<span class="dim onboarding-detail">not set up; the installer or the Setup screen does it</span>
+</li>
+<li>
+<span class="state severity-report">optional</span>
+<span class="onboarding-label">Connected to Cloudflare</span>
+<span class="dim onboarding-detail">only for changing the Cloudflare setup from this screen</span>
+</li>
+</ol>
+</section>
+<p class="dim">Receiving, sending and delivery outcomes are set up at install, with the consent wrangler already had, or later with <span class="mono">mailda setup</span>. Connecting this Node, below, is what lets you change them from this screen.</p>
+<section class="setup-block" aria-label="Optional connection">
+<h2>Optional: connect this Node to Cloudflare from this screen</h2>
+<p>The install set receiving, sending and delivery outcomes up with the consent wrangler already had, so this Node works without a credential of its own. Connecting it is only for changing that from here: another receiving domain, a sending domain, taking over a routing rule.</p>
+<p>Create one API token in Cloudflare with exactly these permissions, restricted to this account, and paste it below. This Node holds it wrapped under its credential key and never shows it again.</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Permissions the token needs">
+<table>
+<thead>
+<tr>
+<th scope="col">Permission</th>
+<th scope="col">Scope</th>
+<th scope="col">What this Node does with it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">Zone Read</td>
+<td>zone</td>
+<td>find the zone a domain lives in</td>
+</tr>
+<tr>
+<td class="mono">Registrar Domains Read</td>
+<td>account</td>
+<td>price a domain before buying it <span class="dim">Optional.</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="dim">The permission names come from Cloudflare's token form and are not measured against it.</p>
+<p>
+<a class="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">Open the token page</a>
+</p>
+<pre class="notice bad butler-findings" role="alert">E_PROVIDER_ACCOUNT_AMBIGUOUS  the token can see 2 accounts
+  fix      pass accountId</pre>
+<div class="limits-ask">
+<label class="field-row" for="setup-api-token">
+<span>API token</span>
+<input id="setup-api-token" class="mono" autocomplete="off" type="password" value="">
+</label>
+<label class="field-row" for="setup-account-id">
+<span>Account id</span>
+<input id="setup-account-id" class="mono" value="">
+</label>
+<button type="button" class="primary" disabled="">Connect</button>
+</div>
+</section>
+<section class="setup-block" aria-label="Receiving">
+<h2>Receiving</h2>
+<p class="dim">Needs the connection above, or the terminal command: <span class="mono">curl -fsSL https://mailda.site/update.sh | bash</span>, which sets this up with the consent wrangler already has.</p>
+</section>
+<section class="setup-block" aria-label="Sending">
+<h2>Sending</h2>
+<p class="dim">Needs the connection above, or the terminal command: <span class="mono">curl -fsSL https://mailda.site/update.sh | bash</span>, which sets this up with the consent wrangler already has.</p>
+</section>
+<section class="setup-block" aria-label="Delivery outcomes">
+<h2>Delivery outcomes</h2>
+<p class="dim">Needs the connection above, or the terminal command: <span class="mono">curl -fsSL https://mailda.site/update.sh | bash</span>, which sets this up with the consent wrangler already has.</p>
+</section>

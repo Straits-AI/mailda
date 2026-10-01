@@ -23,4 +23,5 @@ export const common: Twin<typeof source> = {
 
   "route./settings": "设置",
   "title.route": "{screen} · {brand}",
+  "join.sentence": "",
 };

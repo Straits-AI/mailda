@@ -1,4 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
+import type { ButlerVersionState } from "@mailda/contract/schemas";
 import {
   astSha256, canonicalButlerJson, checkButler, describeFindings, textSha256, type Butler, type Finding,
 } from "@mailda/butler-ast";
@@ -85,7 +86,8 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
  * the authority granting access takes.
  */
 
-export type ButlerState = "draft" | "published" | "superseded";
+/** A version's lifecycle, declared in the contract (`BUTLER_VERSION_STATES`) so the interface keys its words by it. */
+export type ButlerState = ButlerVersionState;
 
 export interface ButlerDraft {
   butlerId: string;
