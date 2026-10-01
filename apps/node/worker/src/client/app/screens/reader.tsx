@@ -13,7 +13,7 @@ import {
   useMessageHeaders, useThread,
 } from "../api.ts";
 import { sendStateWords, shown } from "../delivery-words.ts";
-import { fullTime, shortTime } from "../format.ts";
+import { fullTime, recipients, shortTime } from "../format.ts";
 import { NodeWords, marked, sentence } from "../words.tsx";
 import { useToast } from "../shell-context.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -659,7 +659,7 @@ export function Thread({ conversationId, current }: { conversationId: string | n
                 title={item.message !== undefined ? item.message.from_addr ?? item.message.envelope_from : undefined}>
                 {item.message !== undefined
                   ? item.message.from_name ?? item.message.from_addr ?? item.message.envelope_from
-                  : `→ ${item.send!.envelope_to}`}
+                  : `→ ${recipients(item.send!.envelope_to)}`}
               </span>
               <time className="row-time" dateTime={item.at} title={fullTime(item.at)}>{shortTime(item.at)}</time>
               <span className="row-subject">

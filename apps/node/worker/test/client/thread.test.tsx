@@ -45,7 +45,7 @@ beforeEach(() => {
     if (url.pathname === "/api/sends") {
       return Response.json({
         sends: url.searchParams.get("conversation") === "cnv_1"
-          ? [{ id: "snd_1", subject: "Re: message 1", envelope_to: '["a@b.test"]', state: "sent", state_at: "2026-08-23T09:00:00.000Z",
+          ? [{ id: "snd_1", subject: "Re: message 1", envelope_to: '["a@b.test","c@d.test"]', state: "sent", state_at: "2026-08-23T09:00:00.000Z",
                release_at: "", attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 1,
                state_reason: null, policy_outcome: null, recipients: [] }]
           : [],
@@ -98,6 +98,8 @@ describe("the reading pane carries the rest of the conversation", () => {
     await act(async () => { earlier!.click(); });
     expect(earlier!.getAttribute("aria-expanded")).toBe("false");
 
+    // The recipients as a sentence lists them, never the stored JSON array (`["a@b.test",...]`).
+    expect(send!.querySelector(".row-sender")!.textContent).toBe("→ a@b.test and c@d.test");
     await act(async () => { send!.click(); });
     const link = await waitFor(() => {
       const found = thread.querySelector<HTMLAnchorElement>("a[href='/api/sends/snd_1/submitted']");

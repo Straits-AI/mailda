@@ -7,7 +7,7 @@ import { t } from "/app/locale.js";
 
 import { Nothing, Scroller, Truncated } from "../chrome.tsx";
 import { deliveryWords, sendReasonWords, sendStateWords, shown } from "../delivery-words.ts";
-import { clock, fullTime } from "../format.ts";
+import { clock, fullTime, recipients, stamp } from "../format.ts";
 import { marked, NodeWords, sentence } from "../words.tsx";
 import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
@@ -255,7 +255,7 @@ export function Outbox() {
                         {send.subject.trim() === "" ? <span className="dim">{t("ledgers.outbox.noSubject")}</span> : send.subject}
                       </button>
                     </td>
-                    <td className="dim mono">{(JSON.parse(send.envelope_to) as string[]).join(", ")}</td>
+                    <td className="dim mono">{recipients(send.envelope_to)}</td>
                     <td>
                       <span className={`state state-${send.state}`} title={state.note}>
                         {shown(state)}
@@ -269,7 +269,7 @@ export function Outbox() {
                       )}
                       <DeliveryChips send={send} />
                     </td>
-                    <td className="num mono dim">{clock(send.state_at)}</td>
+                    <td className="num mono dim">{stamp(send.state_at)}</td>
                     <td className="num">
                       {send.state === "held" || send.state === "awaiting" ? (
                         <>
@@ -322,7 +322,7 @@ export function Outbox() {
                         <>
                           {send.retry.mode === null ? null : (
                             <>
-                              <button type="button" className="linkish" title={send.retry.why} onClick={() => void retry(send)}>
+                              <button type="button" className="linkish" onClick={() => void retry(send)}>
                                 {send.retry.mode === "retry-effect" ? t("ledgers.outbox.retry") : t("ledgers.outbox.resend")}
                               </button>
                               {/* A separator only between two things: an authored send never submitted has no .eml. */}
@@ -459,7 +459,7 @@ export function Audit() {
                   </span>
                 </td>
                 <td className="mono dim">{entry.subject ?? "—"}</td>
-                <td className="num mono dim">{clock(entry.at)}</td>
+                <td className="num mono dim">{stamp(entry.at)}</td>
               </tr>
             ))}
           </tbody>
@@ -519,7 +519,7 @@ export function Log() {
                   </td>
                   <td className="mono"><code>{entry.event}</code></td>
                   <td><NodeWords>{entry.message}</NodeWords></td>
-                  <td className="num mono dim">{clock(entry.at)}</td>
+                  <td className="num mono dim">{stamp(entry.at)}</td>
                 </tr>
               ))}
             </tbody>

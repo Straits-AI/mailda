@@ -234,7 +234,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/supervised",
   ),
   ...changing("governed",
-    "Stopping or resuming mail to a whole domain, and restarting a Butler a machine stopped. A breaker "
+    "Pausing every send from a whole domain or lifting the pause, and resuming a Butler a machine paused. A breaker "
     + "exists because something went wrong at volume; a machine that could clear one could clear the "
     + "evidence of its own loop.",
     "POST /api/domain-pauses",

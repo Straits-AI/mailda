@@ -1,12 +1,16 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { exposureOf } from "@mailda/contract/agent";
+import { ROUTES } from "@mailda/contract/routes";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
 import { decideApproval, pendingApprovals, stageOf } from "../src/approvals.ts";
+import { AUDIT_ACTIONS } from "../src/audit.ts";
 import { evaluateBreakers, pausesInForce } from "../src/breakers.ts";
 import { liftDomainPause, requestDomainPause } from "../src/domain-pause.ts";
 import { runDoctor } from "../src/doctor.ts";
+import { CONCEPTS } from "../src/i18n/glossary.ts";
 import { dispatchOne, type SendState } from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
@@ -17,7 +21,7 @@ import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.
  * ## The asymmetry is the subject of this file
  *
  * #64 made placing a legal hold easy and lifting it hard, because placing only preserves. Placing a domain
- * pause **stops a customer's mail**, so the safe direction reverses: two administrators and a mandatory
+ * pause **pauses a customer's mail**, so the safe direction reverses: two administrators and a mandatory
  * reason to place, one administrator alone to lift. Same principle, opposite conclusion.
  *
  * That is easy to state and easy to get wrong in either direction, so both halves are asserted here as
@@ -221,7 +225,7 @@ describe("placing a pause takes two administrators and a reason", () => {
     const queue = await pendingApprovals(testEnv, ORG, ADMIN_B);
     expect(queue).toHaveLength(1);
     expect(queue[0]!.subjectKind).toBe("domain_pause");
-    // The whole point of carrying it on the request rather than only in the trail: a person asked to stop a
+    // The whole point of carrying it on the request rather than only in the trail: a person asked to pause a
     // customer's mail with no stated reason is being asked to agree to nothing in particular.
     expect(queue[0]!.domainPause?.domain).toBe("acme.example");
     expect(queue[0]!.domainPause?.reason).toBe("outbound spam");
@@ -233,7 +237,7 @@ describe("placing a pause takes two administrators and a reason", () => {
 /* ---------------------------------------------------- what a pause does ----------------------------- */
 
 describe("a pause refuses rather than gates, at the seal and at the dispatch", () => {
-  it("withholds a new send with domain_paused and the way to restart it", async () => {
+  it("withholds a new send with domain_paused and the way to lift the pause", async () => {
     await placed();
     const sealed = await seal(AUGUST_20 + 10_000);
     expect(sealed.state).toBe("withheld");
@@ -288,7 +292,7 @@ describe("a pause refuses rather than gates, at the seal and at the dispatch", (
 /* ---------------------------------------------------- lifting takes one ----------------------------- */
 
 describe("lifting takes one administrator, alone", () => {
-  it("restarts the domain on a single call with no second decision anywhere", async () => {
+  it("lifts the pause on a single call with no second decision anywhere", async () => {
     const pauseId = await placed();
 
     // ADMIN_A requested the pause and could not approve it. They can lift it, alone, immediately — because
@@ -328,7 +332,7 @@ describe("lifting takes one administrator, alone", () => {
     expect(row?.lifted_reason).toBeNull();
   });
 
-  it("refuses a second lift, so two administrators cannot both claim to have restarted it", async () => {
+  it("refuses a second lift, so two administrators cannot both claim to have lifted it", async () => {
     const pauseId = await placed();
     await liftDomainPause(testEnv, atTime(AUGUST_20 + 20_000), ORG, ADMIN_B, pauseId);
     await expect(
@@ -360,7 +364,7 @@ describe("both acts are in the trail, and doctor shows a pause nobody would othe
       `SELECT actor_user_id, detail FROM audit_entries
         WHERE org_id = ? AND subject = ? AND action = 'domain.pause_placed'`,
     ).bind(ORG, pauseId).first<{ actor_user_id: string | null; detail: string }>();
-    expect(entry, "a domain whose mail stopped with nothing in the trail").not.toBeNull();
+    expect(entry, "a domain whose mail was paused with nothing in the trail").not.toBeNull();
     const detail = JSON.parse(entry!.detail) as Record<string, unknown>;
     expect(detail.domain).toBe("acme.example");
     expect(detail.reason).toBe("outbound spam from a compromised key");
@@ -387,5 +391,83 @@ describe("both acts are in the trail, and doctor shows a pause nobody would othe
     await liftDomainPause(testEnv, atTime(AUGUST_20 + 70_000), ORG, ADMIN_B, pauseId);
     const after = await runDoctor(testEnv, atTime(AUGUST_20 + 80_000));
     expect(after.findings.find((f) => f.check === "domain_paused")).toBeUndefined();
+  });
+});
+
+/* ---------------------------------------------------- the Node's own words -------------------------- */
+
+/**
+ * D3's one verb in the Node's own English (G6, `docs/i18n.md`). Every screen says a domain is paused and a pause is
+ * lifted; the refusals, the withheld send's sentence, doctor's finding, the audit vocabulary and the route summaries
+ * an agent reads said stopped and restarted. The words to avoid are the glossary's `pause` row's, so the screens and
+ * the API are held to one list. The codes are the contract and are not words here: none of them changed.
+ */
+describe("the Node's own English says pause and lift, as every screen does", () => {
+  const AVOID = CONCEPTS.find((concept) => concept.id === "pause")!.avoid.en!;
+  const said = (text: string) => AVOID.filter((word) => text.includes(word));
+  async function refusal(act: Promise<unknown>): Promise<string> {
+    const error = await act.then(() => null, (thrown: unknown) => thrown);
+    expect(error, "expected a refusal").toBeInstanceOf(Error);
+    return (error as Error).message;
+  }
+
+  it("finds the avoided words to look for, so nothing below passes by checking none", () => {
+    expect(AVOID).toContain("stop");
+    expect(AVOID).toContain("restart");
+  });
+
+  it("in every refusal of a request or a lift", async () => {
+    const texts = [
+      await refusal(requestDomainPause(testEnv, atTime(AUGUST_20), ORG, ADMIN_A, "nodomain", "spam")),
+      await refusal(requestDomainPause(testEnv, atTime(AUGUST_20), ORG, ADMIN_A, "acme.example", " ")),
+      await refusal(liftDomainPause(testEnv, atTime(AUGUST_20), ORG, ADMIN_B, "dpz_nothing")),
+    ];
+    const requested = await requestDomainPause(testEnv, atTime(AUGUST_20), ORG, ADMIN_A, "acme.example", "first");
+    texts.push(
+      await refusal(requestDomainPause(testEnv, atTime(AUGUST_20 + 1), ORG, ADMIN_B, "acme.example", "second")),
+      await refusal(liftDomainPause(testEnv, atTime(AUGUST_20 + 2), ORG, ADMIN_B, requested.pauseId)),
+    );
+    await decideApproval(testEnv, atTime(AUGUST_20 + 3), ORG, ADMIN_B, requested.approvalId, "approve");
+    await decideApproval(testEnv, atTime(AUGUST_20 + 4), ORG, ADMIN_C, requested.approvalId, "approve");
+    texts.push(await refusal(requestDomainPause(testEnv, atTime(AUGUST_20 + 5), ORG, ADMIN_B, "acme.example", "again")));
+    await liftDomainPause(testEnv, atTime(AUGUST_20 + 6), ORG, ADMIN_B, requested.pauseId);
+    texts.push(await refusal(liftDomainPause(testEnv, atTime(AUGUST_20 + 7), ORG, ADMIN_C, requested.pauseId)));
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ? AND relation = 'org.admin'",
+    ).bind(ORG, ADMIN_C).run();
+    texts.push(await refusal(requestDomainPause(testEnv, atTime(AUGUST_20 + 8), ORG, ADMIN_A, "acme.example", "x")));
+
+    expect(texts.map((text) => text.split(" ")[0])).toEqual([
+      "E_DOMAIN_PAUSE_DOMAIN_REQUIRED", "E_DOMAIN_PAUSE_REASON_REQUIRED", "E_NO_DOMAIN_PAUSE", "E_DOMAIN_PAUSE_PENDING",
+      "E_DOMAIN_PAUSE_NOT_PLACED", "E_DOMAIN_ALREADY_PAUSED", "E_DOMAIN_PAUSE_ALREADY_LIFTED", "E_DOMAIN_PAUSE_UNSATISFIABLE",
+    ]);
+    expect(texts.filter((text) => said(text).length > 0)).toEqual([]);
+  });
+
+  it("in a withheld send's sentence and doctor's finding", async () => {
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(createSystemCtx().id("clm"), "x", new Date(AUGUST_20).toISOString(), ORG).run();
+    await placed();
+    const sealed = await seal(AUGUST_20 + 10_000);
+    expect(sealed.breakerError).toContain("paused since");
+    const finding = (await runDoctor(testEnv, atTime(AUGUST_20 + 60_000))).findings
+      .find((one) => one.check === "domain_paused")!;
+    expect([sealed.breakerError!, finding.detail, finding.fix!].filter((text) => said(text).length > 0)).toEqual([]);
+  });
+
+  it("in the audit vocabulary, the routes' summaries and the reason the Skill gives for withholding them", () => {
+    const routes = ROUTES.filter((one) => one.path.startsWith("/api/domain-pauses"));
+    const texts = [
+      AUDIT_ACTIONS["domain.pause_placed"].says, AUDIT_ACTIONS["domain.pause_lifted"].says,
+      ...routes.map((one) => one.summary),
+      ...routes.filter((one) => one.method === "POST").map((one) => exposureOf(one).why),
+    ];
+    expect(texts).toHaveLength(7);
+    expect(texts.filter((text) => said(text).length > 0)).toEqual([]);
+    // A pause is lifted, not released: release is a held send's verb (放行).
+    expect(AUDIT_ACTIONS["domain.pause_lifted"].says).toContain("lifted");
+    // A pause holds mail **from** a domain, and one administrator lifts it.
+    expect(texts.filter((text) => / to a domain|more than one person/.test(text))).toEqual([]);
   });
 });

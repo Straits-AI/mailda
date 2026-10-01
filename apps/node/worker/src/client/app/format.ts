@@ -20,9 +20,25 @@ export function list(items: readonly string[]): string {
   return new Intl.ListFormat(current().formatLocale, { type: "conjunction" }).format(items);
 }
 
+/**
+ * A send's recipients as a sentence lists them: `a@x.test and b@y.test` / `a@x.test和b@y.test`. `envelope_to` is
+ * the JSON array the Node stores (`packages/contract/src/schemas.ts`, `sendRow`), never a display string.
+ */
+export function recipients(envelopeTo: string): string {
+  return list(JSON.parse(envelopeTo) as string[]);
+}
+
 /** A time of day on a 24-hour clock, with seconds: `15:09:02`. */
 export function clock(at: string | number): string {
   return new Date(at).toLocaleTimeString(current().formatLocale, { hour12: false });
+}
+
+/**
+ * When a ledger's row happened: the `clock` today, the `fullTime` on any other day (`15:09:02`, `9/26/2026, 15:09:02` /
+ * `2026/9/26 15:09:02`). A clock alone read yesterday's send as today's.
+ */
+export function stamp(at: string, now: Date = new Date()): string {
+  return new Date(at).toDateString() === now.toDateString() ? clock(at) : fullTime(at);
 }
 
 /** How long ago `at` was, in the coarsest unit that reads naturally: `now`, `5 minutes ago`, `3 hours ago`. */

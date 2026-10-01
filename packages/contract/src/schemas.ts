@@ -2338,6 +2338,23 @@ export const recipientRow = z.object({
   last_error: z.string().nullable(),
 }).strict();
 
+/**
+ * Which retry a send offers (`src/outbound/retry.ts`'s `RetryOffer`), and on what grounds.
+ *
+ * ADR 40's distinction made answerable rather than left to a caller's judgement: `retry-effect` reuses the
+ * original idempotency key and provably cannot duplicate, and `proof` is the recorded non-acceptance that makes
+ * it so (`refused`, `throttled`, `suppressed`, `never_submitted`); `resend-may-duplicate` mints a new key and
+ * might. Only `mode: null` carries `why`, the reason neither is offered (`not_yet_attempted`, `decided`,
+ * `acceptance_observed`, `state_not_classified`). Until 2 October 2026 this schema had the null arm alone, and
+ * the Outbox titled its Retry button with a `why` no offered mode has.
+ */
+const retryOffer = z.union([
+  z.object({ mode: z.literal("retry-effect"), proof: z.string().min(1) }).strict(),
+  z.object({ mode: z.literal("resend-may-duplicate"), duplicatePossible: z.literal(true) }).strict(),
+  z.object({ mode: z.null(), why: z.string().min(1) }).strict(),
+]);
+export type RetryOffer = z.infer<typeof retryOffer>;
+
 export const sendRow = z.object({
   id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
   subject: z.string(),
@@ -2355,15 +2372,7 @@ export const sendRow = z.object({
   /** 0 or 1, not a boolean: it is `EXISTS` from SQL, and the client reads it as a number. */
   has_submitted: z.number().int(),
   recipients: z.array(recipientRow),
-  /**
-   * Which retry this send offers, and why.
-   *
-   * ADR 40's distinction made answerable rather than left to a caller's judgement: `retry-effect` reuses the
-   * original idempotency key and provably cannot duplicate; `resend-may-duplicate` mints a new one and
-   * might. `why` carries the reason the mode is what it is — `not_yet_attempted` for a send that has never
-   * been handed over — so a UI can explain a disabled button instead of just disabling it.
-   */
-  retry: z.object({ mode: z.string().nullable(), why: z.string().min(1) }).strict(),
+  retry: retryOffer,
 }).strict();
 
 const capability = z.object({
@@ -2778,7 +2787,7 @@ const runEffect = z.object({
   send: z.object({
     state: z.string().min(1),
     fidelity: z.enum(["authored", "reconstructed"]),
-    retry: z.object({ mode: z.string().nullable(), why: z.string().min(1) }).strict(),
+    retry: retryOffer,
     resentAs: z.string().nullable(),
   }).strict().optional(),
 }).strict();

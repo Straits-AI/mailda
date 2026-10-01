@@ -685,7 +685,7 @@ export async function checkBreakers(
       detail: paused.map((pause) =>
         `${pause.domain} has been paused since ${pause.placedAt} (${pause.pauseId}): "${pause.reason}"`,
       ).join(" | "),
-      fix: "no send from these domains is leaving. Any one administrator can restart a domain alone — "
+      fix: "no send from these domains is leaving. Any one administrator can lift a domain's pause alone — "
         + `POST /api/domain-pauses/${paused[0]!.pauseId}/lift — because the harm of a wrongly paused domain `
         + "grows every minute it stands. Placing one took two administrators; lifting takes one",
       receipt: "docs/receipts/send-breakers.md",

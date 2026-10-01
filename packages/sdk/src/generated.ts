@@ -864,7 +864,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Domains this Node has stopped sending to
+   * The domains paused now, each with its reason; nothing is sent from them
    *
    * `GET /api/domain-pauses`
    */
@@ -873,7 +873,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Stop sending to a domain
+   * Ask two other administrators to pause every send from a domain
    *
    * `POST /api/domain-pauses`
    */
@@ -900,7 +900,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Resume sending to a domain, which takes more than one person
+   * Lift a domain's pause, which one administrator may do alone
    *
    * `POST /api/domain-pauses/:pauseId/lift`
    */

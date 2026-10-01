@@ -37,7 +37,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getAccess` | Who holds what on which mailbox |
 | `getBreakers` | The rate breakers, with the readings behind them |
 | `getDoctor` | What this Node can and cannot do, with the evidence |
-| `getDomainPauses` | Domains this Node has stopped sending to |
+| `getDomainPauses` | The domains paused now, each with its reason; nothing is sent from them |
 | `getDrafts` | Drafts this person is writing |
 | `getDraftsByDraftId` | One draft |
 | `getMailboxes` | The mailboxes this person may act in |
@@ -90,7 +90,7 @@ so you are that one person and can never be the second. These are not permission
 
 - **`deleteInvitationsByInvitationId`, `postButlerPausesByPauseIdResume`, `postButlerRunsByRunIdReplay`, `postDomainPauses`, `postDomainPausesByPauseIdLift`, `postSuppressionsLift`**
 
-  Stopping or resuming mail to a whole domain, and restarting a Butler a machine stopped. A breaker exists because something went wrong at volume; a machine that could clear one could clear the evidence of its own loop.
+  Pausing every send from a whole domain or lifting the pause, and resuming a Butler a machine paused. A breaker exists because something went wrong at volume; a machine that could clear one could clear the evidence of its own loop.
 
 - **`postApprovalsByApprovalIdDecide`, `postApprovalsByApprovalIdWithdraw`, `postSendsBySendIdRelease`, `postSendsBySendIdReleaseHold`**
 

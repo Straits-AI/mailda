@@ -4337,6 +4337,41 @@ the Node's English. One flag is left for a change of its own:
 the API's prose still says stop and restart for a domain pause, byte-stable for the agents that read it (G6). The flags
 are in `docs/i18n.md`.
 
+## Five small things the layer 2b review left (2 October 2026)
+
+**The Butler editor's dry-run buttons stood 4px apart.** They are list items, and their 4px margins collapsed into
+one 4px gap. The list is now a column with the 8px gap every row of controls has, held by
+`apps/node/worker/test/node/control-spacing.test.ts`.
+
+**A send in the reader's conversation showed its recipients as stored**, `→ ["a@b.test"]`: `envelope_to` is a JSON
+array on the wire, and the Outbox parsed it while the thread printed it. Both now go through `format.ts`'s
+`recipients`, a list as the viewer's language joins one (`a and b`, `a和b`).
+
+**The Outbox's When column showed a clock only**, so yesterday's send read `17:09:00`. The Audit and Log ledgers'
+At column had the same cell. All three now show `format.ts`'s `stamp`: the clock for a row from today, the date and
+the clock for any other day, in the viewer's locale.
+
+**The Outbox's Retry and Resend buttons had an empty title.** It read `retry.why`, which `apps/node/worker/src/outbound/retry.ts` sends
+only when no mode is offered: an offered mode carries its `proof` (`retry-effect`) or `duplicatePossible`
+(`resend-may-duplicate`), and the button shows only then. The contract described the `mode: null` arm alone, as
+`.strict()`, so a listing with a retryable send did not satisfy it, and no test had listed one. `retry` is now the
+union the Node sends (`RetryOffer` in `packages/contract/src/schemas.ts`), `apps/node/worker/test/contract-responses.test.ts` lists a
+refused send, and the title is gone: the state beside the button already says what the proof would.
+
+**The API says a domain is paused and a pause is lifted (G6).** The screens moved to pause and lift in layer 2b
+(D3); the Node's own English kept stop and restart, so an agent read "Mail from acme.example has been stopped …
+Any one administrator can restart the domain" beside a screen that said paused. The refusals, the withheld send's
+sentence, doctor's `domain_paused` finding, the audit vocabulary's `domain.pause_placed` and the `/api/domain-pauses`
+summaries (and so the SDK's comments, the Agent Skill's table and MCP's tool descriptions) now say pause and lift,
+as does the Skill's reason for withholding the two acts from agents (`packages/contract/src/agent.ts`), and the
+audit vocabulary says a pause is lifted, not released, which is a held send's verb.
+**For an agent:** every error code and field name is byte-identical (`E_DOMAIN_ALREADY_PAUSED`, `domain_paused`,
+`pauseId` and the rest), so matching on codes is unaffected; text matched on the old words ("stopped since",
+"restart the domain", "Stop sending to a domain") no longer appears in new answers. A send withheld before this
+change keeps the sentence it was given in `last_error`, which is a record, not rewritten. Two of the summaries were
+wrong beyond the verb: they said sending **to** a domain, where a pause holds mail **from** one, and that a lift
+"takes more than one person", where one administrator lifts alone.
+
 ## The interface's languages, layer 3: the pages before sign-in, and the pseudo-locale (2 October 2026)
 
 **Every screen is in the catalog now, the ones before sign-in included, and a pseudo-locale proves it.** Layer 3 moved

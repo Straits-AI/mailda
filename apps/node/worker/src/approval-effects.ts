@@ -289,7 +289,7 @@ export const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | n
    * A pause already in force when its own approval completes is a state no path here produces — nothing
    * places a pause but this statement — so reaching it means the world moved outside the product, and
    * recording `domain_pause.placed` for it would put an entry in the trail claiming two administrators
-   * stopped a domain that was already stopped, which is what an investigation would read as two incidents.
+   * paused a domain that was already paused, which is what an investigation would read as two incidents.
    */
   domain_pause: {
     undone: `SELECT 1 FROM domain_pauses p
@@ -320,7 +320,7 @@ export const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | n
       code: "E_NO_DOMAIN_PAUSE",
       what: (approval) =>
         `approval ${approval.id} names domain pause ${approval.subjectId}, which does not exist`,
-      fix: "investigate; completing this would stop a domain's mail with no record of which domain or why",
+      fix: "investigate; completing this would pause a domain's mail with no record of which domain or why",
     },
     raced: {
       code: "E_DOMAIN_PAUSE_RACED",

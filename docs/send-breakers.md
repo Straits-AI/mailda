@@ -174,7 +174,7 @@ all. Both halves are asserted: `test/policy.test.ts` proves a policy-gated send 
 placing only ever preserves, and ceremony in front of it is how evidence is lost in the hour after somebody
 realises they need it. Lifting re-permits destruction, so it takes two people and a reason.
 
-Placing a domain pause **stops a customer's mail**. The safe direction reverses, and the conclusion reverses
+Placing a domain pause **pauses a customer's mail**. The safe direction reverses, and the conclusion reverses
 with it:
 
 | | Legal hold ([#64][64]) | Domain pause ([#66][66]) |
@@ -187,12 +187,12 @@ What [#66][66] removed from the lift is the *ceremony*, not the *record*: `domai
 it and when.
 
 The pause is on the **sending** domain, the domain of the envelope From. That is the domain a Node can
-actually stop; pausing a *recipient* domain would be a suppression list, and this product has none of its own.
+actually pause; pausing a *recipient* domain would be a suppression list, and this product has none of its own.
 
 `placed_at` is NULL until two administrators say so, which is what makes a request not a pause: the
 `domain_pauses` row is written when somebody *asks*, in the same transaction as the approval, so the reason
 the approvers read is a stored fact rather than a parameter travelling beside the request. A denied request
-leaves `placed_at` NULL for ever and the row stays as the record that somebody asked to stop a domain's mail
+leaves `placed_at` NULL for ever and the row stays as the record that somebody asked to pause a domain's mail
 and was refused.
 
 **If a pause cannot be placed, the domain keeps sending**, and that is the opposite of the hold's safe
@@ -365,9 +365,9 @@ The Butler pause is documented with the engine,
 
 ```
 GET  /api/breakers                 what every rate is at right now, armed or not
-POST /api/domain-pauses            ask two other administrators to stop a domain's mail
+POST /api/domain-pauses            ask two other administrators to pause a domain's mail
 GET  /api/domain-pauses            every pause in force, with its reason and its age
-POST /api/domain-pauses/:id/lift   restart a domain. One administrator, alone
+POST /api/domain-pauses/:id/lift   lift a domain's pause. One administrator, alone
 POST /api/approvals/:id/decide     decide a pause request; #61's machinery, not duplicated
 ```
 
