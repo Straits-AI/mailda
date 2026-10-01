@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CAPABILITIES as NODE_CAPABILITIES } from "@mailda/contract/capability";
+
 import { install } from "/app/locale.js";
 import { CATALOGS } from "../../src/i18n/catalog.ts";
 import { answerWith, reset, type Call } from "./session-stub.ts";
@@ -275,9 +277,12 @@ describe("Passkeys (people.tsx) in English", () => {
 
 /* ------------------------------------------------------------------------------------------- Agents --- */
 
+/** The Node's own words for a capability this interface knows; `hold.read` below is one it does not (a removed id). */
+const MAIL_READ_SAYS = NODE_CAPABILITIES.find((one) => one.id === "mail.read")!.says;
+
 const CAPABILITIES = [
   {
-    id: "mail.read", says: "Read mail: list it, open a message, and fetch the original bytes.", reachesContent: true,
+    id: "mail.read", says: MAIL_READ_SAYS, reachesContent: true,
     requires: ["mailbox.content.read", "message.export"], routes: ["a", "b", "c", "d"],
   },
   { id: "hold.read", says: "Read the legal holds in force.", reachesContent: false, requires: [], routes: ["e"] },
@@ -480,7 +485,7 @@ describe("People, Agents and Approvals in Chinese", () => {
     expect((await within(added).findByRole("status")).innerHTML).toBe('x@example.test：<span lang="en">Run mailda route add.</span>');
   });
 
-  it("counts an agent's ceiling in its own units, and keeps the Node's descriptions and notice English", async () => {
+  it("counts an agent's ceiling in its own units, describes a known capability in Chinese, and keeps an unknown one and the notice English", async () => {
     const { container } = agentsNode([]);
     await screen.findByText("Legal");
     tick("mail.read");
@@ -488,7 +493,10 @@ describe("People, Agents and Approvals in Chinese", () => {
     tick("message.export", "Support");
     expect(container.querySelector("form .notice p")!.textContent).toBe("这个代理将持有 1 项能力，涉及 2 项邮箱关系，直到过期或被收回。");
     const says = Array.from(container.querySelectorAll("fieldset label .dim")).map((one) => one.innerHTML);
-    expect(says[0]).toBe('<span lang="en">Read mail: list it, open a message, and fetch the original bytes.</span>');
+    // A capability this interface knows is described in the viewer's language (`capability.<id>`); one it does not
+    // (`hold.read`, removed from the vocabulary) in the Node's own English, marked.
+    expect(says[0]).toBe(CATALOGS["zh-Hans"].app["capability.mail.read"]);
+    expect(says[1]).toBe('<span lang="en">Read the legal holds in force.</span>');
     fireEvent.change(screen.getByPlaceholderText("这个代理的用途"), { target: { value: "nightly triage" } });
     await act(async () => { screen.getByRole("button", { name: "签发代理" }).click(); });
     expect((await screen.findByText("Shown once: only its hash is stored.")).outerHTML).toBe('<span lang="en">Shown once: only its hash is stored.</span>');

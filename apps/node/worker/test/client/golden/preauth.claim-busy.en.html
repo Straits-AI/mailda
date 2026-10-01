@@ -1,0 +1,22 @@
+<label class="field-row" for="org">
+<span>Organization</span>
+<input id="org" value="" required="required" placeholder="Acme Logistics">
+</label>
+<label class="field-row" for="email">
+<span>Owner email</span>
+<input id="email" type="email" required="required" autocomplete="username">
+</label>
+<p class="hint">You sign in with this email. Mail goes out from a mailbox's address, which setup chooses.</p>
+<label class="field-row" for="password">
+<span>Password</span>
+<input id="password" type="password" required="required" minlength="12" autocomplete="new-password">
+</label>
+<p class="hint">At least 12 characters. No character-class rules — length is what resists guessing.</p>
+<label class="field-row" for="secret">
+<span>Claim secret</span>
+<input id="secret" required="required" autocomplete="off" class="mono">
+</label>
+<p class="hint">Shown once, by `mailda claim-secret`.</p>
+<button class="primary" type="submit" disabled="">Claiming…</button>
+<div class="errors" role="alert">
+</div>

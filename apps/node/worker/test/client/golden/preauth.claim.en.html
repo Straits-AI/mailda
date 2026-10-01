@@ -1,0 +1,41 @@
+<!-- #status -->
+<span class="field">
+<span class="dot idle">
+</span>
+<span>unclaimed</span>
+</span>
+<span class="field mono">localhost:3000</span>
+<!-- #app -->
+<div class="split">
+<div class="split-lede" data-reveal="" style="--reveal-delay: 0ms;">
+<h1>This Node is yours to claim.</h1>
+<p>It is running in your Cloudflare account, holding your data, under your keys. Nothing has been claimed yet, so it rejects incoming mail rather than filing it somewhere it cannot attribute.</p>
+</div>
+<section class="panel" data-reveal="" style="--reveal-delay: 55ms;">
+<h2>First run</h2>
+<form novalidate="novalidate">
+<label class="field-row" for="org">
+<span>Organization</span>
+<input id="org" value="" required="required" placeholder="Acme Logistics">
+</label>
+<label class="field-row" for="email">
+<span>Owner email</span>
+<input id="email" type="email" required="required" autocomplete="username">
+</label>
+<p class="hint">You sign in with this email. Mail goes out from a mailbox's address, which setup chooses.</p>
+<label class="field-row" for="password">
+<span>Password</span>
+<input id="password" type="password" required="required" minlength="12" autocomplete="new-password">
+</label>
+<p class="hint">At least 12 characters. No character-class rules — length is what resists guessing.</p>
+<label class="field-row" for="secret">
+<span>Claim secret</span>
+<input id="secret" required="required" autocomplete="off" class="mono">
+</label>
+<p class="hint">Shown once, by `mailda claim-secret`.</p>
+<button class="primary" type="submit">Claim this Node</button>
+<div class="errors" role="alert">
+</div>
+</form>
+</section>
+</div>

@@ -1197,6 +1197,10 @@ export const reconcileEvidence = (collect: boolean) =>
 export const applyMigrations = () =>
   act<{ applied: string[]; raced: string[]; alreadyCurrent: boolean; message: string }>(at("POST", "/api/prepare"));
 
+/** The audit chain re-hashed from its first entry: a verdict, or the Node's refusal (never read as a verdict). */
+export const verifyAudit = () =>
+  act<{ intact: boolean; checked: number; brokenAt?: number }>(at("POST", "/api/audit/verify"));
+
 export const acknowledgeConflict = (restoreId: string, scope: string, conclusion: string) =>
   act<{ acknowledged: { restoreId: string; generations: string; acknowledgedAt: string } }>(
     at("POST", "/api/recovery/conflicts/:restoreId/acknowledge", { restoreId }), "POST", { scope, conclusion },

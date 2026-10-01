@@ -100,6 +100,18 @@ describe("controls stand at least 8px apart, by the sheet's shared rules", () =>
     expect(declared).toEqual(["0"]);
   });
 
+  /*
+   * Layer 3 (2 October 2026): the strip before sign-in carries a language switch, a control, and wraps on a phone; and
+   * the lockup's Latin mark stands beside 淼达 by the wordmark's own gap.
+   */
+  it("stands the pre-sign-in strip's lines 8px apart, its items further, and the lockup's two marks 8px apart", () => {
+    expect(px("#status", "row-gap")).toEqual([MIN_GAP]);
+    const across = rulesFor("#status").flatMap((rule) => rule.declarations).filter((one) => one.property === "column-gap");
+    expect(across.map((one) => one.value)).toEqual(["clamp(.8rem, 2.5vw, 1.75rem)"]);
+    expect(px(".wordmark", "gap")).toContain(MIN_GAP);
+    expect(rulesFor(".wordmark > span[lang]").length, "the lockup's secondary mark has no rule").toBe(1);
+  });
+
   it("stacks a queue row's actions 8px apart", () => {
     expect(px(".case-actions button", "margin-bottom")).toEqual([MIN_GAP]);
   });

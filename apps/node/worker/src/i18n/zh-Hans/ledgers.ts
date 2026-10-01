@@ -39,8 +39,7 @@ export const ledgers: Twin<typeof source> = {
   "ledgers.outbox.manifest": "清单",
   "ledgers.outbox.reported": "上报内容",
   "ledgers.outbox.chip": "{state} {n}",
-  "ledgers.outbox.bounce": "{note}（{type}）",
-  "ledgers.outbox.kind.to": "收件人",
+    "ledgers.outbox.kind.to": "收件人",
   "ledgers.outbox.kind.cc": "抄送",
   "ledgers.outbox.kind.bcc": "密送",
 
@@ -53,6 +52,9 @@ export const ledgers: Twin<typeof source> = {
   "ledgers.audit.col.action": "操作",
   "ledgers.audit.col.actor": "执行者",
   "ledgers.audit.col.outcome": "结果",
+  "ledgers.audit.outcome.ok": "成功",
+  "ledgers.audit.outcome.refused": "已拒绝",
+  "ledgers.audit.outcome.failed": "失败",
   "ledgers.audit.actorFor": "{actor}（代表 {delegator}）",
 
   "ledgers.log.label": "运行日志",

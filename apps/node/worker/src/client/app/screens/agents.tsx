@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { shortfall } from "@mailda/contract/capability";
+import { CAPABILITY_IDS, shortfall } from "@mailda/contract/capability";
+import { oneOf } from "@mailda/contract/schemas";
 
 import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
@@ -217,8 +218,13 @@ function Minting({ onMinted }: { onMinted: () => void }) {
             {capability.reachesContent
               ? <span className="state state-audit-warn">{t("agents.mint.reachesContent")}</span>
               : null}
-            {/* The capability's description is the Node's (`GET /api/agent-capabilities`), so it stays English. */}
-            <span className="dim"><NodeWords>{capability.says}</NodeWords></span>
+            {/*
+              * Keyed by the id (`CAPABILITY_IDS`); an id this interface does not know shows the Node's own
+              * description (`GET /api/agent-capabilities`), marked.
+              */}
+            <span className="dim">
+              {oneOf(CAPABILITY_IDS, capability.id) ? t(`capability.${capability.id}`) : <NodeWords>{capability.says}</NodeWords>}
+            </span>
           </label>
         ))}
       </fieldset>

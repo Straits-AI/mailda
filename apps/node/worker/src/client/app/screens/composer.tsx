@@ -1028,7 +1028,7 @@ async function judge(file: File): Promise<Attached> {
 
 /** A file's size in KB (1,024 bytes), never "0 KB" for a file that is there. */
 function kilobytes(bytes: number): string {
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return t("composer.size.kb", { size: String(Math.max(1, Math.round(bytes / 1024))) });
 }
 
 /**
@@ -1038,7 +1038,7 @@ function kilobytes(bytes: number): string {
  * tenth: at 3.375 MB, the budget when this was written, it read "Up to 3.4 MB", room the seal refuses.
  */
 function megabytes(bytes: number, round: (n: number) => number = Math.floor): string {
-  return `${(round(bytes / 104_857.6) / 10).toFixed(1)} MB`;
+  return t("composer.size.mb", { size: (round(bytes / 104_857.6) / 10).toFixed(1) });
 }
 
 /**

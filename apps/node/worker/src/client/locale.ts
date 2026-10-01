@@ -20,9 +20,11 @@
  * the upgrade, at the price of `Vary: Cookie` on the document.
  */
 
+import { preauthError } from "@mailda/contract/preauth-errors";
+
 import type { Key, Source } from "../i18n/catalog.ts";
 import { parts, resolveLocale, text, type ArgsFor, type Message, type Resolved, type Text } from "../i18n/format.ts";
-import { isLocale, localeEntry, type Locale } from "../i18n/locales.ts";
+import { LOCALES, SOURCE_LOCALE, isLocale, localeEntry, type Locale } from "../i18n/locales.ts";
 import { PREAUTH } from "../i18n/preauth.ts";
 
 /** Written by the build: each locale's content-tagged table URL, and whether a missing key throws. */
@@ -91,8 +93,39 @@ export function bootLocale(): Locale {
   const brand = t("brand.name");
   document.title = brand;
   const wordmark = document.querySelector(".rack .wordmark span");
-  if (wordmark !== null) wordmark.textContent = brand;
+  if (wordmark !== null) {
+    wordmark.textContent = brand;
+    // The lockup (`docs/i18n.md`, Brand): a locale whose mark is not the source's shows the source's after it,
+    // marked as English, so 淼达 is read beside the Mailda on the CLI and the domain. English shows its one mark.
+    wordmark.parentElement?.querySelector(":scope > span[lang]")?.remove();
+    const latin = PREAUTH[SOURCE_LOCALE]["brand.name"];
+    if (brand !== latin) {
+      const secondary = document.createElement("span");
+      secondary.lang = SOURCE_LOCALE;
+      secondary.textContent = latin;
+      wordmark.after(secondary);
+    }
+  }
   return resolved.locale;
+}
+
+/**
+ * What a language switch lists before sign-in, each by its endonym: the offered locales, and the active one when
+ * the review flag chose a preview, so a page in a preview language can be switched back. One entry is no choice,
+ * and the switch is then not drawn (`app.client.js`), as Settings says English is the only language.
+ */
+export function switchable(): ReadonlyArray<{ readonly tag: Locale; readonly endonym: string }> {
+  return LOCALES.filter((entry) => !entry.preview || entry.tag === active.locale);
+}
+
+/**
+ * This interface's headline for a refusal the Node sent before sign-in (`{ error, message }`), or null for a code
+ * outside the contract's `PREAUTH_ERRORS`, whose message is then shown alone as the Node's English. Narrowed here
+ * because `app.client.js` is served as written and cannot import the contract.
+ */
+export function refusalHeadline(code: unknown): Text | null {
+  const known = preauthError(code);
+  return known === null ? null : t(`preauth.refusal.${known}`);
 }
 
 /**

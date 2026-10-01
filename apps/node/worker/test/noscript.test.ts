@@ -1,6 +1,8 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { LOCALES } from "../src/i18n/locales.ts";
+
 /**
  * What the shell says when the bundle does not run (#92).
  *
@@ -68,5 +70,44 @@ describe("the shell explains itself when scripting is off", () => {
       .replace(/<[^>]+>/g, "")
       .trim();
     expect(visible).toBe("Mailda");
+  });
+});
+
+/**
+ * The notice in every language (ADR 46, layer 3). Without scripting nothing can choose a language for the reader,
+ * so the page carries each locale's block, marked with its `lang`, and the reader finds their own.
+ */
+describe("the notice is in every language, each block marked", () => {
+  const blocks = async (): Promise<Map<string, string>> => {
+    const html = (await SELF.fetch("https://node.example/").then((response) => response.text()));
+    const notice = html.slice(html.indexOf("<noscript>"), html.indexOf("</noscript>"));
+    return new Map([...notice.matchAll(/<div class="rack" lang="([^"]+)">([\s\S]*?)<\/div><\/div>/g)].map((match) => [match[1]!, match[2]!]));
+  };
+  /** Each paragraph's words, its markup removed and its line breaks folded, as a browser lays it out. */
+  const text = (block: string): string[] => [...block.matchAll(/<p>([\s\S]*?)<\/p>/g)]
+    .map((match) => match[1]!.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+
+  it("has one block per locale, English first", async () => {
+    expect([...(await blocks()).keys()]).toEqual(LOCALES.map(({ tag }) => tag));
+  });
+
+  it("says in English what it said before the catalog held it, word for word", async () => {
+    // The notice as `page()` wrote it on 2 October 2026, before its words moved into `preauth.noscript.*`.
+    expect(text((await blocks()).get("en")!)).toEqual([
+      "This page needs JavaScript.",
+      "Claiming a Node, signing in and reading the diagnostic all run in the browser. Nothing here is rendered on the "
+        + "server, so with scripting disabled this page can show you only this notice.",
+      "The diagnostic is available as plain text and needs no scripting: /api/doctor?format=text.",
+    ]);
+  });
+
+  it("says it in Chinese in the Chinese block, the link inside its sentence", async () => {
+    const zh = (await blocks()).get("zh-Hans")!;
+    expect(text(zh)).toEqual([
+      "此页面需要 JavaScript。",
+      "认领节点、登录和查看诊断都在浏览器中运行。这里没有任何内容在服务器上渲染，所以禁用脚本后，此页面只能显示这条提示。",
+      "诊断报告有纯文本版本，无需脚本：/api/doctor?format=text。",
+    ]);
+    expect(zh).toContain('<a href="/api/doctor?format=text">/api/doctor?format=text</a>。');
   });
 });

@@ -38,12 +38,11 @@ export function address(origin, route, locale) {
 
 /**
  * The words a state's locators look for, in the run's locale: the catalog the page itself renders from, so a locator
- * on a migrated control follows its translation instead of failing as a state that could not open. A locator on a
- * screen not migrated yet (the rule and Butler editors) is still an English literal, because that screen still
- * renders English under every locale.
+ * on a migrated control follows its translation instead of failing as a state that could not open. Both tables, since
+ * layer 3 migrated the pages before sign-in, whose locators (the invitation link, the sign-in form) are words too.
  */
 export function wordsFor(locale) {
-  return CATALOGS[locale ?? "en"].app;
+  return { ...CATALOGS[locale ?? "en"].preauth, ...CATALOGS[locale ?? "en"].app };
 }
 
 /** A `^prefix` pattern from a message's words before its first placeholder: "Health: {verdict}" matches "Health: ok". */

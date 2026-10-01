@@ -1,6 +1,6 @@
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
-import type { LogLevel } from "@mailda/contract/schemas";
+import type { AuditOutcome, LogLevel } from "@mailda/contract/schemas";
 
 import { sponsorOf } from "./delegation.ts";
 import { unavailable } from "./errors.ts";
@@ -49,7 +49,8 @@ const GENESIS = "0".repeat(64);
  * the exact question §23 exists to answer. The argument in full is in `src/butler/principal.ts`.
  */
 export type ActorKind = "user" | "node" | "installer" | "butler" | "agent";
-export type Outcome = "ok" | "refused" | "failed";
+/** The contract's `AUDIT_OUTCOMES`, so the screen that keys its words and this writer read one list. */
+export type Outcome = AuditOutcome;
 
 /**
  * Every action this Node may record, declared in one place.

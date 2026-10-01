@@ -234,14 +234,11 @@ export async function apiFetch(path, init = {}) {
   noteServerTime(response);
 
   // A 401 that survives a *successful* refresh is not recoverable, and the page must not be left
-  // showing a live session above a signed-out screen. Say the session is over, once.
+  // showing a live session above a signed-out screen. Say the session is over, once. No `message`: that field
+  // carries the Node's own words, and this finding is the page's, which `app.client.js` words by its reason.
   if (response.status === 401) {
     stop();
-    emit({
-      type: "signed-out",
-      reason: "refresh_did_not_help",
-      message: "Your session could not be renewed. Please sign in again.",
-    });
+    emit({ type: "signed-out", reason: "refresh_did_not_help" });
   }
   return response;
 }

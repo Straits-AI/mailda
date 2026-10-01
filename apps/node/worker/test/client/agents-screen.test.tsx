@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CAPABILITIES as NODE_CAPABILITIES } from "@mailda/contract/capability";
+
 import { answerWith, reset, seen } from "./session-stub.ts";
 
 /**
@@ -32,10 +34,13 @@ vi.mock("@tanstack/react-router", () => ({
 
 const { Agents } = await import("../../src/client/app/screens/agents.tsx");
 
+/** The Node's own words for a capability this interface knows; `hold.read` below is one it does not (a removed id). */
+const MAIL_READ_SAYS = NODE_CAPABILITIES.find((one) => one.id === "mail.read")!.says;
+
 const CAPABILITIES = [
   {
     id: "mail.read",
-    says: "Read mail: list it, open a message, and fetch the original bytes.",
+    says: MAIL_READ_SAYS,
     reachesContent: true,
     requires: ["mailbox.content.read", "message.export"],
     routes: ["a", "b", "c", "d"],
@@ -154,9 +159,11 @@ describe("the ceiling is chosen and shown as capabilities", () => {
      * sounding administrative, so getting this wrong is not a cosmetic matter.
      */
     expect(
-      screen.getByText("Read mail: list it, open a message, and fetch the original bytes."),
+      screen.getByText(MAIL_READ_SAYS),
       "a capability was offered with no description of what granting it does",
     ).toBeTruthy();
+    // An id this interface has no words for (a newer Node's, or one since removed) is described in the Node's own.
+    expect(screen.getByText("Read the legal holds in force.")).toBeTruthy();
   });
 
   it("marks the capabilities that reach message content", async () => {

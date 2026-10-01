@@ -73,10 +73,11 @@ describe("the Cloudflare credential is reachable from nothing that carries mail"
      * this door, and since 26 September 2026 it names the word for a different reason: `provider_token` is
      * also the doctor *finding* the credential module reports, and `client/app/health.ts` keys its Health
      * popover rows by every finding name (a `Record<DoctorCheck, …>`, so it must). The import door above
-     * still scans the client too.
+     * still scans the client too. `i18n/` for the same reason since layer 3 of ADR 46: the catalogs are words
+     * served to the browser, and `doctor.check.provider_token` is that finding's title.
      */
     const readers = ALL
-      .filter((path) => !relative(path).startsWith("client/"))
+      .filter((path) => !relative(path).startsWith("client/") && !relative(path).startsWith("i18n/"))
       .filter((path) => readFileSync(path, "utf8").includes("provider_token"))
       .map(relative)
       .sort();

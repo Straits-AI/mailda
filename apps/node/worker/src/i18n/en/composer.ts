@@ -45,6 +45,12 @@ export const composer = {
   "composer.from.more": "More addresses for this mailbox are added on People, by an administrator.",
 
   // The attachment limit, before anything is attached and after.
+  /**
+   * A size and its unit. `{size}` is a figure `composer.tsx` rounds itself and passes as text, left ungrouped on purpose
+   * (`4096 KB`), which a catalog number would group.
+   */
+  "composer.size.kb": "{size} KB",
+  "composer.size.mb": "{size} MB",
   "composer.limit.none": { one: "Up to {size} in total, {n} file.", other: "Up to {size} in total, {n} files." },
   "composer.limit.used": { one: "{used} of {size} used, {count} of {n} file.", other: "{used} of {size} used, {count} of {n} files." },
   "composer.limit.over": " Over the limit: remove a file or send a link.",

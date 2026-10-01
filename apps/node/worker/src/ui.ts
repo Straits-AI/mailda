@@ -16,6 +16,9 @@ import themeScript from "./client/theme.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
 import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "./outbound/attachment-budget.ts";
 import { MARK_IS_AUTHORED, faviconDataUri, markSvg } from "./brand.ts";
+import { parts } from "./i18n/format.ts";
+import { LOCALES } from "./i18n/locales.ts";
+import { PREAUTH } from "./i18n/preauth.ts";
 import { currentTable, servedTables } from "./i18n/served.ts";
 import { SHELL_CSS } from "./shell-css.ts";
 import { frameStylesheet } from "./theme.ts";
@@ -105,6 +108,30 @@ function configModule(): string {
   return `export const CONFIG = ${JSON.stringify(config).replace(/</g, "\\u003c")};\n`;
 }
 
+/**
+ * The `<noscript>` notice, once per locale, each block marked with its language. Without scripting nothing can
+ * choose a language for the reader, so every locale's words are here and the reader finds their own; English
+ * first, as the source. The words are the catalog's `preauth` ones (`src/i18n/en/preauth.ts`), escaped, and the
+ * link is filled into its sentence, so a translation moves it and cannot add one.
+ */
+function noscript(): string {
+  const link = { html: '<a href="/api/doctor?format=text">/api/doctor?format=text</a>' };
+  return LOCALES.map(({ tag }) => {
+    const words = PREAUTH[tag];
+    const doctor = parts(words["preauth.noscript.doctor"], { link }, tag, undefined)
+      .map((part) => (part === link ? link.html : escapeHtml(String(part)))).join("");
+    return `  <div class="rack" lang="${tag}"><div class="rack-inner">
+    <p><strong>${escapeHtml(words["preauth.noscript.title"])}</strong></p>
+    <p>${escapeHtml(words["preauth.noscript.body"])}</p>
+    <p>${doctor}</p>
+  </div></div>`;
+  }).join("\n");
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function page(): string {
   return `<!doctype html>
 <html lang="en">
@@ -142,13 +169,7 @@ export function page(): string {
   reachable. A blank page is the worst available diagnostic because it looks like a network problem.
 -->
 <noscript>
-  <div class="rack"><div class="rack-inner">
-    <p><strong>This page needs JavaScript.</strong></p>
-    <p>Claiming a Node, signing in and reading the diagnostic all run in the browser. Nothing here is
-    rendered on the server, so with scripting disabled this page can show you only this notice.</p>
-    <p>The diagnostic is available as plain text and needs no scripting:
-    <a href="/api/doctor?format=text">/api/doctor?format=text</a>.</p>
-  </div></div>
+${noscript()}
 </noscript>
 
 <script type="module" src="/app/app.js"></script>

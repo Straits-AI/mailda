@@ -63,6 +63,12 @@ export const chrome = {
   "chrome.notices.noun": "notices",
   "chrome.notice.approval": "You were asked to decide an approval ({kind}).",
   "chrome.notice.an_act": "an act",
+  /** `APPROVAL_SUBJECT_KINDS`, what an approval-request notice asks about, filled into `chrome.notice.approval`. */
+  "chrome.notice.kind.send_manifest": "a send",
+  "chrome.notice.kind.hold_lift": "a legal hold lift",
+  "chrome.notice.kind.supervised_read": "a supervised read",
+  "chrome.notice.kind.ediscovery_export": "an export",
+  "chrome.notice.kind.domain_pause": "a domain pause",
   "chrome.notice.request": "request {id}",
   "chrome.notice.asked_by": "asked by {who}",
   "chrome.notice.somebody": "somebody",

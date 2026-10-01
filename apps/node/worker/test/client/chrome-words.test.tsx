@@ -38,7 +38,7 @@ describe("the notices band", () => {
           id: "ntf_1", kind: "supervised_read", subjectId: "sgr_1", mailboxId: "mbx_1", matterId: "mat_1", dueAt: null,
           deliveredAt: null,
           body: {
-            readerEmail: "legal@example.test", mailboxName: "Support", scope: "read", grantedAt: "2026-09-26T09:00:00Z",
+            readerEmail: "legal@example.test", mailboxName: "Support", scope: "content", grantedAt: "2026-09-26T09:00:00Z",
             expiresAt: "2026-09-27T09:00:00Z", matterId: "mat_1", matterType: "legal_hold", grantId: "sgr_1",
             acts: { queries: 1, listed: 1, opened: 3, attachments: 1 },
           },
@@ -50,7 +50,7 @@ describe("the notices band", () => {
         {
           id: "ntf_3", kind: "approval_request", subjectId: "apr_1", mailboxId: null, matterId: null, dueAt: null,
           deliveredAt: null,
-          body: { subjectKind: "send", approvalId: "apr_1", requestedBy: "ops@example.test", requestedAt: "2026-09-26T10:00:00Z" },
+          body: { subjectKind: "send_manifest", approvalId: "apr_1", requestedBy: "ops@example.test", requestedAt: "2026-09-26T10:00:00Z" },
         },
         {
           id: "ntf_4", kind: "approval_request", subjectId: "apr_2", mailboxId: null, matterId: null, dueAt: null,
@@ -60,14 +60,18 @@ describe("the notices band", () => {
     }));
     render(<QueryClientProvider client={client()}><Notices /></QueryClientProvider>);
     const band = await screen.findByRole("region", { name: "Notifications" });
+    // Each instant in the viewer's zone and locale (D37), the approval's subject in words, the matter's type in its
+    // words (`matters.type.*`), and the grant's scope as the Node's token, in <code>.
+    const local = (at: string) => new Date(at).toLocaleString();
     expect([...band.querySelectorAll(".notice.told")].map((notice) => notice.textContent)).toEqual([
-      "legal@example.test was granted a supervised read of Support, 2026-09-26T09:00:00Z to 2026-09-27T09:00:00Z. "
-        + "1 query listing 1 message · 3 opened · 1 raw message read · matter mat_1 (legal_hold) · grant sgr_1",
+      `legal@example.test was granted a supervised content of Support, ${local("2026-09-26T09:00:00Z")} to ${local("2026-09-27T09:00:00Z")}. `
+        + "1 query listing 1 message · 3 opened · 1 raw message read · matter mat_1 (legal hold) · grant sgr_1",
       "somebody was granted a supervised read of a mailbox, at an unrecorded instant to an unrecorded instant. "
         + "4 queries listing 0 messages · 0 opened · 0 raw messages read · matter none cited · grant sgr_2",
-      "You were asked to decide an approval (send). request apr_1 · asked by ops@example.test · 2026-09-26T10:00:00Z",
+      `You were asked to decide an approval (a send). request apr_1 · asked by ops@example.test · ${local("2026-09-26T10:00:00Z")}`,
       "You were asked to decide an approval (an act). request apr_2 · asked by somebody · an unrecorded instant",
     ]);
+    expect(band.querySelector(".notice.told code")?.textContent).toBe("content");
     expect(band.querySelector(".notice.dim")?.textContent).toBe("Showing the newest 4 notices. Older ones exist and are not listed.");
   });
 });

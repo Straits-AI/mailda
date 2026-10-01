@@ -69,9 +69,11 @@
 <fieldset class="field-row butler-format">
 <legend>Format</legend>
 <label for="butler-format-yaml">
-<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> yaml</label>
+<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> <code>yaml</code>
+</label>
 <label for="butler-format-json">
-<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> json</label>
+<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> <code>json</code>
+</label>
 <span class="dim">which parser reads the source below. Switching it does not rewrite your text</span>
 </fieldset>
 <label class="field-row" for="butler-source">
@@ -88,15 +90,17 @@
 <p class="dim">Walks the draft — or the live version if there is no draft — over a past run’s input. Reads real rows and asks the real authority questions; writes nothing.</p>
 <ul class="butler-dry-runs">
 <li>
-<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · completed</span>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">
+<code>mail.received</code> · finished</span>
 </li>
 <li>
-<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · stopped</span>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">
+<code>mail.received</code> · stopped</span>
 </li>
 </ul>
 <div class="butler-dry-result">
 <p>
-<strong>completed</strong> — reached stop <span class="dim">draft · 4 nodes · would spend 2</span>
+<strong>finished</strong> — reached stop <span class="dim">draft · 4 nodes · would spend 2</span>
 </p>
 <table>
 <caption class="dim">“would” is a write this Node declined to make. Every other outcome is a real answer from a real read — the same one a live run would have recorded.</caption>
@@ -202,7 +206,7 @@
 <tbody>
 <tr>
 <td class="mono">[clock]</td>
-<td>completed</td>
+<td>finished</td>
 <td>
 <span class="dim">—</span>
 </td>
@@ -241,6 +245,20 @@
 <tr>
 <td class="mono">[clock]</td>
 <td>running</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<span class="dim">—</span>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>awaiting release</td>
 <td>
 <span class="dim">—</span>
 </td>

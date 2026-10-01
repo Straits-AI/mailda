@@ -215,6 +215,23 @@ describe("the reading pane in English", () => {
     await expect(lines.join("\n") + "\n").toMatchFileSnapshot("./golden/reader.body.en.txt");
   });
 
+  it("says a body's problem by its code in the Node's own English, byte for byte", async () => {
+    // The Node's sentences (`problemSentence` in `src/render/body.ts`), as the API sends them beside the code.
+    const said: Record<string, string> = {
+      unreadable: "This message's body could not be read (Unexpected end of input). The original is unchanged and can still be downloaded.",
+      sanitised_empty: "Nothing in this message's HTML survived sanitising. The original is unchanged and can still be downloaded.",
+      unrenderable: "This message's HTML could not be rendered safely (memory limit exceeded). The original is unchanged and can still be downloaded.",
+    };
+    const causes: Record<string, string | null> = { unreadable: "Unexpected end of input", sanitised_empty: null, unrenderable: "memory limit exceeded" };
+    for (const [code, problem] of Object.entries(said)) {
+      body = () => Response.json({ ...FULL_BODY, state: "unparsed", html: null, problem, problemCode: code, problemCause: causes[code] });
+      const { container, unmount } = mount(pane(row()));
+      await bodyShown();
+      expect(container.querySelector(".notice.bad")!.innerHTML).toBe(problem);
+      unmount();
+    }
+  });
+
   it("renders the headers dialog, truncated, as before", async () => {
     mount(pane(row()));
     await bodyShown();
@@ -342,6 +359,20 @@ describe("the reading pane in Chinese", () => {
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(screen.getByRole("menuitem", { name: "移到回收站" })).not.toBeNull();
     expect(container.textContent).not.toMatch(/Reply|Forward|Headers|Download/);
+  });
+
+  it("says a body's problem in Chinese by its code, with the parser's own words marked, and an unknown code in the Node's", async () => {
+    chinese();
+    body = () => Response.json({ ...FULL_BODY, state: "unparsed", html: null, problem: "The Node's own words.", problemCode: "unreadable", problemCause: "Unexpected end of input" });
+    const first = mount(pane(row()));
+    await bodyShown();
+    expect(first.container.querySelector(".notice.bad")!.innerHTML)
+      .toBe('无法读取此邮件的正文（<span lang="en">Unexpected end of input</span>）。原始邮件未改动，仍可下载。');
+    first.unmount();
+    body = () => Response.json({ ...FULL_BODY, state: "unparsed", html: null, problem: "The Node's own words.", problemCode: "a_newer_code", problemCause: null });
+    const second = mount(pane(row()));
+    await bodyShown();
+    expect(second.container.querySelector(".notice.bad")!.innerHTML).toBe('<span lang="en">The Node\'s own words.</span>');
   });
 
   it("marks the Node's own words as English wherever the pane shows a refusal or a problem it sent", async () => {

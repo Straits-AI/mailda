@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, type ReactNode, useState } from "react";
-import { LOG_LEVELS, RECIPIENT_KINDS, oneOf } from "@mailda/contract/schemas";
+import { AUDIT_OUTCOMES, DOCTOR_CHECKS, LOG_LEVELS, RECIPIENT_KINDS, oneOf } from "@mailda/contract/schemas";
 import { apiFetch } from "/app/session.js";
 import { describeReason, describeRecipient, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 import { t } from "/app/locale.js";
@@ -13,7 +13,7 @@ import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
   type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, type Refused, repairSearch,
   requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
-  useSends, useTransport, verifyEvidence,
+  useSends, useTransport, verifyAudit, verifyEvidence,
 } from "../api.ts";
 
 /**
@@ -77,21 +77,21 @@ function Recipients({ send }: { send: SendRow }) {
                   {oneOf(RECIPIENT_KINDS, recipient.kind) ? t(`ledgers.outbox.kind.${recipient.kind}`) : <code>{recipient.kind}</code>}
                 </span>
                 <span className="mono">{recipient.address}</span>
-                <span
-                  className={`state delivery-${recipient.delivery_state ?? "unobserved"}`}
-                  title={recipient.bounce_type ? t("ledgers.outbox.bounce", { note: state.note, type: recipient.bounce_type }) : state.note}
-                >
+                <span className={`state delivery-${recipient.delivery_state ?? "unobserved"}`} title={state.note}>
                   {shown(state)}
                 </span>
+                {/* The provider's bounce type (`hard`, `soft`), its token in every locale. Beside the state rather than
+                    in its title, where a token cannot be marked as one. */}
+                {recipient.bounce_type ? <code className="dim">{recipient.bounce_type}</code> : null}
                 {reason === null ? null : (
                   // Beside `unobserved`, not instead of it, as the send row's reason sits beside its state (#62):
                   // the state is what was heard, which is nothing; the reason is why nothing is coming.
                   <span className="state state-reason delivery-chip" title={reason.note}>{shown(reason)}</span>
                 )}
                 {recipient.last_error ? (
-                  // The provider's own words. A paraphrase of somebody else's mail server is a guess. Not marked
-                  // as the Node's English either: the receiving server wrote them, in whatever language it uses.
-                  <span className="dim mono recipient-error">{recipient.last_error}</span>
+                  // The provider's own words, which this Node passes on as it does its own (an SMTP reply is English
+                  // by protocol), so marked as the Node's English. A paraphrase of somebody else's mail server is a guess.
+                  <span className="dim mono recipient-error"><NodeWords>{recipient.last_error}</NodeWords></span>
                 ) : null}
               </div>
             );
@@ -393,7 +393,7 @@ function actorLabel(entry: AuditRow): string {
 
 export function Audit() {
   const audit = useAudit();
-  const [verdict, setVerdict] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<{ said: ReactNode; refused: boolean } | null>(null);
 
   if (audit.isPending || audit.isError) {
     return (
@@ -405,15 +405,19 @@ export function Audit() {
   }
 
   async function verify() {
-    const response = await apiFetch("/api/audit/verify", { method: "POST" });
-    const outcome = (await response.json()) as { intact: boolean; checked: number; brokenAt?: number };
+    const outcome = await verifyAudit();
+    // A refusal is the Node's answer to the request, not a verdict on the chain: read as one, it said "Chain broken at
+    // entry undefined" (found by T4, 2 October 2026).
+    if (!outcome.ok) { setVerdict({ said: marked(outcome), refused: true }); return; }
+    const { intact, checked, brokenAt } = outcome.value;
     // Stated as what was checked, not as a reassurance. An unverified chain and a verified one must not
     // read the same.
-    setVerdict(
-      outcome.intact
-        ? t("ledgers.audit.intact", { count: String(outcome.checked) })
-        : t("ledgers.audit.broken", { entry: String(outcome.brokenAt), count: String(outcome.checked) }),
-    );
+    setVerdict({
+      refused: false,
+      said: intact
+        ? t("ledgers.audit.intact", { count: String(checked) })
+        : t("ledgers.audit.broken", { entry: String(brokenAt), count: String(checked) }),
+    });
   }
 
   return (
@@ -424,7 +428,9 @@ export function Audit() {
           {t("ledgers.audit.verify")}
         </button>
       </header>
-      {verdict === null ? null : <p className="notice mono">{verdict}</p>}
+      {verdict === null ? null
+        : verdict.refused ? <p className="notice bad" role="alert">{verdict.said}</p>
+        : <p className="notice mono">{verdict.said}</p>}
       <Truncated when={audit.data.truncated} shown={audit.data.entries.length} noun={t("ledgers.noun.entries")} />
       {audit.data.entries.length === 0 ? (
         <Nothing kind="empty" detail={t("ledgers.audit.empty")} />
@@ -444,10 +450,13 @@ export function Audit() {
             {audit.data.entries.map((entry) => (
               <tr key={entry.id}>
                 <td className="num mono dim">{entry.seq}</td>
-                <td className="mono">{entry.action}</td>
+                {/* The audit key, an identifier in every locale (docs/i18n.md, Register). */}
+                <td className="mono"><code>{entry.action}</code></td>
                 <td className="mono dim">{actorLabel(entry)}</td>
                 <td>
-                  <span className={`state state-audit-${entry.outcome}`}>{entry.outcome}</span>
+                  <span className={`state state-audit-${entry.outcome}`}>
+                    {oneOf(AUDIT_OUTCOMES, entry.outcome) ? t(`ledgers.audit.outcome.${entry.outcome}`) : <code>{entry.outcome}</code>}
+                  </span>
                 </td>
                 <td className="mono dim">{entry.subject ?? "—"}</td>
                 <td className="num mono dim">{stamp(entry.at)}</td>
@@ -508,7 +517,7 @@ export function Log() {
                   <td>
                     <span className={`state state-log-${entry.level}`}>{levelWord(entry.level)}</span>
                   </td>
-                  <td className="mono">{entry.event}</td>
+                  <td className="mono"><code>{entry.event}</code></td>
                   <td><NodeWords>{entry.message}</NodeWords></td>
                   <td className="num mono dim">{stamp(entry.at)}</td>
                 </tr>
@@ -576,7 +585,7 @@ function SendingCredentials() {
         ? <Nothing kind="loading" />
         : (
           <p className="dim">
-            {sentence("ledgers.transport.through", { adapter: <span className="mono">{report.adapter}</span> })}
+            {sentence("ledgers.transport.through", { adapter: <span className="mono"><NodeWords>{report.adapter}</NodeWords></span> })}
             {" "}
             {report.available.binding
               ? t("ledgers.transport.binding")
@@ -761,7 +770,8 @@ function Acknowledge() {
         <input id="ack-scope" value={scope} onChange={(event) => setScope(event.target.value)} /></label>
       <label className="field-row" htmlFor="ack-conclusion"><span>{t("ledgers.conflict.conclusion")}</span>
         <input id="ack-conclusion" value={conclusion} onChange={(event) => setConclusion(event.target.value)} /></label>
-      <OneAct label={t("ledgers.conflict.act")} run={async () => {
+      {/* No act without the id its path is built from: an empty one throws before any request (found by T4). */}
+      <OneAct label={t("ledgers.conflict.act")} disabled={restoreId.trim() === ""} run={async () => {
         const outcome = await acknowledgeConflict(restoreId.trim(), scope, conclusion);
         if (!outcome.ok) return outcome;
         const { acknowledged } = outcome.value;
@@ -981,6 +991,16 @@ function EvidenceVerify() {
   );
 }
 
+/**
+ * A finding's check: this interface's title for it (`doctor.check.*`) above its name, or, for a name a newer Node
+ * emits that this interface does not know, the name alone. The name stays because the Node's own `fix` text cites
+ * checks by it ("check the migrations_applied finding first").
+ */
+function CheckName({ check }: { check: string }) {
+  if (!oneOf(DOCTOR_CHECKS, check)) return <td className="mono"><NodeWords>{check}</NodeWords></td>;
+  return <td>{t(`doctor.check.${check}`)}<span className="mono dim block"><NodeWords>{check}</NodeWords></span></td>;
+}
+
 export function Doctor() {
   const doctor = useDoctor();
   if (doctor.isPending || doctor.isError) {
@@ -1013,7 +1033,7 @@ export function Doctor() {
         <tbody>
           {report.findings.map((finding) => (
             <tr key={finding.check}>
-              <td className="mono">{finding.check}</td>
+              <CheckName check={finding.check} />
               <td>
                 <span className={`state ${finding.ok ? "delivery-accepted" : `severity-${finding.severity}`}`}>
                   {t(finding.ok ? "health.status.ok" : `health.status.${finding.severity}`)}

@@ -13,13 +13,14 @@ import type { Locale } from "./locales.ts";
  * ## Status: every row starts proposed, and only the owner confirms one
  *
  * A row's `status` is `"proposed"` until the repository's owner confirms that word, and then it becomes
- * `{ confirmedBy, record }`, where `record` links the owner's own written confirmation and says when it was
- * made (a PR review comment, an issue comment, or a decision the owner recorded on a review page). An author,
- * human or agent, never writes a `confirmedBy` for somebody else: the only edit to a row's status is copying
- * that record in, which `CONFIRMED` below does for the owner's review of 30 September 2026 (and `ANSWERED` and
- * `ROUND_TWO` for the answers and the second round of 1 October 2026, `ROUND_THREE` for the third). The check cannot tell who typed the
- * field, so **the real gate is the owner's approval of the pull request that carries the edit**, and
- * `docs/i18n.md` says so.
+ * `{ confirmedBy, record }`, where `record` says where and when the owner confirmed it: a link to the owner's own
+ * written confirmation (a PR review comment, an issue comment, or a decision the owner recorded on a review page),
+ * or, where there is none, the words the owner said and where. An author, human or agent, never writes a
+ * `confirmedBy` for somebody else: the only edit to a row's status is copying that record in, which `CONFIRMED`
+ * below does for the owner's review of 30 September 2026 (and `ANSWERED` and `ROUND_TWO` for the answers and the
+ * second round of 1 October 2026, `ROUND_THREE` for the third, `ROUND_FOUR` for the fourth, which has no review page).
+ * The check cannot tell who typed the field, so **the real gate is the owner's approval of the pull request that
+ * carries the edit**, and `docs/i18n.md` says so.
  *
  * What the status gates: a locale that is **not** a preview may not ship a key bound to a proposed row. A
  * preview locale may, because reviewing proposed words in place is what a preview is for, and a preview is
@@ -97,6 +98,21 @@ const ROUND_THREE: ReadonlySet<string> = new Set([
   "team", "mint", "capability", "approve", "routing-rule", "pause", "supervised-read", "export", "breaker", "vouch", "lift",
   "administrator", "receipt.measured", "onboard", "zone", "apex", "token", "delivery-event", "subscription", "consumer",
 ]);
+/**
+ * Round four, with no review page: layer 3's twenty-five rows, and the reviewer's questions H1 to H14 on its strings,
+ * accepted by the owner in the working session on 2 October 2026 ("just accept them"), every row and question as
+ * proposed, without reviewing them. The record says so, because a review that did not happen is not one. The same
+ * acceptance took H7's words for a Butler run's state, so `butler-run.stopped` (已终止, never 已停止) is here too.
+ */
+const OWNER_ROUND_FOUR = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "round four: the owner accepted every proposed row and question as proposed, in the working session on 2 October 2026, without a review page",
+} as const;
+const ROUND_FOUR: ReadonlySet<string> = new Set([
+  "node.listening", "organization", "owner", "operator", "renew", "passkey-sign-in", "doctor.check", "credential-key", "signing-key",
+  "key-generation", "evidence", "evidence-bucket", "catalog-db", "migration", "backlog", "stranded", "orphaned", "supervision-notice",
+  "transport", "reduced-report", "sanitise", "classifier", "triage", "audit.refused", "workers-paid", "butler-run.stopped",
+]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -154,21 +170,36 @@ export const CONCEPTS: readonly Concept[] = [
   row("approval", "approval", "审批", { avoid: { "zh-Hans": ["同意"] } }),
   row("receipt.ingress", "receipt", "接收记录", { avoid: { "zh-Hans": ["回执", "收据"] } }),
   row("escrow", "escrow", "密钥恢复副本", { avoid: { "zh-Hans": ["托管"] } }),
-  row("recovery-codes", "recovery codes", "恢复码", { avoid: { "zh-Hans": ["备用码"] } }),
+  row("recovery-codes", "recovery codes", "恢复码", { sentences: ["preauth.codes.heading"], avoid: { "zh-Hans": ["备用码"] } }),
   row("passkey", "passkey", "通行密钥", {
-    sentences: ["api.passkey.unsupported", "api.passkey.none"], avoid: { "zh-Hans": ["通行证"] },
+    sentences: [
+      "api.passkey.unsupported", "api.passkey.none", "preauth.signin.passkey", "preauth.passkey.waiting", "preauth.passkey.unsupported",
+      "preauth.passkey.failed", "preauth.refusal.E_PASSKEY_REJECTED",
+    ],
+    avoid: { "zh-Hans": ["通行证"] },
     note: "not 密钥, which already names cryptographic keys here (escrow is 密钥恢复副本, and the key vault); 通行密钥 is how Apple and Google localize passkey. The owner first chose 密钥 (30 Sep 2026), was asked once, and confirmed 通行密钥 (1 Oct 2026)",
   }),
-  row("claim", "claim", "认领", { sentences: ["ledgers.doctor.claimed", "ledgers.doctor.unclaimed"], avoid: { "zh-Hans": ["注册", "激活"] } }),
-  row("claim-secret", "claim secret", "认领码", { avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
-  row("invitation-secret", "invitation secret", "邀请码", { avoid: { "zh-Hans": ["邀请密钥"] } }),
+  row("claim", "claim", "认领", {
+    sentences: [
+      "ledgers.doctor.claimed", "ledgers.doctor.unclaimed", "preauth.claim.title", "preauth.claim.submit", "preauth.refusal.already_claimed",
+      "preauth.refusal.not_claimed",
+    ], avoid: { "zh-Hans": ["注册", "激活"] } }),
+  row("claim-secret", "claim secret", "认领码", {
+    // The claim's field says "Claim secret" since round four (H1, D35); the Node's own messages still say bootstrap.
+    sentences: ["preauth.claim.secret"], avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
+  row("invitation-secret", "invitation secret", "邀请码", { sentences: ["preauth.join.secret"], avoid: { "zh-Hans": ["邀请密钥"] } }),
   row("grant", "grant", "授权", { avoid: { "zh-Hans": ["许可"] } }),
   row("provider", "provider", "服务商", { avoid: { "zh-Hans": ["供应商"] } }),
   row("catch-all", "catch-all", "Catch-all 地址", { avoid: { "zh-Hans": ["全部邮件", "转发"] } }),
   row("sponsor", "sponsor", "委托人", { avoid: { "zh-Hans": ["担保人"] } }),
   row("effect", "effect", "外部动作", { avoid: { "zh-Hans": ["效果", "副作用"] } }),
   row("graph-node", "node (Butler graph)", "步骤"),
-  row("session", "session", "登录会话"),
+  row("session", "session", "登录会话", {
+    sentences: [
+      "preauth.session.renewsIn", "preauth.session.renewing", "preauth.session.renewed", "preauth.session.notRenewed",
+      "preauth.refusal.no_refresh_token", "preauth.refusal.expired", "preauth.refusal.unknown", "preauth.refusal.reuse_detected",
+    ],
+  }),
   row("settings", "Settings", "设置", { keys: ["route./settings"] }),
   row("setup", "Setup", "配置", { keys: ["route./setup"], avoid: { "zh-Hans": ["设置"] } }),
 
@@ -259,7 +290,7 @@ export const CONCEPTS: readonly Concept[] = [
   row("quarantine", "quarantine / held back", "隔离"),
   row("legal-hold", "legal hold", "法律保全", {
     // `matters.type.legal_hold` is the matter kind's own name, keyed over the contract's `MATTER_TYPES` (G12).
-    keys: ["matters.type.legal_hold"], sentences: ["ledgers.collect.warning"], avoid: { "zh-Hans": ["保留", "冻结"] },
+    keys: ["matters.type.legal_hold"], sentences: ["ledgers.collect.warning", "chrome.notice.kind.hold_lift"], avoid: { "zh-Hans": ["保留", "冻结"] },
   }),
   row("policy-hold", "rule hold", "规则暂扣", { keys: ["send.reason.policy_hold"] }),
   row("case.hand-over", "Hand over (a case)", "转交", { avoid: { "zh-Hans": ["移交"] } }),
@@ -325,19 +356,19 @@ export const CONCEPTS: readonly Concept[] = [
   row("pause", "pause", "暂停", {
     sentences: [
       "send.reason.domain_paused", "send.reason.domain_paused.note", "approvals.kind.domain_pause.what", "limits.pauses.lead",
-      "limits.pauses.asked", "limits.pauses.act", "limits.pauses.empty", "butlers.standing.paused",
+      "limits.pauses.asked", "limits.pauses.act", "limits.pauses.empty", "butlers.standing.paused", "chrome.notice.kind.domain_pause",
     ],
     avoid: { en: ["stop", "Stop", "restart", "Restart"], "zh-Hans": ["停止", "封禁"] },
     note: "D3: one verb for a domain or a Butler held until somebody lifts or resumes it; never stopped, never restarted",
   }),
   row("supervised-read", "supervised read", "受监督查阅", {
-    sentences: ["matters.read.empty"], avoid: { "zh-Hans": ["监控", "监视"] },
+    sentences: ["matters.read.empty", "chrome.notice.kind.supervised_read"], avoid: { "zh-Hans": ["监控", "监视"] },
     note: "a time-boxed grant to read a mailbox one holds nothing on; already the word of `chrome.notice.supervised`",
   }),
   row("export", "export", "导出", {
     sentences: [
       "api.grant.ediscovery.export", "reader.original.recorded", "reader.original.note", "ledgers.collect.warning",
-      "ledgers.collect.exports", "matters.exports.lead", "matters.exports.act", "matters.exports.empty",
+      "ledgers.collect.exports", "matters.exports.lead", "matters.exports.act", "matters.exports.empty", "chrome.notice.kind.ediscovery_export",
     ],
     avoid: { "zh-Hans": ["外发"] },
     note: "an e-discovery copy that leaves this Node's controls (外发 is the outbound row's avoided word too)",
@@ -353,7 +384,7 @@ export const CONCEPTS: readonly Concept[] = [
   row("lift", "lift", "解除", {
     sentences: [
       "approvals.kind.domain_pause.what", "send.reason.domain_paused.note", "matters.holds.liftWaiting", "matters.holds.liftAsked",
-      "matters.holds.liftAct",
+      "matters.holds.liftAct", "chrome.notice.kind.hold_lift",
     ],
     avoid: { "zh-Hans": ["释放"] },
     note: "ending a legal hold or a domain pause; 释放 is the release family (case.release avoids it too)",
@@ -400,7 +431,10 @@ export const CONCEPTS: readonly Concept[] = [
     note: "an API token (Cloudflare's, or an agent's bearer token). Not 密钥, which names cryptographic keys here (passkey's note), as in 凭据密钥",
   }),
   row("delivery-event", "delivery event", "投递事件", {
-    sentences: ["setup.outcomes.done", "onboarding.delivery.unread", "delivery.reason.verified_destination.note"],
+    sentences: [
+      "setup.outcomes.done", "onboarding.delivery.unread", "delivery.reason.verified_destination.note",
+      "doctor.check.sending_events_consumer", "doctor.check.delivery_attribution",
+    ],
     note: "Cloudflare's report of what a receiving server did with a send, which this Node reads as a delivery state",
   }),
   row("subscription", "subscription", "订阅", {
@@ -408,13 +442,92 @@ export const CONCEPTS: readonly Concept[] = [
     note: "Cloudflare's subscription that publishes a sending domain's delivery events into this Node's queue",
   }),
   row("consumer", "consumer", "消费者", {
-    sentences: ["setup.outcomes.noConsumer", "onboarding.outcomes.noConsumer"],
+    sentences: ["setup.outcomes.noConsumer", "onboarding.outcomes.noConsumer", "doctor.check.sending_events_consumer"],
     note: "the Worker a Cloudflare queue hands its messages to; Cloudflare's own Chinese word",
+  }),
+
+  // Layer 3 (2 October 2026): the words the pages before sign-in, the Doctor's check titles, a capability's
+  // description and a body's problem needed that no row had. Accepted as proposed in round four (`OWNER_ROUND_FOUR`).
+  row("node.listening", "listening", "接收中", {
+    keys: ["preauth.status.listening"], note: "a claimed Node's state in the strip before sign-in, beside 未认领",
+  }),
+  row("organization", "Organization", "组织", { keys: ["preauth.claim.org"], note: "what the claim creates" }),
+  row("owner", "owner", "所有者", { sentences: ["preauth.claim.email"], note: "the person who claims the Node" }),
+  row("operator", "operator", "运维人员", { sentences: ["preauth.refusal.internal"], note: "whoever reads this Node's log" }),
+  row("renew", "renew", "续期", {
+    sentences: [
+      "preauth.session.renewsIn", "preauth.session.renewing", "preauth.session.renewed", "preauth.session.notRenewed",
+      "settings.session.renews",
+    ],
+    note: "a session's token renewal",
+  }),
+  row("passkey-sign-in", "passkey sign-in", "通行密钥登录", {
+    sentences: ["preauth.passkey.notStarted", "preauth.refusal.E_CHALLENGE_UNUSABLE", "preauth.refusal.E_CHALLENGE_ALREADY_SPENT"],
+    note: "one passkey ceremony (the Node's challenge), which can expire or be spent; built on the passkey row",
+  }),
+  row("doctor.check", "check", "检查项", {
+    sentences: ["health.area.other"], note: "a Doctor finding's subject, named by `DOCTOR_CHECKS`",
+  }),
+  row("credential-key", "credential key", "凭据密钥", { sentences: ["doctor.check.credential_key"] }),
+  row("signing-key", "signing key", "签名密钥", { sentences: ["doctor.check.signing_key", "capability.identity.read"] }),
+  row("key-generation", "key generation", "密钥代", {
+    sentences: ["doctor.check.evidence_key_generation"], avoid: { "zh-Hans": ["版本"] },
+    note: "one generation of the keys that seal evidence; 密钥代 as `ledgers.conflict.done` already says",
+  }),
+  row("evidence", "evidence", "证据", {
+    sentences: [
+      "doctor.check.evidence_bucket_reachable", "doctor.check.evidence_orphans", "doctor.check.evidence_present",
+      "doctor.check.evidence_key_generation", "doctor.check.send_evidence_changed", "send.reason.evidence_changed",
+    ],
+    note: "the stored bytes a send or an arrival is proven by",
+  }),
+  row("evidence-bucket", "evidence bucket", "证据存储桶", { sentences: ["doctor.check.evidence_bucket_reachable"] }),
+  row("catalog-db", "Catalog database", "目录数据库", {
+    keys: ["doctor.check.catalog_reachable"], note: "the D1 database bound as CATALOG",
+  }),
+  row("migration", "migration", "迁移", { sentences: ["doctor.check.migrations_applied", "ledgers.migrations.apply"] }),
+  row("backlog", "backlog", "积压", {
+    sentences: ["doctor.check.body_index_backlog", "doctor.check.preview_backlog", "doctor.check.search_index_backlog"],
+  }),
+  row("stranded", "stranded", "滞留", {
+    sentences: ["doctor.check.draft_bodies_stranded", "doctor.check.supervision_notice_stranded"],
+  }),
+  row("orphaned", "orphaned", "孤立", { sentences: ["doctor.check.evidence_orphans"] }),
+  row("supervision-notice", "supervision notice", "受监督查阅通知", {
+    sentences: [
+      "doctor.check.supervision_notice_missing", "doctor.check.supervision_notices_overdue", "doctor.check.supervision_notice_stranded",
+    ],
+    note: "the notice §7 owes the person whose mail was read; built on the supervised-read row",
+  }),
+  row("transport", "sending transport", "发信通道", {
+    sentences: ["doctor.check.transport_adapters"], avoid: { "zh-Hans": ["适配器"] },
+    note: "what hands a send to the mail service (the adapter token stays Latin)",
+  }),
+  row("reduced-report", "reduced report", "精简报告", { sentences: ["doctor.check.report_reduced"] }),
+  row("sanitise", "sanitising", "安全清理", {
+    sentences: ["reader.body.problem.sanitised_empty"], avoid: { "zh-Hans": ["净化", "消毒"] },
+    note: "removing what is unsafe from a message's HTML before it is shown",
+  }),
+  row("classifier", "classifier", "分类器", { sentences: ["capability.mail.hold"] }),
+  row("triage", "triage", "分拣", { sentences: ["capability.queue.assign"] }),
+  row("audit.refused", "refused", "已拒绝", {
+    keys: ["ledgers.audit.outcome.refused"], avoid: { "zh-Hans": ["拒收", "否决"] },
+    note: "an audit entry's outcome: this Node refused the act (`AUDIT_OUTCOMES`). Not the provider's refusal (服务商拒收) nor a rule's decision (否决)",
+  }),
+  row("workers-paid", "Workers Paid", "Workers Paid 套餐", {
+    sentences: ["doctor.check.workers_paid_plan"], avoid: { "zh-Hans": ["付费版"] }, note: "Cloudflare's plan, by its own name",
+  }),
+  // H7 (round four): a Butler run's state, keyed over `BUTLER_RUN_STATES` (`butlers.run.*`). Only `stopped` is a row,
+  // because only it had a word to keep clear of: the other five are status words, keys and not rows, as G12's are.
+  row("butler-run.stopped", "stopped", "已终止", {
+    keys: ["butlers.run.stopped"], avoid: { "zh-Hans": ["停止"] },
+    note: "a `stop` node ended the run, or its release gate timed out. Not 已停止: 停止 is the pause row's avoided word (D3)",
   }),
 ].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
   : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER }
   : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO }
-  : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE } : concept));
+  : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE }
+  : ROUND_FOUR.has(concept.id) ? { ...concept, status: OWNER_ROUND_FOUR } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only

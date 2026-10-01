@@ -70,9 +70,11 @@
 <fieldset class="field-row butler-format">
 <legend>Format</legend>
 <label for="butler-format-yaml">
-<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> yaml</label>
+<input id="butler-format-yaml" type="radio" value="yaml" name="butler-format"> <code>yaml</code>
+</label>
 <label for="butler-format-json">
-<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> json</label>
+<input id="butler-format-json" type="radio" value="json" checked="" name="butler-format"> <code>json</code>
+</label>
 <span class="dim">which parser reads the source below. Switching it does not rewrite your text</span>
 </fieldset>
 <label class="field-row" for="butler-source">
@@ -89,10 +91,16 @@
 <p class="dim">Walks the draft — or the live version if there is no draft — over a past run’s input. Reads real rows and asks the real authority questions; writes nothing.</p>
 <ul class="butler-dry-runs">
 <li>
-<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · failed</span>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">
+<code>mail.received</code> · failed</span>
 </li>
 <li>
-<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">mail.received · running</span>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">
+<code>mail.received</code> · running</span>
+</li>
+<li>
+<button class="quiet" type="button">Dry run over [clock]</button> <span class="dim">
+<code>mail.received</code> · awaiting release</span>
 </li>
 </ul>
 </section>
@@ -138,7 +146,7 @@
 <tbody>
 <tr>
 <td class="mono">[clock]</td>
-<td>completed</td>
+<td>finished</td>
 <td>
 <span class="dim">—</span>
 </td>
@@ -177,6 +185,20 @@
 <tr>
 <td class="mono">[clock]</td>
 <td>running</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="mono num">3</td>
+<td class="mono num">1</td>
+<td class="mono num">0</td>
+<td class="mono num">4</td>
+<td>
+<span class="dim">—</span>
+</td>
+</tr>
+<tr>
+<td class="mono">[clock]</td>
+<td>awaiting release</td>
 <td>
 <span class="dim">—</span>
 </td>

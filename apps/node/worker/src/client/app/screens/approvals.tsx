@@ -5,7 +5,7 @@ import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
 import { dateTime } from "../format.ts";
 import { decide, useApprovals, withdrawDecision, type ApprovalRow, type Said } from "../api.ts";
-import { marked } from "../words.tsx";
+import { marked, sentence } from "../words.tsx";
 
 /**
  * What is waiting on you (#81).
@@ -98,8 +98,11 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
       {row.supervised == null ? null : (
         <p className="dim mono">
           {row.supervised.matterId === null
-            ? t("approvals.supervised.noMatter", { scope: row.supervised.scope, subject: row.supervised.subjectId })
-            : t("approvals.supervised.matter", { scope: row.supervised.scope, subject: row.supervised.subjectId, matter: row.supervised.matterId })}
+            // The scope is the Node's token (`metadata`, `content`), an identifier in every locale.
+            ? sentence("approvals.supervised.noMatter", { scope: <code>{row.supervised.scope}</code>, subject: row.supervised.subjectId })
+            : sentence("approvals.supervised.matter", {
+              scope: <code>{row.supervised.scope}</code>, subject: row.supervised.subjectId, matter: row.supervised.matterId,
+            })}
         </p>
       )}
       {row.domainPause == null ? null : (

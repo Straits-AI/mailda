@@ -80,10 +80,11 @@ const run = (id: string, butler: string, state: string, extra: Record<string, un
 });
 
 const RUNS = [
-  run("run_done", "btl_paused", "completed"),
+  run("run_done", "btl_paused", "finished"),
   run("run_stopped", "btl_paused", "stopped", { outcome_reason: "nothing needed doing", effects: 0 }),
   run("run_failed", "btl_live", "failed", { outcome_reason: "budget exhausted", refusals: 2 }),
   run("run_open", "btl_live", "running", { finished_at: null }),
+  run("run_waiting", "btl_live", "awaiting_release", { finished_at: null }),
 ];
 
 const version = (id: string, n: number | null, state: string, extra: Record<string, unknown> = {}) => ({
@@ -93,7 +94,7 @@ const version = (id: string, n: number | null, state: string, extra: Record<stri
 });
 
 const SIMULATION = {
-  butlerId: "btl_paused", butlerName: "triage", versionId: "bv_3", version: null, state: "completed", reason: "reached stop",
+  butlerId: "btl_paused", butlerName: "triage", versionId: "bv_3", version: null, state: "finished", reason: "reached stop",
   nodesExecuted: 4, wouldSpend: 2, bindings: {},
   effects: [
     { seq: 1, nodeId: "label", nodeType: "label", outcome: "ok", reason: null, subject: null },
@@ -266,6 +267,16 @@ describe("the English the migration fixed", () => {
     expect(container.querySelector(".butler-dry-result .dim")!.textContent).toBe("v2 · 1 node · would spend 1");
   });
 
+  it("says a run's state in words, an underscore read as a space, and a token outside the list as the Node sent it (H7)", async () => {
+    node({ "/api/butlers": { butlers: BUTLERS }, "/api/butler-runs": { runs: [...RUNS, run("run_odd", "btl_live", "parked_for_test")] } });
+    mount(<Butlers />);
+    await screen.findByText("live · v3");
+    const states = [...screen.getByRole("region", { name: "Runs" }).querySelectorAll("tbody td:nth-child(2)")];
+    expect(states.map((cell) => cell.innerHTML)).toEqual([
+      "finished", "stopped", "failed", "running", "awaiting release", "parked_for_test",
+    ]);
+  });
+
   /**
    * D1 (`docs/i18n.md`): the send notes said "a policy", and the interface calls one a rule (the Rules screen). Read
    * from the catalog, so a note the Outbox golden does not render (approval required, denied, stricter, impossible)
@@ -316,12 +327,20 @@ describe("Butlers and Rules in zh-Hans", () => {
     // A pause's reason is the contract's token (`BUTLER_PAUSE_REASONS`), keyed in the catalog since round three (G12).
     expect(screen.getByText("已暂停：检测到循环").closest("[lang='en']")).toBeNull();
     expect(screen.getByText("生效中 · v3")).toBeTruthy();
+    // A run's state is the contract's token (`BUTLER_RUN_STATES`), keyed since round four (H7): stopped is 已终止, never
+    // 已停止, and none of them is the Node's English.
+    const states = [...screen.getByRole("region", { name: "运行记录" }).querySelectorAll("tbody td:nth-child(2)")];
+    expect(states.map((cell) => cell.textContent)).toEqual(["已完成", "已终止", "失败", "运行中", "等待放行"]);
+    expect(states.filter((cell) => cell.querySelector("[lang=en]") !== null)).toEqual([]);
     fireEvent.click(screen.getAllByRole("button", { name: "打开" })[0]!);
     await waitFor(() => { expect(container.querySelector(".butler-detail table tbody td:nth-child(2)")).not.toBeNull(); });
     expect([...container.querySelectorAll(".butler-detail table tbody td:nth-child(2)")].map((cell) => cell.innerHTML))
       .toEqual(expect.arrayContaining(["已发布"]));
     await act(async () => { screen.getAllByRole("button", { name: /^试运行：.+ 的那次运行$/ })[0]!.click(); });
+    // The run a dry run reads names its event as an identifier and its state in the viewer's words.
+    expect(container.querySelector(".butler-dry-runs li .dim")!.innerHTML).toBe("<code>mail.received</code> · 已完成");
     await waitFor(() => { expect(container.querySelector(".butler-dry-result")).not.toBeNull(); });
+    expect(container.querySelector(".butler-dry-result strong")!.innerHTML).toBe("已完成");
     expect(container.querySelector(".butler-dry-result .dim")!.textContent).toBe("草稿 · 4 个步骤 · 将消耗 2");
     expect([...container.querySelectorAll(".butler-dry-result tbody td:nth-child(3) [lang=en]")].map((one) => one.textContent))
       .toEqual(["ok", "would", "refused", "no such colleague", "failed", "timed out"]);

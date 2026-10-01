@@ -42,6 +42,8 @@ export const composer: Twin<typeof source> = {
   "composer.from.none": "还没有邮件地址：在管理员于“成员”中添加一个之前，从 {name} 发出的邮件会被拒绝。",
   "composer.from.more": "此邮箱的更多邮件地址由管理员在“成员”中添加。",
 
+  "composer.size.kb": "{size} KB",
+  "composer.size.mb": "{size} MB",
   "composer.limit.none": { other: "总计最多 {size}，{n} 个文件。" },
   "composer.limit.used": { other: "已用 {used}，共 {size}；{count} 个文件，最多 {n} 个。" },
   "composer.limit.over": "超出限额：请移除一个文件，或改为发送链接。",

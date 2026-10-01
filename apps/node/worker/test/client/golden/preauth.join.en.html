@@ -1,0 +1,34 @@
+<!-- #status -->
+<span class="field">
+<span class="dot live">
+</span>
+<span>listening</span>
+</span>
+<span class="field mono">localhost:3000</span>
+<!-- #app -->
+<div class="split">
+<div class="split-lede" data-reveal="" style="--reveal-delay: 0ms;">
+<h1>You have been invited.</h1>
+<p>Paste the secret you were given and choose a password. Nobody else ever sees it — not even the administrator who invited you. You will arrive holding nothing until they grant you access to a mailbox.</p>
+</div>
+<section class="panel" data-reveal="" style="--reveal-delay: 55ms;">
+<h2>Join</h2>
+<form novalidate="novalidate">
+<label class="field-row" for="invitation">
+<span>Invitation secret</span>
+<input id="invitation" required="required" autocomplete="off" class="mono">
+</label>
+<label class="field-row" for="join-password">
+<span>Choose a password</span>
+<input id="join-password" type="password" required="required" autocomplete="new-password">
+</label>
+<p class="hint">At least 12 characters. No character-class rules — length is what resists guessing.</p>
+<button class="primary" type="submit">Join</button>
+<div class="errors" role="alert">
+</div>
+</form>
+<p class="hint">
+<button class="linkish" type="button">I already have an account</button>
+</p>
+</section>
+</div>

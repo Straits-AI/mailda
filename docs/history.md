@@ -4371,3 +4371,42 @@ audit vocabulary says a pause is lifted, not released, which is a held send's ve
 change keeps the sentence it was given in `last_error`, which is a record, not rewritten. Two of the summaries were
 wrong beyond the verb: they said sending **to** a domain, where a pause holds mail **from** one, and that a lift
 "takes more than one person", where one administrator lifts alone.
+
+## The interface's languages, layer 3: the pages before sign-in, and the pseudo-locale (2 October 2026)
+
+**Every screen is in the catalog now, the ones before sign-in included, and a pseudo-locale proves it.** Layer 3 moved
+the framework-free scripts (the claim and its recovery codes, sign-in with a password or a passkey, the invitation, the
+session's timer, the theme) into the catalog, so `UNMIGRATED` is empty. With no React before sign-in, the Node's
+English is marked by a DOM twin of `<NodeWords>`. A refusal before sign-in used to be the Node's four-part English
+alone, a code first; it now has a headline in the viewer's language, keyed by a closed list in the contract
+(`PREAUTH_ERRORS`), with the Node's sentence beside it, marked (D34). A reader on an English browser can switch
+language from the status strip, which reloads with `?locale=` and needs no storage, and the claim and sign-in pages
+draw the 淼达 lockup. `/app/locale.js` grew from 3 KB to 16 KB raw (6.5 KB gzip) to carry it, still with no framework
+(ADR 30, ADR 46). The Doctor's checks, a capability's description and a body's problem are keyed by their codes.
+
+**The pseudo-locale (T4) renders every route, empty, full and failed, and presses every button against a Node that
+refuses everything, then the pages before sign-in with each of their refusals.** Any Latin letter outside the Node's
+marked English, `<code>` or the fixtures' data fails it. Its first run found fifteen places English was still bare:
+raw tokens (an audit action, a log event, SPF results, `yaml`), raw ISO stamps and an approval's subject token in the
+notices band, a unit, a recipient's error unmarked, a token inside a `title`. Identifiers are now in `<code>`, words a
+reader needs are keyed from contract lists (`AUDIT_OUTCOMES`, `APPROVAL_SUBJECT_KINDS`), and its fixtures were moved to
+the Node's real shapes, which several were not (a scope of `read`, an audit outcome of `allowed`). It also found three
+defects that were not about language, each fixed in its own change with a test that failed first: Audit's Verify read
+a refusal as "Chain broken at entry undefined", Doctor's Acknowledge threw on an empty field and stayed busy, and the
+first-run gate re-read the provider about once a second for a member, whose read is refused. Twenty-five new glossary
+rows are proposed for the owner, and zh-Hans stays a preview until that review.
+
+**The screenshots found one more, older than the layer: the claim's recovery codes were taken off the screen at
+once.** The claim adopts the session, adopting says "signed-in", and the page's listener hands a signed-in page to
+the shell, which replaced the ten codes (#134: shown once, never again) before anybody could copy them. The tests
+never saw it, because their session stub's adopt is silent. The claim now holds the codes before it adopts, and only
+"I have saved these" hands the page over.
+
+**Round four was accepted, not reviewed.** In the working session on 2 October 2026 the owner said "just accept them",
+so every proposed row and every question was taken as proposed, with no review page, and the glossary's record for the
+round says exactly that rather than linking a review (`OWNER_ROUND_FOUR`). No row is proposed now. Two questions changed
+the screen: the claim's field says "Claim secret", as the CLI and the glossary do (the Node's own two messages still say
+bootstrap, a later change), and a Butler run's state is keyed, stopped as 已终止 rather than 已停止 because 停止 is the
+pause row's avoided word. Five questions older than or beside this layer (a supervised headline, the lockout's plural, a
+text-only body's problem, a failed read shown as "not an administrator", CLI commands in `<code>`) are accepted
+follow-ups, each its own change, in `docs/i18n.md`. Ending the preview is not one of them yet.
