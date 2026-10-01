@@ -14,6 +14,9 @@ import { sealManifest } from "../src/outbound/manifest.ts";
 import { liftSuppression, suppressedAmong } from "../src/suppression.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { runDoctor } from "../src/doctor.ts";
+import { statementsOf } from "../src/sql-statements.ts";
+// Imported as text, the way `src/migrate.ts` does, so the test runs the bytes a Node will.
+import STATE_REASON_REPAIR from "../migrations/0073_state_reason_invariant.sql";
 
 /**
  * The three windowed rate breakers (#66), and the landmine they were built around.
@@ -553,7 +556,10 @@ describe("a rate gate parks a send in awaiting, and the sweep is what drains it"
     const cleared = oldest + VOLUME_WINDOW * 1000 + 1_000;
     const second = await dispatchDue(testEnv, atTime(cleared), ORG, acceptingTransport);
     expect(second.map((result) => result.state)).toEqual(["handed_over"]);
-    expect((await manifestRow(sealed.id))?.state).toBe("handed_over");
+    const row = await manifestRow(sealed.id);
+    expect(row?.state).toBe("handed_over");
+    // The gate is gone, and so are its words: this row used to read "handed over · too much, too fast".
+    expect(row?.state_reason, "a rate gate's reason outlived the gate").toBeNull();
   });
 
   it("files one entry per gate rather than one per sweep", async () => {
@@ -633,6 +639,99 @@ describe("a rate gate parks a send in awaiting, and the sweep is what drains it"
     const raced = await dispatchOne(testEnv, atTime(after + 120_000), ORG, sealed.id, acceptingTransport);
     expect(raced.state, "a cancelled send is cancelled, not awaiting a window").toBe("cancelled");
     expect((await manifestRow(sealed.id))?.state).toBe("cancelled");
+  });
+});
+
+/**
+ * A reason describes the state a send is in now, so it exists exactly on `awaiting` and `withheld` (0019's
+ * convention, `0073_state_reason_invariant.sql`). A send the sweep admits leaves its gate at the claim, and
+ * every outcome after that is reachable only through the claim, so each is asserted here through a real
+ * admission rather than a seeded row. Every assertion below was red before the claim and the cancel cleared.
+ */
+describe("a rate gate's reason does not outlive the gate", () => {
+  /** A send the volume breaker gates at the seal, and the instant its window has cleared. */
+  async function rateGated() {
+    const oldest = AUGUST_20 - 600_000;
+    await handedOver(VOLUME_MAX + 1, oldest);
+    const sealed = await seal(AUGUST_20);
+    // The premise: without a breaker reason on the row, every "is null" below would pass by default.
+    expect(sealed.state).toBe("awaiting");
+    expect(sealed.stateReason).toBe("breaker_volume");
+    expect((await manifestRow(sealed.id))?.last_error).not.toBeNull();
+    return { sealed, cleared: oldest + VOLUME_WINDOW * 1000 + 1_000 };
+  }
+
+  const saying = (outcome: SubmitOutcome): TransportAdapter =>
+    ({ ...acceptingTransport, name: "saying", submit: async () => outcome });
+
+  // `handed_over` is the report; the rest are `applyOutcome`'s other four writes, each only reachable after the claim.
+  it.each<[SendState, SubmitOutcome]>([
+    ["handed_over", { kind: "handed_over", transportMessageId: "<x@acme.example>" }],
+    ["throttled", { kind: "throttled", reason: "provider 429" }],
+    ["refused", { kind: "refused", reason: "provider 400", retryable: false }],
+    ["suppressed", { kind: "suppressed", reason: "provider: on the suppression list" }],
+    ["outcome_unknown", { kind: "outcome_unknown", reason: "provider: unclassifiable" }],
+  ])("admitted and then %s carries no reason", async (state, outcome) => {
+    const { sealed, cleared } = await rateGated();
+    await dispatchDue(testEnv, atTime(cleared), ORG, saying(outcome));
+    const row = await manifestRow(sealed.id);
+    expect(row?.state).toBe(state);
+    expect(row?.state_reason).toBeNull();
+    // What a person reads is the provider's answer, not the gate's "it goes when the window clears".
+    if (state !== "handed_over") expect(row?.last_error).toContain("provider");
+  });
+
+  it("records why the outcome is unknown when the dispatch throws after admitting it", async () => {
+    // The claim kept the gate's `last_error`, and `recordUnexplainedDispatch` writes only where it is NULL, so
+    // the cause of the throw was never recorded and the rate gate's words explained an unknown outcome.
+    const { sealed, cleared } = await rateGated();
+    const throwing: TransportAdapter = {
+      ...acceptingTransport, name: "throwing",
+      submit: async () => { throw new Error("the transport threw after the claim"); },
+    };
+    await expect(dispatchDue(testEnv, atTime(cleared), ORG, throwing)).rejects.toThrow("after the claim");
+    const row = await manifestRow(sealed.id);
+    expect(row?.state).toBe("outcome_unknown");
+    expect(row?.state_reason).toBeNull();
+    expect(row?.last_error).toContain("the dispatch failed before an outcome was recorded");
+  });
+
+  it("clears the reason and the gate's words when the send is cancelled", async () => {
+    const { sealed } = await rateGated();
+    expect((await cancelSend(testEnv, atTime(AUGUST_20 + 1_000), ORG, sealed.id)).cancelled).toBe(true);
+    const row = await manifestRow(sealed.id);
+    expect(row?.state).toBe("cancelled");
+    // "It has not left and it is not lost … it goes on its own" is false of a cancelled send.
+    expect(row?.state_reason).toBeNull();
+    expect(row?.last_error).toBeNull();
+  });
+
+  it("repairs the rows the old writers left, and leaves a gate's and a refusal's reason alone", async () => {
+    const stale = await seal(AUGUST_20);
+    const cancelled = await seal(AUGUST_20);
+    const gated = await seal(AUGUST_20);
+    const refused = await seal(AUGUST_20);
+    const set = (id: string, state: string, reason: string, lastError: string) =>
+      testEnv.CATALOG.prepare(
+        "UPDATE send_manifests SET state = ?, state_reason = ?, last_error = ? WHERE id = ?",
+      ).bind(state, reason, lastError, id).run();
+    // The two shapes the old claim and cancel wrote, and the two the invariant keeps.
+    await set(stale.id, "handed_over", "breaker_volume", "provider words");
+    await set(cancelled.id, "cancelled", "policy_hold", "it goes when the window clears");
+    await set(gated.id, "awaiting", "breaker_volume", "it goes when the window clears");
+    await set(refused.id, "withheld", "evidence_changed", "the body hash differs");
+
+    for (const sql of statementsOf(STATE_REASON_REPAIR)) await testEnv.CATALOG.prepare(sql).run();
+
+    expect(await manifestRow(stale.id)).toMatchObject({ state_reason: null, last_error: "provider words" });
+    expect(await manifestRow(cancelled.id)).toMatchObject({ state_reason: null, last_error: null });
+    // The control: a repair that cleared every reason would pass the two lines above.
+    expect(await manifestRow(gated.id)).toMatchObject({
+      state_reason: "breaker_volume", last_error: "it goes when the window clears",
+    });
+    expect(await manifestRow(refused.id)).toMatchObject({
+      state_reason: "evidence_changed", last_error: "the body hash differs",
+    });
   });
 });
 

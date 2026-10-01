@@ -30,6 +30,12 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  *   handed_over      the transport accepted it; whether it arrived is unknown
  *   outcome_unknown  we do not know whether it left
  *
+ * **A `state_reason` exists exactly on `awaiting` and `withheld`**, the gates and the refusals (0019). Every
+ * writer into another state clears it: the releases into `held`, the claim into `outcome_unknown` (which every
+ * later outcome passes through), and `cancelSend`. `0073_state_reason_invariant.sql` repairs the rows the claim
+ * and the cancel left before they did, except those the previous version writes while this one is still a
+ * canary; its header says why, and that the next release re-runs it.
+ *
  * `sent` and `delivered` do not exist here and must never be added. §5C forbids claiming an outcome
  * nobody observed, and the transport reports acceptance rather than arrival.
  *
@@ -209,7 +215,10 @@ export async function cancelSend(
     (entry) => [
       entry,
       env.CATALOG.prepare(
-        `UPDATE send_manifests SET state = 'cancelled', state_at = ?
+        // Both explanations go with the gate. A cancelled send has no reason (a reason exists exactly on
+        // `awaiting` and `withheld`; see the header), and the only `last_error` a stoppable send carries is a
+        // rate gate's "it goes when the window clears" or a refusal a retry moved on from, both false of it now.
+        `UPDATE send_manifests SET state = 'cancelled', state_at = ?, state_reason = NULL, last_error = NULL
           WHERE id = ? AND org_id = ? AND ${stoppablePredicate}`,
       ).bind(new Date(ctx.now()).toISOString(), manifestId, orgId, ...stoppable),
       // Recipients follow the manifest. Unconditional here because the batch only commits when the gate
@@ -674,9 +683,15 @@ export async function dispatchOne(
   }
 
   // Claim: only a movable manifest may move. A concurrent cancel wins here.
+  //
+  // It clears both explanations, because what it admits carries the previous state's: a rate gate's
+  // `breaker_*` reason and "it goes when the window clears", or a throttle's provider words. Kept, they
+  // described every outcome after this one (a send read "handed over · too much, too fast"), and a kept
+  // `last_error` made `recordUnexplainedDispatch`'s `last_error IS NULL` false, so a throw here went
+  // unrecorded. Every write after this is `applyOutcome`'s or the recorder's, so this is the one place to clear.
   const claimed = await env.CATALOG.prepare(
     `UPDATE send_manifests
-        SET state = 'outcome_unknown', state_at = ?, attempts = attempts + 1
+        SET state = 'outcome_unknown', state_at = ?, attempts = attempts + 1, state_reason = NULL, last_error = NULL
       WHERE id = ? AND org_id = ? AND ${movableNow("")}`,
   )
     .bind(at, manifestId, orgId, ...movableParams(at))
@@ -796,8 +811,9 @@ async function submitClaimed(
  *
  * ## The gap this closes
  *
- * The claim writes `state` and bumps `attempts` and nothing else, on purpose. Every other route to a
- * terminal state goes through `applyOutcome`, which writes `last_error` **and** an audit entry in one
+ * The claim writes `state`, bumps `attempts` and clears `state_reason` and `last_error`, which is what makes a
+ * NULL `last_error` here mean "unexplained" rather than "still carrying the previous state's words". Every
+ * other route to a terminal state goes through `applyOutcome`, which writes `last_error` **and** an audit entry in one
  * transaction. So a throw anywhere in between produced the only terminal state reachable with no reason
  * attached: `outcome_unknown`, `last_error` NULL, no audit entry, no log line — and never retried, by
  * design. An operator saw "we do not know whether it left" and could not find out why not.

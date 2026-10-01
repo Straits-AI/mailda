@@ -889,6 +889,32 @@ describe("the two acts, and the two names (#53)", () => {
     expect(JSON.parse(entry!.detail)).toMatchObject({ proof: "refused", duplicatePossible: false });
   });
 
+  it("a retry that dies after the claim records why, rather than keeping the refusal's words", async () => {
+    // `retryEffect` keeps `last_error` into `held`; the claim clears it before submitting. Kept past the claim,
+    // "boundary said no" would explain an unknown outcome and `recordUnexplainedDispatch` (NULL only) would
+    // record nothing and append no entry.
+    const id = await sentInto({ kind: "refused", reason: "boundary said no", retryable: true }, atTime(T0));
+    const row = () => testEnv.CATALOG.prepare("SELECT state, last_error FROM send_manifests WHERE id = ?")
+      .bind(id).first<{ state: string; last_error: string | null }>();
+    // The premise: a refused send carrying the refusal's words.
+    expect(await row()).toEqual({ state: "refused", last_error: "boundary said no" });
+
+    // The body read happens after the claim, so an absent body is a throw between the claim and any outcome.
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET body_normalized_key = ? WHERE id = ?")
+      .bind(`${ORG}/sent/absent/never-written.txt`, id).run();
+    await expect(retryEffect(testEnv, atTime(T0 + 5000), ORG, ADMIN, id,
+      fakeTransport({ kind: "handed_over", transportMessageId: "tm_never" }))).rejects.toThrow();
+
+    const after = await row();
+    // The premise: the throw came after the claim (before it, the send would still be `held`).
+    expect(after?.state).toBe("outcome_unknown");
+    expect(after?.last_error).toContain("the dispatch failed before an outcome was recorded");
+    expect(after?.last_error).not.toContain("boundary said no");
+    expect((await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND subject = ? AND action = 'send.outcome_unknown'",
+    ).bind(ORG, id).first<{ n: number }>())?.n).toBe(1);
+  });
+
   it("refuses retry-effect where non-acceptance is not proven, and names the other mode and its cost",
     async () => {
       const ctx = atTime(T0);

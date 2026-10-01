@@ -908,7 +908,11 @@ not have.
 - **`state_reason`**, a machine token beside the state, rendered as its own unpainted chip. The state says what
   happened to the send; the reason says **who can act**. `awaiting` a hold and `awaiting` an approval are the
   same state with different answers to that question, and the whole point of a reason column is that they do
-  not render identically.
+  not render identically. The Worker writes the token only while a send is `awaiting` or `withheld` and clears
+  it on every other transition. A row can still carry one under another state if the previous version wrote
+  it: before 1 October 2026 (repaired by `0073_state_reason_invariant.sql`), or while that release's canary
+  was still being checked (repaired by the next release's re-run; the 0073 header has the detail). The chip
+  renders whatever the row carries, and the fix for a stale token is the row, not a state guard in one channel.
 
 **The reason words live in the catalog, not in `policy.ts` and not in `ledgers.tsx`**, which is the same
 placement rule the send-state words follow and for the same reason: `src/policy.ts` mints the token, one module

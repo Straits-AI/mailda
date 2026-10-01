@@ -4285,6 +4285,37 @@ minutes" and the Doctor's "(s)" counts are plurals, a sentence with three counts
 rather than one plural over three numbers (D10 to D12), and the held, awaiting and withheld notes say "Not handed
 over" (尚未移交), ADR 39's word, where they said "Not sent" (D13).
 
+## A gate's reason no longer outlives the gate (1 October 2026)
+
+**A send admitted after a rate breaker read "handed over · too much, too fast".** A rate breaker seals a send to
+`awaiting` with a `breaker_*` reason and the sentence "it goes when the window clears", and the sweep admits it
+once the window has. The claim that admits it (`held`, `throttled` or rate-gated `awaiting`, to `outcome_unknown`)
+wrote the state and the attempt and nothing else, so the reason and the sentence went on describing every outcome
+after it: `handed_over`, `throttled`, `refused`, `suppressed`, `outcome_unknown`. The Outbox, `GET /api/sends`, the
+SDK and a Butler's replay all read the stale token. `cancelSend` did the same, so a cancelled `policy_hold` still
+said anybody could release it. Found by reading during the Chinese layer's verification, then confirmed in the Workers
+tests by a real sweep admitting a send a real breaker trip had gated, rather than by a seeded row.
+
+**The same line hid a second defect.** `recordUnexplainedDispatch` writes why an outcome is unknown only where
+`last_error` is NULL, so that it never overwrites a recorded answer. The claim kept a `throttled` send's "provider
+429", so when the next dispatch threw, the cause was never recorded and no `send.outcome_unknown` entry was
+appended; the throttle's words explained an outcome they had nothing to do with.
+
+The claim and the cancel now clear `state_reason` and `last_error`. The claim is the one place for it, because every
+outcome after it is written through it. A reason now exists exactly on `awaiting` and `withheld`, which is what
+`0019_policy.sql` said it was. `0073_state_reason_invariant.sql` clears the reason on every other row, and
+`last_error` on cancelled rows, since cancel never wrote it. It leaves `last_error` on the other terminal states,
+where a stale word and a true one cannot be told apart. **It is not a complete repair on its own.** `mailda deploy`
+applies it in the expand step, and the previous version (the cron backstop, the `OutboxSweeper` Durable Object, and
+`cancelSend` behind the API) keeps serving until promotion, so it can write a stale pair after 0073 has run. If the
+canary check fails, that window has no end until a later deploy promotes. 0073 never runs twice, so the next release
+ships the same two statements again as a new expand migration; by then the fixed claim and cancel are the incumbent, so nothing writes a stale pair after
+it runs. The gate's history stays where it was: the
+`send.rate_limited` entry, the seal entry, the approvals and `policy_outcome`. A database trigger that would refuse
+a stale pair, and a state guard in the Outbox's chip, were both considered and not built: the trigger would be a
+fourth copy of the list of states with a reason, and the guard would hide the token in one channel while the API,
+SDK and Butler kept reading it.
+
 ## The interface's languages, layer 2b: every other React screen (1 October 2026)
 
 **The owner's third review confirmed all of it, and thirteen of the twenty flags moved words or code.** Layer 2b moved

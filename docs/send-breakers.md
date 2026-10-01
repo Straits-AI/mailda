@@ -153,6 +153,15 @@ place that decides whether a send may move is now built by one function, `movabl
 `src/outbound/dispatch.ts`, with three call sites. One function, because a widening that had to reach three
 identical hand-written predicates is a widening that reaches two of them.
 
+**Admission ends the gate, and the gate's words go with it.** The claim that takes an admitted send to
+`outcome_unknown` clears `state_reason` and `last_error`, so a send that leaves after a rate breaker reads
+`handed_over` with no reason rather than `handed_over` with `breaker_volume`, and cancelling a rate-gated send
+clears both too. A reason exists exactly on `awaiting` and `withheld`. The record of the trip is the
+`send.rate_limited` entry, not the row. Until 1 October 2026 neither write cleared them;
+`0073_state_reason_invariant.sql` repairs the rows they left before it ran. The previous version keeps writing
+them from the expand step until promotion, and for good if the canary check fails, so the next release runs the
+same repair again.
+
 **The policy gates stay closed, twice over.** `BREAKER_REASONS` is derived from `RATE_BREAKERS`, so
 `policy_hold` and `policy_approval_required` are not in it and could only get there by somebody declaring a
 policy outcome to be a rate breaker; and `sealManifest` will not write a breaker reason over a policy gate at
