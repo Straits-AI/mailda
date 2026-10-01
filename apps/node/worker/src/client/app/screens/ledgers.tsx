@@ -1,12 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
+import { LOG_LEVELS, RECIPIENT_KINDS, oneOf } from "@mailda/contract/schemas";
 import { apiFetch } from "/app/session.js";
 import { describeReason, describeRecipient, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
+import { t } from "/app/locale.js";
 
-import { Nothing, Truncated } from "../chrome.tsx";
+import { Nothing, Scroller, Truncated } from "../chrome.tsx";
+import { deliveryWords, sendReasonWords, sendStateWords, shown } from "../delivery-words.ts";
+import { clock, fullTime } from "../format.ts";
+import { marked, NodeWords, sentence } from "../words.tsx";
 import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
-  type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, repairSearch,
+  type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, type Refused, repairSearch,
   requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
   useSends, useTransport, verifyEvidence,
 } from "../api.ts";
@@ -16,42 +21,41 @@ import {
  *
  * ## The delivery vocabulary is imported, not restated
  *
- * `summariseDelivery` and the state words come from `/app/delivery.js` at runtime rather than being
- * bundled or reimplemented. That module is the one place the rule lives — *never suppress an outcome just
- * because the recipients agree, because they agree when everything bounced too* — and
- * `test/node/delivery-summary.test.ts` evaluates the same served bytes. Reimplementing it in React would
- * have recreated exactly the bug that rule exists to prevent, in a file the test cannot see.
- */
-
-/** ADR 39's seven plus `withheld` and `awaiting`, nothing collapsed away. */
-/*
- * The send-state words moved to `/app/delivery.js`.
+ * `summariseDelivery` and the decisions about which state a reader is shown come from `/app/delivery.js` at
+ * runtime rather than being bundled or reimplemented. That module is the one place the rule lives — *never
+ * suppress an outcome just because the recipients agree, because they agree when everything bounced too* — and
+ * `test/node/delivery-summary.test.ts` evaluates the same served bytes. Reimplementing it in React would have
+ * recreated exactly the bug that rule exists to prevent, in a file the test cannot see.
  *
- * They were a literal map here, keyed on `state` alone, and `outcome_unknown` therefore read "We do not know
- * whether it left" even when the Node could prove it had not — `fidelity === "authored"` with no submitted
- * key means the bytes were stored before the transport was asked, and there are none. That is a *reading* of
- * three fields rather than a lookup on one, and it belongs beside the delivery vocabulary in a module a test
- * can import. This screen touches `document`, which is why the previous honesty defect in the outbox lived
- * here uncovered.
+ * It returns tokens; the words are the catalog's, looked up by `../delivery-words.ts` (ADR 46). The send-state
+ * words were once a literal map here, keyed on `state` alone, so `outcome_unknown` read "We do not know whether
+ * it left" even when the Node could prove it had not. That is a *reading* of three fields (`describeSend`'s
+ * `never_submitted`), and it belongs in the module a test can import.
+ *
+ * ## The words
+ *
+ * Every word here is the catalog's (`ledgers.*`, ADR 46); the headings are the routes' names and the Doctor's
+ * states are `health.status.*`. What the Node wrote (a finding's detail and fix, a refusal's reason, a remedy's
+ * message, a log line) is shown as it came, inside `<NodeWords>`. Tokens the Node names things by (an audit
+ * action, a check, an actor kind, a table and column) stay as they are: they are identifiers, in mono.
  */
-
-function clock(at: string): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour12: false });
-}
 
 function DeliveryChips({ send }: { send: SendRow }) {
   const summary = summariseDelivery(send.recipients);
   return (
     <>
-      {summary.map((entry) => (
-        <span
-          key={entry.state}
-          className={`state delivery-${entry.state} delivery-chip`}
-          title={entry.note}
-        >
-          {send.recipients.length === 1 ? entry.label : `${entry.count} ${entry.label}`}
-        </span>
-      ))}
+      {summary.map((entry) => {
+        const words = deliveryWords(entry.state);
+        return (
+          <span
+            key={entry.state}
+            className={`state delivery-${entry.state} delivery-chip`}
+            title={words.note}
+          >
+            {send.recipients.length === 1 ? shown(words) : sentence("ledgers.outbox.chip", { n: entry.count, state: shown(words) })}
+          </span>
+        );
+      })}
     </>
   );
 }
@@ -60,28 +64,33 @@ function Recipients({ send }: { send: SendRow }) {
   if (send.recipients.length === 0) return null;
   return (
     <>
-      <dt>Recipients</dt>
+      <dt>{t("ledgers.outbox.recipients")}</dt>
       <dd>
         <div className="recipients">
           {orderRecipients(send.recipients).map((recipient) => {
-            const { state, reason } = describeRecipient(recipient);
+            const said = describeRecipient(recipient);
+            const state = deliveryWords(said.state);
+            const reason = said.reason === null ? null : deliveryWords(said.reason);
             return (
               <div className="recipient" key={`${recipient.kind}:${recipient.address}`}>
-                <span className="label">{recipient.kind}</span>
+                <span className="label">
+                  {oneOf(RECIPIENT_KINDS, recipient.kind) ? t(`ledgers.outbox.kind.${recipient.kind}`) : <code>{recipient.kind}</code>}
+                </span>
                 <span className="mono">{recipient.address}</span>
                 <span
                   className={`state delivery-${recipient.delivery_state ?? "unobserved"}`}
-                  title={state.note + (recipient.bounce_type ? ` (${recipient.bounce_type})` : "")}
+                  title={recipient.bounce_type ? t("ledgers.outbox.bounce", { note: state.note, type: recipient.bounce_type }) : state.note}
                 >
-                  {state.label}
+                  {shown(state)}
                 </span>
                 {reason === null ? null : (
                   // Beside `unobserved`, not instead of it, as the send row's reason sits beside its state (#62):
                   // the state is what was heard, which is nothing; the reason is why nothing is coming.
-                  <span className="state state-reason delivery-chip" title={reason.note}>{reason.label}</span>
+                  <span className="state state-reason delivery-chip" title={reason.note}>{shown(reason)}</span>
                 )}
                 {recipient.last_error ? (
-                  // The provider's own words. A paraphrase of somebody else's mail server is a guess.
+                  // The provider's own words. A paraphrase of somebody else's mail server is a guess. Not marked
+                  // as the Node's English either: the receiving server wrote them, in whatever language it uses.
                   <span className="dim mono recipient-error">{recipient.last_error}</span>
                 ) : null}
               </div>
@@ -97,16 +106,17 @@ export function Outbox() {
   const sends = useSends();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  /** What the last act answered, when it refused: the Node's reason, or this screen's words when it gave none. */
+  const [problem, setProblem] = useState<ReactNode>(null);
   /** The send whose duplicate-risk resend is waiting for a reason, or null. */
   const [resending, setResending] = useState<string | null>(null);
   const [resendReason, setResendReason] = useState("");
 
   if (sends.isPending || sends.isError) {
     return (
-      <section className="ledger" aria-label="Outbox">
-        <header className="ledger-head"><h1>Outbox</h1></header>
-        {sends.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={sends.error.message} />}
+      <section className="ledger" aria-label={t("route./outbox")}>
+        <header className="ledger-head"><h1>{t("route./outbox")}</h1></header>
+        {sends.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={marked(sends.error)} />}
       </section>
     );
   }
@@ -122,7 +132,7 @@ export function Outbox() {
     await queryClient.invalidateQueries({ queryKey: ["sends"] });
     // Rendered, not alerted. `window.alert` blocks the page, cannot be styled or announced properly, and the
     // reason a send could not be stopped is exactly the kind of message somebody needs to read twice.
-    if (!outcome.cancelled) setProblem(outcome.reason ?? "It could not be stopped.");
+    if (!outcome.cancelled) setProblem(outcome.reason === undefined ? t("ledgers.outbox.stop.failed") : <NodeWords>{outcome.reason}</NodeWords>);
   }
 
   /**
@@ -136,7 +146,7 @@ export function Outbox() {
     const response = await apiFetch(`/api/sends/${encodeURIComponent(id)}/release-hold`, { method: "POST" });
     const outcome = (await response.json()) as { released: boolean; reason?: string };
     await queryClient.invalidateQueries({ queryKey: ["sends"] });
-    if (!outcome.released) setProblem(outcome.reason ?? "It could not be released.");
+    if (!outcome.released) setProblem(outcome.reason === undefined ? t("ledgers.outbox.letGo.failed") : <NodeWords>{outcome.reason}</NodeWords>);
   }
 
   /**
@@ -150,10 +160,8 @@ export function Outbox() {
     const response = await apiFetch(`/api/sends/${encodeURIComponent(id)}/release`, { method: "POST" });
     const outcome = (await response.json()) as { released: boolean; reason?: string };
     await queryClient.invalidateQueries({ queryKey: ["sends"] });
-    if (!outcome.released) {
-      setProblem(`${outcome.reason ?? "refused"}: this send is no longer waiting on a Butler's gate, or you may not send `
-        + "as its mailbox. The outbox has been refreshed; if it is still listed, ask for send.propose on that mailbox.");
-    }
+    // The reason here is a code (`not_found`), Latin in every locale as the E_ codes are.
+    if (!outcome.released) setProblem(t("ledgers.outbox.gate.failed", { reason: outcome.reason ?? t("api.refusal.code") }));
   }
 
   /**
@@ -175,55 +183,58 @@ export function Outbox() {
     });
     const outcome = (await response.json().catch(() => null)) as { message?: string; what?: string } | null;
     await queryClient.invalidateQueries({ queryKey: ["sends"] });
-    if (!response.ok) setProblem(outcome?.message ?? outcome?.what ?? `This Node answered ${response.status}.`);
+    if (!response.ok) {
+      const said = outcome?.message ?? outcome?.what;
+      setProblem(said === undefined ? t("api.answered", { status: String(response.status) }) : <NodeWords>{said}</NodeWords>);
+    }
   }
 
   return (
-    <section className="ledger" aria-label="Outbox">
+    <section className="ledger" aria-label={t("route./outbox")}>
       <header className="ledger-head">
-        <h1>Outbox</h1>
-        <p className="dim mono">{rows.length} sends</p>
+        <h1>{t("route./outbox")}</h1>
+        <p className="dim mono">{t("ledgers.outbox.count", { n: rows.length })}</p>
       </header>
       {resendTarget === null ? null : (
         <p className="notice" role="status">
-          Resending <span className="mono">{resendTarget.subject}</span> mints a new message and may deliver it twice —
-          the first attempt's outcome is unknown, not failed. Say why, for the trail:{" "}
+          {sentence("ledgers.outbox.resend.notice", { subject: <span className="mono">{resendTarget.subject}</span> })}{" "}
           <span className="inline-actions">
-            <input className="mono resend-reason" aria-label="Why resend" value={resendReason} onChange={(event) => setResendReason(event.target.value)} />
-            <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>Resend anyway</button>
-            <button type="button" className="linkish dim" onClick={() => setResending(null)}>Never mind</button>
+            <input className="mono resend-reason" aria-label={t("ledgers.outbox.resend.why")} value={resendReason} onChange={(event) => setResendReason(event.target.value)} />
+            <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>{t("ledgers.outbox.resend.anyway")}</button>
+            <button type="button" className="linkish dim" onClick={() => setResending(null)}>{t("ledgers.neverMind")}</button>
           </span>
         </p>
       )}
 
       {capability.canSend ? null : (
-        <p className="notice bad">{capability.detail}</p>
+        <p className="notice bad"><NodeWords>{capability.detail}</NodeWords></p>
       )}
       {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
       <p className="notice dim">
         {daily.throttledAtCount === null
-          ? `${daily.handedOver} handed over today. Your daily limit is not published by Cloudflare; it will be recorded here the first time you hit it.`
-          : `${daily.handedOver} handed over today. This Node was first rate-limited at ${daily.throttledAtCount}.`}
+          ? t("ledgers.outbox.daily.unmeasured", { count: String(daily.handedOver) })
+          : t("ledgers.outbox.daily.throttled", { count: String(daily.handedOver), at: String(daily.throttledAtCount) })}
       </p>
 
-      <Truncated when={sends.data.truncated} shown={rows.length} noun="sends" />
+      <Truncated when={sends.data.truncated} shown={rows.length} noun={t("ledgers.outbox.noun")} />
       {rows.length === 0 ? (
-        <Nothing kind="empty" detail="Nothing has been sent from this Node yet." />
+        <Nothing kind="empty" detail={t("ledgers.outbox.empty")} />
       ) : (
         <table>
           <thead>
             <tr>
-              <th scope="col">Subject</th>
-              <th scope="col">To</th>
-              <th scope="col">State</th>
-              <th scope="col" className="num">When</th>
-              <th scope="col" className="num">Submitted</th>
+              <th scope="col">{t("ledgers.col.subject")}</th>
+              <th scope="col">{t("ledgers.outbox.col.to")}</th>
+              <th scope="col">{t("ledgers.col.state")}</th>
+              <th scope="col" className="num">{t("ledgers.outbox.col.when")}</th>
+              <th scope="col" className="num">{t("ledgers.outbox.col.submitted")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((send) => {
-              const state = describeSend(send);
-              const reason = describeReason(send);
+              const state = sendStateWords(describeSend(send));
+              const token = describeReason(send);
+              const reason = token === null ? null : sendReasonWords(token);
               const expanded = open === send.id;
               return (
                 // `Fragment` with a key, not `<>`. A keyless fragment in a list leaves React reconciling
@@ -241,19 +252,19 @@ export function Outbox() {
                         onClick={() => setOpen(expanded ? null : send.id)}
                       >
                         {/* Said, as the inbox rows say it: a blank subject left the row's only button nameless. */}
-                        {send.subject.trim() === "" ? <span className="dim">(no subject)</span> : send.subject}
+                        {send.subject.trim() === "" ? <span className="dim">{t("ledgers.outbox.noSubject")}</span> : send.subject}
                       </button>
                     </td>
                     <td className="dim mono">{(JSON.parse(send.envelope_to) as string[]).join(", ")}</td>
                     <td>
                       <span className={`state state-${send.state}`} title={state.note}>
-                        {state.label}
+                        {shown(state)}
                       </span>
                       {reason === null ? null : (
                         // Beside the state, not instead of it. The state says what happened to the send; the
                         // reason says who can act. Collapsing them would lose whichever half the reader needs.
                         <span className="state state-reason delivery-chip" title={reason.note}>
-                          {reason.label}
+                          {shown(reason)}
                         </span>
                       )}
                       <DeliveryChips send={send} />
@@ -275,7 +286,7 @@ export function Outbox() {
                                 className="linkish"
                                 onClick={() => void release(send.id)}
                               >
-                                Let it go
+                                {t("ledgers.outbox.letGo")}
                               </button>
                               {" · "}
                             </>
@@ -290,10 +301,10 @@ export function Outbox() {
                               <button
                                 type="button"
                                 className="linkish"
-                                title="A Butler wrote this. Releasing it puts it in the ordinary hold window, where it can still be stopped."
+                                title={t("ledgers.outbox.release.title")}
                                 onClick={() => void releaseFromGate(send.id)}
                               >
-                                Release
+                                {t("ledgers.outbox.release")}
                               </button>
                               {" · "}
                             </>
@@ -304,7 +315,7 @@ export function Outbox() {
                             already hold.
                           */}
                           <button type="button" className="linkish" onClick={() => void stop(send.id)}>
-                            Stop
+                            {t("ledgers.outbox.stop")}
                           </button>
                         </>
                       ) : (
@@ -312,9 +323,10 @@ export function Outbox() {
                           {send.retry.mode === null ? null : (
                             <>
                               <button type="button" className="linkish" title={send.retry.why} onClick={() => void retry(send)}>
-                                {send.retry.mode === "retry-effect" ? "Retry" : "Resend…"}
+                                {send.retry.mode === "retry-effect" ? t("ledgers.outbox.retry") : t("ledgers.outbox.resend")}
                               </button>
-                              {" · "}
+                              {/* A separator only between two things: an authored send never submitted has no .eml. */}
+                              {send.fidelity === "authored" && send.has_submitted === 1 ? " · " : null}
                             </>
                           )}
                           {send.fidelity === "authored" && send.has_submitted === 1 ? (
@@ -333,21 +345,21 @@ export function Outbox() {
                   <tr id={`detail-${send.id}`} className="detail" hidden={!expanded}>
                     <td colSpan={5}>
                       <dl>
-                        <dt>What this means</dt>
+                        <dt>{t("ledgers.outbox.means")}</dt>
                         <dd>{state.note}</dd>
                         {reason === null ? null : (
                           <>
-                            <dt>Why</dt>
+                            <dt>{t("ledgers.outbox.why")}</dt>
                             <dd>{reason.note}</dd>
                           </>
                         )}
                         <Recipients send={send} />
-                        <dt>Manifest</dt>
+                        <dt>{t("ledgers.outbox.manifest")}</dt>
                         <dd className="mono">{send.id}</dd>
                         {send.last_error === null ? null : (
                           <>
-                            <dt>Reported</dt>
-                            <dd>{send.last_error}</dd>
+                            <dt>{t("ledgers.outbox.reported")}</dt>
+                            <dd><NodeWords>{send.last_error}</NodeWords></dd>
                           </>
                         )}
                       </dl>
@@ -376,7 +388,7 @@ export function Outbox() {
 function actorLabel(entry: AuditRow): string {
   if (entry.actor_user_id === null) return entry.actor_kind;
   if (entry.delegator_user_id === null) return entry.actor_user_id;
-  return `${entry.actor_user_id} for ${entry.delegator_user_id}`;
+  return t("ledgers.audit.actorFor", { actor: entry.actor_user_id, delegator: entry.delegator_user_id });
 }
 
 export function Audit() {
@@ -385,9 +397,9 @@ export function Audit() {
 
   if (audit.isPending || audit.isError) {
     return (
-      <section className="ledger" aria-label="Audit trail">
-        <header className="ledger-head"><h1>Audit</h1></header>
-        {audit.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={audit.error.message} />}
+      <section className="ledger" aria-label={t("ledgers.audit.label")}>
+        <header className="ledger-head"><h1>{t("route./audit")}</h1></header>
+        {audit.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={marked(audit.error)} />}
       </section>
     );
   }
@@ -399,33 +411,33 @@ export function Audit() {
     // read the same.
     setVerdict(
       outcome.intact
-        ? `${outcome.checked} entries checked, chain intact.`
-        : `Chain broken at entry ${outcome.brokenAt}. ${outcome.checked} entries checked.`,
+        ? t("ledgers.audit.intact", { count: String(outcome.checked) })
+        : t("ledgers.audit.broken", { entry: String(outcome.brokenAt), count: String(outcome.checked) }),
     );
   }
 
   return (
-    <section className="ledger" aria-label="Audit trail">
+    <section className="ledger" aria-label={t("ledgers.audit.label")}>
       <header className="ledger-head">
-        <h1>Audit</h1>
+        <h1>{t("route./audit")}</h1>
         <button type="button" className="linkish" onClick={() => void verify()}>
-          Verify chain
+          {t("ledgers.audit.verify")}
         </button>
       </header>
       {verdict === null ? null : <p className="notice mono">{verdict}</p>}
-      <Truncated when={audit.data.truncated} shown={audit.data.entries.length} noun="entries" />
+      <Truncated when={audit.data.truncated} shown={audit.data.entries.length} noun={t("ledgers.noun.entries")} />
       {audit.data.entries.length === 0 ? (
-        <Nothing kind="empty" detail="No audited action has been taken on this Node yet." />
+        <Nothing kind="empty" detail={t("ledgers.audit.empty")} />
       ) : (
         <table>
           <thead>
             <tr>
-              <th scope="col" className="num">Seq</th>
-              <th scope="col">Action</th>
-              <th scope="col">Actor</th>
-              <th scope="col">Outcome</th>
-              <th scope="col">Subject</th>
-              <th scope="col" className="num">At</th>
+              <th scope="col" className="num">{t("ledgers.audit.col.seq")}</th>
+              <th scope="col">{t("ledgers.audit.col.action")}</th>
+              <th scope="col">{t("ledgers.audit.col.actor")}</th>
+              <th scope="col">{t("ledgers.audit.col.outcome")}</th>
+              <th scope="col">{t("ledgers.col.subject")}</th>
+              <th scope="col" className="num">{t("ledgers.col.at")}</th>
             </tr>
           </thead>
           <tbody>
@@ -448,53 +460,62 @@ export function Audit() {
   );
 }
 
+/** A level's word, or the Node's own token for a level this interface does not know yet. */
+function levelWord(level: string): string {
+  return oneOf(LOG_LEVELS, level) ? t(`ledgers.log.level.${level}`) : level;
+}
+
 export function Log() {
   const logs = useLogs();
   // Heading first, then the state. See the note in inbox.tsx: a screen whose name appears only once its
   // data has arrived is a screen with no heading while it loads.
   if (logs.isPending || logs.isError) {
     return (
-      <section className="ledger" aria-label="Operational log">
-        <header className="ledger-head"><h1>Log</h1></header>
-        {logs.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={logs.error.message} />}
+      <section className="ledger" aria-label={t("ledgers.log.label")}>
+        <header className="ledger-head"><h1>{t("route./log")}</h1></header>
+        {logs.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={marked(logs.error)} />}
       </section>
     );
   }
 
   return (
-    <section className="ledger" aria-label="Operational log">
+    <section className="ledger" aria-label={t("ledgers.log.label")}>
       <header className="ledger-head">
-        <h1>Log</h1>
+        <h1>{t("route./log")}</h1>
         <p className="dim mono">
-          {logs.data.counts.map((count) => `${count.n} ${count.level}`).join(" · ") || "empty"}
+          {logs.data.counts.map((count) => t("ledgers.log.count", { count: String(count.n), level: levelWord(count.level) })).join(" · ")
+            || t("ledgers.log.counts.none")}
         </p>
       </header>
-      <Truncated when={logs.data.truncated} shown={logs.data.entries.length} noun="entries" />
+      <Truncated when={logs.data.truncated} shown={logs.data.entries.length} noun={t("ledgers.noun.entries")} />
       {logs.data.entries.length === 0 ? (
-        <Nothing kind="empty" detail="Nothing has been logged. This Node trims its log by design." />
+        <Nothing kind="empty" detail={t("ledgers.log.empty")} />
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Level</th>
-              <th scope="col">Event</th>
-              <th scope="col">Message</th>
-              <th scope="col" className="num">At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.data.entries.map((entry) => (
-              <tr key={entry.id}>
-                <td>
-                  <span className={`state state-log-${entry.level}`}>{entry.level}</span>
-                </td>
-                <td className="mono">{entry.event}</td>
-                <td>{entry.message}</td>
-                <td className="num mono dim">{clock(entry.at)}</td>
+        // The one ledger with no control of its own, so a keyboard could not reach what scrolls past a phone's edge.
+        <Scroller label={t("ledgers.log.entries")}>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">{t("ledgers.log.col.level")}</th>
+                <th scope="col">{t("ledgers.log.col.event")}</th>
+                <th scope="col">{t("ledgers.col.message")}</th>
+                <th scope="col" className="num">{t("ledgers.col.at")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {logs.data.entries.map((entry) => (
+                <tr key={entry.id}>
+                  <td>
+                    <span className={`state state-log-${entry.level}`}>{levelWord(entry.level)}</span>
+                  </td>
+                  <td className="mono">{entry.event}</td>
+                  <td><NodeWords>{entry.message}</NodeWords></td>
+                  <td className="num mono dim">{clock(entry.at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Scroller>
       )}
     </section>
   );
@@ -530,7 +551,7 @@ function SendingCredentials() {
   const queryClient = useQueryClient();
   const [accountId, setAccountId] = useState("");
   const [apiToken, setApiToken] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Refused | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -538,7 +559,7 @@ function SendingCredentials() {
     setProblem(null);
     const outcome = await configureTransport(accountId.trim(), apiToken);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     // Cleared on success: the token has been handed over and nothing can read it back, so holding it in a
     // form field afterwards would be the only place it still exists in the clear.
     setApiToken("");
@@ -549,26 +570,26 @@ function SendingCredentials() {
   const report = transport.data?.transport;
 
   return (
-    <section className="transport" aria-label="Sending credentials">
-      <h2>Sending credentials</h2>
+    <section className="transport" aria-label={t("ledgers.transport.label")}>
+      <h2>{t("ledgers.transport.label")}</h2>
       {report === undefined
         ? <Nothing kind="loading" />
         : (
           <p className="dim">
-            Sends go through <span className="mono">{report.adapter}</span>.
+            {sentence("ledgers.transport.through", { adapter: <span className="mono">{report.adapter}</span> })}
             {" "}
             {report.available.binding
-              ? "The EMAIL binding is present and is preferred: it holds no credential, and it is the only adapter that can submit the exact bytes an authored send records."
+              ? t("ledgers.transport.binding")
               : report.available.rest === null
-                ? "There is no EMAIL binding and no API token, so this Node cannot send at all."
-                : `There is no EMAIL binding, so reconstructed sends go over the REST API for account ${report.available.rest.accountId}. Authored sends are refused: that API builds its own MIME, so the bytes sent would not be the bytes recorded.`}
+                ? t("ledgers.transport.none")
+                : t("ledgers.transport.rest", { account: report.available.rest.accountId })}
           </p>
         )}
 
-      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
 
       <label className="field-row" htmlFor="transport-account">
-        <span>Cloudflare account id</span>
+        <span>{t("ledgers.transport.account")}</span>
         <input
           id="transport-account"
           className="mono"
@@ -577,7 +598,7 @@ function SendingCredentials() {
         />
       </label>
       <label className="field-row" htmlFor="transport-token">
-        <span>Email Sending API token</span>
+        <span>{t("ledgers.transport.token")}</span>
         <input
           id="transport-token"
           type="password"
@@ -587,8 +608,7 @@ function SendingCredentials() {
         />
       </label>
       <p className="dim">
-        Needs the <span className="mono">Email Sending: Edit</span> permission. It is encrypted on arrival and
-        no route returns it — to change it, supply a new one.
+        {sentence("ledgers.transport.needs", { permission: <span className="mono">Email Sending: Edit</span> })}
       </p>
       <p>
         <button className="quiet"
@@ -596,7 +616,7 @@ function SendingCredentials() {
           onClick={() => void save()}
           disabled={busy || accountId.trim() === "" || apiToken === ""}
         >
-          Save credentials
+          {t("ledgers.transport.save")}
         </button>
       </p>
     </section>
@@ -610,14 +630,19 @@ function SendingCredentials() {
  * and the last one is what to do next. A result is `role="status"`: what was done, in the Node's counts,
  * never a reassurance the screen composed itself.
  */
-function Outcome({ outcome }: { outcome: { ok: true; text: string } | { ok: false; message: string } | null }) {
+function Outcome({ outcome }: { outcome: Shown }) {
   if (outcome === null) return null;
   return outcome.ok
     ? <p className="notice mono" role="status">{outcome.text}</p>
-    : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{outcome.message}</p>;
+    : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{marked(outcome)}</p>;
 }
 
-type Shown = { ok: true; text: string } | { ok: false; message: string } | null;
+type Shown = { ok: true; text: ReactNode } | Refused | null;
+
+/** A remedy's answer: the Node's count in this interface's words, then the Node's own sentence. */
+function requeued(value: { requeued: number; message: string }): ReactNode {
+  return sentence("ledgers.requeued", { count: String(value.requeued), message: <NodeWords>{value.message}</NodeWords> });
+}
 
 /**
  * The remedies, beside the findings that name them.
@@ -637,20 +662,22 @@ function Remedy({ finding }: { finding: DoctorFinding }) {
   if (finding.check === "evidence_present") return <EvidenceVerify />;
   if (finding.ok) return null;
   if (finding.check === "migrations_applied") {
-    return <OneAct label="Apply migrations" run={async () => {
+    return <OneAct label={t("ledgers.migrations.apply")} run={async () => {
       const outcome = await applyMigrations();
-      return outcome.ok ? { ok: true, text: outcome.value.message } : outcome;
+      return outcome.ok ? { ok: true, text: <NodeWords>{outcome.value.message}</NodeWords> } : outcome;
     }} />;
   }
   if (finding.check === "evidence_key_generation") {
-    return <OneAct label="Reseal a batch" run={async () => {
+    return <OneAct label={t("ledgers.reseal.act")} run={async () => {
       const outcome = await resealEvidence();
       if (!outcome.ok) return outcome;
       const { resealed, alreadyCurrent, failed, remaining, targetGeneration } = outcome.value;
       return {
         ok: true,
-        text: `${resealed} resealed under generation ${targetGeneration}, ${alreadyCurrent} already current, `
-          + `${failed.length} failed. ${remaining} remaining — run it again until that reaches 0.`,
+        text: t("ledgers.reseal.done", {
+          resealed: String(resealed), generation: String(targetGeneration), current: String(alreadyCurrent),
+          failed: String(failed.length), remaining: String(remaining),
+        }),
       };
     }} />;
   }
@@ -658,9 +685,9 @@ function Remedy({ finding }: { finding: DoctorFinding }) {
   if (finding.check === "recovery_key_conflicts") return <Acknowledge />;
   if (finding.check === "body_index_failed") return <SearchRepair />;
   if (finding.check === "preview_backlog") {
-    return <OneAct label="Requeue failed previews" run={async () => {
+    return <OneAct label={t("ledgers.previews.requeue")} run={async () => {
       const outcome = await requeuePreviews();
-      return outcome.ok ? { ok: true, text: `${outcome.value.requeued} requeued. ${outcome.value.message}` } : outcome;
+      return outcome.ok ? { ok: true, text: requeued(outcome.value) } : outcome;
     }} />;
   }
   return null;
@@ -693,27 +720,26 @@ function OneAct({ label, run, disabled = false }: { label: string; run: () => Pr
 function Collect() {
   const [armed, setArmed] = useState(false);
   if (!armed) {
-    return <p><button type="button" className="quiet" onClick={() => setArmed(true)}>Collect them…</button></p>;
+    return <p><button type="button" className="quiet" onClick={() => setArmed(true)}>{t("ledgers.collect.arm")}</button></p>;
   }
   return (
     <>
-      <p className="notice">
-        This deletes every object the reconciler finds no referent for — orphaned raw mail past the grace
-        period, stranded draft bodies and export residue. It is refused for the whole organization while a
-        legal hold stands.
-      </p>
-      <OneAct label="Delete them now" run={async () => {
+      <p className="notice">{t("ledgers.collect.warning")}</p>
+      <OneAct label={t("ledgers.collect.act")} run={async () => {
         const outcome = await reconcileEvidence(true);
         if (!outcome.ok) return outcome;
         const { orphansDeleted, draftBodiesDeleted, exportObjectsDeleted } = outcome.value;
         return {
           ok: true,
-          text: `Deleted ${orphansDeleted} orphan(s), ${draftBodiesDeleted} draft body/bodies, `
-            + `${exportObjectsDeleted} export object(s).`,
+          text: t("ledgers.collect.done", {
+            orphans: t("ledgers.collect.orphans", { n: orphansDeleted }),
+            drafts: t("ledgers.collect.drafts", { n: draftBodiesDeleted }),
+            exports: t("ledgers.collect.exports", { n: exportObjectsDeleted }),
+          }),
         };
       }} />
       {" "}
-      <button type="button" className="linkish dim" onClick={() => setArmed(false)}>Never mind</button>
+      <button type="button" className="linkish dim" onClick={() => setArmed(false)}>{t("ledgers.neverMind")}</button>
     </>
   );
 }
@@ -729,20 +755,21 @@ function Acknowledge() {
   const [conclusion, setConclusion] = useState("");
   return (
     <>
-      <label className="field-row" htmlFor="ack-restore"><span>Restore id</span>
+      <label className="field-row" htmlFor="ack-restore"><span>{t("ledgers.conflict.restore")}</span>
         <input id="ack-restore" className="mono" value={restoreId} onChange={(event) => setRestoreId(event.target.value)} /></label>
-      <label className="field-row" htmlFor="ack-scope"><span>What was examined</span>
+      <label className="field-row" htmlFor="ack-scope"><span>{t("ledgers.conflict.scope")}</span>
         <input id="ack-scope" value={scope} onChange={(event) => setScope(event.target.value)} /></label>
-      <label className="field-row" htmlFor="ack-conclusion"><span>What was concluded</span>
+      <label className="field-row" htmlFor="ack-conclusion"><span>{t("ledgers.conflict.conclusion")}</span>
         <input id="ack-conclusion" value={conclusion} onChange={(event) => setConclusion(event.target.value)} /></label>
-      <OneAct label="Record the assessment" run={async () => {
+      <OneAct label={t("ledgers.conflict.act")} run={async () => {
         const outcome = await acknowledgeConflict(restoreId.trim(), scope, conclusion);
         if (!outcome.ok) return outcome;
         const { acknowledged } = outcome.value;
         return {
           ok: true,
-          text: `Recorded against ${acknowledged.restoreId} (generations ${acknowledged.generations}) at `
-            + `${acknowledged.acknowledgedAt}. The collision is not repaired; the alarm is discharged.`,
+          text: t("ledgers.conflict.done", {
+            restoreId: acknowledged.restoreId, generations: acknowledged.generations, at: fullTime(acknowledged.acknowledgedAt),
+          }),
         };
       }} />
     </>
@@ -787,7 +814,7 @@ function RecoveryCodes() {
     setBusy(false);
     // Cleared either way: the field held a live key, and a refused one is still a live key.
     setCode("");
-    setShown(outcome.ok ? { ok: true, text: outcome.value.message } : outcome);
+    setShown(outcome.ok ? { ok: true, text: <NodeWords>{outcome.value.message}</NodeWords> } : outcome);
     await queryClient.invalidateQueries({ queryKey: ["doctor"] });
   }
 
@@ -795,35 +822,37 @@ function RecoveryCodes() {
     <>
       {minted === null ? (
         <p>
-          <button type="button" className="quiet" disabled={busy} onClick={() => void rotate()}>Mint a new set</button>
+          <button type="button" className="quiet" disabled={busy} onClick={() => void rotate()}>{t("ledgers.codes.mint")}</button>
           {" "}
-          <span className="dim">Ten codes, shown once. Confirming one retires any previous sheet.</span>
+          <span className="dim">{t("ledgers.codes.mintNote")}</span>
         </p>
       ) : (
         <div className="codes-sheet">
-          <p><strong>Write these down now.</strong> {minted.notice}</p>
-          <ol className="codes" aria-label="Recovery codes">
+          <p><strong>{t("ledgers.codes.now")}</strong> <NodeWords>{minted.notice}</NodeWords></p>
+          <ol className="codes" aria-label={t("ledgers.codes.label")}>
             {minted.codes.map((one) => <li key={one} className="mono">{one}</li>)}
           </ol>
           <p className="dim">
-            Set <span className="mono">{minted.set}</span>, carrying content key generation {minted.escrowed.content} and
-            credential key generation {minted.escrowed.credential}. Put them somewhere that survives losing this
-            computer and this Cloudflare account.
+            {sentence("ledgers.codes.set", {
+              set: <span className="mono">{minted.set}</span>,
+              content: String(minted.escrowed.content),
+              credential: String(minted.escrowed.credential),
+            })}
           </p>
-          <p><button type="button" className="quiet" onClick={() => setMinted(null)}>I have saved these ten codes</button></p>
+          <p><button type="button" className="quiet" onClick={() => setMinted(null)}>{t("ledgers.codes.saved")}</button></p>
         </div>
       )}
       <label className="field-row" htmlFor="recovery-code">
-        <span>Confirm one code</span>
+        <span>{t("ledgers.codes.confirmOne")}</span>
         <input id="recovery-code" type="password" className="mono" autoComplete="off" value={code}
           onChange={(event) => setCode(event.target.value)} />
       </label>
       <p>
         <button type="button" className="quiet" disabled={busy || code.trim() === ""} onClick={() => void confirm()}>
-          Confirm
+          {t("ledgers.codes.confirm")}
         </button>
         {" "}
-        <span className="dim">Compared against the hash, never spent. Type it; nothing here fills it in for you.</span>
+        <span className="dim">{t("ledgers.codes.confirmNote")}</span>
       </p>
       <Outcome outcome={shown} />
     </>
@@ -843,8 +872,8 @@ function SearchRepair() {
   const [chosen, setChosen] = useState<Set<string>>(new Set());
 
   if (failed.isPending) return <Nothing kind="loading" />;
-  if (failed.isError) return <Nothing kind="failed" detail={failed.error.message} />;
-  if (failed.data.failed.length === 0) return <p className="dim">The failed list is empty now.</p>;
+  if (failed.isError) return <Nothing kind="failed" detail={marked(failed.error)} />;
+  if (failed.data.failed.length === 0) return <p className="dim">{t("ledgers.search.none")}</p>;
 
   function toggle(id: string) {
     setChosen((was) => {
@@ -858,31 +887,35 @@ function SearchRepair() {
     <>
       <table className="search-failed">
         <thead>
-          <tr><th scope="col">Repair</th><th scope="col">Message</th><th scope="col">State</th><th scope="col" className="num">Attempts</th><th scope="col">Error</th></tr>
+          <tr>
+            <th scope="col">{t("ledgers.search.col.repair")}</th><th scope="col">{t("ledgers.col.message")}</th>
+            <th scope="col">{t("ledgers.col.state")}</th><th scope="col" className="num">{t("ledgers.search.col.attempts")}</th>
+            <th scope="col">{t("ledgers.search.col.error")}</th>
+          </tr>
         </thead>
         <tbody>
           {failed.data.failed.map((row) => (
             <tr key={row.messageId}>
               <td>
-                <input type="checkbox" aria-label={`Repair ${row.messageId}`} checked={chosen.has(row.messageId)}
+                <input type="checkbox" aria-label={t("ledgers.search.repairOne", { id: row.messageId })} checked={chosen.has(row.messageId)}
                   onChange={() => toggle(row.messageId)} />
               </td>
               <td className="mono">{row.messageId}</td>
-              <td><span className={`state state-index-${row.state}`}>{row.state}</span></td>
+              <td><span className={`state state-index-${row.state}`}>{t(`ledgers.search.state.${row.state}`)}</span></td>
               <td className="num mono dim">{row.attempts}</td>
-              <td className="dim mono">{row.error ?? "—"}</td>
+              <td className="dim mono">{row.error === null ? "—" : <NodeWords>{row.error}</NodeWords>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="dim">Tick the ones worth retrying — fix the cause first.</p>
+      <p className="dim">{t("ledgers.search.advice")}</p>
       {/* Mounted whether or not anything is ticked, so the answer outlives the selection it was about. */}
-      <OneAct label={`Requeue ${chosen.size} message(s)`} disabled={chosen.size === 0} run={async () => {
+      <OneAct label={t("ledgers.search.requeue", { n: chosen.size })} disabled={chosen.size === 0} run={async () => {
         const outcome = await repairSearch([...chosen]);
         if (!outcome.ok) return outcome;
         setChosen(new Set());
         await queryClient.invalidateQueries({ queryKey: ["search-failed"] });
-        return { ok: true, text: `${outcome.value.requeued} requeued. ${outcome.value.message}` };
+        return { ok: true, text: requeued(outcome.value) };
       }} />
     </>
   );
@@ -892,9 +925,22 @@ function SearchRepair() {
  * Verifying evidence, one bounded batch at a time. The verdict says what it covered, and the next
  * batch starts where this one stopped rather than from the beginning again.
  */
+/** What a batch read and what it found: one plural per count, filled into the sentence that fits it. */
+function batchRead(verdict: EvidenceVerdict): string {
+  const counts = {
+    checked: verdict.table === null
+      ? t("ledgers.evidence.checked", { n: verdict.checked })
+      : t("ledgers.evidence.checkedIn", { n: verdict.checked, table: verdict.table }),
+    bytes: String(verdict.bytesRead),
+  };
+  return verdict.intact
+    ? t("ledgers.evidence.intact", counts)
+    : t("ledgers.evidence.faults", { ...counts, faults: t("ledgers.evidence.faultCount", { n: verdict.faults.length }) });
+}
+
 function EvidenceVerify() {
   const [verdict, setVerdict] = useState<EvidenceVerdict | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Refused | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function verify(after: string | null) {
@@ -902,7 +948,7 @@ function EvidenceVerify() {
     setProblem(null);
     const outcome = await verifyEvidence(after);
     setBusy(false);
-    if (!outcome.ok) { setProblem(outcome.message); return; }
+    if (!outcome.ok) { setProblem(outcome); return; }
     setVerdict(outcome.value);
   }
 
@@ -911,21 +957,22 @@ function EvidenceVerify() {
       <p>
         {/* A row of its own, 8px apart: a text space set the two buttons 4px apart (28 September 2026). */}
         <span className="inline-actions">
-          <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>Verify a batch</button>
+          <button type="button" className="quiet" disabled={busy} onClick={() => void verify(null)}>{t("ledgers.evidence.verify")}</button>
           {verdict?.resumeAfter == null ? null : (
-            <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>Continue from where it stopped</button>
+            <button type="button" className="linkish" disabled={busy} onClick={() => void verify(verdict.resumeAfter)}>{t("ledgers.evidence.continue")}</button>
           )}
         </span>
       </p>
-      {problem === null ? null : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{problem}</p>}
+      {problem === null ? null : <p className="notice bad mono" role="alert" style={{ whiteSpace: "pre-wrap" }}>{marked(problem)}</p>}
       {verdict === null ? null : (
         <p className="notice mono" role="status">
-          {verdict.checked} object(s) checked{verdict.table === null ? "" : ` in ${verdict.table}`}, {verdict.bytesRead} bytes read:{" "}
-          {verdict.intact ? "intact." : `${verdict.faults.length} fault(s).`}
-          {verdict.resumeAfter === null ? " That was the last batch." : " More remains."}
+          {t("ledgers.evidence.verdict", { head: batchRead(verdict), tail: t(verdict.resumeAfter === null ? "ledgers.evidence.last" : "ledgers.evidence.more") })}
           {verdict.faults.map((fault) => (
             <span key={`${fault.table}:${fault.rowId}:${fault.column}`} style={{ display: "block" }}>
-              {fault.kind} {fault.table}.{fault.column} {fault.rowId}: {fault.detail}
+              {sentence("ledgers.evidence.fault", {
+                kind: t(`ledgers.evidence.kind.${fault.kind}`), table: fault.table, column: fault.column, rowId: fault.rowId,
+                detail: <NodeWords>{fault.detail}</NodeWords>,
+              })}
             </span>
           ))}
         </p>
@@ -938,29 +985,29 @@ export function Doctor() {
   const doctor = useDoctor();
   if (doctor.isPending || doctor.isError) {
     return (
-      <section className="ledger" aria-label="Doctor">
-        <header className="ledger-head"><h1>Doctor</h1></header>
-        {doctor.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={doctor.error.message} />}
+      <section className="ledger" aria-label={t("route./doctor")}>
+        <header className="ledger-head"><h1>{t("route./doctor")}</h1></header>
+        {doctor.isPending ? <Nothing kind="loading" /> : <Nothing kind="failed" detail={marked(doctor.error)} />}
       </section>
     );
   }
 
   const report = doctor.data;
   return (
-    <section className="ledger" aria-label="Doctor">
+    <section className="ledger" aria-label={t("route./doctor")}>
       <header className="ledger-head">
-        <h1>Doctor</h1>
-        <span className={`state verdict-${report.verdict}`}>{report.verdict}</span>
+        <h1>{t("route./doctor")}</h1>
+        <span className={`state verdict-${report.verdict}`}>{t(`health.status.${report.verdict}`)}</span>
       </header>
       <p className="notice dim mono">
-        {report.claimed ? "claimed" : "unclaimed"} · read {clock(report.at)}
+        {t(report.claimed ? "ledgers.doctor.claimed" : "ledgers.doctor.unclaimed", { at: clock(report.at) })}
       </p>
       <table>
         <thead>
           <tr>
-            <th scope="col">Check</th>
-            <th scope="col">State</th>
-            <th scope="col">Detail</th>
+            <th scope="col">{t("ledgers.doctor.col.check")}</th>
+            <th scope="col">{t("ledgers.col.state")}</th>
+            <th scope="col">{t("ledgers.doctor.col.detail")}</th>
           </tr>
         </thead>
         <tbody>
@@ -969,15 +1016,15 @@ export function Doctor() {
               <td className="mono">{finding.check}</td>
               <td>
                 <span className={`state ${finding.ok ? "delivery-accepted" : `severity-${finding.severity}`}`}>
-                  {finding.ok ? "ok" : finding.severity}
+                  {t(finding.ok ? "health.status.ok" : `health.status.${finding.severity}`)}
                 </span>
               </td>
               <td>
-                {finding.detail}
+                <NodeWords>{finding.detail}</NodeWords>
                 {finding.fix === undefined ? null : (
                   <>
                     {" "}
-                    <span className="dim">Fix: {finding.fix}</span>
+                    <span className="dim">{sentence("ledgers.doctor.fix", { fix: <NodeWords>{finding.fix}</NodeWords> })}</span>
                   </>
                 )}
                 <Remedy finding={finding} />

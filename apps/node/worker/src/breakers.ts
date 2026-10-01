@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import type { SendReason } from "@mailda/contract/schemas";
 import { BUDGETS, BUDGET_ORIGINS, type BudgetName } from "@mailda/budgets";
 
 import { type Suppression, suppressedSubselect, suppressionsFromJson } from "./suppression.ts";
@@ -159,7 +160,7 @@ export const RATE_BREAKERS = {
     sentence: "Too many recipients marked this Node's mail as spam.",
   },
 } as const satisfies Record<string, {
-  reason: string;
+  reason: SendReason;
   windowBudget: BudgetName;
   limitBudget: BudgetName;
   minObservationsBudget: BudgetName | null;
@@ -176,16 +177,16 @@ export const RATE_BREAKER_NAMES = Object.keys(RATE_BREAKERS) as RateBreaker[];
  * The tokens `send_manifests.state_reason` can carry from a rate gate, derived from the map that writes them.
  *
  * Derived rather than written out for the reason `POLICY_REASONS` gives one module over: a second literal list
- * of the same three tokens is a claim nothing keeps true. The **words** for them live in
- * `src/client/delivery.client.js`, which owns every send-state sentence, and
- * `test/outbound-recheck.test.ts` reads this against the exact bytes a browser is served.
+ * of the same three tokens is a claim nothing keeps true. The **words** for them live in the catalog
+ * (`src/i18n/en/delivery.ts`), keyed by the contract's `SEND_REASONS`, and `test/outbound-recheck.test.ts`
+ * holds this list against that one.
  */
-export const BREAKER_REASONS: readonly string[] =
+export const BREAKER_REASONS: readonly SendReason[] =
   RATE_BREAKER_NAMES.map((name) => RATE_BREAKERS[name].reason);
 
 /** Is this `state_reason` a rate gate — the one `awaiting` reason that clears without anybody acting? */
 export function isBreakerReason(reason: string | null): boolean {
-  return reason !== null && BREAKER_REASONS.includes(reason);
+  return reason !== null && (BREAKER_REASONS as readonly string[]).includes(reason);
 }
 
 /* ---- what one evaluation answers ------------------------------------------------------------- */

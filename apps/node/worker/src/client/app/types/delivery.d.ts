@@ -10,9 +10,12 @@
  * own test.
  */
 
-export interface DeliveryMeta { label: string; note: string }
-/** `state` is a delivery state, or a reason token (`DELIVERY_REASONS`) for a recipient that has none. */
-export interface DeliveryEntry { state: string; count: number; label: string; note: string }
+/**
+ * `state` is a delivery state (`DELIVERY_STATES`), `unobserved`, or a reason token (`DELIVERY_REASONS`) for a
+ * recipient that has none; a newer Node's unknown token arrives as a string. The words are the catalog's
+ * (`src/client/app/delivery-words.ts`).
+ */
+export interface DeliveryEntry { state: string; count: number }
 export interface RecipientLike {
   kind?: string;
   address?: string;
@@ -21,12 +24,8 @@ export interface RecipientLike {
   delivery_reason?: string | null;
 }
 
-export const DELIVERY_STATES: Record<string, DeliveryMeta>;
-export const UNOBSERVED: DeliveryMeta;
-/** The words for each `delivery_reason` token; the contract's `DELIVERY_REASONS` is the closed list. */
-export const DELIVERY_REASONS: Record<string, DeliveryMeta>;
-/** One recipient's state, and the reason beside it when there is one. `reason` is null whenever a state is set. */
-export function describeRecipient(recipient: RecipientLike): { state: DeliveryMeta; reason: DeliveryMeta | null };
+/** One recipient's tokens. `state` is `unobserved` when none is set; `reason` is null whenever a state is set. */
+export function describeRecipient(recipient: RecipientLike): { state: string; reason: string | null };
 export const DELIVERY_SEVERITY: string[];
 export function severityRank(state: string): number;
 /** Worst first. Empty only when nothing at all has been observed — see the module's own header. */
@@ -44,12 +43,11 @@ export interface SendLike {
   /** The machine token behind `awaiting` or `withheld` (#60), or null when the state needs no reason. */
   state_reason?: string | null;
 }
-export const SEND_STATES: Record<string, DeliveryMeta>;
-/** The stronger reading available when the submitted bytes provably do not exist. */
-export const NEVER_SUBMITTED: DeliveryMeta;
-/** Takes the row, not the state, because the honest answer needs three of its fields. */
-export function describeSend(send: SendLike): DeliveryMeta;
-/** Why a send is `awaiting` or `withheld`, keyed on `state_reason`. */
-export const SEND_REASONS: Record<string, DeliveryMeta>;
-/** `null` when the row carries no reason, which is the ordinary case for `held`. */
-export function describeReason(send: SendLike): DeliveryMeta | null;
+/**
+ * The state token, `never_submitted` when the submitted bytes provably do not exist (the stronger reading of
+ * `outcome_unknown`), or the raw state. Takes the row, not the state, because the honest answer needs three of
+ * its fields.
+ */
+export function describeSend(send: SendLike): string;
+/** The `state_reason` token, or `null` when the row carries none, which is the ordinary case for `held`. */
+export function describeReason(send: SendLike): string | null;

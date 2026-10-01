@@ -364,7 +364,7 @@ for (const theme of THEMES) {
       // Not part of what was audited, and run whether or not the state opened: a claim made before a state failed
       // to open or settle is given back too. A cleanup that fails is reported; the audit above still stands.
       if (leave !== undefined) {
-        await leave.run(page).catch((error) => console.log(`      (could not ${leave.what}: ${String(error).split("\n")[0]})`));
+        await leave.run(page, words).catch((error) => console.log(`      (could not ${leave.what}: ${String(error).split("\n")[0]})`));
       }
       await page.setViewportSize(VIEWPORT);
       await page.close();

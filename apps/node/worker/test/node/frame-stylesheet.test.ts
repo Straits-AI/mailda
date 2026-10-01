@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { THEMES, declarations, frameStylesheet } from "../../src/theme.ts";
+import { BODY_SCRIPTS } from "@mailda/contract/schemas";
+
+import { THEMES, declarations, frameStylesheet, scriptFamily } from "../../src/theme.ts";
 import { cssRules, themeBlocks } from "./support/theme-blocks.ts";
 
 /**
@@ -53,6 +55,35 @@ describe("the frame's stylesheet", () => {
     expect(wrap("a")).toBe("anywhere");
     expect(wrap("pre")).toBe("anywhere");
     expect(wrap("code")).toBe("anywhere");
+  });
+
+  it("names Han faces of the message's own script, before the UI sans that would draw another's (critic M9)", () => {
+    // The reader writes `data-script` from the message (`src/render/script.ts`); an attribute nothing reads would
+    // be a landmine. Each script leads with its own faces, and every one of them still ends on the generic family.
+    const rules = cssRules(sheet.slice(themeBlocks(sheet).end));
+    const family = (script: string) => rules
+      .find((rule) => rule.selectors.includes(`html[data-script="${script}"] body`))?.declarations
+      .find((one) => one.property === "font-family")?.value;
+    const lead = { sc: /^"PingFang SC",.*"Noto Sans CJK SC"/, tc: /^"PingFang TC",.*"Noto Sans CJK TC"/, jp: /^"Hiragino Sans",.*"Noto Sans CJK JP"/ };
+    for (const script of BODY_SCRIPTS) {
+      expect(family(script), script).toMatch(lead[script]);
+      expect(family(script)!.indexOf("CJK"), script).toBeLessThan(family(script)!.indexOf("system-ui"));
+      expect(family(script), script).toMatch(/, sans-serif$/);
+    }
+  });
+
+  it("lets a sender's lang on an element pick that element's forms, Traditional tags after the zh they also match", () => {
+    // `<p lang="ja">` inside a GB2312 message is Japanese there; the frame's `data-script` is the whole message's.
+    // `:lang(zh)` matches zh-TW too, so at equal specificity the Traditional rule has to come later to win.
+    const rules = cssRules(sheet.slice(themeBlocks(sheet).end));
+    const at = (selector: string) => rules.findIndex((rule) => rule.selectors.includes(selector));
+    const family = (selector: string) => rules[at(selector)]?.declarations.find((one) => one.property === "font-family")?.value;
+    expect(family("[lang]:lang(ja)")).toBe(scriptFamily("jp"));
+    expect(family("[lang]:lang(zh-TW)")).toBe(scriptFamily("tc"));
+    expect(family("[lang]:lang(zh-Hant)")).toBe(scriptFamily("tc"));
+    expect(family("[lang]:lang(zh)")).toBe(scriptFamily("sc"));
+    expect(at("[lang]:lang(zh)")).toBeLessThan(at("[lang]:lang(zh-TW)"));
+    expect(at("[lang]:lang(zh)")).toBeLessThan(at("[lang]:lang(zh-HK)"));
   });
 
   it("can fetch nothing", () => {

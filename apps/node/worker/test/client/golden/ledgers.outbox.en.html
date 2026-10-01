@@ -1,0 +1,220 @@
+<section class="ledger" aria-label="Outbox">
+<header class="ledger-head">
+<h1>Outbox</h1>
+<p class="dim mono">6 sends</p>
+</header>
+<p class="notice" role="status">Resending <span class="mono">subject snd_unknown</span> mints a new message and may deliver it twice — the first attempt's outcome is unknown, not failed. Say why, for the trail: <span class="inline-actions">
+<input class="mono resend-reason" aria-label="Why resend" value="">
+<button type="button" class="linkish" disabled="">Resend anyway</button>
+<button type="button" class="linkish dim">Never mind</button>
+</span>
+</p>
+<p class="notice bad">This Node has no sending adapter.</p>
+<p class="notice dim">7 handed over today. Your daily limit is not published by Cloudflare; it will be recorded here the first time you hit it.</p>
+<p class="notice dim">Showing the newest 6 sends. Older ones exist and are not listed.</p>
+<table>
+<thead>
+<tr>
+<th scope="col">Subject</th>
+<th scope="col">To</th>
+<th scope="col">State</th>
+<th scope="col" class="num">When</th>
+<th scope="col" class="num">Submitted</th>
+</tr>
+</thead>
+<tbody>
+<tr class="entry">
+<td>
+<button type="button" class="row-toggle" aria-expanded="false" aria-controls="detail-snd_held">subject snd_held</button>
+</td>
+<td class="dim mono">a@example.test</td>
+<td>
+<span class="state state-held" title="Not handed over yet. You can still stop this.">held</span>
+<span class="state state-reason delivery-chip" title="A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.">policy hold</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<button type="button" class="linkish">Let it go</button> · <button type="button" class="linkish">Stop</button>
+</td>
+</tr>
+<tr id="detail-snd_held" class="detail" hidden="">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>Not handed over yet. You can still stop this.</dd>
+<dt>Why</dt>
+<dd>A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no approver is needed, which is what makes a hold the lesser of the two gates.</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_held</dd>
+</dl>
+</td>
+</tr>
+<tr class="entry">
+<td>
+<button type="button" class="row-toggle" aria-expanded="false" aria-controls="detail-snd_gate">
+<span class="dim">(no subject)</span>
+</button>
+</td>
+<td class="dim mono">a@example.test</td>
+<td>
+<span class="state state-awaiting" title="Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.">awaiting</span>
+<span class="state state-reason delivery-chip" title="A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority that composed it would have needed — and releasing it puts it back in the ordinary hold window, where it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point of this gate is that a program does not get to decide that a person agreed.">waiting for a person</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<button type="button" class="linkish" title="A Butler wrote this. Releasing it puts it in the ordinary hold window, where it can still be stopped.">Release</button> · <button type="button" class="linkish">Stop</button>
+</td>
+</tr>
+<tr id="detail-snd_gate" class="detail" hidden="">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>Not handed over yet. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval only an approver can give.</dd>
+<dt>Why</dt>
+<dd>A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority that composed it would have needed — and releasing it puts it back in the ordinary hold window, where it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point of this gate is that a program does not get to decide that a person agreed.</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_gate</dd>
+</dl>
+</td>
+</tr>
+<tr class="entry open">
+<td>
+<button type="button" class="row-toggle" aria-expanded="true" aria-controls="detail-snd_over">subject snd_over</button>
+</td>
+<td class="dim mono">a@example.test, b@example.test, c@example.test, d@example.test</td>
+<td>
+<span class="state state-handed_over" title="Taken by the mail service. Whether it arrived is not knowable from here.">handed over</span>
+<span class="state delivery-bounced delivery-chip" title="The receiving server refused it. A hard bounce means the address is wrong; a soft one means temporary failures ran out of retries.">1 bounced</span>
+<span class="state delivery-verified_destination delivery-chip" title="No outcome is reported for verified destinations. A read of this Node's Cloudflare account showed this address as a verified Email Routing destination, verified before this message was handed over, and Cloudflare published no delivery event for mail to a verified destination in the one case measured. So nothing is expected here. The silence is not a fault in this Node, and it says nothing about whether this message arrived. An address removed from the account's list after the latest read still shows this until the list is read again.">1 verified destination</span>
+<span class="state delivery-accepted delivery-chip" title="The receiving mail server accepted this message and returned a 250. That is not the same as a person having read it — nothing here can know that.">2 accepted</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<a class="mono" href="/api/sends/snd_over/submitted">.eml</a>
+</td>
+</tr>
+<tr id="detail-snd_over" class="detail">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>Taken by the mail service. Whether it arrived is not knowable from here.</dd>
+<dt>Recipients</dt>
+<dd>
+<div class="recipients">
+<div class="recipient">
+<span class="label">to</span>
+<span class="mono">a@example.test</span>
+<span class="state delivery-accepted" title="The receiving mail server accepted this message and returned a 250. That is not the same as a person having read it — nothing here can know that.">accepted</span>
+</div>
+<div class="recipient">
+<span class="label">to</span>
+<span class="mono">d@example.test</span>
+<span class="state delivery-accepted" title="The receiving mail server accepted this message and returned a 250. That is not the same as a person having read it — nothing here can know that.">accepted</span>
+</div>
+<div class="recipient">
+<span class="label">cc</span>
+<span class="mono">b@example.test</span>
+<span class="state delivery-bounced" title="The receiving server refused it. A hard bounce means the address is wrong; a soft one means temporary failures ran out of retries. (hard)">bounced</span>
+<span class="dim mono recipient-error">550 no such user</span>
+</div>
+<div class="recipient">
+<span class="label">bcc</span>
+<span class="mono">c@example.test</span>
+<span class="state delivery-unobserved" title="Nothing has been reported about this recipient yet. This Node will not guess: no news is not good news, and it is not bad news either.">unobserved</span>
+<span class="state state-reason delivery-chip" title="No outcome is reported for verified destinations. A read of this Node's Cloudflare account showed this address as a verified Email Routing destination, verified before this message was handed over, and Cloudflare published no delivery event for mail to a verified destination in the one case measured. So nothing is expected here. The silence is not a fault in this Node, and it says nothing about whether this message arrived. An address removed from the account's list after the latest read still shows this until the list is read again.">verified destination</span>
+</div>
+</div>
+</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_over</dd>
+</dl>
+</td>
+</tr>
+<tr class="entry">
+<td>
+<button type="button" class="row-toggle" aria-expanded="false" aria-controls="detail-snd_unknown">subject snd_unknown</button>
+</td>
+<td class="dim mono">a@example.test</td>
+<td>
+<span class="state state-outcome_unknown" title="It never left. This Node stores the submitted bytes before asking the mail service, and there are none — so the attempt failed before the mail service was contacted. Nothing was sent, and no duplicate can result from sending it again.">outcome unknown</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<button type="button" class="linkish" title="">Resend…</button>
+</td>
+</tr>
+<tr id="detail-snd_unknown" class="detail" hidden="">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>It never left. This Node stores the submitted bytes before asking the mail service, and there are none — so the attempt failed before the mail service was contacted. Nothing was sent, and no duplicate can result from sending it again.</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_unknown</dd>
+<dt>Reported</dt>
+<dd>the transport timed out</dd>
+</dl>
+</td>
+</tr>
+<tr class="entry">
+<td>
+<button type="button" class="row-toggle" aria-expanded="false" aria-controls="detail-snd_refused">subject snd_refused</button>
+</td>
+<td class="dim mono">a@example.test</td>
+<td>
+<span class="state state-refused" title="The mail service would not accept it. It never left.">refused</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<button type="button" class="linkish" title="">Retry</button>
+</td>
+</tr>
+<tr id="detail-snd_refused" class="detail" hidden="">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>The mail service would not accept it. It never left.</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_refused</dd>
+</dl>
+</td>
+</tr>
+<tr class="entry">
+<td>
+<button type="button" class="row-toggle" aria-expanded="false" aria-controls="detail-snd_withheld">subject snd_withheld</button>
+</td>
+<td class="dim mono">a@example.test</td>
+<td>
+<span class="state state-withheld" title="Not handed over: this Node declined, and the reason beside it says why — a policy denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.">withheld</span>
+<span class="state state-reason delivery-chip" title="The approval for this send passed its deadline before it was handed over. That is final: an approval is bound to these exact bytes, and one that could be revived indefinitely would be a standing permission rather than a decision. Compose again and the new message gets its own approval.">approval expired</span>
+<span class="state delivery-deferred delivery-chip" title="A temporary failure, and the mail service is still retrying. The outcome is genuinely not known yet.">deferred</span>
+</td>
+<td class="num mono dim">[clock]</td>
+<td class="num">
+<span class="dim mono">—</span>
+</td>
+</tr>
+<tr id="detail-snd_withheld" class="detail" hidden="">
+<td colspan="5">
+<dl>
+<dt>What this means</dt>
+<dd>Not handed over: this Node declined, and the reason beside it says why — a policy denied it, an approver denied it, or something it was approved on had changed by the time it was due to go. Nobody cancelled it and the mail service was never asked.</dd>
+<dt>Why</dt>
+<dd>The approval for this send passed its deadline before it was handed over. That is final: an approval is bound to these exact bytes, and one that could be revived indefinitely would be a standing permission rather than a decision. Compose again and the new message gets its own approval.</dd>
+<dt>Recipients</dt>
+<dd>
+<div class="recipients">
+<div class="recipient">
+<span class="label">to</span>
+<span class="mono">a@example.test</span>
+<span class="state delivery-deferred" title="A temporary failure, and the mail service is still retrying. The outcome is genuinely not known yet.">deferred</span>
+</div>
+</div>
+</dd>
+<dt>Manifest</dt>
+<dd class="mono">snd_withheld</dd>
+</dl>
+</td>
+</tr>
+</tbody>
+</table>
+</section>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BUDGETS } from "@mailda/budgets";
+import { messageBodyResponse } from "@mailda/contract/schemas";
 
 import { renderBody, sanitizeHtml } from "../src/render/body.ts";
 
@@ -335,5 +336,94 @@ describe("the four body states (§5C)", () => {
     const rendered = await renderBody(mime({ text: huge }));
     expect(rendered.truncated).toBe(true);
     // The full bytes are never withheld — /raw streams the complete original unbounded.
+  });
+});
+
+/**
+ * The message's own language and script reach the frame (critic M9, Blueprint §5C "preserved original message
+ * language"): the sender's `lang` and `dir` survive the sanitiser, and the body route says which glyph forms the
+ * message's Han is in, from the rendered part's charset and then `Content-Language`, so a GB2312 message is not
+ * drawn in Japanese forms because the reader's system is Japanese.
+ */
+describe("the message's language and script", () => {
+  const raw = (headers: string[], parts: Array<[type: string, charset: string]>) => new TextEncoder().encode([
+    "From: sender@example.net", "To: inbox@example.com", "Subject: t", "MIME-Version: 1.0", ...headers,
+    'Content-Type: multipart/alternative; boundary="b1"', "",
+    ...parts.map(([type, charset]) => `--b1\r\nContent-Type: ${type}; charset=${charset}\r\n\r\n<p>hello</p>\r\n`),
+    "--b1--", "",
+  ].join("\r\n"));
+
+  it("keeps a sender's lang and dir on every element, the root included, and nothing else new", async () => {
+    const { html } = await sanitizeHtml('<html lang="zh-CN" dir="ltr" onload="x()"><p lang="ja" dir="rtl" class="c" title="t">t</p></html>');
+    expect(html).toBe('<html lang="zh-CN" dir="ltr"><p lang="ja" dir="rtl">t</p></html>');
+  });
+
+  it("names the script a legacy CJK charset names, through any of its labels", async () => {
+    const cases: Array<[string, string]> = [
+      ["gb2312", "sc"], ["GBK", "sc"], ["gb18030", "sc"], ["x-gbk", "sc"], ["big5", "tc"], ["csbig5", "tc"], ["big5-hkscs", "tc"],
+      ["iso-2022-jp", "jp"], ["shift_jis", "jp"], ["x-sjis", "jp"], ["euc-jp", "jp"],
+    ];
+    for (const [charset, script] of cases) {
+      expect((await renderBody(raw([], [["text/html", charset]]))).script, charset).toBe(script);
+    }
+  });
+
+  it("reads the part it renders: the HTML part's charset over the plain one's, and the plain one's when alone", async () => {
+    expect((await renderBody(raw([], [["text/plain", "big5"], ["text/html", "gb2312"]]))).script).toBe("sc");
+    expect((await renderBody(raw([], [["text/plain", "big5"]]))).script).toBe("tc");
+  });
+
+  it("falls back to Content-Language, and the charset outranks it", async () => {
+    const utf8: Array<[string, string]> = [["text/html", "utf-8"]];
+    expect((await renderBody(raw(["Content-Language: zh-TW"], utf8))).script).toBe("tc");
+    expect((await renderBody(raw(["Content-Language: zh"], utf8))).script).toBe("sc");
+    expect((await renderBody(raw(["Content-Language: ja, en"], utf8))).script).toBe("jp");
+    expect((await renderBody(raw(["Content-Language: ja"], [["text/html", "gb2312"]]))).script).toBe("sc");
+  });
+
+  it("reads the rendered body's charset, never an attachment's", async () => {
+    const body = ["Content-Type: text/html", "", "<p>hello</p>"];
+    const report = ["Content-Type: text/html; charset=big5", 'Content-Disposition: attachment; filename="report.html"', "", "<p>report</p>"];
+    const mixed = (...parts: string[][]) => new TextEncoder().encode([
+      "From: sender@example.net", "To: inbox@example.com", "Subject: t", "MIME-Version: 1.0",
+      'Content-Type: multipart/mixed; boundary="b1"', "",
+      ...parts.flatMap((part) => ["--b1", ...part]), "--b1--", "",
+    ].join("\r\n"));
+    // An attached Big5 report is not the body, before it or after it, so its charset says nothing about the body.
+    expect((await renderBody(mixed(body, report))).script).toBeNull();
+    expect((await renderBody(mixed(report, body))).script).toBeNull();
+  });
+
+  it("takes the HTML's own root lang when the charset and Content-Language are silent, and only then", async () => {
+    const html = (headers: string[], charset: string, root: string) => new TextEncoder().encode([
+      "From: sender@example.net", "To: inbox@example.com", "Subject: t", "MIME-Version: 1.0", ...headers,
+      `Content-Type: text/html; charset=${charset}`, "", `<html ${root}><p>hello</p></html>`, "",
+    ].join("\r\n"));
+    expect((await renderBody(html([], "utf-8", 'lang="ja"'))).script).toBe("jp");
+    expect((await renderBody(html([], "utf-8", 'lang="zh-TW"'))).script).toBe("tc");
+    expect((await renderBody(html([], "gb2312", 'lang="ja"'))).script).toBe("sc");
+    expect((await renderBody(html(["Content-Language: zh-TW"], "utf-8", 'lang="ja"'))).script).toBe("tc");
+    expect((await renderBody(html([], "utf-8", 'lang="en"'))).script).toBeNull();
+  });
+
+  it("keeps bdo and bdi, whose only job is the direction a sender states", async () => {
+    const { html } = await sanitizeHtml('<p>Hello <bdi>إيان</bdi>: <bdo dir="rtl">abc</bdo></p>');
+    expect(html).toBe('<p>Hello <bdi>إيان</bdi>: <bdo dir="rtl">abc</bdo></p>');
+  });
+
+  it("sends the script as a string a client narrows, so a newer Node's script or an older Node's silence parses", () => {
+    const body = { state: "html", html: "<p>x</p>", text: null, blockedRemote: 0, truncated: false, problem: null,
+      attachments: [], links: [], recipients: { to: [], cc: [], replyTo: null } };
+    expect(messageBodyResponse.safeParse({ ...body, script: "kr" }).success).toBe(true);
+    expect(messageBodyResponse.safeParse(body).success).toBe(true);
+    expect(messageBodyResponse.safeParse({ ...body, script: 3 }).success).toBe(false);
+  });
+
+  it("says nothing when the message says nothing, or nothing a script follows from", async () => {
+    const utf8: Array<[string, string]> = [["text/html", "utf-8"]];
+    expect((await renderBody(raw([], utf8))).script).toBeNull();
+    expect((await renderBody(raw(["Content-Language: en"], utf8))).script).toBeNull();
+    expect((await renderBody(raw(["Content-Language: !!"], utf8))).script).toBeNull();
+    expect((await renderBody(raw([], [["text/html", "no-such-charset"]]))).script).toBeNull();
   });
 });

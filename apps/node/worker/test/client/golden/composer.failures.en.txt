@@ -1,0 +1,39 @@
+## save refused in the Node's words
+not saved — E_LEGAL_HOLD  this draft is under a legal hold
+This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it on purpose.
+## save refused with no words
+not saved — this Node answered 503
+This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it on purpose.
+## save answered without a draft
+not saved — this Node answered without a draft
+This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it on purpose.
+## save never reached the Node
+not saved — Failed to fetch
+This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it on purpose.
+## discard refused in the Node's words
+saved on your node · {clock}
+E_LEGAL_HOLD  held
+## discard refused with no words
+saved on your node · {clock}
+This Node answered 409 and gave no reason, so this draft may still be here.
+## discard never reached the Node
+saved on your node · {clock}
+This Node could not be reached (Failed to fetch), so this draft may still be here.
+## seal refused in the Node's words
+this browser only · a reload loses it
+E_BUDGET_EXCEEDED  send.max_recipients=50, asked for 63
+## seal refused with no words
+this browser only · a reload loses it
+This message could not be sealed.
+## seal never reached the Node
+this browser only · a reload loses it
+This Node could not be reached (Failed to fetch). Nothing was sealed, so nothing will be sent.
+## sealed, and the refresh after it failed
+this browser only · a reload loses it
+This Node could not be reached (navigation failed).
+## the case is held by a colleague
+this browser only · a reload loses it
+bob@example.test is answering this since 09:00. Take it anyway
+## the claim failed
+this browser only · a reload loses it
+This Node answered 503.

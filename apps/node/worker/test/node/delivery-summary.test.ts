@@ -3,6 +3,11 @@ import { join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { DELIVERY_REASONS, DELIVERY_STATES, SEND_STATES } from "@mailda/contract/schemas";
+
+import * as en from "../../src/i18n/en/index.ts";
+import * as zhHans from "../../src/i18n/zh-Hans/index.ts";
+
 /**
  * The outbox's honesty rule, tested.
  *
@@ -37,8 +42,6 @@ const SOURCE = join(import.meta.dirname, "..", "..", "src", "client", "delivery.
 interface DeliveryEntry {
   state: string;
   count: number;
-  label: string;
-  note: string;
 }
 
 interface Recipient { kind?: string; address?: string; delivery_state: string | null }
@@ -63,16 +66,12 @@ describe("the outbox delivery summary", () => {
   it("shows a total failure rather than calling it unanimous", () => {
     // The regression. Three recipients, all bounced, and the row must not be silent about it.
     const summary = summariseDelivery([recipient("bounced"), recipient("bounced"), recipient("bounced")]);
-    expect(summary).toEqual([
-      { state: "bounced", count: 3, label: "bounced", note: expect.stringContaining("refused") },
-    ]);
+    expect(summary).toEqual([{ state: "bounced", count: 3 }]);
   });
 
   it("shows the outcome of a single recipient, which is most mail", () => {
     // The `length < 2` guard meant one bounced recipient produced nothing at all.
-    expect(summariseDelivery([recipient("bounced")])).toEqual([
-      { state: "bounced", count: 1, label: "bounced", note: expect.any(String) },
-    ]);
+    expect(summariseDelivery([recipient("bounced")])).toEqual([{ state: "bounced", count: 1 }]);
   });
 
   it("collapses a unanimous success to one entry instead of repeating it per recipient", () => {
@@ -106,9 +105,9 @@ describe("the outbox delivery summary", () => {
   it("puts an outcome it does not recognise first rather than last", () => {
     // A state Cloudflare adds later must not sort below "accepted" and read as probably fine.
     const summary = summariseDelivery([recipient("accepted"), recipient("quarantined")]);
-    expect(summary[0]!.state).toBe("quarantined");
-    // And it is still named, using the provider's own word rather than being relabelled or dropped.
-    expect(summary[0]!.label).toBe("quarantined");
+    // And it is still named, by the provider's own token rather than being relabelled or dropped: the shell
+    // shows a token it has no words for as it came (`src/client/app/delivery-words.ts`).
+    expect(summary[0]).toEqual({ state: "quarantined", count: 1 });
   });
 
   it("reads recipients in envelope order, not alphabetical order", () => {
@@ -160,39 +159,28 @@ describe("the outbox delivery summary", () => {
  * ranked with the outcomes a reader must act on; a token with no words, or words for a token nothing writes.
  */
 describe("the reason beside unobserved", () => {
-  let describeRecipient: (recipient: unknown) => {
-    state: { label: string; note: string };
-    reason: { label: string; note: string } | null;
-  };
-  let DELIVERY_REASONS: Record<string, { label: string; note: string }>;
+  let describeRecipient: (recipient: unknown) => { state: string; reason: string | null };
 
   beforeAll(async () => {
     const source = readFileSync(SOURCE, "utf8");
     const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
     describeRecipient = module.describeRecipient;
-    DELIVERY_REASONS = module.DELIVERY_REASONS;
   });
 
   const silent = (delivery_reason: string | null) => ({ delivery_state: null, delivery_reason });
 
   it("keeps the state unobserved and puts the reason beside it", () => {
-    const said = describeRecipient(silent("verified_destination"));
-    expect(said.state.label).toBe("unobserved");
-    expect(said.reason?.label).toBe("verified destination");
-    expect(said.reason?.note.startsWith("No outcome is reported for verified destinations")).toBe(true);
+    expect(describeRecipient(silent("verified_destination"))).toEqual({ state: "unobserved", reason: "verified_destination" });
   });
 
   it("drops the reason once an outcome is observed: an event wins", () => {
-    const said = describeRecipient({ delivery_state: "accepted", delivery_reason: "verified_destination" });
-    expect(said.state.label).toBe("accepted");
-    expect(said.reason).toBeNull();
+    expect(describeRecipient({ delivery_state: "accepted", delivery_reason: "verified_destination" }))
+      .toEqual({ state: "accepted", reason: null });
   });
 
   it("gives a send whose every recipient is a verified destination its one chip", () => {
     // It adds a fact the submission state does not: nothing is coming, so do not wait.
-    expect(summariseDelivery([silent("verified_destination")])).toEqual([
-      { state: "verified_destination", count: 1, label: "verified destination", note: expect.any(String) },
-    ]);
+    expect(summariseDelivery([silent("verified_destination")])).toEqual([{ state: "verified_destination", count: 1 }]);
   });
 
   it("ranks the reason below unobserved and above accepted", () => {
@@ -202,14 +190,20 @@ describe("the reason beside unobserved", () => {
     expect(summary.map((entry) => entry.state)).toEqual(["bounced", "unobserved", "verified_destination", "accepted"]);
   });
 
+  it("reads an empty reason as none, rather than a reason with no words", () => {
+    expect(describeRecipient(silent(""))).toEqual({ state: "unobserved", reason: null });
+    expect(describeRecipient(silent(null))).toEqual({ state: "unobserved", reason: null });
+  });
+
   it("still says nothing when every recipient is plainly unobserved", () => {
     expect(summariseDelivery([silent(null)])).toEqual([]);
   });
 
-  it("has words for exactly the reasons the contract names", async () => {
-    // Imported here rather than at the top, so this file's other tests do not depend on the contract's export.
-    const contract = await import("@mailda/contract/schemas");
-    expect(Object.keys(DELIVERY_REASONS).sort()).toEqual([...contract.DELIVERY_REASONS].sort());
+  it("ranks every state and reason the contract names, so none can sort ahead of a bounce", () => {
+    // `severityRank` returns -1 for a token absent from the list, which is right for a newer Node's unknown one
+    // and a bug for a known one. The words for each are the catalog's, held to the same lists by its type.
+    expect([...DELIVERY_SEVERITY].sort())
+      .toEqual([...DELIVERY_STATES, "unobserved", ...DELIVERY_REASONS].sort());
   });
 });
 
@@ -227,66 +221,115 @@ describe("the reason beside unobserved", () => {
  * import.
  */
 describe("what a send's state is called", () => {
-  let describeSend: (send: unknown) => { label: string; note: string };
-  let NEVER_SUBMITTED: { label: string; note: string };
+  let describeSend: (send: unknown) => string;
+  let describeReason: (send: unknown) => string | null;
 
   beforeAll(async () => {
     const source = readFileSync(SOURCE, "utf8");
     const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
     describeSend = module.describeSend;
-    NEVER_SUBMITTED = module.NEVER_SUBMITTED;
+    describeReason = module.describeReason;
   });
 
-  it("says it never left when the submitted bytes provably do not exist", () => {
-    const said = describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 });
-    expect(said.note).toContain("It never left");
-    expect(said.note).not.toContain("We do not know");
+  it("reads never_submitted when the submitted bytes provably do not exist, and its words say so", () => {
+    const unproven = { state: "outcome_unknown", fidelity: "authored", has_submitted: 0 };
+    expect(describeSend(unproven)).toBe("never_submitted");
+    const note = en.app["send.state.never_submitted.note"];
+    expect(note).toContain("It never left");
+    expect(note).not.toContain("We do not know");
     // And it says the useful operational thing, which is the whole point of knowing.
-    expect(said.note).toContain("no duplicate");
+    expect(note).toContain("no duplicate");
+    expect(en.app["send.state.outcome_unknown.note"]).toContain("We do not know");
   });
 
-  it("keeps saying we do not know when the bytes were submitted", () => {
-    const said = describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 1 });
-    expect(said.note).toContain("We do not know");
+  it("keeps the plain state when the bytes were submitted", () => {
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 1 })).toBe("outcome_unknown");
   });
 
   it("stays silent about the reconstructed path, where the NULL proves nothing", () => {
     // `submitted_key` is never written on that path at all, so its absence carries no information. This is
     // the guard that stops the stronger claim being made where it is unfounded.
-    const said = describeSend({ state: "outcome_unknown", fidelity: "reconstructed", has_submitted: 0 });
-    expect(said.note).toContain("We do not know");
+    expect(describeSend({ state: "outcome_unknown", fidelity: "reconstructed", has_submitted: 0 }))
+      .toBe("outcome_unknown");
   });
 
   it("accepts the integer D1 actually serves as well as a boolean", () => {
     // The API ships `submitted_key IS NOT NULL AS has_submitted`, which is 0 or 1. A truthiness assumption
     // here is how a correct rule renders the wrong sentence.
-    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: false }).note)
-      .toBe(NEVER_SUBMITTED.note);
-    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 }).note)
-      .toBe(NEVER_SUBMITTED.note);
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: false })).toBe("never_submitted");
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 })).toBe("never_submitted");
   });
 
-  it("keeps the label consistent with the stored state", () => {
+  it("keeps the label consistent with the stored state, in every locale", () => {
     // The row in D1 really is `outcome_unknown`. This is a reading of it plus one column, not a different
     // state, so anything comparing label to stored state must still find them agreeing.
-    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 }).label)
-      .toBe("outcome unknown");
+    for (const catalog of [en.app, zhHans.app]) {
+      expect(catalog["send.state.never_submitted"]).toBe(catalog["send.state.outcome_unknown"]);
+    }
   });
 
-  it("still names every other state, so moving the map lost nothing", () => {
-    // `awaiting` joined the vocabulary with the policy object (#60). A state with no words is the shape this
-    // list exists to catch: the fallback below renders the raw token, which for a policy-gated send would
-    // show somebody `awaiting` and nothing about what is being awaited.
-    for (const state of ["held", "awaiting", "cancelled", "withheld", "throttled", "refused", "suppressed",
-                         "handed_over", "outcome_unknown"]) {
-      const said = describeSend({ state, fidelity: "authored", has_submitted: 1 });
-      expect(said.label, `no words for ${state}`).toBeTruthy();
-      expect(said.note, `no explanation for ${state}`).toBeTruthy();
+  it("passes every other state through as its token", () => {
+    // The words for each are the catalog's `send.state.*`, which its type holds to the contract's list.
+    for (const state of SEND_STATES) {
+      if (state !== "outcome_unknown") expect(describeSend({ state, fidelity: "authored", has_submitted: 0 })).toBe(state);
     }
   });
 
   it("falls back to the raw state rather than rendering nothing", () => {
-    const said = describeSend({ state: "some_future_state", fidelity: "authored", has_submitted: 1 });
-    expect(said.label).toBe("some_future_state");
+    expect(describeSend({ state: "some_future_state", fidelity: "authored", has_submitted: 1 })).toBe("some_future_state");
+  });
+
+  it("gives the reason as its token, and null when the row has none", () => {
+    expect(describeReason({ state: "awaiting", state_reason: "policy_hold" })).toBe("policy_hold");
+    expect(describeReason({ state: "held", state_reason: null })).toBeNull();
+    expect(describeReason({ state: "held", state_reason: "" })).toBeNull();
+  });
+});
+
+/**
+ * ADR 39's two scales, in the words (`docs/i18n.md`, D5 and D8). At the submission scale this Node hands over,
+ * or does not: nothing there says accepted, which is the receiving server's 250; a state says sent only to say a
+ * send was not; and the empty Outbox does not say sent at all. Case-insensitive, because the glossary's `avoid`
+ * check is not, and D8's defect began with a capital.
+ */
+describe("the Outbox's words keep to their scale", () => {
+  const sendStateKeys = (Object.keys(en.app) as (keyof typeof en.app)[])
+    .filter((key) => key.startsWith("send.state."));
+
+  it("never says accepted, bounced or delivered about what this Node did (D8)", () => {
+    // Anti-vacuity: the filter must find every state's label and note.
+    expect(sendStateKeys.length).toBe(2 * (SEND_STATES.length + 1));
+    for (const key of sendStateKeys) {
+      expect(en.app[key], key).not.toMatch(/\b(accepted|bounced|delivered)\b/i);
+      expect(zhHans.app[key], key).not.toMatch(/受理|退信|送达/);
+    }
+  });
+
+  it("says sent about a send only to say it was not", () => {
+    // "Nothing was sent" claims no outcome; "Sent to the mail service" would claim one.
+    const words = (key: (typeof sendStateKeys)[number]) => String(en.app[key]);
+    const said = sendStateKeys.filter((key) => /\bsent\b/i.test(words(key)));
+    expect(said, "anti-vacuity: never_submitted's note negates it").toEqual(["send.state.never_submitted.note"]);
+    for (const key of said) expect(words(key).replace(/\b(?:not|nothing was) sent\b/gi, ""), key).not.toMatch(/\bsent\b/i);
+  });
+
+  it("says a send that has not left was not handed over, this scale's word, not that it was not sent (D13)", () => {
+    // The owner's review of 1 October 2026 (F9). Held and awaiting may still go, so "yet"; withheld will not.
+    const notes = ["send.state.held.note", "send.state.awaiting.note", "send.state.withheld.note"] as const;
+    expect(notes.map((key) => en.app[key].split(/[.:]/)[0])).toEqual(["Not handed over yet", "Not handed over yet", "Not handed over"]);
+    expect(notes.map((key) => zhHans.app[key].split("。")[0])).toEqual(["尚未移交", "尚未移交", "未移交"]);
+  });
+
+  it("never says the send scale's 拒收 about what the receiving world did", () => {
+    // 服务商拒收 is the mail service refusing a send; a receiving server's refusal is 退信 (the glossary's rows).
+    const deliveryKeys = (Object.keys(zhHans.app) as (keyof typeof zhHans.app)[])
+      .filter((key) => key.startsWith("delivery."));
+    expect(deliveryKeys.length).toBe(2 * (DELIVERY_STATES.length + 1 + DELIVERY_REASONS.length));
+    for (const key of deliveryKeys) expect(zhHans.app[key], key).not.toMatch(/拒收/);
+  });
+
+  it("does not call an empty Outbox a record of nothing sent (D5)", () => {
+    expect(en.app["ledgers.outbox.empty"]).not.toMatch(/\bsent\b/i);
+    expect(zhHans.app["ledgers.outbox.empty"]).not.toMatch(/已发送|发送/);
   });
 });

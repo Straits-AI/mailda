@@ -101,7 +101,7 @@ describe("what the language reaches, and what it does not", () => {
   it("does not give the message frame the interface's language: the frame is the sender's", () => {
     install({ locale: "zh-Hans", formatLocale: "zh-Hans", source: "flag" }, { ...CATALOGS["zh-Hans"].preauth, ...CATALOGS["zh-Hans"].app });
     expect(html.lang).toBe("zh-Hans");
-    expect(frameHead("dark")).not.toMatch(/\blang=/);
+    expect(frameHead("dark", "sc")).not.toMatch(/\blang=/);
   });
 
   it("fails loudly under test on a key the table lacks, rather than showing the key", () => {

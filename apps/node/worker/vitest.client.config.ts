@@ -60,8 +60,8 @@ export default defineConfig({
       /*
        * `/app/delivery.js` is the third specifier of this kind, and unlike the two above it **is** a real file
        * — `src/client/delivery.client.js`, served verbatim by the Worker. So this alias points at the shipped
-       * module rather than at a stub: the delivery vocabulary is the thing `ledgers.tsx` is not allowed to
-       * restate, and a stub of it here would be exactly the second copy that rule exists to prevent.
+       * module rather than at a stub: which state a reader is shown is the thing `ledgers.tsx` is not allowed
+       * to restate, and a stub of it here would be exactly the second copy that rule exists to prevent.
        */
       "/app/delivery.js": fileURLToPath(new URL("./src/client/delivery.client.js", import.meta.url)),
       /*

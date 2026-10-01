@@ -2191,20 +2191,67 @@ export const dispatchResponse = z.object({ dispatched: z.array(z.unknown()) }).l
 
 /* ------------------------------------------------------------------ sending (#61, ADR 33, ADR 40) -- */
 
+/*
+ * The sending vocabularies, as closed lists (ADR 46). Each is the one declaration of its tokens: the Worker types
+ * what it writes with them, and the interface's catalog (`apps/node/worker/src/i18n/en/delivery.ts`) is keyed by
+ * them, so a token added here without words, or words for a token nobody writes, is a compile error there. **The
+ * wire stays `z.string()`** for every one of them, so a newer Node's unknown token reaches an older client as a
+ * string, which it shows raw, instead of breaking the listing (`DOCTOR_CHECKS`' precedent).
+ */
+
+/** Where a send stands at **this Node's** scale (ADR 39, 40): what it did with the envelope, never what the world did. */
+export const SEND_STATES = [
+  "held", "awaiting", "cancelled", "withheld", "throttled", "refused", "suppressed", "handed_over", "outcome_unknown",
+] as const;
+export type SendState = (typeof SEND_STATES)[number];
+
+/**
+ * Why a send is `awaiting` or `withheld` (#60, #62, #66, #50): the `state_reason` tokens. Minted by `src/policy.ts`,
+ * `src/approval-plan.ts`, `src/outbound/recheck.ts`, `src/breakers.ts` and `src/butler/gate.ts`, each typed with
+ * `SendReason`; `test/outbound-recheck.test.ts` holds that every token here is minted by one of them.
+ */
+export const SEND_REASONS = [
+  "policy_hold", "policy_approval_required", "policy_denied",
+  "authority_lost", "approval_revoked", "approver_ineligible", "policy_stricter", "approval_expired", "evidence_changed",
+  "domain_paused",
+  "approval_denied", "approval_unsatisfiable",
+  "breaker_volume", "breaker_bounce_rate", "breaker_complaint_rate",
+  "butler_release_required",
+] as const;
+export type SendReason = (typeof SEND_REASONS)[number];
+
+/**
+ * What the receiving world did with one recipient, per event (`src/outbound/events.ts`). Null on the wire is
+ * **unobserved**, which is a state a person is shown and not a token the Node writes, so it is not in this list.
+ */
+export const DELIVERY_STATES = ["accepted", "bounced", "deferred", "failed", "rejected"] as const;
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+
 /**
  * Every reason a recipient's silence can be explained by (28 September 2026). A reason explains silence and is
  * never a delivery state: states are set by events only. It is present only while `delivery_state` is null and
- * the recipient was handed over. The wire (`recipientRow.delivery_reason`) stays `z.string()`, so a newer
- * Node's unknown reason reaches an older client as a string instead of breaking it (`DOCTOR_CHECKS`'
- * precedent). The Outbox's words for each live in `delivery.client.js`, held equal to this list.
+ * the recipient was handed over.
  */
 export const DELIVERY_REASONS = ["verified_destination"] as const;
 export type DeliveryReason = (typeof DELIVERY_REASONS)[number];
 
+/** The envelope's three recipient kinds, in envelope order. A person reads them as To, Cc and Bcc. */
+export const RECIPIENT_KINDS = ["to", "cc", "bcc"] as const;
+export type RecipientKind = (typeof RECIPIENT_KINDS)[number];
+
+/** The operational log's levels (`log_entries.level`, written by `log` in `apps/node/worker/src/audit.ts`). */
+export const LOG_LEVELS = ["error", "warn", "info"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/** Narrows a wire string to one of a closed list's tokens, so the words for it can be looked up by type. */
+export function oneOf<T extends string>(list: readonly T[], value: unknown): value is T {
+  return (list as readonly unknown[]).includes(value);
+}
+
 /** One recipient's own state, because migration 0013 makes the **delivery** the unit rather than the send. */
 export const recipientRow = z.object({
   manifest_id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
-  kind: z.enum(["to", "cc", "bcc"]),
+  kind: z.enum(RECIPIENT_KINDS),
   address: z.string().min(1),
   submission_state: z.string().min(1),
   delivery_state: z.string().nullable(),
@@ -2746,6 +2793,14 @@ export const sendReleasedResponse = z.object({
  * images are trackers, and a reader deciding whether to trust a message wants to know some were there.
  * `problem` is non-null when the body could not be produced, which is not the same as an empty one.
  */
+/**
+ * The glyph forms a message's Han is drawn in (critic M9): Simplified Chinese, Traditional Chinese, Japanese. One
+ * code point is drawn differently in each, so a Chinese message in a Japanese face reads as the wrong language.
+ * Decided from the message, never from the reader's interface (`src/render/script.ts` says how).
+ */
+export const BODY_SCRIPTS = ["sc", "tc", "jp"] as const;
+export type BodyScript = (typeof BODY_SCRIPTS)[number];
+
 export const messageBodyResponse = z.object({
   state: z.string().min(1),
   html: z.string().nullable(),
@@ -2757,6 +2812,14 @@ export const messageBodyResponse = z.object({
   attachments: z.array(attachmentSummary),
   /** Every link in the rendered HTML, judged. Empty for a text-only body. */
   links: z.array(judgedLink),
+  /**
+   * The script the message says it is written in, from the rendered part's charset, then `Content-Language`, then
+   * the HTML's own root `lang`; null when it says none of them (UTF-8 with no language), and the reader chooses. A
+   * frame hint, not a claim about the language. One of `BODY_SCRIPTS`, but the wire is a string and may be absent,
+   * so a newer Node's fourth script, or an older Node that sends none, reaches a client as a value it narrows with
+   * `oneOf` instead of failing the whole body (`DOCTOR_CHECKS`' precedent, as the sending vocabularies).
+   */
+  script: z.string().nullable().optional(),
   /** Who the sender addressed, from the headers: what a reply-all is built from. Lower-cased, names dropped. */
   recipients: z.object({
     to: z.array(z.string()),

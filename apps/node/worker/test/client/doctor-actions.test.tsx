@@ -165,14 +165,18 @@ describe("the fix buttons", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("collects orphans only on the second click, with collect=1", async () => {
+  // Two fixtures so each count is seen at one and at many (D12).
+  it.each([
+    [4, 1, 0, "Deleted 4 orphans, 1 draft body, 0 export objects."],
+    [1, 2, 1, "Deleted 1 orphan, 2 draft bodies, 1 export object."],
+  ])("collects orphans only on the second click, with collect=1 (%i, %i, %i)", async (orphansDeleted, draftBodiesDeleted, exportObjectsDeleted, said) => {
     mount([finding("evidence_orphans", false)], {
-      "POST /api/maintenance/reconcile?collect=1": { body: { orphans: [], orphansDeleted: 4, draftBodiesDeleted: 1, exportObjectsDeleted: 0 } },
+      "POST /api/maintenance/reconcile?collect=1": { body: { orphans: [], orphansDeleted, draftBodiesDeleted, exportObjectsDeleted } },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Collect them…" }));
     expect(posts()).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Delete them now" }));
-    expect((await screen.findByRole("status")).textContent).toBe("Deleted 4 orphan(s), 1 draft body/bodies, 0 export object(s).");
+    expect((await screen.findByRole("status")).textContent).toBe(said);
     expect(posts().map((call) => call.path)).toEqual(["/api/maintenance/reconcile?collect=1"]);
   });
 
@@ -203,11 +207,13 @@ describe("the fix buttons", () => {
     });
     expect((await screen.findByText("R2 timed out")).textContent).toBe("R2 timed out");
     expect(screen.getByText("unindexable")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Requeue 0 message(s)" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Requeue 0 messages" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText("Repair msg_b"));
-    fireEvent.click(screen.getByLabelText("Repair msg_b"));
+    expect(screen.getByRole("button", { name: "Requeue 1 message" })).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Repair msg_a"));
-    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message(s)" }));
+    expect(screen.getByRole("button", { name: "Requeue 2 messages" })).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Repair msg_b"));
+    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message" }));
     expect((await screen.findByRole("status")).textContent).toBe("1 requeued. Queued for the next backfill pass.");
     expect(posts().map((call) => [call.path, call.body])).toEqual([["/api/search/repair", { messageIds: ["msg_a"] }]]);
   });
@@ -227,7 +233,7 @@ describe("the fix buttons", () => {
       "POST /api/search/repair": { status: 422, body: { error: "unprocessable", what: "no message ids to repair", why: "repair is per message", fix: "pass the ids worth retrying" } },
     });
     fireEvent.click(await screen.findByLabelText("Repair msg_a"));
-    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message(s)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Requeue 1 message" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("no message ids to repair");
     expect(alert.textContent).toContain("fix      pass the ids worth retrying");
@@ -275,11 +281,11 @@ describe("verifying evidence", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Verify a batch" }));
     const first = await screen.findByRole("status");
-    expect(first.textContent).toContain("50 object(s) checked in receipts, 1024 bytes read: 1 fault(s). More remains.");
+    expect(first.textContent).toContain("50 objects checked in receipts, 1024 bytes read: 1 fault. More remains.");
     expect(first.textContent).toContain("missing receipts.blob_key rcpt_7: no object");
 
     fireEvent.click(screen.getByRole("button", { name: "Continue from where it stopped" }));
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("2 object(s) checked in drafts"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("2 objects checked in drafts"));
     expect(screen.getByRole("status").textContent).toContain("intact. That was the last batch.");
     expect(posts().map((call) => call.path)).toEqual(["/api/evidence/verify", "/api/evidence/verify?after=rcpt_50"]);
   });
