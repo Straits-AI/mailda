@@ -73,9 +73,16 @@ export function Gate({ children }: { children: React.ReactNode }) {
   const path = useRouterState({ select: (state) => state.location.pathname });
   const readiness = useReadiness();
   const [opened, setOpened] = useState(overridden);
+  // Once the gate has let the shell through, a read going back to pending does not take it away. The shell reads the
+  // provider too (`SetupUnfinished`), and a reader mounting on a failed read refetches it, so for a member, whose read
+  // is refused, dropping to loading unmounted that reader, which mounted again on the failure: a re-read about once a
+  // second and a screen flipping between loading and the shell (found by T4, 2 October 2026).
+  const [through, setThrough] = useState(false);
+  const decided = readiness.state === "unknown" || readiness.state === "ready";
+  if (decided && !through) setThrough(true);
   if (
     path === "/setup" || path === "/doctor" || path === "/settings"
-    || opened || readiness.state === "unknown" || readiness.state === "ready"
+    || opened || decided || (through && readiness.state === "loading")
   ) {
     return <>{children}</>;
   }

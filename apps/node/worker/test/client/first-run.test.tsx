@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerWith, reset } from "./session-stub.ts";
+import { answerWith, calls, reset } from "./session-stub.ts";
 
 /**
  * The first-run gate (25 September 2026): an administrator on a Node with no routed address sees the
@@ -15,13 +15,14 @@ const route = vi.hoisted(() => ({ pathname: "/" }));
 vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { Gate } = await import("../../src/client/app/screens/first-run.tsx");
+const { SetupUnfinished } = await import("../../src/client/app/onboarding.tsx");
 
 const binding = { state: "no_token", accountId: null, accountName: null, registeredAt: null, verifiedAt: null };
 const permissions = [{ name: "Zone Read", scope: "zone", why: "w", optional: false }];
 const none = { receiving: null, sending: null, deliveryEvents: null };
 const routed = { receiving: { domain: "mail.example.test", at: "2026-09-24T00:00:00.000Z", authority: "operator", address: "hello@mail.example.test" }, sending: null, deliveryEvents: null };
 
-function mount(parts: { addressOk: boolean; provisioned?: unknown; providerStatus?: number }) {
+function mount(parts: { addressOk: boolean; provisioned?: unknown; providerStatus?: number }, child = <div>THE INBOX</div>) {
   answerWith((call) => {
     if (call.path === "/api/provider") {
       if (parts.providerStatus !== undefined) return Response.json({ error: "not_found" }, { status: parts.providerStatus });
@@ -35,7 +36,7 @@ function mount(parts: { addressOk: boolean; provisioned?: unknown; providerStatu
     return undefined;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><Gate><div>THE INBOX</div></Gate></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><Gate>{child}</Gate></QueryClientProvider>);
 }
 
 describe("the first-run gate", () => {
@@ -58,6 +59,20 @@ describe("the first-run gate", () => {
   it("does not gate a member, who is refused the provider read and cannot set anything up", async () => {
     mount({ addressOk: false, providerStatus: 404 });
     expect(await screen.findByText("THE INBOX")).toBeTruthy();
+  });
+
+  /*
+   * Found by the pseudo-locale (T4, 2 October 2026). The shell under the gate reads the provider too (the setup
+   * notice). A second reader mounting on a failed read refetches it, the read goes back to pending, and a gate that
+   * showed loading then unmounted the shell, whose reader mounted again when the read failed: about one read a second,
+   * and a screen flipping between loading and the shell, for every member.
+   */
+  it("keeps the shell for a member once it has decided, rather than re-reading the provider in a loop", async () => {
+    mount({ addressOk: false, providerStatus: 404 }, <><SetupUnfinished /><div>THE INBOX</div></>);
+    expect(await screen.findByText("THE INBOX")).toBeTruthy();
+    for (let tick = 0; tick < 20; tick += 1) await act(async () => { await new Promise((done) => setTimeout(done, 25)); });
+    expect(calls.filter((call) => call.path === "/api/provider").length).toBeLessThanOrEqual(2);
+    expect(screen.getByText("THE INBOX")).toBeTruthy();
   });
 
   it("lets an administrator open the app anyway, for this tab", async () => {
