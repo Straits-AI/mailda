@@ -4336,3 +4336,13 @@ breaker's name are now lists in the contract that the Node itself uses, so their
 the Node's English. One flag is left for a change of its own:
 the API's prose still says stop and restart for a domain pause, byte-stable for the agents that read it (G6). The flags
 are in `docs/i18n.md`.
+
+## Five small things the layer 2b review left (2 October 2026)
+
+**The Butler editor's dry-run buttons stood 4px apart.** They are list items, and their 4px margins collapsed into
+one 4px gap. The list is now a column with the 8px gap every row of controls has, held by
+`apps/node/worker/test/node/control-spacing.test.ts`.
+
+**A send in the reader's conversation showed its recipients as stored**, `→ ["a@b.test"]`: `envelope_to` is a JSON
+array on the wire, and the Outbox parsed it while the thread printed it. Both now go through `format.ts`'s
+`recipients`, a list as the viewer's language joins one (`a and b`, `a和b`).

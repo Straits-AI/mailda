@@ -20,6 +20,14 @@ export function list(items: readonly string[]): string {
   return new Intl.ListFormat(current().formatLocale, { type: "conjunction" }).format(items);
 }
 
+/**
+ * A send's recipients as a sentence lists them: `a@x.test and b@y.test` / `a@x.test和b@y.test`. `envelope_to` is
+ * the JSON array the Node stores (`packages/contract/src/schemas.ts`, `sendRow`), never a display string.
+ */
+export function recipients(envelopeTo: string): string {
+  return list(JSON.parse(envelopeTo) as string[]);
+}
+
 /** A time of day on a 24-hour clock, with seconds: `15:09:02`. */
 export function clock(at: string | number): string {
   return new Date(at).toLocaleTimeString(current().formatLocale, { hour12: false });

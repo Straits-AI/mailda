@@ -7,7 +7,7 @@ import { t } from "/app/locale.js";
 
 import { Nothing, Scroller, Truncated } from "../chrome.tsx";
 import { deliveryWords, sendReasonWords, sendStateWords, shown } from "../delivery-words.ts";
-import { clock, fullTime } from "../format.ts";
+import { clock, fullTime, recipients } from "../format.ts";
 import { marked, NodeWords, sentence } from "../words.tsx";
 import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
@@ -255,7 +255,7 @@ export function Outbox() {
                         {send.subject.trim() === "" ? <span className="dim">{t("ledgers.outbox.noSubject")}</span> : send.subject}
                       </button>
                     </td>
-                    <td className="dim mono">{(JSON.parse(send.envelope_to) as string[]).join(", ")}</td>
+                    <td className="dim mono">{recipients(send.envelope_to)}</td>
                     <td>
                       <span className={`state state-${send.state}`} title={state.note}>
                         {shown(state)}
