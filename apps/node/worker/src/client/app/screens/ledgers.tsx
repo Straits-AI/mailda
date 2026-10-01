@@ -13,7 +13,7 @@ import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
   type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, type Refused, repairSearch,
   requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
-  useSends, useTransport, verifyEvidence,
+  useSends, useTransport, verifyAudit, verifyEvidence,
 } from "../api.ts";
 
 /**
@@ -393,7 +393,7 @@ function actorLabel(entry: AuditRow): string {
 
 export function Audit() {
   const audit = useAudit();
-  const [verdict, setVerdict] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<{ said: ReactNode; refused: boolean } | null>(null);
 
   if (audit.isPending || audit.isError) {
     return (
@@ -405,15 +405,19 @@ export function Audit() {
   }
 
   async function verify() {
-    const response = await apiFetch("/api/audit/verify", { method: "POST" });
-    const outcome = (await response.json()) as { intact: boolean; checked: number; brokenAt?: number };
+    const outcome = await verifyAudit();
+    // A refusal is the Node's answer to the request, not a verdict on the chain: read as one, it said "Chain broken at
+    // entry undefined" (found by T4, 2 October 2026).
+    if (!outcome.ok) { setVerdict({ said: marked(outcome), refused: true }); return; }
+    const { intact, checked, brokenAt } = outcome.value;
     // Stated as what was checked, not as a reassurance. An unverified chain and a verified one must not
     // read the same.
-    setVerdict(
-      outcome.intact
-        ? t("ledgers.audit.intact", { count: String(outcome.checked) })
-        : t("ledgers.audit.broken", { entry: String(outcome.brokenAt), count: String(outcome.checked) }),
-    );
+    setVerdict({
+      refused: false,
+      said: intact
+        ? t("ledgers.audit.intact", { count: String(checked) })
+        : t("ledgers.audit.broken", { entry: String(brokenAt), count: String(checked) }),
+    });
   }
 
   return (
@@ -424,7 +428,9 @@ export function Audit() {
           {t("ledgers.audit.verify")}
         </button>
       </header>
-      {verdict === null ? null : <p className="notice mono">{verdict}</p>}
+      {verdict === null ? null
+        : verdict.refused ? <p className="notice bad" role="alert">{verdict.said}</p>
+        : <p className="notice mono">{verdict.said}</p>}
       <Truncated when={audit.data.truncated} shown={audit.data.entries.length} noun={t("ledgers.noun.entries")} />
       {audit.data.entries.length === 0 ? (
         <Nothing kind="empty" detail={t("ledgers.audit.empty")} />

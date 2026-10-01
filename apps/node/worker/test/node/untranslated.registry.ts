@@ -185,7 +185,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   "src/client/app/screens/ledgers.tsx": [
     ...["sends", "transport", "doctor", "search-failed"]
       .map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
-    ...["/api/sends//cancel", "/api/sends//release-hold", "/api/sends//release", "/api/sends//retry", "/api/audit/verify"]
+    ...["/api/sends//cancel", "/api/sends//release-hold", "/api/sends//release", "/api/sends//retry"]
       .map((text) => ({ text, reason: "a route path the screen fetches" })),
     { text: "POST", reason: "an HTTP method" },
     { text: "application/json", reason: "a media type in a content-type header" },

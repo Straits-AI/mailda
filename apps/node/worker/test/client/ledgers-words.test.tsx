@@ -175,6 +175,21 @@ describe("the Audit trail in English", () => {
     await screen.findByText("Chain broken at entry 9. 12 entries checked.");
     await expect(html(container)).toMatchFileSnapshot("./golden/ledgers.audit-empty.en.html");
   });
+  /*
+   * Found by the pseudo-locale (T4, 2 October 2026): a refused Verify read the refusal's body as a verdict, and said
+   * "Chain broken at entry undefined. undefined entries checked." A refusal is not a broken chain (AGENTS.md §3).
+   */
+  it("shows a refused verification as the Node's refusal, never as a broken chain", async () => {
+    answerWith((call) => {
+      if (call.path === "/api/audit") return Response.json({ entries: AUDIT, truncated: false });
+      if (call.path === "/api/audit/verify") return Response.json({ error: "E_FORBIDDEN", message: "Only an administrator may verify the chain." }, { status: 403 });
+      return undefined;
+    });
+    const { container } = mount(<Audit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Verify chain" }));
+    await screen.findByText("Only an administrator may verify the chain.");
+    expect(container.textContent).not.toMatch(/Chain broken|chain intact|undefined/);
+  });
 });
 
 const LOGS = [
