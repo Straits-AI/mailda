@@ -34,8 +34,9 @@ A live drill on the zone `mailda.site`, approved by the owner for that zone only
 same day (every drill rule, the drill Worker and the one destination the drill added were deleted; the zone's
 routing, DNS and other destinations were left exactly as before). One throwaway Worker,
 `mailda-forward-drill`, behind one literal rule per case, each case logging one structured line per step to
-Workers Logs and a `wrangler tail` (the tail file is kept with the plan in the session's scratchpad, not in this
-repository, because it carries the owner's message ids). Senders: the owner's Gmail, by hand, an outside MTA. Two
+Workers Logs and a `wrangler tail`. The raw tail and the drill's plan were working files outside this repository
+and were not kept with it (they carry the owner's message ids and inboxes); every figure below was read from that
+tail, and the drill can be repeated from the cases this section and the results name. Senders: the owner's Gmail, by hand, an outside MTA. Two
 verified Gmail destinations the owner reads; one destination the drill registered and left unverified. The rules
 and destinations were written with the operator's wrangler login.
 

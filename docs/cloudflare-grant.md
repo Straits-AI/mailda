@@ -684,7 +684,9 @@ on mailda.site on 2 October 2026 (`docs/receipts/email-worker-forward.md`); the 
 - **Once per receipt.** A redelivery of a stored message forwards nothing; the attempt row is written in the
   receipt's own batch.
 - **Put back, then remove.** A put-back clears the forward once the rule reads back; removing an address that keeps
-  one is refused (`E_ADDRESS_KEEPS_A_FORWARD`). The rule's name already records `was forward <destination>`.
+  one is refused (`E_ADDRESS_KEEPS_A_FORWARD`). A put-back that finds the rule re-pointed by hand
+  (`E_ROUTING_RULE_NOT_OURS_NOW`) stops keeping the forward too, since that mail no longer reaches the Node, so the
+  address is never left both forwarding and unremovable. The rule's name already records `was forward <destination>`.
 
 **Destination addresses.** `POST /api/provider/verified-destinations` (`mailda provider --destinations`, the Setup
 screen's Verified destinations) now also counts the account's whole list (verified, waiting for verification),

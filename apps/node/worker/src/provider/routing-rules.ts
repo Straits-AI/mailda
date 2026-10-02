@@ -630,10 +630,22 @@ export async function putBackRule(
     throw unprocessable(code, said);
   }
   if (!rule.ours) {
+    /*
+     * The rule no longer routes here, so no mail for the address reaches this Node and a kept forward has nothing to
+     * forward (ADR 47). Cleared, or the address could never be removed (it keeps a forward) while its rule could
+     * never be put back (not ours): a rule re-pointed in the dashboard would leave it stuck. Only with this Node's
+     * name known, since without it `ours` is false for every rule.
+     */
+    const named: string | undefined = env.WORKER_NAME; // typed as wrangler.jsonc's names; a fork renames it
+    const cleared = named === undefined || named === "" ? 0 : (await env.CATALOG.prepare(
+      "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL "
+      + "WHERE org_id = ? AND address = ? AND kept_forward_to IS NOT NULL",
+    ).bind(orgId, rule.to).run()).meta.changes;
     throw conflict("E_ROUTING_RULE_NOT_OURS_NOW", {
       what: `${rule.to} no longer routes to this Worker (${rule.action} → ${rule.destinations.join(", ")})`,
       why: "somebody changed it since the take-over, or the take-over itself did not complete (its read-back is on "
-        + "the audit trail as provider.routing_rule_read_back), and overwriting either is not a put-back",
+        + "the audit trail as provider.routing_rule_read_back), and overwriting either is not a put-back"
+        + (cleared > 0 ? `; this Node has stopped keeping its forward of ${rule.to}, since that mail no longer reaches it` : ""),
       fix: "nothing, or edit it in the dashboard",
     });
   }

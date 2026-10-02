@@ -607,6 +607,15 @@ describe("a forward rule's third choice: receive here and keep forwarding (ADR 4
     expect((await kept())?.too).toBe("somebody@gmail.test");
   });
 
+  it("stops keeping the forward when the rule was re-pointed by hand, so the address is not left stuck", async () => {
+    const { rules } = serving([FORWARD]);
+    await takeOver("rule_hello", MAILBOX, "keep");
+    rules[0]!.actions = FORWARD.actions;
+    await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello"))
+      .rejects.toThrow(/E_ROUTING_RULE_NOT_OURS_NOW[\s\S]*stopped keeping its forward of hello@example.test/);
+    expect(await kept()).toEqual({ too: null, verified: null });
+  });
+
   it("refuses to remove an address that keeps a forward, naming the put-back", async () => {
     serving([FORWARD]);
     await takeOver("rule_hello", MAILBOX, "keep");

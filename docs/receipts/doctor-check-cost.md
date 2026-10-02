@@ -91,6 +91,22 @@ after     subrequests=33  d1=28  r2=5  findings=31
 `manifest_id`), then the recipient compared within that send's events. So a silent row costs one more indexed
 lookup; the rows-read effect is argued, not measured.
 
+## Correction, 3 October 2026: `kept_forwards`, one query and one subrequest
+
+`kept_forwards` (ADR 47, `src/doctor/delivery.ts`) counts the addresses keeping a forward, their attempts with no
+recorded answer, and the addresses whose latest attempt was refused, in one statement of three scalar subqueries
+over `addresses` and `kept_forward_attempts`; no R2, and no per-row subrequest. Measured by removing the check and
+re-running the same fixture in the same session (`apps/node/worker/test/outbound-recheck.test.ts`, "reports the
+withheld sends"):
+
+```
+without   subrequests=33  d1=28  r2=5  findings=32
+with      subrequests=34  d1=29  r2=5  findings=33
+```
+
+**+1 subrequest, +1 D1 query, +1 finding.** The run sits at 34 against `doctor.max_subrequests_per_run = 220`, and
+`values:` is untouched.
+
 ## Correction, 26 September 2026: `preview_backlog`, one grouped query and one subrequest
 
 `preview_backlog` (0068) counts the messages that still owe a row preview and sender name, and the ones that
