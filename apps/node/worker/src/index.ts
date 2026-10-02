@@ -8,6 +8,7 @@ import { refuseUnknownFields } from "./request-shape.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { EvidenceMissing } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
+import { FORWARDED_BY_HEADER, forwardKept, forwardedBy } from "./kept-forward.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
@@ -353,8 +354,8 @@ const handler = {
     // rejecting tells the sending server the message was not taken, which is the honest answer and the
     // one §13 requires. Unclaimed and unmigrated are both "nowhere to put it".
     const claimed = await env.CATALOG.prepare(
-      "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-    ).first<{ org_id: string }>().catch(() => null);
+      "SELECT id, org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
+    ).first<{ id: string; org_id: string }>().catch(() => null);
 
     if (claimed?.org_id == null) {
       // Reject rather than accept mail we cannot attribute. §13 forbids losing an accepted
@@ -369,6 +370,8 @@ const handler = {
       envelopeFrom: message.from,
       envelopeTo: message.to,
       raw,
+      // The claim id is this Node's loop marker (ADR 47): random per Node, and already in hand here.
+      forwardedByThisNode: forwardedBy(message.headers.get(FORWARDED_BY_HEADER), claimed.id),
     });
 
     if (result.status === "unknown_recipient") {
@@ -380,6 +383,16 @@ const handler = {
     // the event just committed is claimable at once (`src/outbox.ts` says why there is no second publisher
     // here). `waitUntil` so accepting the message never waits on the Durable Object.
     ctx.waitUntil(armSweeper(env));
+
+    /*
+     * A kept forward (ADR 47), after the receipt committed and only for a delivery this call stored: a redelivery is
+     * `already_accepted` and forwards nothing. Awaited, as measured, never in `waitUntil` (a forward after the
+     * handler returned was not), and it never rejects or throws: the message is stored, and a failed forward is
+     * recorded and shown, not bounced.
+     */
+    if (result.status === "accepted" && result.forward !== undefined && result.receiptId !== undefined) {
+      await forwardKept(env, clock, message, claimed.org_id, result.receiptId, result.forward, claimed.id);
+    }
   },
 
   /**

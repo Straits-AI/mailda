@@ -30,6 +30,8 @@ export const EXPECTED_TABLES = [
   "send_recipients", "send_recipient_events", "suppression_lifts",
   // Migration 0060: what an authored send attached, as evidence.
   "send_attachments",
+  // Migration 0074 (ADR 47): each kept forward's attempt.
+  "kept_forward_attempts",
   // Migration 0061: words people put on messages. 0062: which messages each person has opened.
   "message_labels", "message_reads", "message_places",
   // Migration 0012 (durable drafts).
