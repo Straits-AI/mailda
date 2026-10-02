@@ -4423,3 +4423,12 @@ continue down the viewer's list. A stored choice is honoured, Settings > Languag
 sign-in shows for an English reader too, which is the one change to the English pages' goldens. `?locale=` works as it
 did. The preview mechanism stays for the next locale, tested in a registry that has a preview in it, since against the
 real one its every line is now unreachable (`docs/i18n.md`, The preview flag).
+
+## The search index keeps word order, by decision (2 October 2026)
+
+ADR 28's 30 September correction left one question open: `message_body_search` is `detail=full`, so a copy of
+the D1 database gives up each indexed body's words in order, and a Chinese, Japanese or Korean body's text. The
+alternatives store less but end phrase queries, which CJK search is built on. The owner chose on 2 October 2026 to
+keep `detail=full`. ADR 28, `docs/receipts/d1-fts5-search.md` and `docs/message-search.md` now say the trade is
+decided, not open. No code changed.
+
