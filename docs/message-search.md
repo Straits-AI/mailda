@@ -23,7 +23,8 @@ person permitted to see who wrote and what about is not thereby permitted the te
 `message_body_search` is `content = ''`, so it stores no body text as such. It is not a bag of words either:
 the table is `detail=full`, FTS5's default, so it keeps each token's offset and `fts5vocab`'s `instance` view
 reads a body back as its tokens in order (`docs/receipts/d1-fts5-search.md`, corrected 30 September 2026). For
-Chinese, Japanese and Korean, whose runs are indexed as bigrams, that is the text. The contentless form has a
+Chinese, Japanese and Korean, whose runs are indexed as bigrams, that is the text. Kept deliberately: the owner chose
+`detail=full` on 2 October 2026 (ADR 28), because dropping offsets would end phrase search and with it CJK search. The contentless form has a
 consequence worth knowing: the index yields no excerpt (`snippet()` returns null on a contentless table rather
 than failing), so showing the matching line would mean fetching the message from R2 and decrypting it, which
 is a `mailbox.content.read` operation and is authorized as one. A result row may carry the message's stored

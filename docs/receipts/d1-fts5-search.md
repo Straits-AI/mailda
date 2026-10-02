@@ -34,7 +34,8 @@ bigrams, and a chain of bigrams is the original characters, so such a body reads
 What remains true: `SELECT body` returns null, there is no `_content` table, and `snippet()` has nothing to
 cut from. What is not: that the disclosure is tokens *and not text*. `detail=column` or `detail=none` would
 store less (no offsets, so no order) at the price of phrase queries — which the CJK search depends on, since
-a typed run is a phrase of bigrams. That trade is ADR 28's to decide and is not changed here.
+a typed run is a phrase of bigrams. That trade is ADR 28's to decide, and on 2 October 2026 the owner decided it: `detail=full` stays, so CJK and
+phrase search keep working and the disclosure above is accepted, not open.
 
 These five facts decide whether Mailda can have full-text search at all, and, more importantly, how much
 of ADR 28's guarantee it has to give up to get it. The answer to the second question turned out to be much
