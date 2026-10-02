@@ -133,6 +133,13 @@ describe("every closed set the contract declares is a closed set the boundary en
       // Replacing and restoring a routing rule's action (#258): the same zone, the same reason.
       "POST /api/provider/routing-rules/take-over",
       "POST /api/provider/routing-rules/put-back",
+      /*
+       * ADR 47's two: registering a destination address, where a misspelled `email` dropped would be refused as
+       * no address rather than as the field it is; and the destinations read, where a misspelled `addresses`
+       * dropped would answer counts to an operator who asked to see the list.
+       */
+      "POST /api/provider/destination-addresses",
+      "POST /api/provider/verified-destinations",
       "POST /api/provider/domains/purchase",
       "POST /api/provider/sending",
       "POST /api/provider/subscription",
@@ -343,10 +350,10 @@ describe("strictness is decided per route, not turned on globally", () => {
     }
     expect(strict.sort()).toEqual([
       "DELETE /api/addresses", "POST /api/addresses", "POST /api/agents", "POST /api/mailboxes", "POST /api/policies",
-      "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
+      "POST /api/provider/destination-addresses", "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",
-      "POST /api/provider/sending", "POST /api/provider/subscription",
+      "POST /api/provider/sending", "POST /api/provider/subscription", "POST /api/provider/verified-destinations",
       "POST /api/quarantine/:messageId/hold", "POST /api/search/repair",
       "PUT /api/cases/:caseId/assignee", "PUT /api/messages/:messageId/place",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/token",

@@ -383,8 +383,60 @@ export const providerVerifiedDestinationsResponse = z.object({
     error: z.string().nullable(),
     recipients: z.number().int().nonnegative(),
     verified: z.number().int().nonnegative().nullable(),
+    /**
+     * The account's whole destination list as this read found it, counted (3 October 2026): `verified`, and `waiting`
+     * for a destination registered whose link nobody has clicked yet. Null when this attempt could not read.
+     */
+    listed: z.object({ verified: z.number().int().nonnegative(), waiting: z.number().int().nonnegative() }).strict().nullable(),
+    /**
+     * The listed addresses themselves, only when the request asked for them (`addresses: true`) and the read
+     * succeeded; null otherwise. Never written to the audit trail or a log: the list can hold anybody's address.
+     */
+    addresses: z.array(z.object({ email: z.string(), state: z.enum(["verified", "waiting"]) }).strict()).nullable(),
   }).strict(),
 }).strict();
+
+/** `POST /api/provider/verified-destinations`' one option: print the account's addresses, not only their counts. */
+export const providerVerifiedDestinationsRequest = z.object({
+  addresses: z.boolean().optional(),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+/**
+ * Registering a destination address with the account (`POST /api/provider/destination-addresses`, ADR 47). Cloudflare
+ * mails the address a link; until somebody there clicks it the destination is `waiting` and nothing can be forwarded
+ * to it.
+ */
+export const providerDestinationAddRequest = z.object({
+  email: z.string().min(3).max(254),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+export const providerDestinationAddResponse = z.object({
+  destination: z.object({
+    email: z.string(),
+    state: z.enum(["verified", "waiting"]),
+    /** Whether this request registered it (false: it was already on the account's list, and nothing was sent). */
+    added: z.boolean(),
+  }).strict(),
+}).strict();
+
+/**
+ * The addresses on this Node that keep a forward (ADR 47), each with the latest read of its destination and its
+ * latest attempt. Read from D1 alone: no Cloudflare call.
+ */
+const keptForwardAttemptState = z.enum(["outcome_unknown", "handed_over", "refused", "withheld"]);
+export const keptForwardsResponse = z.object({
+  forwards: z.array(z.object({
+    address: z.string(),
+    mailboxId: z.string(),
+    to: z.string(),
+    /** The latest read of the account's destination list: null when none has answered since the forward was kept. */
+    verified: z.enum(["verified", "waiting", "absent"]).nullable(),
+    checkedAt: isoDate.nullable(),
+    /** The latest attempt; `error` is Cloudflare's words on `refused`, the loop reason on `withheld`. Null: none yet. */
+    last: z.object({ state: keptForwardAttemptState, at: isoDate, error: z.string().nullable() }).strict().nullable(),
+    lastHandedOverAt: isoDate.nullable(),
+  }).strict()),
+}).strict();
+export type KeptForwardRow = z.infer<typeof keptForwardsResponse>["forwards"][number];
 /** The `destinations` object, for the consumers that print it (the client and the CLI's declaration). */
 export type ProviderVerifiedDestinations = z.infer<typeof providerVerifiedDestinationsResponse>["destinations"];
 
@@ -740,6 +792,12 @@ export const providerRoutingRulesResponse = z.object({
         says: z.string().min(1),
         filesInto: z.object({ id: z.string(), name: z.string() }).strict().nullable(),
         asksMailbox: z.boolean(),
+        /**
+         * A forward rule's second choice (ADR 47): receive here and keep forwarding to the rule's destination, in the
+         * Node's words. Null on any other rule. On a forward rule `label`/`says` above are the other choice, stopping
+         * the forward, and a take-over must name one of the two (`forward`, `E_ROUTING_FORWARD_NEEDS_CHOICE`).
+         */
+        keep: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict().nullable(),
       }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),
@@ -766,6 +824,11 @@ export const providerRoutingRuleOutcomeResponse = z.object({
      * put-back can. Null on a put-back.
      */
     nameRecorded: z.boolean().nullable(),
+    /**
+     * The destination this Node keeps forwarding the address's mail to after a take-over that kept the forward
+     * (ADR 47); null when nothing is forwarded, and on a put-back, which clears it.
+     */
+    keptForward: z.string().nullable(),
   }).strict(),
 }).strict();
 
@@ -778,6 +841,12 @@ export const providerRoutingRuleTakeOverRequest = z.object({
    * organization has exactly one, except on a forward rule, which is refused without it (`E_ROUTING_FORWARD_NEEDS_MAILBOX`).
    */
   mailboxId: z.string().min(1).max(64).optional(),
+  /**
+   * A forward rule only, and required there (ADR 47): `keep` receives here and keeps forwarding to the rule's own
+   * destination with `message.forward()` after the message is stored; `stop` receives here only. Refused on any other
+   * rule (`E_ROUTING_FORWARD_NOT_A_FORWARD`), and missing on a forward rule (`E_ROUTING_FORWARD_NEEDS_CHOICE`).
+   */
+  forward: z.enum(["keep", "stop"]).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 export const providerRoutingRulePutBackRequest = z.object({
@@ -902,7 +971,7 @@ export const DOCTOR_CHECKS = [
   "butler_loop_detection", "butler_paused", "butler_run_silence", "catalog_reachable", "credential_key",
   "delivery_attribution", "delivery_explanation_void", "delivery_visibility", "doctor_cost", "domain_paused", "draft_bodies_stranded",
   "evidence_bucket_reachable", "evidence_key_generation", "evidence_orphans", "evidence_present",
-  "inbound_authentication", "inbound_routing", "key_vault", "legal_hold_lift_pending", "legal_hold_mailbox_missing",
+  "inbound_authentication", "inbound_routing", "kept_forwards", "key_vault", "legal_hold_lift_pending", "legal_hold_mailbox_missing",
   "legal_holds_active", "legal_hold_unliftable", "migrations_applied", "outbox_draining", "preview_backlog",
   "provider_token", "recovery_escrow", "recovery_key_conflicts", "recovery_restore_state", "report_reduced",
   "search_index_backlog", "self_granted_access", "send_breakers", "send_evidence_changed", "sending_events_consumer",

@@ -1289,7 +1289,7 @@ record of an act, not a live read, and the row says so in those words.
 **Which recipients are verified destinations** (28 September 2026). Section 5 ends with one button, *Read
 verified destinations*, which posts `POST /api/provider/verified-destinations` with the Node's token (the
 section renders only when the Node holds one; `mailda setup` and `mailda upgrade` make the same read with
-wrangler's login). It needs the optional permission Email Routing Addresses: Read, and the section says so.
+wrangler's login). It needs the optional permission Email Routing Addresses: Edit, and the section says so.
 The answer is counts, never an address: which recipients they are is the Outbox's to show, bounded by who may
 read the send. Three answers, checked in this order (`test/client/setup-screen.test.tsx`):
 a failed read (`error` set) renders as a refusal naming the failure as reported and the permission, and says that

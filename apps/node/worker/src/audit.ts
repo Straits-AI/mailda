@@ -933,6 +933,14 @@ export const AUDIT_ACTIONS = {
     says: "An administrator restored a routing rule to the action it had before this Node took it over.",
   },
   /**
+   * A destination address registered with the account's Email Routing (ADR 47). The subject is Cloudflare's id for
+   * it and the entry never names the address: the trail is permanent and the address is somebody's own inbox.
+   */
+  "provider.destination_added": {
+    says: "An administrator asked Cloudflare to register a destination address, which Cloudflare then mails a "
+      + "verification link; the entry names Cloudflare's id for it and never the address.",
+  },
+  /**
    * What a take-over or put-back's PUT did, read back from Cloudflare afterwards (30 September 2026). The two
    * entries above are the intent, written before the PUT for `receiving_onboarded`'s reason, and until this
    * existed they were the only record and said `ok` before Cloudflare answered. `detail.act` names which act.

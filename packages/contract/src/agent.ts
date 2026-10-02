@@ -452,6 +452,13 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/provider/verified-destinations",
     /*
+     * Registering a destination (ADR 47). It makes Cloudflare mail a verification link to an address, which is the
+     * first half of handing somebody's mail to it: a person's act. The listing of kept forwards is withheld beside
+     * it because every row names a destination, usually somebody's own inbox.
+     */
+    "POST /api/provider/destination-addresses",
+    "GET /api/forwards",
+    /*
      * The proposal read, `operator` for the same reason as the two above — it spends the grant — and for one
      * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
      * the digest is the only thing standing between a `POST` and a change to the customer's DNS.

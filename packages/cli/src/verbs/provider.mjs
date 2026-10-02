@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 import { signInAndChooseAccount } from "./install.mjs";
-import { catchAllLine, outcomeRoutesHere, ownRulesLines, wranglerToken } from "./provision.mjs";
+import { catchAllLine, destinationSaid, keptForwardLines, outcomeRoutesHere, ownRulesLines, verifiedDestinationLines, wranglerToken } from "./provision.mjs";
 import { needsMailbox, putBackWithoutNode } from "./routing-step.mjs";
 /**
  * One domain's price, or the reason there is not one.
@@ -170,6 +170,32 @@ export async function provider(argv) {
     return;
   }
 
+  /*
+   * The account's Email Routing destination addresses (ADR 47): counts, the kept forwards' destinations re-checked,
+   * and the addresses themselves only with `--addresses`, since the list can hold anybody's inbox.
+   */
+  if (argv.includes("--destinations")) {
+    const { destinations } = await call("POST", "/api/provider/verified-destinations", argv.includes("--addresses") ? { addresses: true } : {});
+    process.stdout.write("\n");
+    for (const line of verifiedDestinationLines(destinations)) process.stdout.write(`   ${line}\n`);
+    process.stdout.write("\n");
+    return;
+  }
+  const adding = flag(argv, "add-destination");
+  if (adding !== null) {
+    const { destination } = await call("POST", "/api/provider/destination-addresses", { email: adding });
+    process.stdout.write(`\n   ${destination.email}\n     ${destinationSaid(destination)}\n\n`);
+    return;
+  }
+  if (argv.includes("--forwards")) {
+    const { forwards } = await call("GET", "/api/forwards");
+    process.stdout.write("\n");
+    if (forwards.length === 0) process.stdout.write("   no address keeps a forward\n");
+    for (const one of forwards) for (const line of keptForwardLines(one)) process.stdout.write(`   ${line}\n`);
+    process.stdout.write("\n");
+    return;
+  }
+
   const rulesOn = flag(argv, "routing-rules");
   if (rulesOn !== null) {
     const { routing } = await call("GET", "/api/provider/routing-rules", undefined, { domain: rulesOn });
@@ -226,6 +252,8 @@ export async function provider(argv) {
       ? await call("POST", "/api/provider/routing-rules/take-over", {
         domain, ruleId: takeOver, digest: flag(argv, "confirm"),
         ...(flag(argv, "mailbox") === null ? {} : { mailboxId: flag(argv, "mailbox") }),
+        // A forward rule's choice (ADR 47), sent as typed: the Node refuses anything but keep or stop, by name.
+        ...(flag(argv, "forward") === null ? {} : { forward: flag(argv, "forward") }),
       })
       : await call("POST", "/api/provider/routing-rules/put-back", { domain, ruleId: putBack });
     const said = (one) => `${one.action}${one.destinations.length === 0 ? "" : ` -> ${one.destinations.join(", ")}`}`;
@@ -233,6 +261,7 @@ export async function provider(argv) {
       `\n   ${outcome.to}\n     was       ${said(outcome.before)}\n     now       ${said(outcome.after)}\n`
       // Where the address now files: the mailbox of a row already there when none was chosen (30 September 2026).
       + (outcome.mailbox == null ? "" : `     files     into ${outcome.mailbox.name} (${outcome.mailbox.id})\n`)
+      + (outcome.keptForward == null ? "" : `     forwards  to ${outcome.keptForward}, after each message is stored here\n`)
       + (takeOver !== null
         ? `\n   put it back: mailda provider --put-back ${outcome.ruleId} --domain ${domain}\n\n`
         : "\n"),

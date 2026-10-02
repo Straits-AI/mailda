@@ -32,6 +32,7 @@ export const doctor = {
   "doctor.check.evidence_present": "Evidence present",
   "doctor.check.inbound_authentication": "Inbound authentication",
   "doctor.check.inbound_routing": "Inbound routing",
+  "doctor.check.kept_forwards": "Kept forwards",
   "doctor.check.key_vault": "Key vault",
   "doctor.check.legal_hold_lift_pending": "Legal hold lifts waiting for approval",
   "doctor.check.legal_hold_mailbox_missing": "Legal holds on missing mailboxes",

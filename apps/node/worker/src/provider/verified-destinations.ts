@@ -4,6 +4,7 @@ import { auditedBatch } from "../audit.ts";
 import { conflict } from "../errors.ts";
 import { heldAccount } from "./account-routing.ts";
 import { cloudflareGetAll, operatorOf } from "./cloudflare-api.ts";
+import { type Listed, listedOf } from "./destinations.ts";
 
 /**
  * Which of the addresses this Node has handed mail to were verified Email Routing destinations of its
@@ -47,13 +48,17 @@ export interface VerifiedDestinations {
   recipients: number;
   /** How many of them the latest successful read listed as verified destinations; null when none succeeded. */
   verified: number | null;
+  /** This attempt's whole listing, counted (ADR 47); null when this attempt could not read. */
+  listed: { verified: number; waiting: number } | null;
+  /** The listed addresses, only when asked for and read; never recorded anywhere. */
+  addresses: Listed[] | null;
 }
 
 /** One entry of Cloudflare's destination-address listing, read defensively: only two fields are used. */
-interface Listed { email?: unknown; verified?: unknown }
+interface RawListed { email?: unknown; verified?: unknown }
 
 export async function recordVerifiedDestinations(
-  env: Env, ctx: Ctx, orgId: string, actorUserId: string,
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, options: { addresses?: boolean } = {},
 ): Promise<VerifiedDestinations> {
   /*
    * The account to read: the operator credential's, else the stored token's, which is `boundAccount`'s rule.
@@ -100,7 +105,7 @@ export async function recordVerifiedDestinations(
 
   const at = new Date(ctx.now()).toISOString();
   const authority = operator === null ? "token" : "operator";
-  const listed = await cloudflareGetAll<Listed>(env, ctx, orgId, `/accounts/${accountId}/email/routing/addresses`);
+  const listed = await cloudflareGetAll<RawListed>(env, ctx, orgId, `/accounts/${accountId}/email/routing/addresses`);
 
   if (!listed.ok) {
     await auditedBatch(
@@ -111,8 +116,14 @@ export async function recordVerifiedDestinations(
       },
       (entry) => [entry, readRow(env, { accountId: null, authority, readAt: null, at, error: listed.error })],
     );
-    return stateOf(env, orgId);
+    return { ...await stateOf(env, orgId), listed: null, addresses: null };
   }
+  // Every listed address with its state, for the kept forwards and the counts; the addresses leave only in the answer.
+  const all: Listed[] = listed.result.flatMap((one) => {
+    const parsed = listedOf(one);
+    return parsed === null ? [] : [parsed];
+  });
+  const states = JSON.stringify(Object.fromEntries(all.map((one) => [one.email.toLowerCase(), one.state])));
 
   /*
    * `verified` non-null is Cloudflare's documented test, and it agrees with `status: "verified"` on every
@@ -142,7 +153,11 @@ export async function recordVerifiedDestinations(
     env, ctx, orgId,
     {
       action: "provider.verified_destinations_read", outcome: "ok", actorUserId, subject: accountId,
-      detail: { accountId, authority, recipients: counted.recipients, kept: counted.kept },
+      detail: {
+        accountId, authority, recipients: counted.recipients, kept: counted.kept,
+        listedVerified: all.filter((one) => one.state === "verified").length,
+        listedWaiting: all.filter((one) => one.state === "waiting").length,
+      },
     },
     (entry) => [
       entry,
@@ -161,9 +176,22 @@ export async function recordVerifiedDestinations(
            SET verified_from = excluded.verified_from, verified_until = excluded.verified_until`,
       ).bind(orgId, at, verified),
       readRow(env, { accountId, authority, readAt: at, at, error: null }),
+      /*
+       * Each kept forward's destination as this read found it (ADR 47): the re-check People's "verified" comes from.
+       * Absent from the list is `absent`, a state of its own: forward() to it throws, as to a waiting one.
+       */
+      env.CATALOG.prepare(
+        `UPDATE addresses SET kept_forward_checked_at = ?2,
+           kept_forward_verified = COALESCE((SELECT j.value FROM json_each(?3) j WHERE j.key = lower(addresses.kept_forward_to)), 'absent')
+         WHERE org_id = ?1 AND kept_forward_to IS NOT NULL`,
+      ).bind(orgId, at, states),
     ],
   );
-  return stateOf(env, orgId);
+  return {
+    ...await stateOf(env, orgId),
+    listed: { verified: all.filter((one) => one.state === "verified").length, waiting: all.filter((one) => one.state === "waiting").length },
+    addresses: options.addresses === true ? all : null,
+  };
 }
 
 /**
@@ -186,7 +214,7 @@ function readRow(
 }
 
 /** What the latest attempt left, in one statement. Counts only. */
-async function stateOf(env: Env, orgId: string): Promise<VerifiedDestinations> {
+async function stateOf(env: Env, orgId: string): Promise<Omit<VerifiedDestinations, "listed" | "addresses">> {
   const row = await env.CATALOG.prepare(
     `SELECT rd.account_id, rd.read_at, rd.attempted_at, rd.error,
        (SELECT COUNT(DISTINCT lower(address)) FROM send_recipients

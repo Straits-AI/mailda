@@ -65,10 +65,25 @@ export function needsMailbox(rule, mailboxes) {
   return rule.takeOver?.filesInto == null && (rule.takeOver?.asksMailbox === true || mailboxes?.length !== 1);
 }
 
-/** The command that takes one rule over by hand: printed under `--yes`, and wherever the step could not ask. */
-export function takeOverCommand(rule, domain, origin, mailboxes = null) {
+/**
+ * The command that takes one rule over by hand: printed under `--yes`, and wherever the step could not ask. A forward
+ * rule needs `--forward keep` or `--forward stop` (ADR 47), and neither is a default: `forward` picks which one is
+ * printed, and with none the command says `--forward <keep|stop>` for the operator to fill in.
+ */
+export function takeOverCommand(rule, domain, origin, mailboxes = null, forward = null) {
+  // A Node older than ADR 47 lists no `keep` and refuses the field, so it is named only to a Node that offers it.
+  const choice = forward !== null ? ` --forward ${forward}` : rule.action === "forward" && rule.takeOver?.keep != null ? " --forward <keep|stop>" : "";
   return `mailda provider --take-over ${rule.id} --domain ${domain} --confirm ${rule.digest}`
-    + `${needsMailbox(rule, mailboxes) ? " --mailbox <mailbox id>" : ""} --url ${origin}`;
+    + `${needsMailbox(rule, mailboxes) ? " --mailbox <mailbox id>" : ""}${choice} --url ${origin}`;
+}
+
+/** The commands for one rule under `--yes`: a forward rule's two choices each with the Node's words, else the one. */
+export function takeOverCommands(rule, domain, origin, mailboxes = null) {
+  if (rule.action !== "forward" || (rule.takeOver?.keep ?? null) === null) return [{ label: null, command: takeOverCommand(rule, domain, origin, mailboxes) }];
+  return [
+    { label: rule.takeOver.label, command: takeOverCommand(rule, domain, origin, mailboxes, "stop") },
+    { label: rule.takeOver.keep.label, command: takeOverCommand(rule, domain, origin, mailboxes, "keep") },
+  ];
 }
 
 /**
@@ -151,11 +166,14 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
 
   if (yes || process.stdin.isTTY !== true) {
     const boxes = await mailboxesNow();
-    const commands = plan.offered.map((rule) => [rule, takeOverCommand(rule, domain, origin, boxes.ok ? boxes.mailboxes : null)]);
+    const commands = plan.offered.map((rule) => [rule, takeOverCommands(rule, domain, origin, boxes.ok ? boxes.mailboxes : null)]);
     out();
     out(`${yes ? "--yes" : "With no terminal to ask in, this"} changes no routing rule. To point one here:`);
-    for (const [rule, command] of commands) { out(`  ${rule.to}`); out(`    ${command}`); }
-    if (commands.some(([, command]) => command.includes("--mailbox"))) {
+    for (const [rule, choices] of commands) {
+      out(`  ${rule.to}`);
+      for (const { label, command } of choices) { if (label !== null) out(`    ${label}:`); out(`    ${command}`); }
+    }
+    if (commands.some(([, choices]) => choices.some(({ command }) => command.includes("--mailbox")))) {
       if (!boxes.ok) { out("the mailboxes, for <mailbox id>, could not be listed:"); refused(boxes.text); return; }
       out("the mailboxes, for <mailbox id>:");
       const width = Math.max(0, ...boxes.mailboxes.map((box) => box.id.length));
@@ -176,8 +194,17 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
     process.stdout.write("\n");
     out(`${rule.to}   ${whereTo(rule)}`);
     for (const line of wrapAt(`${rule.takeOver.label}: ${rule.takeOver.says}.`, 90)) out(`  ${line}`);
-    const take = await choose(`   ${rule.to}`, [{ label: "leave it", value: false }, { label: rule.takeOver.label, value: true }]);
+    // A forward rule's third choice (ADR 47): keep the forward, in the Node's words.
+    const keep = rule.takeOver.keep ?? null;
+    if (keep !== null) for (const line of wrapAt(`${keep.label}: ${keep.says}.`, 90)) out(`  ${line}`);
+    const take = await choose(`   ${rule.to}`, [
+      { label: "leave it", value: false },
+      // "stop" only to a Node that offers the choice: an older one lists no `keep` and refuses the field.
+      { label: rule.takeOver.label, value: keep !== null ? "stop" : true },
+      ...(keep === null ? [] : [{ label: keep.label, value: "keep" }]),
+    ]);
     if (!take) continue;
+    const forward = take === "keep" || take === "stop" ? take : null;
     const options = mailboxChoices(rule, mailboxes);
     if (rule.takeOver.filesInto === null && options.length === 0) {
       out(`  left as it is: no mailbox could be listed, and ${rule.to} is longer than a mailbox name may be`);
@@ -188,22 +215,23 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
       : !rule.takeOver.asksMailbox && mailboxes.length === 1
         ? mailboxes[0]
         : await choose(`   which mailbox receives ${rule.to}?`, options);
-    chosen.push({ rule, mailbox });
+    chosen.push({ rule, mailbox, forward });
   }
   if (chosen.length === 0) { process.stdout.write("\n"); out("left as they are."); return; }
 
   process.stdout.write("\n");
   out("Plan");
-  for (const { rule, mailbox } of chosen) {
-    out(`  ${rule.to}   ${whereTo(rule)}  ->  this Node, into ${mailbox.id === null ? `a new mailbox named ${mailbox.name}` : `mailbox ${mailbox.name}`}`);
-    for (const line of wrapAt(`${rule.takeOver.says}.`, 88)) out(`    ${line}`);
+  for (const { rule, mailbox, forward } of chosen) {
+    out(`  ${rule.to}   ${whereTo(rule)}  ->  this Node, into ${mailbox.id === null ? `a new mailbox named ${mailbox.name}` : `mailbox ${mailbox.name}`}`
+      + `${forward === "keep" ? `, and keeps forwarding to ${rule.destinations[0]}` : ""}`);
+    for (const line of wrapAt(`${forward === "keep" ? rule.takeOver.keep.says : rule.takeOver.says}.`, 88)) out(`    ${line}`);
   }
   const apply = await ask("   Apply? [y/N] ");
   if (!/^y(es)?$/i.test(apply.trim())) { out("nothing was changed."); return; }
 
   // Take-overs whose rule read back with the name that records where it went: the only ones `--without-node` restores.
   let recorded = 0;
-  for (const { rule, mailbox } of chosen) {
+  for (const { rule, mailbox, forward } of chosen) {
     process.stdout.write("\n");
     let mailboxId = mailbox.id;
     if (mailboxId === null) {
@@ -211,7 +239,9 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
       if (!made.ok) { out(`${rule.to}   not taken over: the mailbox could not be made`); refused(made.text); continue; }
       mailboxId = made.value.mailboxId;
     }
-    const taken = await call("POST", "/api/provider/routing-rules/take-over", { domain, ruleId: rule.id, digest: rule.digest, mailboxId });
+    const taken = await call("POST", "/api/provider/routing-rules/take-over", {
+      domain, ruleId: rule.id, digest: rule.digest, mailboxId, ...(forward === null ? {} : { forward }),
+    });
     if (!taken.ok && taken.unknown) {
       // The address row is written before the PUT, so the mailbox is not "empty"; and the rule may route here now.
       out(`${rule.to}   not confirmed: Cloudflare may have applied this`);
@@ -225,7 +255,8 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
       if (mailbox.id === null) out(`  the mailbox ${mailbox.name} was made for it and stays, empty`);
       continue;
     }
-    out(`${rule.to}   taken over, files into ${taken.value.outcome.mailbox?.name ?? mailbox.name}`);
+    out(`${rule.to}   taken over, files into ${taken.value.outcome.mailbox?.name ?? mailbox.name}`
+      + `${(taken.value.outcome.keptForward ?? null) === null ? "" : `, and keeps forwarding to ${taken.value.outcome.keptForward}`}`);
     out(`  put back: mailda provider --put-back ${rule.id} --domain ${domain} --url ${origin}`);
     if (taken.value.outcome.nameRecorded === true) recorded += 1;
     if (taken.value.outcome.nameRecorded === false) {

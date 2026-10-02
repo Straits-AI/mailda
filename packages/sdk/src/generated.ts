@@ -1173,12 +1173,30 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Read which of the addresses this Node has handed mail to are verified Email Routing destinations of the account, and record when. Answers with counts. No outcome is reported for verified destinations
+   * Read the account's Email Routing destination addresses: record which of the addresses this Node has handed mail to are verified destinations, and whether each kept forward's destination is verified, waiting for verification or gone. Answers with counts, and the addresses only when asked. No outcome is reported for verified destinations
    *
    * `POST /api/provider/verified-destinations`
    */
-  async postProviderVerifiedDestinations(body?: unknown): Promise<z.infer<typeof S.providerVerifiedDestinationsResponse>> {
+  async postProviderVerifiedDestinations(body: z.infer<typeof S.providerVerifiedDestinationsRequest>): Promise<z.infer<typeof S.providerVerifiedDestinationsResponse>> {
     return await this.json("POST", "/api/provider/verified-destinations", {}, body) as z.infer<typeof S.providerVerifiedDestinationsResponse>;
+  }
+
+  /**
+   * Register a destination address with the account's Email Routing, which mails it a verification link. It stays waiting for verification until somebody at that address clicks the link. An address already listed is answered as it is, and nothing is sent. Nothing here deletes a destination
+   *
+   * `POST /api/provider/destination-addresses`
+   */
+  async postProviderDestinationAddresses(body: z.infer<typeof S.providerDestinationAddRequest>): Promise<z.infer<typeof S.providerDestinationAddResponse>> {
+    return await this.json("POST", "/api/provider/destination-addresses", {}, body) as z.infer<typeof S.providerDestinationAddResponse>;
+  }
+
+  /**
+   * The addresses that keep forwarding to the destination of the rule this Node took over (ADR 47): where each forwards, what the latest read of the account's destinations said of it, and its latest attempt. No Cloudflare call
+   *
+   * `GET /api/forwards`
+   */
+  async getForwards(): Promise<z.infer<typeof S.keptForwardsResponse>> {
+    return await this.json("GET", "/api/forwards", {}, undefined) as z.infer<typeof S.keptForwardsResponse>;
   }
 
   /**
@@ -1282,7 +1300,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry and in the rule's own name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, an action other than forward, worker or drop, one with more than one destination, an address with more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it
+   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry and in the rule's own name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, an action other than forward, worker or drop, one with more than one destination, an address with more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it. A forward rule also needs forward: keep (this Node forwards each stored message to the rule's destination, which must not be listed unverified) or stop
    *
    * `POST /api/provider/routing-rules/take-over`
    */
@@ -1291,7 +1309,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Restore a rule this Node took over to the action and name the take-over recorded, then read it back. Refuses a rule this Node never took, or one that no longer routes here
+   * Restore a rule this Node took over to the action and name the take-over recorded, then read it back, and stop a kept forward once it reads back. Refuses a rule this Node never took, or one that no longer routes here
    *
    * `POST /api/provider/routing-rules/put-back`
    */

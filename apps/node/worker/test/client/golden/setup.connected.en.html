@@ -267,8 +267,21 @@
 <button type="button" class="primary">Subscribe this domain</button>
 </div>
 <h3>Verified destinations</h3>
-<p class="dim">Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Read on this Node's token; <span class="mono">mailda setup</span> reads it with wrangler's login instead.</p>
+<p class="dim">Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Edit on this Node's token; <span class="mono">mailda setup</span> reads it with wrangler's login instead.</p>
 <p class="notice" role="status">Read [clock] from account acc_one. 1 of the 2 addresses this Node has handed mail to is a verified destination. No outcome is reported for verified destinations; the Outbox marks their hand-overs made while they were verified.</p>
+<label class="field-row" for="setup-verified-addresses">
+<input id="setup-verified-addresses" type="checkbox">
+<span>Show the addresses</span>
+</label>
 <button class="quiet" type="button">Read verified destinations</button>
+<h3>Register a destination address</h3>
+<p class="dim">A kept forward goes only to a verified destination. Registering one makes Cloudflare mail it a link; until someone at that address clicks it, it is waiting for verification and nothing can be forwarded to it. This Node deletes no destination.</p>
+<div class="limits-ask">
+<label class="field-row" for="setup-destination-email">
+<span>Address</span>
+<input id="setup-destination-email" class="mono" placeholder="someone@example.com" type="email" value="">
+</label>
+<button class="quiet" type="button" disabled="">Register</button>
+</div>
 </section>
 <p class="dim">Buying a domain through this credential is not on this screen yet. It spends money, and who may press that button is a decision this Node has not been given.</p>

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import worker from "../src/index.ts";
+import { checkKeptForwards } from "../src/doctor/delivery.ts";
 import { acceptInbound } from "../src/ingress.ts";
 import { forwardedBy } from "../src/kept-forward.ts";
 
@@ -111,7 +112,7 @@ describe("a kept forward at the email handler", () => {
   it("writes no attempt for the delivery that loses a race, so no attempt names a receipt that does not exist", async () => {
     const one = () => acceptInbound(testEnv, createSystemCtx(), ORG, {
       providerEventId: "<race@example.net>", envelopeFrom: "s@example.net", envelopeTo: ADDRESS,
-      raw: new TextEncoder().encode("Subject: race\r\n\r\nx\r\n"),
+      raw: new TextEncoder().encode("Subject: race\r\n\r\nx\r\n") as Uint8Array<ArrayBuffer>,
     });
     const results = await Promise.all([one(), one(), one()]);
     // The race must have happened for this to measure anything: more than one call got past the early check.
@@ -126,5 +127,50 @@ describe("a kept forward at the email handler", () => {
     expect(forwardedBy("clm_OTHER", CLAIM)).toBe(false);
     expect(forwardedBy(null, CLAIM)).toBe(false);
     expect(forwardedBy("anything", "")).toBe(false);
+  });
+});
+
+describe("doctor's kept_forwards finding", () => {
+  const now = Date.parse("2026-10-03T10:00:00.000Z");
+  const clock = { ...createSystemCtx(), now: () => now };
+  const attempt = (receipt: string, state: string, msAgo: number) => testEnv.CATALOG.prepare(
+    "INSERT INTO kept_forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at) VALUES (?,?,?,?,?,?,?)",
+  ).bind(receipt, ORG, ADDRESS, DEST, state, state === "refused" ? "destination address not verified" : null, new Date(now - msAgo).toISOString()).run();
+
+  it("reports, and passes, when every attempt has an answer", async () => {
+    await attempt("rcpt_a", "handed_over", 60_000);
+    // Younger than the slowest forward measured: possibly in flight, so not counted.
+    await attempt("rcpt_b", "outcome_unknown", 1_000);
+    expect(await checkKeptForwards(testEnv, clock, ORG)).toMatchObject([{ check: "kept_forwards", ok: true, severity: "report" }]);
+  });
+
+  it("degrades for an attempt with no recorded answer older than the slowest forward measured", async () => {
+    await attempt("rcpt_a", "outcome_unknown", 60_000);
+    const [finding] = await checkKeptForwards(testEnv, clock, ORG);
+    expect(finding).toMatchObject({ ok: false, severity: "degraded" });
+    expect(finding!.detail).toContain("1 kept forward attempt(s) have no recorded answer");
+  });
+
+  it("degrades for an address whose latest forward was refused, and not for one refused before a later hand-over", async () => {
+    await attempt("rcpt_a", "refused", 60_000);
+    expect((await checkKeptForwards(testEnv, clock, ORG))[0]).toMatchObject({ ok: false });
+    await attempt("rcpt_b", "handed_over", 30_000);
+    expect((await checkKeptForwards(testEnv, clock, ORG))[0]).toMatchObject({ ok: true });
+  });
+
+  it("says no address keeps a forward when none does", async () => {
+    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = NULL").run();
+    expect((await checkKeptForwards(testEnv, clock, ORG))[0]!.detail).toBe("No address keeps a forward.");
+  });
+});
+
+describe("GET /api/forwards' rows", () => {
+  it("names the latest attempt and the last hand-over, which may be older", async () => {
+    const { keptForwards } = await import("../src/kept-forward.ts");
+    await deliver({ messageId: "<one@example.net>" });
+    await deliver({ messageId: "<two@example.net>", forward: async () => { throw new Error("destination address not verified"); } });
+    const [row] = await keptForwards(testEnv, ORG);
+    expect(row).toMatchObject({ address: ADDRESS, to: DEST, verified: null, last: { state: "refused", error: "destination address not verified" } });
+    expect(row!.lastHandedOverAt).not.toBeNull();
   });
 });

@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are twenty", () => {
+  it("derives read for every GET but the named exceptions, and there are twenty-one", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -123,11 +123,14 @@ describe("every route is classified, and a new one cannot default", () => {
      * **digest** a money-spending `POST` must quote, so a machine that could read it could supply the
      * confirmation. `…/purchase/status` is the read a person performs when automation has *stopped* — at
      * `action_required` or `failed` — which is precisely the moment automation must not resume.
+     *
+     * `GET /api/forwards` (ADR 47) is the twenty-first, withheld for what it discloses rather than what it costs
+     * (it reads D1 alone): every row names a kept forward's destination, usually somebody's own inbox.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
       "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit",
-      "GET /api/evidence/inventory", "GET /api/logs",
+      "GET /api/evidence/inventory", "GET /api/forwards", "GET /api/logs",
       "GET /api/people/:userId/mailboxes", "GET /api/provider",
       "GET /api/provider/delivery-events", "GET /api/provider/domains",
       "GET /api/provider/domains/purchase", "GET /api/provider/domains/purchase/status",

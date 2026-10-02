@@ -94,6 +94,9 @@ function mount(
       return Response.json(parts.verified.body, { status: parts.verified.status });
     }
     if (call.path.startsWith("/api/provider/routing-rules?") && call.method === "GET") return Response.json(parts.rules);
+    if (call.path === "/api/provider/destination-addresses" && call.method === "POST") {
+      return Response.json({ destination: { email: (call.body as { email: string }).email, state: "waiting", added: true } });
+    }
     if (call.path === "/api/provider/routing-rules/take-over" && call.method === "POST") {
       return parts.takeOverRefused === undefined ? Response.json(parts.takenOver) : Response.json(parts.takeOverRefused.body, { status: parts.takeOverRefused.status });
     }
@@ -563,6 +566,30 @@ describe("reading which recipients are verified destinations", () => {
   });
 });
 
+describe("registering a destination address (ADR 47)", () => {
+  it("posts the address and says it waits until somebody there clicks the link", async () => {
+    mount();
+    fireEvent.change(await screen.findByLabelText("Address", { selector: "#setup-destination-email" }), { target: { value: " new@example.test " } });
+    fireEvent.click(screen.getByText("Register"));
+    expect((await screen.findByText(/waiting for verification until/)).textContent)
+      .toBe("new@example.test is waiting for verification until someone at that address clicks the link Cloudflare mailed them.");
+    expect(calls.filter((one) => one.method === "POST").map((one) => [one.path, one.body]))
+      .toEqual([["/api/provider/destination-addresses", { email: "new@example.test" }]]);
+  });
+
+  it("asks for the addresses only when the box is ticked, and lists them with their state", async () => {
+    mount({ verified: { status: 200, body: { destinations: {
+      accountId: "acc", readAt: "2026-10-03T00:00:00.000Z", attemptedAt: "2026-10-03T00:00:00.000Z", error: null, recipients: 0, verified: 0,
+      listed: { verified: 1, waiting: 1 }, addresses: [{ email: "a@gmail.test", state: "verified" }, { email: "b@gmail.test", state: "waiting" }],
+    } } } });
+    fireEvent.click(await screen.findByLabelText("Show the addresses"));
+    fireEvent.click(screen.getByText("Read verified destinations"));
+    expect((await screen.findByText(/The account lists/)).textContent).toBe("The account lists 1 verified destination address(es) and 1 waiting for verification.");
+    expect(screen.getByText("b@gmail.test").closest("li")!.textContent).toContain("waiting for verification");
+    expect(calls.find((one) => one.path === "/api/provider/verified-destinations")!.body).toEqual({ addresses: true });
+  });
+});
+
 describe("the rules already on a zone", () => {
   const FORWARD_OFFER = {
     label: "receive here only", says: "someone@gmail.test gets nothing more for hello@example.com", filesInto: null, asksMailbox: true,
@@ -662,6 +689,30 @@ describe("the rules already on a zone", () => {
     fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
     await screen.findByText(/hello@example.com: was forward/);
     expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64) }]]);
+  });
+
+  // ADR 47: a forward rule's third choice, in the Node's words, sent as the choice it is.
+  const KEEP = { label: "receive here and keep forwarding to someone@gmail.test", says: "hello@example.com is stored here first, then forwarded" };
+  const keeping = rule({ takeOver: { ...FORWARD_OFFER, filesInto: { id: "mbx_me", name: "Me" }, asksMailbox: false, keep: KEEP } });
+
+  it("offers keep forwarding beside receive here only, shows what it means, and sends forward: keep", async () => {
+    mount({ rules: listing([keeping]), takenOver: { outcome: { ...TAKEN.outcome, keptForward: "someone@gmail.test" } } });
+    await list();
+    fireEvent.click(await screen.findByText(KEEP.label));
+    expect(screen.getByText(`${KEEP.says}.`)).toBeTruthy();
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
+      .toContain("It keeps forwarding to someone@gmail.test, after each message is stored here.");
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "keep" }]]);
+  });
+
+  it("sends forward: stop for receive here only when the Node offers the choice", async () => {
+    mount({ rules: listing([keeping]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText("receive here only"));
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await screen.findByText(/hello@example.com: was forward/);
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "stop" }]]);
   });
 
   // Review, 1 October 2026: what the screen said, and offered, around a mailbox it made for a take-over refused after.

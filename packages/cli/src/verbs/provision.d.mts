@@ -21,6 +21,12 @@ export type VerifiedDestinations = import("@mailda/contract/schemas").ProviderVe
 /** What a read of verified destinations found, as lines to print (unindented). Pure. */
 export function verifiedDestinationLines(d: VerifiedDestinations): string[];
 
+/** What registering a destination left, in one phrase (ADR 47). Pure. */
+export function destinationSaid(destination: import("zod").infer<typeof import("@mailda/contract/schemas").providerDestinationAddResponse>["destination"]): string;
+
+/** One kept forward as `mailda provider --forwards` prints it (ADR 47). Pure. */
+export function keptForwardLines(one: import("@mailda/contract/schemas").KeptForwardRow): string[];
+
 /** Posts the read with the operator's credential and prints what the Node recorded or why it refused. Never exits or throws. */
 export function verifiedDestinationsStep(input: { origin: string; cookie: string; accountId: string; token: string }): Promise<void>;
 

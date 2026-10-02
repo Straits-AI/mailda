@@ -246,7 +246,19 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.routing_rule_read_back",
       "provider.catch_all_taken_over",
       "provider.catch_all_put_back",
+      // A destination registered with the account (ADR 47): it lives in Cloudflare's account, not a row here.
+      "provider.destination_added",
     ],
+  },
+  /*
+   * Migration 0074 (ADR 47): one row per receipt that arrived at an address keeping a forward, written in the
+   * receipt's own batch by `acceptInbound` and settled by `forwardKept`. Exempt for the reason the receipt is: it is
+   * an inbound delivery's machine record, made by no person, and the act a person did make, keeping the forward, is
+   * `provider.routing_rule_taken_over` with `forward: "keep"` on its detail.
+   */
+  kept_forward_attempts: {
+    exempt: "an inbound delivery's own record of its kept forward, written with the receipt and settled by the email "
+      + "handler; no person acts here, and keeping the forward is audited as provider.routing_rule_taken_over",
   },
   /*
    * Migration 0070's two tables: which of this Node's recipients were verified Email Routing destinations of

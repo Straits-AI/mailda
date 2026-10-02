@@ -7,6 +7,7 @@ import {
 import { holdToken } from "./support/provider-token.ts";
 import { recordedInName } from "@mailda/contract/routing-rule-name";
 import { putBackRule, routingRulesFor, takeOverRule } from "../src/provider/routing-rules.ts";
+import { removeAddress } from "../src/provider/receiving.ts";
 
 /**
  * Taking over a routing rule that already points somewhere, and putting it back (#258).
@@ -68,6 +69,8 @@ function serving(
     settings = { enabled: true, status: "ready", support_subaddress: false } as Record<string, unknown> | null,
     put = "apply" as "apply" | "ignore" | "refuse" | "lose" | "nameless",
     readBack = "answer" as "answer" | "lost",
+    // The account's destination addresses (ADR 47), as Cloudflare lists them; null answers a refusal.
+    destinations = [{ email: "somebody@gmail.test", verified: "2025-01-01T00:00:00Z" }] as Array<{ email: string; verified: string | null }> | null,
   } = {},
 ) {
   const rules = initial.map((one) => ({ ...one }));
@@ -81,6 +84,7 @@ function serving(
       status: 200, headers: { "content-type": "application/json" },
     });
     if (path.startsWith("/zones?name=example.test")) return ok([{ id: "zone_1", name: "example.test" }]);
+    if (path.includes("/email/routing/addresses")) return destinations === null ? refused(10000, "Authentication error") : ok(destinations);
     if (path.startsWith("/zones?name=")) return ok([]);
     if (path === "/zones/zone_1/email/routing") return settings === null ? refused(10000, "Authentication error") : ok(settings);
     const one = /\/email\/routing\/rules\/([^?]+)$/.exec(path);
@@ -119,9 +123,11 @@ async function entries(action: string) {
  * Lists the rules and takes `ruleId` over with the digest shown, as the Setup button does, into the one mailbox
  * unless told otherwise: a forward rule is refused without one (`E_ROUTING_FORWARD_NEEDS_MAILBOX`).
  */
-async function takeOver(ruleId: string, mailboxId: string | null = MAILBOX) {
+async function takeOver(ruleId: string, mailboxId: string | null = MAILBOX, forward?: "keep" | "stop" | null) {
   const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules.find((r) => r.id === ruleId)!;
-  return await takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", ruleId, listed.digest, mailboxId);
+  // A forward rule names its choice (ADR 47); these tests are about the take-over itself, so it stops, as before ADR 47.
+  const choice = forward !== undefined ? forward : listed.action === "forward" ? "stop" : null;
+  return await takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", ruleId, listed.digest, mailboxId, choice);
 }
 
 describe("listing a zone's routing rules", () => {
@@ -178,7 +184,7 @@ describe("taking a rule over", () => {
     const { puts } = serving([FORWARD]);
     const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
     const outcome = await takeOverRule(
-      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX,
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX, "stop",
     );
     expect(outcome.before).toEqual({ action: "forward", destinations: ["somebody@gmail.test"] });
     expect(outcome.after).toEqual({ action: "worker", destinations: ["mailda-test"] });
@@ -208,7 +214,7 @@ describe("taking a rule over", () => {
       testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_all", listing.rules[1]!.digest, null,
     )).rejects.toThrow(/E_ROUTING_RULE_NOT_AN_ADDRESS/);
     await takeOverRule(
-      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listing.rules[0]!.digest, MAILBOX,
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listing.rules[0]!.digest, MAILBOX, "stop",
     );
     const again = await routingRulesFor(testEnv, atTime(AT + 5000), ORG, "example.test");
     await expect(takeOverRule(
@@ -224,7 +230,7 @@ describe("putting a rule back", () => {
       .rejects.toThrow(/E_ROUTING_RULE_NEVER_TAKEN/);
     const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
     await takeOverRule(
-      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX,
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX, "stop",
     );
     const back = await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello");
     expect(back.after).toEqual({ action: "forward", destinations: ["somebody@gmail.test"] });
@@ -238,7 +244,7 @@ describe("putting a rule back", () => {
     const { rules } = serving([FORWARD]);
     const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
     await takeOverRule(
-      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX,
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX, "stop",
     );
     rules[0]!.actions = [{ type: "drop" }];
     await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello"))
@@ -413,7 +419,14 @@ describe("what the listing offers, per kind of rule", () => {
       label: "receive here only",
       says: "somebody@gmail.test gets nothing more for hello@example.test: it is stored here instead, and replies sent from somebody@gmail.test are not seen here",
       filesInto: null, asksMailbox: true,
+      // The third choice on a forward (ADR 47), naming the three costs it accepts.
+      keep: {
+        label: "receive here and keep forwarding to somebody@gmail.test",
+        says: expect.stringMatching(/^hello@example.test is stored here first, then this Node forwards each message to somebody@gmail.test, as the rule did\. The copy leaves before this Node scans the message; a forward that fails is shown on People and is not told to the sender; and Cloudflare reports no delivery/),
+      },
     });
+    expect(by.rule_sales!.takeOver!.keep).toBeNull();
+    expect(by.rule_junk!.takeOver!.keep).toBeNull();
     expect(by.rule_sales!.takeOver).toMatchObject({
       label: "receive here", filesInto: null, asksMailbox: false,
       says: expect.stringMatching(/^info-worker stops receiving mail for sales@example.test, and this Node cannot see what info-worker did with it/),
@@ -515,5 +528,89 @@ describe("the take-over is recorded in the rule's own name (critic H1, 1 October
     rules[0]!.name = "renamed in the dashboard";
     await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello");
     expect([rules[0]!.name, rules[0]!.actions]).toEqual(["renamed in the dashboard", FORWARD.actions]);
+  });
+});
+
+describe("a forward rule's third choice: receive here and keep forwarding (ADR 47)", () => {
+  const kept = async () => await testEnv.CATALOG.prepare(
+    "SELECT kept_forward_to AS too, kept_forward_verified AS verified FROM addresses WHERE org_id = ? AND address = ?",
+  ).bind(ORG, "hello@example.test").first<{ too: string | null; verified: string | null }>();
+
+  it("refuses a forward rule taken over with no choice made, and writes nothing", async () => {
+    const { puts } = serving([FORWARD]);
+    await expect(takeOver("rule_hello", MAILBOX, null)).rejects.toThrow(/E_ROUTING_FORWARD_NEEDS_CHOICE[\s\S]*somebody@gmail.test/);
+    expect(puts).toEqual([]);
+    expect(await kept()).toBeNull();
+  });
+
+  it("refuses a choice on a rule that is not a forward", async () => {
+    serving([{ ...FORWARD, actions: [{ type: "worker", value: ["info-worker"] }] }]);
+    await expect(takeOver("rule_hello", MAILBOX, "keep")).rejects.toThrow(/E_ROUTING_FORWARD_NOT_A_FORWARD/);
+  });
+
+  it("keeps the rule's own destination on the address, read verified, and says so on the outcome and the entry", async () => {
+    serving([FORWARD], { destinations: [{ email: "Somebody@Gmail.test", verified: "2025-01-01T00:00:00Z" }] });
+    const outcome = await takeOver("rule_hello", MAILBOX, "keep");
+    expect(outcome.keptForward).toBe("somebody@gmail.test");
+    expect(await kept()).toEqual({ too: "somebody@gmail.test", verified: "verified" });
+    const [entry] = await entries("provider.routing_rule_taken_over");
+    expect(entry!.detail).toMatchObject({ forward: "keep", keptForwardVerified: "verified" });
+  });
+
+  it("keeps nothing when the choice is stop", async () => {
+    serving([FORWARD]);
+    expect((await takeOver("rule_hello", MAILBOX, "stop")).keptForward).toBeNull();
+    expect(await kept()).toEqual({ too: null, verified: null });
+  });
+
+  it("refuses to keep a forward to a destination the account lists unverified or not at all, and writes nothing", async () => {
+    const { puts } = serving([FORWARD], { destinations: [{ email: "somebody@gmail.test", verified: null }] });
+    await expect(takeOver("rule_hello", MAILBOX, "keep")).rejects.toThrow(/E_FORWARD_DESTINATION_NOT_VERIFIED[\s\S]*registered but not yet verified/);
+    serving([FORWARD], { destinations: [] });
+    await expect(takeOver("rule_hello", MAILBOX, "keep")).rejects.toThrow(/E_FORWARD_DESTINATION_NOT_VERIFIED[\s\S]*mailda provider --add-destination somebody@gmail.test/);
+    expect(puts).toEqual([]);
+    expect(await kept()).toBeNull();
+  });
+
+  it("keeps it as not checked when the list cannot be read: the first forward is then the check", async () => {
+    serving([FORWARD], { destinations: null });
+    expect((await takeOver("rule_hello", MAILBOX, "keep")).keptForward).toBe("somebody@gmail.test");
+    expect(await kept()).toEqual({ too: "somebody@gmail.test", verified: null });
+  });
+
+  it("drops the kept forward when Cloudflare refuses the PUT, so the address is neither stuck nor forwarding", async () => {
+    serving([FORWARD], { put: "refuse" });
+    await expect(takeOver("rule_hello", MAILBOX, "keep")).rejects.toThrow();
+    expect(await kept()).toEqual({ too: null, verified: null });
+  });
+
+  it("keeps it when the outcome of the PUT is unknown, since the rule may route here now", async () => {
+    serving([FORWARD], { put: "lose", readBack: "lost" });
+    await expect(takeOver("rule_hello", MAILBOX, "keep")).rejects.toThrow(/E_ROUTING_RULE_NOT_CONFIRMED/);
+    expect((await kept())?.too).toBe("somebody@gmail.test");
+  });
+
+  it("clears the kept forward with a confirmed put-back, which restores the forward in Cloudflare", async () => {
+    const { rules } = serving([FORWARD]);
+    await takeOver("rule_hello", MAILBOX, "keep");
+    const back = await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello");
+    expect(back.keptForward).toBeNull();
+    expect(rules[0]!.actions).toEqual(FORWARD.actions);
+    expect(await kept()).toEqual({ too: null, verified: null });
+  });
+
+  it("keeps the forward when the put-back is refused, since mail still reaches this Node", async () => {
+    serving([FORWARD]);
+    await takeOver("rule_hello", MAILBOX, "keep");
+    serving([{ ...FORWARD, name: "mailda mailda-test (was forward somebody@gmail.test, repointed 2026-09-19)", actions: [{ type: "worker", value: ["mailda-test"] }] }], { put: "refuse" });
+    await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello")).rejects.toThrow();
+    expect((await kept())?.too).toBe("somebody@gmail.test");
+  });
+
+  it("refuses to remove an address that keeps a forward, naming the put-back", async () => {
+    serving([FORWARD]);
+    await takeOver("rule_hello", MAILBOX, "keep");
+    await expect(removeAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "hello@example.test"))
+      .rejects.toThrow(/E_ADDRESS_KEEPS_A_FORWARD[\s\S]*put the rule back first/);
   });
 });

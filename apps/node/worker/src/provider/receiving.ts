@@ -679,8 +679,8 @@ export async function removeAddress(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string, address: string,
 ): Promise<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }> {
   const normalized = address.trim().toLowerCase();
-  const row = await env.CATALOG.prepare("SELECT id, mailbox_id FROM addresses WHERE org_id = ? AND address = ?")
-    .bind(orgId, normalized).first<{ id: string; mailbox_id: string }>();
+  const row = await env.CATALOG.prepare("SELECT id, mailbox_id, kept_forward_to FROM addresses WHERE org_id = ? AND address = ?")
+    .bind(orgId, normalized).first<{ id: string; mailbox_id: string; kept_forward_to: string | null }>();
   if (row === null) {
     throw notFound("E_NO_SUCH_ADDRESS", {
       what: `${JSON.stringify(address)} is not an address on this Node`,
@@ -689,6 +689,18 @@ export async function removeAddress(
     });
   }
   const domain = normalized.slice(normalized.indexOf("@") + 1);
+  /*
+   * A kept forward (ADR 47) is the customer's forward rule carried by this Node: removing the address would bounce
+   * the mail the rule still routes here and end the forward with it. The rule goes back first, which clears it.
+   */
+  if (row.kept_forward_to !== null) {
+    throw conflict("E_ADDRESS_KEEPS_A_FORWARD", {
+      what: `${normalized} keeps forwarding to ${row.kept_forward_to} through a rule this Node took over`,
+      why: "removing the address would make the rule's mail bounce here and stop the forward without restoring the rule",
+      fix: `put the rule back first, which restores the forward in Cloudflare and clears it here: \`mailda provider --routing-rules ${domain}\` `
+        + "lists it with its put-back command, and the Setup screen offers it",
+    });
+  }
   const received = async () => (await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM ingress_receipts WHERE org_id = ? AND envelope_to = ?")
     .bind(orgId, normalized).first<{ n: number }>())?.n ?? 0;
   const refusal = (n: number) => conflict("E_ADDRESS_HAS_MAIL", {

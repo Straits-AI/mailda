@@ -191,6 +191,13 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
     "GET /api/me": { signedIn: true, principalId: "υσρ_ανα", principalKind: "user", userId: "υσρ_ανα", delegatorUserId: null, organizationId: "οργ_χ", email: ANA },
     "GET /api/mailboxes": { mailboxes: [mailbox("μβχ_1", "Υποστήριξη", SUPPORT), ...list([mailbox("μβχ_2", "Πωλήσεις", null, { unclaimed: 0, claimed: 0, mine: 0 })])] },
     "GET /api/mailboxes/readable": { mailboxes: [{ id: "μβχ_1", name: "Υποστήριξη" }] },
+    // A kept forward (ADR 47) whose latest attempt Cloudflare refused, so People draws the line with the Node's words.
+    "GET /api/forwards": {
+      forwards: list([{
+        address: SUPPORT, mailboxId: "μβχ_1", to: OUTSIDE, verified: "verified", checkedAt: AT,
+        last: { state: "refused", at: AT, error: "destination address not verified" }, lastHandedOverAt: AT,
+      }]),
+    },
     "GET /api/mailboxes/μβχ_1/cases": {
       cases: list([
         caseRow("ψασ_1"),

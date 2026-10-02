@@ -9,7 +9,7 @@ import { count, dateTime } from "../format.ts";
 import { OnboardingProgress } from "../onboarding.tsx";
 import { NodeWords, marked, sentence } from "../words.tsx";
 import {
-  forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, recordVerifiedDestinations,
+  addDestination, forgetProviderToken, onboardReceiving, onboardSending, putBackRule, receivingProposal, recordVerifiedDestinations,
   createMailbox, registerProviderToken, routingRulesOn, takeOverRule,
   sendingProposal, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
@@ -465,6 +465,8 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
   const [listing, setListing] = useState<RoutingRules | null>(null);
   const [mailboxId, setMailboxId] = useState("");
   const [arming, setArming] = useState<string | null>(null);
+  // A forward rule's choice (ADR 47): which of its two buttons armed the confirm. Undefined on any other rule.
+  const [forward, setForward] = useState<"keep" | "stop" | undefined>(undefined);
   const [problem, setProblem] = useState<ReactNode>(null);
   const [outcome, setOutcome] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
@@ -480,8 +482,9 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     setListing(answer.value.routing);
   }
 
-  function arm(rule: RoutingRule) {
+  function arm(rule: RoutingRule, choice?: "keep" | "stop") {
     setArming(rule.id);
+    setForward(choice);
     // The mailbox already named after the address first, then (a forward) a new one, else the only one, else none yet.
     const { named, fresh } = namedAfter(rule, boxes);
     setMailboxId(named?.id ?? (rule.takeOver?.asksMailbox ? (fresh ? NEW_MAILBOX : "") : boxes.length === 1 ? boxes[0]!.id : ""));
@@ -503,7 +506,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     }
     const answer = rule.offer === "put_back"
       ? await putBackRule(listing.domain, rule.id)
-      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined);
+      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined, forward);
     setBusy(false);
     setArming(null);
     if (!answer.ok) {
@@ -519,6 +522,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
         {sentence("setup.rules.done", { address: done.to, before: goesTo(done.before), after: goesTo(done.after) })}
         {done.mailbox === null ? null : <>{t("join.sentence")}{t("setup.rules.filedInto", { name: done.mailbox.name })}</>}
         {done.nameRecorded === false ? <>{t("join.sentence")}{t("setup.rules.nameNotRecorded")}</> : null}
+        {(done.keptForward ?? null) === null ? null : <>{t("join.sentence")}{t("setup.rules.keptForward", { to: done.keptForward ?? "" })}</>}
       </>,
     );
   }
@@ -568,7 +572,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                       <span className="dim">{rule.refusal === null ? null : nodeSaid(`${rule.refusal.what}: ${rule.refusal.fix}`)}</span>
                     ) : arming === rule.id ? (
                       <>
-                        {rule.takeOver === null ? null : <p><NodeWords>{rule.takeOver.says}.</NodeWords></p>}
+                        {rule.takeOver === null ? null : <p><NodeWords>{forward === "keep" ? rule.takeOver.keep?.says : rule.takeOver.says}.</NodeWords></p>}
                         {rule.takeOver === null ? null : rule.takeOver.filesInto !== null || (!rule.takeOver.asksMailbox && boxes.length === 1) ? (
                           // No choice to make, so the mailbox is named before the confirm, as `mailda setup`'s plan names it.
                           <p>{t("setup.rules.filesInto", { name: rule.takeOver.filesInto?.name ?? boxes[0]!.name })}</p>
@@ -580,9 +584,17 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                         </button>
                       </>
                     ) : (
-                      <button type="button" className="quiet" disabled={busy} onClick={() => arm(rule)}>
-                        {rule.offer === "put_back" ? t("setup.rules.putBack") : <NodeWords>{rule.takeOver?.label ?? "?"}</NodeWords>}
-                      </button>
+                      <>
+                        <button type="button" className="quiet" disabled={busy} onClick={() => arm(rule, (rule.takeOver?.keep ?? null) === null ? undefined : "stop")}>
+                          {rule.offer === "put_back" ? t("setup.rules.putBack") : <NodeWords>{rule.takeOver?.label ?? "?"}</NodeWords>}
+                        </button>
+                        {/* A forward rule's third choice, in the Node's words (ADR 47). */}
+                        {rule.offer === "take_over" && (rule.takeOver?.keep ?? null) !== null ? (
+                          <>{" "}<button type="button" className="quiet" disabled={busy} onClick={() => arm(rule, "keep")}>
+                            <NodeWords>{rule.takeOver!.keep!.label}</NodeWords>
+                          </button></>
+                        ) : null}
+                      </>
                     )}
                   </td>
                 </tr>
@@ -820,15 +832,20 @@ function VerifiedDestinations() {
   const [read, setRead] = useState<VerifiedDestinationsState | null>(null);
   const [problem, setProblem] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
+  // The account's list can hold anybody's inbox, so the addresses are fetched only when asked for (ADR 47).
+  const [showAddresses, setShowAddresses] = useState(false);
+  const queryClient = useQueryClient();
 
   async function readList() {
     setProblem(null);
     setRead(null);
     setBusy(true);
-    const answer = await recordVerifiedDestinations();
+    const answer = await recordVerifiedDestinations(showAddresses);
     setBusy(false);
     if (!answer.ok) { setProblem(marked(answer)); return; }
     setRead(answer.value.destinations);
+    // The read re-checks each kept forward's destination, which People shows.
+    await queryClient.invalidateQueries({ queryKey: ["forwards"] });
   }
 
   return (
@@ -837,9 +854,54 @@ function VerifiedDestinations() {
       <p className="dim">{sentence("setup.verified.about", { command: SETUP_COMMAND })}</p>
       <Refusal said={problem} />
       {read === null ? null : <VerifiedDestinationsRead read={read} />}
+      <label className="field-row" htmlFor="setup-verified-addresses">
+        <input id="setup-verified-addresses" type="checkbox" checked={showAddresses} onChange={(event) => setShowAddresses(event.target.checked)} />
+        <span>{t("setup.verified.showAddresses")}</span>
+      </label>
       <button className="quiet" type="button" onClick={() => void readList()} disabled={busy}>
         {busy ? t("setup.working") : t("setup.verified.read")}
       </button>
+      <AddDestination />
+    </>
+  );
+}
+
+/** Registering a destination address (ADR 47): Cloudflare mails the link, and the answer says what ends the wait. */
+function AddDestination() {
+  const [email, setEmail] = useState("");
+  const [problem, setProblem] = useState<ReactNode>(null);
+  const [said, setSaid] = useState<ReactNode>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    setProblem(null);
+    setSaid(null);
+    setBusy(true);
+    const answer = await addDestination(email.trim());
+    setBusy(false);
+    if (!answer.ok) { setProblem(marked(answer)); return; }
+    const { destination } = answer.value;
+    const named = { email: <span className="mono">{destination.email}</span> };
+    setSaid(destination.state === "verified" ? sentence("setup.destination.verified", named)
+      : sentence(destination.added ? "setup.destination.waiting" : "setup.destination.alreadyWaiting", named));
+  }
+
+  return (
+    <>
+      <h3>{t("setup.destination.title")}</h3>
+      <p className="dim">{t("setup.destination.about")}</p>
+      <Refusal said={problem} />
+      {said === null ? null : <p className="notice" role="status">{said}</p>}
+      <div className="limits-ask">
+        <label className="field-row" htmlFor="setup-destination-email">
+          <span>{t("setup.destination.email")}</span>
+          <input id="setup-destination-email" className="mono" type="email" placeholder="someone@example.com" value={email}
+            onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy || email.trim() === ""}>
+          {busy ? t("setup.working") : t("setup.destination.add")}
+        </button>
+      </div>
     </>
   );
 }
@@ -861,11 +923,27 @@ function VerifiedDestinationsRead({ read }: { read: VerifiedDestinationsState })
   }
   // A read that succeeded names its time, in the viewer's zone (the owner's round three, G4), and its account.
   const at = { at: read.readAt === null ? "" : dateTime(read.readAt), account: read.accountId ?? "" };
-  if (read.recipients === 0) return <p className="notice" role="status">{t("setup.verified.nobody", at)}</p>;
+  // `?? null`: a Node older than ADR 47 answers without either field.
+  const listed = (read.listed ?? null) === null ? null : (
+    <>
+      <p className="dim">{t("setup.verified.listed", { verified: read.listed!.verified, waiting: read.listed!.waiting })}</p>
+      {(read.addresses ?? null) === null ? null : (
+        <ul className="grant-list" aria-label={t("setup.verified.addresses")}>
+          {read.addresses!.map((one) => (
+            <li key={one.email}><span className="mono">{one.email}</span>{" "}<span className="dim">{t(`setup.verified.state.${one.state}`)}</span></li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+  if (read.recipients === 0) return <><p className="notice" role="status">{t("setup.verified.nobody", at)}</p>{listed}</>;
   return (
-    <p className="notice" role="status">
-      {t("setup.verified.some", { ...at, n: read.verified ?? 0, recipients: t("setup.verified.recipients", { n: read.recipients }) })}
-    </p>
+    <>
+      <p className="notice" role="status">
+        {t("setup.verified.some", { ...at, n: read.verified ?? 0, recipients: t("setup.verified.recipients", { n: read.recipients }) })}
+      </p>
+      {listed}
+    </>
   );
 }
 
