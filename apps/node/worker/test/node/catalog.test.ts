@@ -37,6 +37,9 @@ const ROUND_FOUR = [
   "transport", "reduced-report", "sanitise", "classifier", "triage", "audit.refused", "workers-paid", "butler-run.stopped",
 ];
 
+/** Kept forwards' three words, accepted in round five in the working session on 3 October 2026. */
+const ROUND_FIVE = ["kept-forward", "destination.waiting", "destination.register"];
+
 const whole = (locale: keyof typeof CATALOGS): Table => ({ ...CATALOGS[locale].preauth, ...CATALOGS[locale].app });
 
 const WORLD: World = {
@@ -204,6 +207,7 @@ describe("the glossary", () => {
     expect(recorded("round three")).toEqual(ROUND_THREE);
     // Round four had no review page, and its record says so rather than linking one.
     expect(recorded("round four")).toEqual(ROUND_FOUR);
+    expect(recorded("round five")).toEqual(ROUND_FIVE);
     const fourth = CONCEPTS.find((concept) => concept.id === "evidence")!.status;
     expect(typeof fourth === "object" ? fourth.record : fourth).toContain("in the working session on 2 October 2026, without a review page");
   });

@@ -182,7 +182,7 @@ export const setup = {
   },
   "setup.verified.recipients": { one: "{n} address", other: "{n} addresses" },
   /** The account's whole destination list, counted (ADR 47); the addresses only when the box below is ticked. */
-  "setup.verified.listed": "The account lists {verified} verified destination address(es) and {waiting} waiting for verification.",
+  "setup.verified.listed": "Destination addresses in the account: {verified} verified, {waiting} waiting for verification.",
   "setup.verified.showAddresses": "Show the addresses",
   "setup.verified.addresses": "The account's destination addresses",
   "setup.verified.state.verified": "verified",

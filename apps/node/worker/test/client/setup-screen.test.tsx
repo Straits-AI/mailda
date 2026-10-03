@@ -584,7 +584,7 @@ describe("registering a destination address (ADR 47)", () => {
     } } } });
     fireEvent.click(await screen.findByLabelText("Show the addresses"));
     fireEvent.click(screen.getByText("Read verified destinations"));
-    expect((await screen.findByText(/The account lists/)).textContent).toBe("The account lists 1 verified destination address(es) and 1 waiting for verification.");
+    expect((await screen.findByText(/Destination addresses in the account/)).textContent).toBe("Destination addresses in the account: 1 verified, 1 waiting for verification.");
     expect(screen.getByText("b@gmail.test").closest("li")!.textContent).toContain("waiting for verification");
     expect(calls.find((one) => one.path === "/api/provider/verified-destinations")!.body).toEqual({ addresses: true });
   });
