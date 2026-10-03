@@ -1434,7 +1434,7 @@ export const butlerRow = z.object({
   live_version: z.number().int().nullable(),
   published_at: isoDate.nullable(),
   draft_version_id: z.string().nullable(),
-  /** A machine stopped it (#75). Null is the ordinary state; the object is what a reader needs next. */
+  /** A machine paused it (#75). Null is the ordinary state; the object is what a reader needs next. */
   pause: z.object({
     pauseId: z.string().min(1),
     butlerId: z.string().min(1),

@@ -31,8 +31,8 @@ import type { PauseReason } from "./pause.ts";
  *
  * **One administrator and not two**, because *an automatic pause nobody can resume is an outage*. Placement
  * needs no administrators at all, so requiring two to undo it would make the machine strictly more powerful
- * than the organization it runs in, and a Node with a single administrator could never restart a Butler the
- * machine stopped. `org.admin` and not *anybody*, because *one anybody can resume is not a pause* — and
+ * than the organization it runs in, and a Node with a single administrator could never resume a Butler the
+ * machine paused. `org.admin` and not *anybody*, because *one anybody can resume is not a pause* — and
  * because it is the authority `src/butlers.ts` already requires to publish a Butler: the person who may make
  * a program live is the person who may make it live again.
  *
@@ -60,7 +60,7 @@ export interface ButlerPausePlaced {
 }
 
 /**
- * The machine stops a Butler.
+ * The machine pauses a Butler.
  *
  * Called from `triggerButlers`, in the sweeper's invocation, at the moment a detector's reading goes over its
  * limit — so the pause exists **before** the run it refuses would have started, and the delivery that tripped
@@ -153,11 +153,11 @@ export interface ButlerPauseResumed {
 }
 
 /**
- * A person restarts a Butler. **One administrator, alone, with a reason.** See the header for both halves.
+ * A person resumes a Butler. **One administrator, alone, with a reason.** See the header for both halves.
  *
  * The whole act is one conditional `UPDATE` with its audit entry in the same transaction. `resumed_at IS
  * NULL` is what makes two concurrent resumes produce one resume and one refusal (#9), and it is what makes
- * the entry true: an entry written for an `UPDATE` that changed nothing would say an administrator restarted
+ * the entry true: an entry written for an `UPDATE` that changed nothing would say an administrator resumed
  * a Butler that was already running.
  */
 export async function resumeButlerPause(
@@ -179,7 +179,7 @@ export async function resumeButlerPause(
       what: "a Butler resume needs a reason, and this one is empty",
       why: "the pause was placed by a machine, so this is the only human judgement anywhere in its "
         + "lifecycle — a blank reason means nobody recorded a decision at any point in it, and the next "
-        + "person to read the trail cannot tell a considered restart from a reflex",
+        + "person to read the trail cannot tell a considered resume from a reflex",
       fix: "send {\"reason\":\"...\"} saying what was fixed, or why the loop was legitimate",
     });
   }
@@ -192,15 +192,15 @@ export async function resumeButlerPause(
   if (paused === null) {
     throw notFound("E_NO_BUTLER_PAUSE", {
       what: `${pauseId} is not a Butler pause in this organization`,
-      why: "a resume names the pause it releases; there is nothing here to release",
+      why: "a resume names the pause it ends; there is nothing here to resume",
       fix: "GET /api/butler-pauses lists every pause in force with its Butler, its reason and what tripped it",
     });
   }
   if (paused.resumed_at !== null) {
     throw conflict("E_BUTLER_PAUSE_ALREADY_RESUMED", {
       what: `pause ${pauseId} was resumed at ${paused.resumed_at}`,
-      why: "a resumed pause stops nothing, so there is nothing left to release; the row stays as the record "
-        + "of what was stopped, why, and when it started again",
+      why: "a resumed pause holds nothing back, so there is nothing left to resume; the row stays as the record "
+        + "of what was paused, why, and when it was resumed",
       fix: `nothing to do — ${paused.butler_id} runs on the next delivery its trigger matches`,
     });
   }
@@ -232,7 +232,7 @@ export async function resumeButlerPause(
   if ((results[1]?.meta.changes ?? 0) === 0) {
     // Somebody else resumed it between the read above and this write. Their resume stands and nothing here
     // was recorded, which is the honest outcome: two entries for one resume would say two administrators
-    // restarted a Butler, and one of them did not.
+    // resumed a Butler, and one of them did not.
     throw conflict("E_BUTLER_PAUSE_ALREADY_RESUMED", {
       what: `pause ${pauseId} was resumed by somebody else while this request was in flight`,
       why: "the resume and its audit entry share one transaction, so a resume that lost the race recorded "

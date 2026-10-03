@@ -4528,3 +4528,14 @@ as "No …, or you do not hold org.admin.", so a Node that could not reach its c
 not one. The Node answers a non-administrator 404 on People, Rules, Butlers and the holds list, and those screens now
 say it on a 404 only and show any other failure as failed, in the Node's words, as Limits has since G5. The matters
 list is never refused to a member (it lists their own), so its sentence is gone and every failure there is failed.
+
+**The API says a Butler is paused and resumed (G6's Butler half).** The screens say a Butler is paused and an
+administrator resumes it (D26); the Node said a machine "stopped" it and an administrator "restarted" it, in the two
+`/api/butler-pauses` summaries (so the SDK's comments), the audit vocabulary, the resume's refusals and doctor. They
+say pause and resume now, and a resume no longer "releases" a pause, a held send's verb. **For an agent:** every code
+and field name is byte-identical (`E_BUTLER_PAUSE_REASON_REQUIRED`, `E_NO_BUTLER_PAUSE`,
+`E_BUTLER_PAUSE_ALREADY_RESUMED`, `E_BUTLER_PAUSED`, `butler_paused`, `butler.paused`, `butler.resumed`, `pauseId`), so
+matching on codes is unaffected; text matched on "Restart a stopped Butler", "Butlers a machine has stopped",
+"This Node stopped a Butler" or "restarted a paused Butler" no longer appears. The audit vocabulary's `says` is the
+code's description of an action and no entry stores it; a stored `butler_pauses.detail`, and the `said` an audit entry
+recorded, are records and are not rewritten (both already said paused).
