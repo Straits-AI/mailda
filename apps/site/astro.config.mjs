@@ -11,9 +11,10 @@ import starlight from "@astrojs/starlight";
  *
  * Two locales, as the Node has (docs/i18n.md): English at the root and Simplified Chinese under /zh-cn/, whose
  * menus, search and navigation are Starlight's own zh translations (it finds them from `lang`, zh-Hans to zh).
- * The doc bodies exist only in English, so /zh-cn/docs/* is Starlight's fallback: the English page, marked
+ * Most doc bodies exist only in English, so most of /zh-cn/docs/* is Starlight's fallback: the English page, marked
  * `lang="en"`, under its notice that this content is not available in your language yet. That notice is the
- * honest label, and nothing is copied on disk to make it. The landing pages are `src/pages/index.astro` and
+ * honest label, and nothing is copied on disk to make it. A doc translated in `docs/zh-cn/` is rendered at its slug
+ * instead, and held to its English by a recorded hash (docs/i18n.md, *Doc translations*). The landing pages are `src/pages/index.astro` and
  * `src/pages/zh-cn/index.astro`.
  */
 export default defineConfig({

@@ -4491,3 +4491,17 @@ script itself under `node:vm`.
 Both pages now import the README as `?raw`, which Vite resolves from the source. And Starlight finds its built-in
 words by stripping a region from `lang` with `-[a-zA-Z]{2}`, which turns zh-Hans into `zhns`. Under zh-Hans the docs
 had English menus until the build handed Starlight its own zh-CN translations under that tag.
+
+**Three docs are in Simplified Chinese, and a translation cannot fall behind its English silently** (3 October 2026,
+with the owner's approval). The README through its *Status* section, `docs/cloudflare-settings.md` and the runbook part of
+`docs/disaster-recovery.md` are translated in `docs/zh-cn/`, in the glossary's words, and mailda.site renders each at
+its English page's path under `/zh-cn/` in place of Starlight's fallback. Each records the SHA-256 of the English it was
+made from, and `apps/site/test/translations.test.mjs` fails when that English changes, naming both files and saying to
+update the translation or remove it. The hash covers the whole English file, so the README's translation will go red
+about twice a day, at the README's rate of change (71 commits in the month before); that is the intended cost, since a
+Chinese page still describing what the English stopped saying is the failure the rule exists for. The same test holds
+each translation to its English's code blocks byte for byte, its links, inline code, tables and headings, to the
+glossary's `NEVER` list and to the register, and every one of those assertions was seen to fail on a mutation before it
+was kept. `docs/onboarding-journey.md`, proposed with them, was left in English: it is an analysis, and its operator
+steps are the README's. Turbo's cache for the site's tests now keys on the README, `docs/` and the glossary, so a
+README edit alone re-runs the hash check locally rather than only in CI.

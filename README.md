@@ -441,6 +441,8 @@ apps/site                              mailda.site: Astro + Starlight, static; t
 docs/history.md                        what each change found, in the order it was found
 docs/i18n.md                           the interface's languages: the catalog, the preview flag, the glossary
                                        and its confirmation, the register rules, and the checks
+docs/zh-cn/                            Simplified Chinese translations of the docs an operator needs first,
+                                       each held to its English by a recorded hash (docs/i18n.md)
 ```
 
 ## Contributing

@@ -32,6 +32,22 @@
       ],
       "outputs": []
     },
+    "@mailda/site#test": {
+      "dependsOn": [
+        "^build",
+        "@mailda/receipts#generate"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "../../README.md",
+        "../../AGENTS.md",
+        "../../docs/**/*.md",
+        "../node/worker/src/i18n/glossary.ts",
+        "../../install.sh",
+        "../../update.sh"
+      ],
+      "outputs": []
+    },
     "bench": {
       "dependsOn": [
         "^build"
