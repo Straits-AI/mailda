@@ -159,8 +159,9 @@ identical hand-written predicates is a widening that reaches two of them.
 clears both too. A reason exists exactly on `awaiting` and `withheld`. The record of the trip is the
 `send.rate_limited` entry, not the row. Until 1 October 2026 neither write cleared them;
 `0073_state_reason_invariant.sql` repairs the rows they left before it ran. The previous version keeps writing
-them from the expand step until promotion, and for good if the canary check fails, so the next release runs the
-same repair again.
+them from the expand step until promotion, and for good if the canary check fails, so the scheduled handler runs
+the same repair every minute (`repairStaleReasons`, #319). Once the fixed version is promoted, the rows are clear
+within a minute, whatever order the Node upgraded in.
 
 **The policy gates stay closed, twice over.** `BREAKER_REASONS` is derived from `RATE_BREAKERS`, so
 `policy_hold` and `policy_approval_required` are not in it and could only get there by somebody declaring a

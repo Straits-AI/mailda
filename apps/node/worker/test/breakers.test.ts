@@ -1,4 +1,5 @@
 import { env } from "cloudflare:test";
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
@@ -9,12 +10,15 @@ import { DISPATCH_REASONS } from "../src/outbound/recheck.ts";
 import { createPolicyDraft, publishPolicy } from "../src/policy.ts";
 import { applySendingEvent } from "../src/outbound/events.ts";
 import { recordDeliveryReport } from "../src/outbound/delivery-report.ts";
-import { cancelSend, dispatchDue, dispatchOne, type SendState } from "../src/outbound/dispatch.ts";
+import {
+  cancelSend, dispatchDue, dispatchOne, REASON_REPAIR_LIMIT, repairStaleReasons, type SendState,
+} from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
 import { liftSuppression, suppressedAmong } from "../src/suppression.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { runDoctor } from "../src/doctor.ts";
 import { statementsOf } from "../src/sql-statements.ts";
+import worker from "../src/index.ts";
 // Imported as text, the way `src/migrate.ts` does, so the test runs the bytes a Node will.
 import STATE_REASON_REPAIR from "../migrations/0073_state_reason_invariant.sql";
 
@@ -732,6 +736,151 @@ describe("a rate gate's reason does not outlive the gate", () => {
     expect(await manifestRow(refused.id)).toMatchObject({
       state_reason: "evidence_changed", last_error: "the body hash differs",
     });
+  });
+});
+
+/**
+ * The same repair, run by the current version every minute rather than once (#319). 0073 ran in the expand step,
+ * and the version before it keeps serving through the canary, so a stale pair can be written after 0073 ran and
+ * no migration would ever run again for it. Each row below is written with raw SQL, the way that version's claim
+ * and cancel left it, after every migration has run.
+ */
+describe("the scheduled repair restores a reason's invariant whenever the stale pair was written", () => {
+  const set = (id: string, state: string, reason: string | null, lastError: string | null) =>
+    testEnv.CATALOG.prepare("UPDATE send_manifests SET state = ?, state_reason = ?, last_error = ? WHERE id = ?")
+      .bind(state, reason, lastError, id).run();
+
+  /** `count` copies of a sealed send, each in `state` with `reason` and `lastError`: one statement, not `count` seals. */
+  async function copies(count: number, state: string, reason: string | null, lastError: string | null) {
+    const template = await seal(AUGUST_20);
+    const columns = (await testEnv.CATALOG.prepare("SELECT name FROM pragma_table_info('send_manifests')")
+      .all<{ name: string }>()).results.map((row) => row.name);
+    const value = (column: string) =>
+      column === "id" || column === "rfc_message_id" ? `${column} || '_' || i`
+        : column === "state" ? "?1" : column === "state_reason" ? "?2" : column === "last_error" ? "?3" : column;
+    await testEnv.CATALOG.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?4)
+       INSERT INTO send_manifests (${columns.join(", ")})
+       SELECT ${columns.map(value).join(", ")} FROM send_manifests, n WHERE id = ?5`,
+    ).bind(state, reason, lastError, count, template.id).run();
+    await testEnv.CATALOG.prepare("DELETE FROM send_manifests WHERE id = ?").bind(template.id).run();
+  }
+
+  /** What `env` read from D1 while `run` ran, summed over every statement's `meta.rows_read`. */
+  async function rowsReadBy(run: (env: Env) => Promise<unknown>): Promise<number> {
+    let read = 0;
+    const counted = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, {
+      get(target, key) {
+        if (key === "bind") return (...values: unknown[]) => counted(target.bind(...values));
+        if (key === "all") {
+          return async () => {
+            const result = await target.all();
+            read += result.meta.rows_read ?? 0;
+            return result;
+          };
+        }
+        throw new Error(`rowsReadBy does not count ${String(key)}; extend it before relying on the figure`);
+      },
+    });
+    const catalog = new Proxy(testEnv.CATALOG, {
+      get(target, key) {
+        if (key === "prepare") return (sql: string) => counted(target.prepare(sql));
+        throw new Error(`rowsReadBy does not count ${String(key)}`);
+      },
+    });
+    await run({ ...testEnv, CATALOG: catalog });
+    return read;
+  }
+
+  it("repairs a pair written after the migration, leaves a gate's and a refusal's reason, and is idempotent", async () => {
+    const stale = await seal(AUGUST_20);
+    const cancelled = await seal(AUGUST_20);
+    const gated = await seal(AUGUST_20);
+    const refused = await seal(AUGUST_20);
+    // The old claim's shape (admitted, the gate's reason kept) and the old cancel's (both kept).
+    await set(stale.id, "outcome_unknown", "breaker_volume", "it goes when the window clears");
+    await set(cancelled.id, "cancelled", "policy_hold", "it goes when the window clears");
+    await set(gated.id, "awaiting", "breaker_volume", "it goes when the window clears");
+    await set(refused.id, "withheld", "evidence_changed", "the body hash differs");
+
+    const repaired = await repairStaleReasons(testEnv, ORG);
+    expect(repaired.reasons.sort()).toEqual([stale.id, cancelled.id].sort());
+    expect(repaired.cancelledErrors).toEqual([cancelled.id]);
+    expect(await manifestRow(stale.id)).toMatchObject({
+      state: "outcome_unknown", state_reason: null, last_error: "it goes when the window clears",
+    });
+    expect(await manifestRow(cancelled.id)).toMatchObject({ state: "cancelled", state_reason: null, last_error: null });
+    // The control: a repair that cleared every reason would pass the two lines above.
+    expect(await manifestRow(gated.id)).toMatchObject({
+      state: "awaiting", state_reason: "breaker_volume", last_error: "it goes when the window clears",
+    });
+    expect(await manifestRow(refused.id)).toMatchObject({
+      state: "withheld", state_reason: "evidence_changed", last_error: "the body hash differs",
+    });
+
+    // A second pass finds nothing, which is also what keeps it from logging every minute.
+    expect(await repairStaleReasons(testEnv, ORG)).toEqual({ reasons: [], cancelledErrors: [] });
+    expect(await manifestRow(gated.id)).toMatchObject({ state_reason: "breaker_volume" });
+    expect(await manifestRow(refused.id)).toMatchObject({ state_reason: "evidence_changed" });
+  });
+
+  it("repairs at most REASON_REPAIR_LIMIT sends per statement and takes the rest on the next pass", async () => {
+    await copies(REASON_REPAIR_LIMIT + 1, "cancelled", "policy_hold", "it goes when the window clears");
+    const first = await repairStaleReasons(testEnv, ORG);
+    expect([first.reasons.length, first.cancelledErrors.length]).toEqual([REASON_REPAIR_LIMIT, REASON_REPAIR_LIMIT]);
+    const second = await repairStaleReasons(testEnv, ORG);
+    expect([second.reasons.length, second.cancelledErrors.length]).toEqual([1, 1]);
+    expect(await repairStaleReasons(testEnv, ORG)).toEqual({ reasons: [], cancelledErrors: [] });
+  });
+
+  it("reads the same rows once caught up, however many sends the Node holds", async () => {
+    const empty = await rowsReadBy((env) => repairStaleReasons(env, ORG));
+    // Valid rows of every shape the predicates look at: a state that may carry a reason and carries one, states
+    // that may not and carry none, and cancelled sends without an error. Without 0076's partial indexes each
+    // pass scans all of them.
+    await copies(150, "handed_over", null, "provider words");
+    await copies(150, "cancelled", null, null);
+    await copies(100, "awaiting", "breaker_volume", "it goes when the window clears");
+    await copies(100, "withheld", "evidence_changed", "the body hash differs");
+
+    // Measured 3 October 2026: 6 rows read at both sizes (three per statement, whatever the table holds), and 1,006
+    // with 0076's two indexes dropped. So the assertion is that the figure does not grow with the table.
+    expect(await rowsReadBy((env) => repairStaleReasons(env, ORG))).toBe(empty);
+  });
+
+  it("runs from the cron, and says what it repaired", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM log_entries").run();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('claim', 'x', ?, ?)",
+    ).bind(new Date(AUGUST_20).toISOString(), ORG).run();
+    const stale = await seal(AUGUST_20);
+    await set(stale.id, "cancelled", "policy_hold", "it goes when the window clears");
+
+    const cron = async () => {
+      const execution = createExecutionContext();
+      await worker.scheduled(
+        { scheduledTime: Date.now(), cron: "* * * * *", noRetry: () => undefined } as ScheduledController,
+        testEnv, execution,
+      );
+      await waitOnExecutionContext(execution);
+    };
+    const logged = async () => (await testEnv.CATALOG.prepare(
+      "SELECT level, detail FROM log_entries WHERE event = 'outbound.reasons_repaired'",
+    ).all<{ level: string; detail: string }>()).results;
+
+    await cron();
+    expect(await manifestRow(stale.id)).toMatchObject({ state_reason: null, last_error: null });
+    const lines = await logged();
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!.detail)).toMatchObject({
+      reasons: [stale.id], cancelledErrors: [stale.id], reasonCount: 1, cancelledErrorCount: 1,
+    });
+
+    // Nothing left to repair, so nothing more is logged. A send sealed now is the control: if the current seal
+    // wrote a reason under `held`, the repair would rewrite every fresh send and log every minute.
+    await seal(Date.now());
+    await cron();
+    expect(await logged()).toHaveLength(1);
   });
 });
 

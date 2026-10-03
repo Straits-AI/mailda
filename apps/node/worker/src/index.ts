@@ -13,7 +13,7 @@ import { COPY_OF_HEADER } from "./outbound/copy.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
-import { dispatchDue } from "./outbound/dispatch.ts";
+import { dispatchDue, repairStaleReasons } from "./outbound/dispatch.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { backfillBodyIndex, backfillSearchIndex } from "./search-backfill.ts";
 import { backfillAuthentication } from "./authentication-backfill.ts";
@@ -88,8 +88,8 @@ const handler = {
 
   /**
    * The cron sweep (#41, #63 part B). Independent jobs, run in order: the inbound outbox backstop,
-   * first-response breaches, the search, authentication, body and preview backfills, due notifications, and the
-   * outbound backstop, each described where it runs.
+   * first-response breaches, the search, authentication, body and preview backfills, due notifications, the
+   * outbound backstop, and the repair of a send's reason (#319), each described where it runs.
    *
    * Deliberately thin, and deliberately *scans*. Cron documents no retry, so anything here has to be repaired
    * by the next minute's run rather than depending on this one — which a query over due rows is and a cursor
@@ -340,6 +340,43 @@ const handler = {
         await log(env, clock, {
           level: "error",
           event: "outbound.sweep_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          orgId,
+        }).catch(() => undefined);
+      }
+
+      try {
+        /*
+         * A send's reason and its state agreeing (#319): a `state_reason` only on `awaiting` and `withheld`, no
+         * `last_error` on a cancelled send. The version before 1 October 2026 broke that, and keeps doing so for
+         * as long as it serves through a canary, so `repairStaleReasons` repairs every minute rather than once.
+         * Its header says why.
+         *
+         * Logged only when it changed something, so an idle Node writes nothing. A repair during a deploy is the
+         * old version's rows. One that recurs after promotion means a current writer has regressed, so the ids
+         * are in the line, and a reader can find the send that just changed.
+         */
+        const repaired = await repairStaleReasons(env, orgId);
+        if (repaired.reasons.length > 0 || repaired.cancelledErrors.length > 0) {
+          await log(env, clock, {
+            level: "info",
+            event: "outbound.reasons_repaired",
+            message: `Cleared state_reason on ${repaired.reasons.length} send(s) neither awaiting nor withheld, `
+              + `and last_error on ${repaired.cancelledErrors.length} cancelled send(s).`,
+            orgId,
+            detail: {
+              reasons: repaired.reasons.slice(0, 20),
+              cancelledErrors: repaired.cancelledErrors.slice(0, 20),
+              reasonCount: repaired.reasons.length,
+              cancelledErrorCount: repaired.cancelledErrors.length,
+            },
+          });
+        }
+      } catch (error) {
+        // `warn`: a stale reason is a wrong word beside a state, not lost mail, and the next minute tries again.
+        await log(env, clock, {
+          level: "warn",
+          event: "outbound.reason_repair_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
           orgId,
         }).catch(() => undefined);
