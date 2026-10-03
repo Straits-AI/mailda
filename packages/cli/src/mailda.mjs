@@ -66,7 +66,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --forwards                   the addresses that keep a forward, and each one's latest attempt
   mailda provider --copy <address> on|off      when that address's forward is refused as not verified, send the message
                                                from the address instead: the recipient sees "<sender> via <mailbox>",
-                                               replies go to the sender; up to 5 MiB, no dangerous attachment, counted
+                                               replies go to the sender; up to email.outbound.max_bytes, no dangerous
+                                               attachment, counted
                                                towards today's sending
   mailda provider --destinations [--addresses] the account's Email Routing destinations, counted (listed with --addresses);
                                                re-checks each kept forward's destination

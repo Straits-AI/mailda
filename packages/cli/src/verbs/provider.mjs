@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { BUDGETS } from "@mailda/budgets";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 import { signInAndChooseAccount } from "./install.mjs";
 import { catchAllLine, destinationSaid, keptForwardLines, outcomeRoutesHere, ownRulesLines, verifiedDestinationLines, wranglerToken } from "./provision.mjs";
@@ -199,7 +200,8 @@ export async function provider(argv) {
     process.stdout.write(`\n   ${copy.address}  forwards to ${copy.to}\n     ${copy.by === null
       ? "copies off: a refused forward is shown on People and nothing else is sent"
       : `copies on, by ${copy.by}: when the forward is refused as not verified, the message is sent from ${copy.address}, `
-        + "the recipient sees it from \"<sender> via <mailbox>\" and replies go to the sender; up to 5 MiB; a message with "
+        + `the recipient sees it from "<sender> via <mailbox>" and replies go to the sender; up to ${BUDGETS["email.outbound.max_bytes"]} bytes `
+        + "(email.outbound.max_bytes); a message with "
         + "an attachment this Node judges dangerous is not copied; each copy counts towards today's sending"}\n\n`);
     return;
   }
