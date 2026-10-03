@@ -1,7 +1,7 @@
 ---
 translated_from: README.md
 source_sha256: 6538504a17eb7a5e998c4bb25859169d8e71c5a0cb9c3d6ed3410d5f018dff3a
-source_commit: bb5f130
+source_commit: c3d37bf
 translated_until: "## What's distinctive about how it's built"
 ---
 # 淼达
