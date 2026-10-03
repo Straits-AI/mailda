@@ -4,11 +4,12 @@ import type { SendState } from "@mailda/contract/schemas";
 import { auditedBatch, log } from "../audit.ts";
 import { stopClockForConversation } from "../response-clock.ts";
 import { maySend } from "../authz-read.ts";
+import { isAdmin } from "../access.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822, sentObjectKey } from "./manifest.ts";
 import { BREAKER_REASONS } from "../breakers.ts";
 import {
-  authorityLost, type BreakerRecheck, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow,
+  authorityLost, type BreakerRecheck, copyAuthorityLost, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow,
   envelopeRecord, recheckApproved, recheckBreakers, requiresApproval, type Withholding,
 } from "./recheck.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
@@ -498,8 +499,14 @@ export async function dispatchOne(
   let envelope: EffectEnvelope | null = null;
   let breaker: BreakerRecheck = null;
   if (manifest !== null) {
+    // A copy (ADR 47) is sealed under an administrator's opt-in on its address; that opt-in is read again here, from
+    // the columns the widened SELECT already fetched, plus one `isAdmin` read on copies alone.
+    const copy = manifest.copy_json == null ? null
+      : JSON.parse(manifest.copy_json) as { address: string | null; copyBy: string | null; optedInBy: string };
     if (!(await maySend(env, { orgId, userId: manifest.author_user_id }, manifest.mailbox_id))) {
       withholding = authorityLost(manifest.author_user_id, manifest.mailbox_id);
+    } else if (copy !== null && (copy.copyBy !== copy.optedInBy || !(await isAdmin(env, orgId, copy.optedInBy)))) {
+      withholding = copyAuthorityLost(copy.optedInBy, copy.address);
     } else {
       /*
        * The breakers (#66), on **both** paths, second — after the free-ish authority read and before the

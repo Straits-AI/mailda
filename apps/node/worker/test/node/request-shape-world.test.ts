@@ -140,6 +140,8 @@ describe("every closed set the contract declares is a closed set the boundary en
        */
       "POST /api/provider/destination-addresses",
       "POST /api/provider/verified-destinations",
+      // Copies (ADR 47 amended): a misspelled `copy` dropped would turn copies off for an administrator who said on.
+      "POST /api/forwards/copy",
       "POST /api/provider/domains/purchase",
       "POST /api/provider/sending",
       "POST /api/provider/subscription",
@@ -349,7 +351,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       }
     }
     expect(strict.sort()).toEqual([
-      "DELETE /api/addresses", "POST /api/addresses", "POST /api/agents", "POST /api/mailboxes", "POST /api/policies",
+      "DELETE /api/addresses", "POST /api/addresses", "POST /api/agents", "POST /api/forwards/copy", "POST /api/mailboxes", "POST /api/policies",
       "POST /api/provider/destination-addresses", "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",

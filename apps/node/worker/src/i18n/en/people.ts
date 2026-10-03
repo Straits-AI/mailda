@@ -54,6 +54,20 @@ export const people = {
   "people.forward.refused": "not forwarded at {when}: {reason}",
   "people.forward.withheld": "not forwarded at {when}: it came back from a forward of this Node's own",
   "people.forward.unknown": "no recorded answer for the forward at {when}: the destination may or may not have it",
+  /**
+   * Copies (ADR 47, amended 3 October 2026): what became of the copy the latest refused forward asked for, the
+   * address's setting, and what a copy is, stated where it is turned on. A refusal's reason is the Node's words.
+   */
+  "people.forward.copy.sealed": "a copy was sealed as {send} ({state})",
+  "people.forward.copy.refused": "no copy: {reason}",
+  "people.forward.copy.off": "Copies off.",
+  "people.forward.copy.on": "Copies on, turned on by {by} on {when}.",
+  "people.forward.copy.turnOn": "Send copies",
+  "people.forward.copy.turnOff": "Stop copies",
+  "people.forward.copy.turnedOn": "Copies on for {address}.",
+  "people.forward.copy.turnedOff": "Copies off for {address}.",
+  "people.forward.copy.about":
+    "With copies on, a forward Cloudflare refuses as not verified is followed by a copy from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending and is in the Outbox like any send, sealed under the administrator who turned copies on.",
   "people.mailbox.addresses": "Addresses of {name}",
   "people.mailbox.remove": "Remove",
   "people.mailbox.access": "Access to {name}",

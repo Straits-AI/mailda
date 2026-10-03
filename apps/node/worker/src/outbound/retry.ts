@@ -2,6 +2,8 @@ import { type Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
+import { DANGEROUS } from "../attachments.ts";
+import type { AttachmentVerdict } from "@mailda/contract/schemas";
 import { getEvidence } from "../evidence-store.ts";
 import { dispatchOne, type DispatchResult, type SendState } from "./dispatch.ts";
 import { sealManifest } from "./manifest.ts";
@@ -80,7 +82,13 @@ export type NoRetryReason =
   /** The transport took the bytes. Non-acceptance is *disproven*; a second copy would be certain. */
   | "acceptance_observed"
   /** A state this Node's code does not classify. Fails closed rather than guessing. */
-  | "state_not_classified";
+  | "state_not_classified"
+  /**
+   * A copy (ADR 47) whose outcome is unknown: a resend would mint an empty message (its body is the original's,
+   * carried at render), so it is not offered, and `resendMayDuplicate` refuses it by name. Forwarding the stored
+   * message from its mailbox is the person's act if it is still owed.
+   */
+  | "copy_not_resent";
 
 export type RetryOffer =
   | { readonly mode: "retry-effect"; readonly proof: NonAcceptanceProof }
@@ -93,6 +101,8 @@ export interface RetryFacts {
   readonly fidelity: string;
   /** Whether `submitted_key` is non-NULL. A boolean rather than the key: nothing here needs the R2 path. */
   readonly hasSubmitted: boolean;
+  /** Whether the send is a copy (ADR 47), which is never resent. Absent reads as not a copy. */
+  readonly isCopy?: boolean;
 }
 
 const proven = (proof: NonAcceptanceProof): RetryOffer => ({ mode: "retry-effect", proof });
@@ -119,7 +129,7 @@ const OFFER_FOR: { [S in SendState]: (facts: RetryFacts) => RetryOffer } = {
     // would be the permissive failure on the one path ADR 33 keeps for non-customer mail.
     facts.fidelity === "authored" && !facts.hasSubmitted
       ? proven("never_submitted")
-      : { mode: "resend-may-duplicate", duplicatePossible: true },
+      : facts.isCopy === true ? none("copy_not_resent") : { mode: "resend-may-duplicate", duplicatePossible: true },
 };
 
 /**
@@ -217,13 +227,18 @@ interface ManifestRow {
   envelope_bcc: string | null;
   in_reply_to_message_id: string | null;
   body_typed_key: string;
+  /** 0059: the stored message a person's forward carries whole, or null. */
+  forward_of_message_id: string | null;
+  /** ADR 47: 1 when the send is a copy of a stored message (`send_copies`), whose body is not its own. */
+  is_copy: number;
 }
 
 type RetryRow = ManifestRow & RetryFacts;
 
 const RETRY_COLUMNS =
   `state, fidelity, submitted_key IS NOT NULL AS has_submitted, mailbox_id, author_user_id, subject,
-   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key`;
+   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key, forward_of_message_id,
+   EXISTS (SELECT 1 FROM send_copies c WHERE c.manifest_id = send_manifests.id) AS is_copy`;
 
 async function retryRow(env: Env, orgId: string, manifestId: string): Promise<RetryRow | null> {
   const row = await env.CATALOG.prepare(
@@ -462,7 +477,35 @@ export async function resendMayDuplicate(
     });
   }
 
+  /*
+   * A copy (ADR 47) is refused: its manifest's own body is empty (the original's is carried at render), its authority
+   * is an administrator's opt-in rather than the person asking, and `send_copies` holds one copy per delivery. A
+   * resend sealed from it would be an empty message from the customer's domain.
+   */
+  if (row.is_copy === 1) {
+    throw conflict("E_RESEND_NOT_FOR_A_COPY", {
+      what: `${manifestId} is a copy of a stored message that a refused kept forward asked for`,
+      why: "a copy's body is the original's, carried at render and nowhere in this manifest, and one delivery is copied "
+        + "at most once, so a resend from it would be a different, empty message",
+      fix: "forward the stored message from its mailbox if it is still owed, which is a send of your own",
+    });
+  }
   const body = new TextDecoder().decode(await getEvidence(env, row.body_typed_key));
+  /*
+   * Everything the first send carried, not only its text (3 October 2026). This rebuilt the composition from the
+   * envelope and the typed body alone, so a resend of a person's forward went out without the original (0059) and a
+   * resend of a send with files went out without them (0060): "the same content under a new key" was a different
+   * message. The files are read back from their evidence, by the author's own names, and a part the first seal let
+   * through as dangerous is let through again, because its author said so then and the seal recorded which.
+   */
+  const { results: parts } = await env.CATALOG.prepare(
+    `SELECT COALESCE(author_filename, filename) AS filename, content_type, blob_key, verdict
+       FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal`,
+  ).bind(manifestId).all<{ filename: string; content_type: string; blob_key: string; verdict: string }>();
+  const attachments = [];
+  for (const part of parts) {
+    attachments.push({ filename: part.filename, contentType: part.content_type, content: await getEvidence(env, part.blob_key) });
+  }
   const sealed = await sealManifest(env, ctx, orgId, {
     mailboxId: row.mailbox_id,
     // The **original author**, not the person asking. `sealManifest` re-checks that the author may still send
@@ -476,6 +519,10 @@ export async function resendMayDuplicate(
     // here by omission.
     senderAddress: row.envelope_from,
     inReplyToMessageId: row.in_reply_to_message_id ?? undefined,
+    forwardOfMessageId: row.forward_of_message_id ?? undefined,
+    ...(attachments.length === 0 ? {} : {
+      attachments, allowDangerousAttachments: parts.some((part) => DANGEROUS.has(part.verdict as AttachmentVerdict)),
+    }),
     to: JSON.parse(row.envelope_to) as string[],
     cc: row.envelope_cc === null ? undefined : (JSON.parse(row.envelope_cc) as string[]),
     bcc: row.envelope_bcc === null ? undefined : (JSON.parse(row.envelope_bcc) as string[]),

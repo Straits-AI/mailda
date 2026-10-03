@@ -62,7 +62,7 @@ const recipient = (address: string, over: Record<string, unknown> = {}) => ({
 const send = (id: string, state: string, over: Record<string, unknown> = {}) => ({
   retry: { mode: null, why: NODE_SAYS.error }, id, subject: "Απάντηση στο τιμολόγιο", envelope_to: JSON.stringify([OUTSIDE]), state,
   state_at: AT, release_at: AT, attempts: 1, last_error: null, transport_message_id: null, fidelity: "exact",
-  has_submitted: 1, state_reason: null, policy_outcome: null, recipients: [recipient(OUTSIDE)], ...over,
+  has_submitted: 1, is_copy: 0, state_reason: null, policy_outcome: null, recipients: [recipient(OUTSIDE)], ...over,
 });
 
 const SENDS = [
@@ -195,7 +195,12 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
     "GET /api/forwards": {
       forwards: list([{
         address: SUPPORT, mailboxId: "μβχ_1", to: OUTSIDE, verified: "verified", checkedAt: AT,
-        last: { state: "refused", at: AT, error: "destination address not verified" }, lastHandedOverAt: AT,
+        last: {
+          state: "refused", at: AT, error: "destination address not verified",
+          // A copy the refusal asked for, refused (ADR 47 amended), so its reason is drawn in the Node's words too.
+          copy: { state: "refused", at: AT, error: "the message is quarantined in its mailbox, and a copy would send what the mailbox held back", sendId: null, sendState: null },
+        },
+        lastHandedOverAt: AT, copy: { by: "υσρ_ανα", at: AT },
       }]),
     },
     "GET /api/mailboxes/μβχ_1/cases": {

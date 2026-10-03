@@ -459,6 +459,11 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/provider/destination-addresses",
     "GET /api/forwards",
     /*
+     * Copies (ADR 47, amended 3 October 2026): turning them on makes this Node send somebody's mail on, from the
+     * customer's domain, to an address nobody verified, on an administrator's standing word. A person's act.
+     */
+    "POST /api/forwards/copy",
+    /*
      * The proposal read, `operator` for the same reason as the two above — it spends the grant — and for one
      * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
      * the digest is the only thing standing between a `POST` and a change to the customer's DNS.

@@ -4447,3 +4447,26 @@ be listed and registered from the CLI and Setup; a put-back clears the forward; 
 removed. Not built: forwarding to a destination the rule did not have, and sending a copy instead when a forward is
 refused, which is next.
 
+## Copies when a kept forward cannot be used (3 October 2026, ADR 47 amended)
+
+**A forward to a destination nobody verified now has somewhere to go.** `message.forward()` only reaches a verified
+Email Routing destination, so a kept forward whose destination was removed, or never verified, delivered nothing and
+told nobody. The owner approved the fallback that day, with one condition: "make sure to state properly what is
+happening". An address may opt in to a copy: when the forward is refused as not verified, the stored message is
+filed, judged, and sealed as an ordinary send from the address, as a mailing list sends it, "Alice via <mailbox>" in
+the From display name, Alice in Reply-To, her body byte for byte. ADR 36 gains its one exception (a copy carries the
+external sender's name, never staff's, and nothing an author composes can set either header). No person releases each
+copy, so the administrator's opt-in is the authority, read again at every copy and at dispatch, and the trail names
+the Node as the actor and that administrator as the one accountable. The copy is refused, with the reason on the
+attempt row, over 5 MiB, for a dangerous or unread attachment, a quarantined message, a DMARC failure, a non-UTF-8
+8-bit body, or a destination on the organisation's own domains; it counts against the daily limit and the breakers
+like any send, and a second seal of one delivery fails on a unique receipt. Unmeasured: how the copy's headers fare on
+Email Sending's raw path (whether `Reply-To` and the `X-` headers arrive, how a client shows "via"), which the next
+drill should look at.
+
+**A resend now carries what the first send carried** (3 October 2026). `resendMayDuplicate` rebuilt its
+composition from the envelope and the typed text alone, so resending a person's forward went out without the
+original, and resending a send with files went out without them: "the same content under a new key" was a different
+message. It now names the same original (`forward_of_message_id`) and re-attaches each file from its evidence, a
+dangerous part only when the first seal let it through on its author's word. A copy is still never resent
+(`E_RESEND_NOT_FOR_A_COPY`).

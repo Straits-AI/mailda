@@ -53,6 +53,11 @@ export const ledgers = {
   "ledgers.outbox.stop": "Stop",
   "ledgers.outbox.retry": "Retry",
   "ledgers.outbox.resend": "Resend…",
+  /** A copy (ADR 47, amended 3 October 2026): its label, what it is, and what to do when its outcome is unknown. */
+  "ledgers.outbox.copy": "copy",
+  "ledgers.outbox.copy.note":
+    "Nobody composed this: a kept forward was refused as not verified, so this Node sealed the stored message as a send from the address it arrived at, with the sender's name in From and their address in Reply-To.",
+  "ledgers.outbox.copy.noResend": "A copy is not resent: forward the message from its mailbox if it is still owed.",
   "ledgers.outbox.means": "What this means",
   "ledgers.outbox.why": "Why",
   "ledgers.outbox.recipients": "Recipients",

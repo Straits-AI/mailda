@@ -1296,7 +1296,13 @@ verification) and re-checks each kept forward's destination; a *Show the address
 themselves, listed under the counts with their state, and a *Register a destination address* form below posts
 `POST /api/provider/destination-addresses` and says the address waits for verification until someone there clicks
 Cloudflare's link. People draws a line under each address that keeps a forward: where it forwards, what the last
-read said of the destination, and its latest attempt, a refusal in Cloudflare's words, marked. Three answers,
+read said of the destination, and its latest attempt, a refusal in Cloudflare's words, marked. Under it (ADR 47 amended, 3 October 2026) the
+line says what became of the copy that attempt asked for (the send's id and its own state, or why none was sealed, in
+the Node's words, marked), whether copies are on and who turned them on, a *Send copies* / *Stop copies* button
+(`POST /api/forwards/copy`), and what a copy is, in full, every time: from the address, "<sender> via <mailbox>",
+replies to the sender, up to `email.outbound.max_bytes` (from `/app/config.js`), never with a dangerous attachment,
+quarantined or failing DMARC, counted towards today's sending, sealed under that administrator. The Setup screen's
+take-over offers the same as a box under *keep*, with the same statement, unticked each time it is armed. In the Outbox a copy carries a *copy* chip whose title says nobody composed it and why it was sealed (`is_copy` on `GET /api/sends`), and a copy whose outcome is unknown offers no *Resend…*: its action cell says a copy is not resent and to forward the message from its mailbox if it is still owed (`retry.why: copy_not_resent`). Three answers,
 checked in this order (`test/client/setup-screen.test.tsx`):
 a failed read (`error` set) renders as a refusal naming the failure as reported and the permission, and says that
 the previous successful read still stands or, when there is none, that these recipients show as unobserved

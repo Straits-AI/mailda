@@ -1200,6 +1200,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Turn copies on or off for an address that keeps a forward (ADR 47). On, a forward Cloudflare refuses as not verified is followed by a copy: the stored message sealed as a send from the address, the sender's name in the From display name and their address in Reply-To, up to email.outbound.max_bytes, never with an attachment this Node judges dangerous, counted against today's sending and the rate breakers, under the administrator who turned it on, who must hold send.propose on the address's mailbox and stay an administrator
+   *
+   * `POST /api/forwards/copy`
+   */
+  async postForwardsCopy(body: z.infer<typeof S.keptForwardCopyRequest>): Promise<z.infer<typeof S.keptForwardCopyResponse>> {
+    return await this.json("POST", "/api/forwards/copy", {}, body) as z.infer<typeof S.keptForwardCopyResponse>;
+  }
+
+  /**
    * Domain suggestions with indicative prices. Cloudflare describes these as cached and non-authoritative, so they are never a basis to buy
    *
    * @param query.q a keyword or domain name to suggest from. A bare extension is not accepted by Cloudflare and is refused here
@@ -1300,7 +1309,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry and in the rule's own name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, an action other than forward, worker or drop, one with more than one destination, an address with more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it. A forward rule also needs forward: keep (this Node forwards each stored message to the rule's destination, which must not be listed unverified) or stop
+   * Point an existing routing rule at this Node, registering its address here first (or keeping the mailbox it already files into) and recording the action it had on the audit entry and in the rule's own name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled rule, an action other than forward, worker or drop, one with more than one destination, an address with more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it. A forward rule also needs forward: keep (this Node forwards each stored message to the rule's destination, which must not be listed unverified unless copy is true) or stop; copy: true with keep also sends a copy when the forward is refused as not verified
    *
    * `POST /api/provider/routing-rules/take-over`
    */

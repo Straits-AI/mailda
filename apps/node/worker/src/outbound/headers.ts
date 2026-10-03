@@ -329,6 +329,21 @@ export class HeaderBlock {
     return this.add(name, addresses.map((address) => normalizeAddress(name, address)).join(", "));
   }
 
+  /**
+   * One address with a display name: `"Alice via Support" <support@acme.example>`, for a copy's From and Reply-To
+   * (ADR 47). The name is a quoted string when it is ASCII and RFC 2047 encoded words when it is not; the address is
+   * normalised. Built here, because `add` would encode the whole value, address and all, when the name is not ASCII.
+   */
+  addNamed(name: string, displayName: string | null, address: string): this {
+    const normalized = normalizeAddress(name, address);
+    if (displayName === null || displayName === "") return this.add(name, normalized);
+    if (CONTROL.test(displayName)) throw injectionError(name);
+    this.add(name, normalized);
+    const phrase = NON_ASCII.test(displayName) ? encodedWords(displayName) : `"${displayName.replace(/(["\\])/g, "\\$1")}"`;
+    this.#fields[this.#fields.length - 1] = `${name}: ${phrase} <${normalized}>`;
+    return this;
+  }
+
   /** Present only when there is something to add — keeps callers free of `if` around every field. */
   addIfPresent(name: string, value: string | null | undefined): this {
     return value == null || value === "" ? this : this.add(name, value);

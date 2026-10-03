@@ -199,4 +199,9 @@ export const setup = {
 
   /** A forward rule's choice, and what a take-over that kept the forward left (ADR 47). */
   "setup.rules.keptForward": "It keeps forwarding to {to}, after each message is stored here.",
+  /** Copies with a kept forward (ADR 47, amended 3 October 2026): the box, what a copy is, and what the take-over did. */
+  "setup.rules.copy": "Also send a copy when Cloudflare refuses the forward as not verified",
+  "setup.rules.copyAbout":
+    "A copy is sent from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending, is in the Outbox like any send, and is sealed under you, so you need send.propose on the mailbox.",
+  "setup.rules.copyOn": "When the forward is refused as not verified, a copy is sent from {address}.",
 } as const satisfies Area<"setup">;

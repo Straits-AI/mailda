@@ -267,6 +267,10 @@ export function Outbox() {
                           {shown(reason)}
                         </span>
                       )}
+                      {/* A copy (ADR 47): nobody composed it, so the row says what it is. `?? 0` for an older Node. */}
+                      {(send.is_copy ?? 0) === 1 ? (
+                        <span className="state delivery-chip" title={t("ledgers.outbox.copy.note")}>{t("ledgers.outbox.copy")}</span>
+                      ) : null}
                       <DeliveryChips send={send} />
                     </td>
                     <td className="num mono dim">{stamp(send.state_at)}</td>
@@ -336,7 +340,10 @@ export function Outbox() {
                               .eml
                             </a>
                           ) : send.retry.mode === null ? (
-                            <span className="dim mono">—</span>
+                            // A copy whose outcome is unknown is never resent: what a person can do is said instead.
+                            send.retry.why === "copy_not_resent"
+                              ? <span className="dim">{t("ledgers.outbox.copy.noResend")}</span>
+                              : <span className="dim mono">—</span>
                           ) : null}
                         </>
                       )}

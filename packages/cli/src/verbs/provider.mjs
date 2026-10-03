@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { BUDGETS } from "@mailda/budgets";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 import { signInAndChooseAccount } from "./install.mjs";
 import { catchAllLine, destinationSaid, keptForwardLines, outcomeRoutesHere, ownRulesLines, verifiedDestinationLines, wranglerToken } from "./provision.mjs";
@@ -187,6 +188,23 @@ export async function provider(argv) {
     process.stdout.write(`\n   ${destination.email}\n     ${destinationSaid(destination)}\n\n`);
     return;
   }
+  /*
+   * Copies (ADR 47, amended 3 October 2026): `--copy <address> on|off`. On, a forward Cloudflare refuses as not
+   * verified is followed by the message sent from the address, the sender's name shown and replies going to them.
+   */
+  const copying = flag(argv, "copy");
+  if (copying !== null && copying.includes("@")) {
+    const state = argv[argv.indexOf("--copy") + 2];
+    if (state !== "on" && state !== "off") fail(`--copy ${copying} needs on or off after it, as \`mailda provider --copy ${copying} on\``);
+    const { copy } = await call("POST", "/api/forwards/copy", { address: copying, copy: state === "on" });
+    process.stdout.write(`\n   ${copy.address}  forwards to ${copy.to}\n     ${copy.by === null
+      ? "copies off: a refused forward is shown on People and nothing else is sent"
+      : `copies on, by ${copy.by}: when the forward is refused as not verified, the message is sent from ${copy.address}, `
+        + `the recipient sees it from "<sender> via <mailbox>" and replies go to the sender; up to ${BUDGETS["email.outbound.max_bytes"]} bytes `
+        + "(email.outbound.max_bytes); a message with "
+        + "an attachment this Node judges dangerous is not copied; each copy counts towards today's sending"}\n\n`);
+    return;
+  }
   if (argv.includes("--forwards")) {
     const { forwards } = await call("GET", "/api/forwards");
     process.stdout.write("\n");
@@ -254,6 +272,8 @@ export async function provider(argv) {
         ...(flag(argv, "mailbox") === null ? {} : { mailboxId: flag(argv, "mailbox") }),
         // A forward rule's choice (ADR 47), sent as typed: the Node refuses anything but keep or stop, by name.
         ...(flag(argv, "forward") === null ? {} : { forward: flag(argv, "forward") }),
+        // Copies with the kept forward (ADR 47): the Node refuses it without --forward keep, by name.
+        ...(argv.includes("--copy") ? { copy: true } : {}),
       })
       : await call("POST", "/api/provider/routing-rules/put-back", { domain, ruleId: putBack });
     const said = (one) => `${one.action}${one.destinations.length === 0 ? "" : ` -> ${one.destinations.join(", ")}`}`;
@@ -262,6 +282,7 @@ export async function provider(argv) {
       // Where the address now files: the mailbox of a row already there when none was chosen (30 September 2026).
       + (outcome.mailbox == null ? "" : `     files     into ${outcome.mailbox.name} (${outcome.mailbox.id})\n`)
       + (outcome.keptForward == null ? "" : `     forwards  to ${outcome.keptForward}, after each message is stored here\n`)
+      + (outcome.copy !== true ? "" : `     copies    on: a forward refused as not verified is followed by the message sent from ${outcome.to}\n`)
       + (takeOver !== null
         ? `\n   put it back: mailda provider --put-back ${outcome.ruleId} --domain ${domain}\n\n`
         : "\n"),

@@ -26,10 +26,10 @@ export function needsMailbox(rule: ListedRule, mailboxes: Array<{ id: string; na
  */
 export function takeOverCommand(
   rule: ListedRule, domain: string, origin: string, mailboxes?: Array<{ id: string; name: string }> | null,
-  forward?: "keep" | "stop" | null,
+  forward?: "keep" | "stop" | null, copy?: boolean,
 ): string;
 
-/** The commands for one rule under `--yes`: a forward rule's two choices, each with the Node's label. Pure. */
+/** The commands for one rule under `--yes`: a forward rule's choices (copies too, when listed), each with the Node's label. Pure. */
 export function takeOverCommands(
   rule: ListedRule, domain: string, origin: string, mailboxes?: Array<{ id: string; name: string }> | null,
 ): Array<{ label: string | null; command: string }>;
