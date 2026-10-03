@@ -4470,3 +4470,24 @@ original, and resending a send with files went out without them: "the same conte
 message. It now names the same original (`forward_of_message_id`) and re-attaches each file from its evidence, a
 dangerous part only when the first seal let it through on its author's word. A copy is still never resent
 (`E_RESEND_NOT_FOR_A_COPY`).
+
+
+## mailda.site in Simplified Chinese (3 October 2026)
+
+**The site has a Chinese landing page and Chinese menus over the docs, with the owner's approval of 3 October.**
+`/zh-cn/` is the landing page in the glossary's words, under 淼达 with a secondary Mailda as the app's sign-in lockup
+draws it, its words and the English page's from one table per locale (`apps/site/src/landing-words.ts`). The English
+page did not change in that move: `dist/index.html` differed from the build before it only in 27 whitespace runs
+HTML collapses and 3 apostrophes now escaped as `&#39;`, and a golden of its markup holds it from here. The README's
+status rows stay English on the Chinese page, marked `lang="en"` under a heading that says they are the repository's
+own words. `/zh-cn/docs/*` is Starlight's fallback: Chinese menus and search over the English page, under the notice
+that it is not yet in your language. A first visit to `/` from a browser asking for Simplified Chinese goes to
+`/zh-cn/`, decided as the Node negotiates, unless the visitor chose English. The check is tested by running the
+script itself under `node:vm`.
+
+**Two things the build had been getting right by accident.** The landing page found the README through
+`import.meta.dirname`, which in a build is the bundled chunk's directory, not the page's. It worked only because
+`dist/pages/` sits four levels below the repository; the Chinese page, one directory deeper, read `/home/README.md`.
+Both pages now import the README as `?raw`, which Vite resolves from the source. And Starlight finds its built-in
+words by stripping a region from `lang` with `-[a-zA-Z]{2}`, which turns zh-Hans into `zhns`. Under zh-Hans the docs
+had English menus until the build handed Starlight its own zh-CN translations under that tag.

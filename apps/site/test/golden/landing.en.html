@@ -1,0 +1,111 @@
+<!DOCTYPE html><html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>Mailda, in your Cloudflare account</title><meta name="description" content="Open-source, customer-owned mail operations: shared inboxes, a queue, policies, Butlers and a governance ledger, deployed into your own Cloudflare account. No Mailda service to depend on."><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta property="og:title" content="Mailda"><meta property="og:description" content="Shared inboxes that know who replied. Runs entirely in your own Cloudflare account."><link rel="alternate" hreflang="en" href="https://mailda.site/"><link rel="alternate" hreflang="zh-Hans" href="https://mailda.site/zh-cn/"><link rel="alternate" hreflang="x-default" href="https://mailda.site/"><script data-first-visit>
+      (function () {
+        var chosen = null;
+        try { chosen = localStorage.getItem("mailda.locale"); } catch (e) { /* storage refused: the browser's languages decide alone */ }
+        if (chosen === "en" || navigator.webdriver || /bot|crawl|spider|slurp/i.test(navigator.userAgent || "")) return;
+        try { if (document.referrer && new URL(document.referrer).origin === location.origin) return; } catch (e) { /* an unreadable referrer is no visit from here */ }
+        var asked = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+        for (var i = 0; i < asked.length; i++) {
+          var tag;
+          try { tag = new Intl.Locale(asked[i]).maximize(); } catch (e) { continue; /* a malformed tag is not a preference */ }
+          if (tag.language === "en") return;
+          if (tag.language === "zh" && tag.script === "Hans") { location.replace("/zh-cn/"); return; }
+        }
+      })();
+    </script><style/>
+<link rel="stylesheet" href="/_astro/(asset)"><script type="module" src="/_astro/(asset)"></script></head>
+<body class="landing">
+<header class="masthead">
+<a class="lockup" href="/" aria-label="Mailda"><span class="mark"><svg/></span><span class="word">Mailda</span></a>
+<nav class="masthead-nav" aria-label="Site">
+<a href="/docs/readme/">Docs</a>
+<a href="/docs/receipts/">Receipts</a>
+<a href="https://github.com/Straits-AI/mailda">GitHub</a>
+</nav>
+<nav class="lang-switch" aria-label="Language">
+<a href="/" hreflang="en" lang="en" data-locale="en" aria-current="page">English</a><a href="/zh-cn/" hreflang="zh-Hans" lang="zh-Hans" data-locale="zh-Hans">简体中文</a>
+</nav>
+</header>
+<main>
+<section class="hero" aria-labelledby="hero-title">
+<h1 id="hero-title">Shared inboxes that know who replied.</h1>
+<p class="lede"> Mailda turns an email address into governed work. Who is answering, whether anybody has, what a rule held back and why. It runs in <strong>your own Cloudflare account</strong>, so you own the domain, the messages, the keys and the bill. There is no Mailda service to depend on, no licence server, no telemetry. Disconnect us and nothing stops working. </p>
+<p class="owner">
+<span class="label">For the owner</span> Workers Paid is the one thing it needs: <strong>$5 a month</strong>, 3,000 emails included, then $0.35 per thousand. A twenty-person team sending ten thousand a month pays about $7.45. Inbound mail is unlimited. Not for newsletters; not for Outlook. Open source, Apache-2.0. </p>
+<p class="actions">
+<a class="primary" href="/docs/readme/#installing-it">Install it</a>
+<a class="quiet" href="/docs/operating/machine-surfaces/">Put it in your AI</a>
+</p>
+</section>
+<section class="report" aria-labelledby="report-title">
+<h2 id="report-title" class="report-head">
+<span class="cmd">mailda doctor</span>
+<span class="verdict">functional alpha</span>
+<span class="dim">what is built, what is thin, and the page that holds each claim to account</span>
+</h2>
+<ol class="findings">
+<li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">install</span>
+<span class="says">One command into your own Cloudflare account: it signs you in, deploys, claims the Node in the same terminal, and with that one sign-in sets up receiving, sending and delivery outcomes, so the Node receives when it ends. No dashboard, no API token, no OAuth client. Drilled on a clean account; a second Node in the same account is a name, and updating is one command too. <a class="doc" href="/docs/receipts/deploy-drill-live-account/">deploy-drill-live-account.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">receiving</span>
+<span class="says">Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, archive and trash (restorable), search over subjects, senders and bodies. <a class="doc" href="/docs/product/application-shell/">application-shell.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">mail_security</span>
+<span class="says">The receiving server&#39;s SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model. <a class="doc" href="/docs/product/mail-security/">mail-security.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">sending</span>
+<span class="says">Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider&#39;s own bounces build. <a class="doc" href="/docs/operating/send-breakers/">send-breakers.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">butlers</span>
+<span class="says">Programs that act on mail: deterministic, refused at publication if they cannot afford to run, paused if they loop, released by a person before anything leaves. The llm.* node types are declared and refused. <a class="doc" href="/docs/product/butler-engine/">butler-engine.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">your_ai</span>
+<span class="says">A contract-generated SDK, an agent Skill and an MCP server, every one derived from the same route registry. Agents hold a pinned ceiling of capabilities and an org.admin can never be minted. <a class="doc" href="/docs/operating/machine-surfaces/">machine-surfaces.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">governance</span>
+<span class="says">An audit trail nothing trims, matters, legal holds two people lift, supervised reads that leave a record, e-discovery exports approved before they run. <a class="doc" href="/docs/product/supervised-access/">supervised-access.md</a></span>
+</li><li class="finding">
+<span class="sev ok">ok</span>
+<span class="check">custody</span>
+<span class="says">Evidence sealed under keys only your Node holds, escrowed to ten recovery codes; a backup you can verify offline; a restore drilled three times, once through to receiving mail. <a class="doc" href="/docs/operating/disaster-recovery/">disaster-recovery.md</a></span>
+</li>  <li>(the README's rows)</li>
+<li class="finding">
+<span class="sev report">report</span>
+<span class="check">receipts</span>
+<span class="says">Every limit, cost and timing in the product has a receipt saying how it was measured and when it goes stale. The build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
+</li>
+</ol>
+<p class="report-foot dim"> The warn rows are the README&#39;s own words. A vendor&#39;s page would leave them off. <a href="/docs/readme/#status-functional-alpha-not-production-ready">Read the whole status</a> before you rely on any of this. </p>
+</section>
+<section class="install" aria-labelledby="install-title">
+<h2 id="install-title">One command, one afternoon</h2>
+<div class="terminal">
+<pre><code id="install-command">curl -fsSL https://mailda.site/install.sh | bash</code></pre>
+<button type="button" class="copy" data-copy="install-command" data-copied="copied" data-select="select it" aria-label="Copy the install command">copy</button>
+</div>
+<p class="dim"> It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, asks which domain it should receive at, and with that same sign-in enables routing, onboards sending and subscribes delivery outcomes, reading each back and refusing if a record is not there. The Node receives when the command ends. No dashboard, no API token, no OAuth client. Open the Node: until it has an address and mail routed to it, it shows the next step and the command that does it, and only then the inbox. A hostname of your own is one more question, attached by the deploy. A credential of the Node&#39;s own, one API token pasted on Setup, is optional and only for changing that setup from the browser later. If you would rather arrange the account by hand, the dashboard path is written down too. <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
+</p>
+<p class="dim"> Later, in the same directory, <code>curl -fsSL https://mailda.site/update.sh | bash</code> pulls the release, backs the Node up, says what its schema will do, and redeploys through the canary. No git command is yours to type, including for a Node the deploy button made. </p>
+</section>
+<section class="values" aria-label="What the product is built to be">
+<ul>
+<li><strong>Intelligent.</strong> Your app in your AI, never AI in your app.</li>
+<li><strong>Reliable.</strong> Every assertion can fail. Every number has a receipt.</li>
+<li><strong>Flowing.</strong> Mail arrives, gets filed, gets answered, and leaves a record.</li>
+<li><strong>Helpful.</strong> A refusal names the problem, the reason and the remedy.</li>
+</ul>
+</section>
+</main>
+<footer class="foot">
+<span class="mark small"><svg/></span>
+<span>Mailda · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href="/docs/agents/">how decisions get made</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">security</a></span>
+</footer>  <script/></body></html>

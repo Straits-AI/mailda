@@ -1,140 +1,166 @@
 ---
 import mark from "../assets/mark.svg?raw";
 import "../styles/site.css";
+import { SITE_LOCALES, WORDS, type SiteLocale } from "../landing-words.ts";
 
-interface Props { gaps: { title: string; detail: string }[] }
-const { gaps } = Astro.props;
+interface Props { gaps: { title: string; detail: string }[]; locale: SiteLocale }
+const { gaps, locale } = Astro.props;
+const w = WORDS[locale];
+/** Where this locale's pages live: Starlight's zh-cn locale serves the docs under /zh-cn/docs/, English at the root. */
+const base = locale === "en" ? "" : "/zh-cn";
+/** The README's rows are English on every page; under another language they say so with `lang`. */
+const readmeLang = locale === "en" ? undefined : "en";
 
 /*
  * The landing page as a doctor report (the roll of 18 September). Every `ok` line names a doc that holds it
  * to account; every `warn` line is the README's own gap table, read at build time and unedited. The copy
  * above the report is for the owner; the report is for the builder. Nothing here is a claim the repository
- * does not make.
+ * does not make. The words are `src/landing-words.ts`; what stays here is what is not words: check ids, files, paths.
  */
-const checks: { check: string; says: string; doc: string; href: string }[] = [
-  { check: "install", says: "One command into your own Cloudflare account: it signs you in, deploys, claims the Node in the same terminal, and with that one sign-in sets up receiving, sending and delivery outcomes, so the Node receives when it ends. No dashboard, no API token, no OAuth client. Drilled on a clean account; a second Node in the same account is a name, and updating is one command too.", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
-  { check: "receiving", says: "Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, archive and trash (restorable), search over subjects, senders and bodies.", doc: "application-shell.md", href: "/docs/product/application-shell/" },
-  { check: "mail_security", says: "The receiving server's SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model.", doc: "mail-security.md", href: "/docs/product/mail-security/" },
-  { check: "sending", says: "Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider's own bounces build.", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
-  { check: "butlers", says: "Programs that act on mail: deterministic, refused at publication if they cannot afford to run, paused if they loop, released by a person before anything leaves. The llm.* node types are declared and refused.", doc: "butler-engine.md", href: "/docs/product/butler-engine/" },
-  { check: "your_ai", says: "A contract-generated SDK, an agent Skill and an MCP server, every one derived from the same route registry. Agents hold a pinned ceiling of capabilities and an org.admin can never be minted.", doc: "machine-surfaces.md", href: "/docs/operating/machine-surfaces/" },
-  { check: "governance", says: "An audit trail nothing trims, matters, legal holds two people lift, supervised reads that leave a record, e-discovery exports approved before they run.", doc: "supervised-access.md", href: "/docs/product/supervised-access/" },
-  { check: "custody", says: "Evidence sealed under keys only your Node holds, escrowed to ten recovery codes; a backup you can verify offline; a restore drilled three times, once through to receiving mail.", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
-];
+const checks = [
+  { check: "install", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
+  { check: "receiving", doc: "application-shell.md", href: "/docs/product/application-shell/" },
+  { check: "mail_security", doc: "mail-security.md", href: "/docs/product/mail-security/" },
+  { check: "sending", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
+  { check: "butlers", doc: "butler-engine.md", href: "/docs/product/butler-engine/" },
+  { check: "your_ai", doc: "machine-surfaces.md", href: "/docs/operating/machine-surfaces/" },
+  { check: "governance", doc: "supervised-access.md", href: "/docs/product/supervised-access/" },
+  { check: "custody", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
+] as const;
+const status = `${base}/docs/readme/#status-functional-alpha-not-production-ready`;
+/** A value's `backticked` identifiers, drawn as <code> (the Register: a token is never bare beside Han). */
+const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part, i) => (i % 2 === 1 ? { code: part } : part));
 ---
-<html lang="en">
+<html lang={locale}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Mailda, in your Cloudflare account</title>
-  <meta name="description" content="Open-source, customer-owned mail operations: shared inboxes, a queue, policies, Butlers and a governance ledger, deployed into your own Cloudflare account. No Mailda service to depend on." />
+  <title>{w["page.title"]}</title>
+  <meta name="description" content={w["page.description"]} />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <meta property="og:title" content="Mailda" />
-  <meta property="og:description" content="Shared inboxes that know who replied. Runs entirely in your own Cloudflare account." />
+  <meta property="og:title" content={w["page.ogTitle"]} />
+  <meta property="og:description" content={w["page.ogDescription"]} />
+  {SITE_LOCALES.map((one) => <link rel="alternate" hreflang={one.tag} href={new URL(one.path, Astro.site).href} />)}
+  <link rel="alternate" hreflang="x-default" href={new URL("/", Astro.site).href} />
+  {locale === "en" && (
+    /*
+     * A first visit from a browser that asks for Simplified Chinese before English goes to /zh-cn/, as the Node
+     * negotiates (`apps/node/worker/src/i18n/format.ts`: a tag that maximizes to zh-Hans; zh-TW, zh-HK and zh-MO are
+     * Hant and do not). Not when the visitor chose English on the switch, not when they came from a page of this
+     * site (so the switch back works where storage is refused), not for a crawler. /zh-cn/ has no such script, so
+     * it cannot loop. Inline because it must run before the page draws; nothing is fetched.
+     */
+    <script is:inline data-first-visit>
+      (function () {
+        var chosen = null;
+        try { chosen = localStorage.getItem("mailda.locale"); } catch (e) { /* storage refused: the browser's languages decide alone */ }
+        if (chosen === "en" || navigator.webdriver || /bot|crawl|spider|slurp/i.test(navigator.userAgent || "")) return;
+        try { if (document.referrer && new URL(document.referrer).origin === location.origin) return; } catch (e) { /* an unreadable referrer is no visit from here */ }
+        var asked = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+        for (var i = 0; i < asked.length; i++) {
+          var tag;
+          try { tag = new Intl.Locale(asked[i]).maximize(); } catch (e) { continue; /* a malformed tag is not a preference */ }
+          if (tag.language === "en") return;
+          if (tag.language === "zh" && tag.script === "Hans") { location.replace("/zh-cn/"); return; }
+        }
+      })();
+    </script>
+  )}
 </head>
 <body class="landing">
   <header class="masthead">
-    <a class="lockup" href="/" aria-label="Mailda"><span class="mark" set:html={mark}></span><span class="word">Mailda</span></a>
-    <nav class="masthead-nav" aria-label="Site">
-      <a href="/docs/readme/">Docs</a>
-      <a href="/docs/receipts/">Receipts</a>
+    <a class="lockup" href={`${base}/`} aria-label={w["brand"]}><span class="mark" set:html={mark}></span><span class="word">{w["brand"]}</span>{w["brand.secondary"] !== null && <span class="word-secondary" lang="en">{w["brand.secondary"]}</span>}</a>
+    <nav class="masthead-nav" aria-label={w["nav.label"]}>
+      <a href={`${base}/docs/readme/`}>{w["nav.docs"]}</a>
+      <a href={`${base}/docs/receipts/`}>{w["nav.receipts"]}</a>
       <a href="https://github.com/Straits-AI/mailda">GitHub</a>
+    </nav>
+    <nav class="lang-switch" aria-label={w["switch.label"]}>
+      {SITE_LOCALES.map((one) => (
+        <a href={one.path} hreflang={one.tag} lang={one.tag} data-locale={one.tag} aria-current={one.tag === locale ? "page" : undefined}>{one.endonym}</a>
+      ))}
     </nav>
   </header>
 
   <main>
     <section class="hero" aria-labelledby="hero-title">
-      <h1 id="hero-title">Shared inboxes that know who replied.</h1>
+      <h1 id="hero-title">{w["hero.title"]}</h1>
       <p class="lede">
-        Mailda turns an email address into governed work. Who is answering, whether anybody has, what a rule
-        held back and why. It runs in <strong>your own Cloudflare account</strong>, so you own the domain,
-        the messages, the keys and the bill. There is no Mailda service to depend on, no licence server, no
-        telemetry. Disconnect us and nothing stops working.
+        {w["lede.before"]}<strong>{w["lede.strong"]}</strong>{w["lede.after"]}
       </p>
       <p class="owner">
-        <span class="label">For the owner</span>
-        Workers Paid is the one thing it needs: <strong>$5 a month</strong>, 3,000 emails included, then $0.35 per thousand.
-        A twenty-person team sending ten thousand a month pays about $7.45. Inbound mail is unlimited.
-        Not for newsletters; not for Outlook. Open source, Apache-2.0.
+        <span class="label">{w["owner.label"]}</span>
+        {w["owner.before"]}<strong>{w["owner.strong"]}</strong>{w["owner.after"]}
       </p>
       <p class="actions">
-        <a class="primary" href="/docs/readme/#installing-it">Install it</a>
-        <a class="quiet" href="/docs/operating/machine-surfaces/">Put it in your AI</a>
+        <a class="primary" href={`${base}/docs/readme/#installing-it`}>{w["action.install"]}</a>
+        <a class="quiet" href={`${base}/docs/operating/machine-surfaces/`}>{w["action.ai"]}</a>
       </p>
     </section>
 
     <section class="report" aria-labelledby="report-title">
       <h2 id="report-title" class="report-head">
         <span class="cmd">mailda doctor</span>
-        <span class="verdict">functional alpha</span>
-        <span class="dim">what is built, what is thin, and the page that holds each claim to account</span>
+        <span class="verdict">{w["report.verdict"]}</span>
+        <span class="dim">{w["report.about"]}</span>
       </h2>
       <ol class="findings">
         {checks.map((one) => (
           <li class="finding">
             <span class="sev ok">ok</span>
             <span class="check">{one.check}</span>
-            <span class="says">{one.says} <a class="doc" href={one.href}>{one.doc}</a></span>
+            <span class="says">{words(w[`ok.${one.check}`]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)} <a class="doc" href={`${base}${one.href}`}>{one.doc}</a></span>
           </li>
         ))}
+        {w["gaps.heading"] !== null && <li class="gaps-head"><h3>{words(w["gaps.heading"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}</h3></li>}
         {gaps.map((gap) => (
-          <li class="finding">
+          <li class="finding" lang={readmeLang}>
             <span class="sev warn">warn</span>
             <span class="check">{gap.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 3).join("_")}</span>
-            <span class="says"><strong>{gap.title}.</strong> {gap.detail} <a class="doc" href="/docs/readme/#status-functional-alpha-not-production-ready">README</a></span>
+            <span class="says"><strong>{gap.title}.</strong> {gap.detail} <a class="doc" href={status}>README</a></span>
           </li>
         ))}
         <li class="finding">
           <span class="sev report">report</span>
           <span class="check">receipts</span>
-          <span class="says">Every limit, cost and timing in the product has a receipt saying how it was measured and when it goes stale. The build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
+          <span class="says">{w["receipts.says"]} <a class="doc" href={`${base}/docs/receipts/`}>docs/receipts/</a></span>
         </li>
       </ol>
       <p class="report-foot dim">
-        The warn rows are the README's own words. A vendor's page would leave them off.
-        <a href="/docs/readme/#status-functional-alpha-not-production-ready">Read the whole status</a> before you rely on any of this.
+        {words(w["foot.before"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}
+        <a href={status}>{w["foot.link"]}</a>{w["foot.after"]}
       </p>
     </section>
 
     <section class="install" aria-labelledby="install-title">
-      <h2 id="install-title">One command, one afternoon</h2>
+      <h2 id="install-title">{w["install.title"]}</h2>
       <div class="terminal">
         <pre><code id="install-command">curl -fsSL https://mailda.site/install.sh | bash</code></pre>
-        <button type="button" class="copy" data-copy="install-command" aria-label="Copy the install command">copy</button>
+        <button type="button" class="copy" data-copy="install-command" data-copied={w["install.copied"]} data-select={w["install.selectIt"]} aria-label={w["install.copyLabel"]}>{w["install.copy"]}</button>
       </div>
       <p class="dim">
-        It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, asks
-        which domain it should receive at, and with that same sign-in enables routing, onboards sending and
-        subscribes delivery outcomes, reading each back and refusing if a record is not there. The Node
-        receives when the command ends. No dashboard, no API token, no OAuth client. Open the Node: until
-        it has an address and mail routed to it, it shows the next step and the command that does it,
-        and only then the inbox. A hostname of your own is one more question, attached by the deploy. A
-        credential of the Node's own, one API token pasted on Setup, is optional and only for changing that
-        setup from the browser later. If you would rather arrange the account by hand, the dashboard path
-        is written down too.
-        <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
+        {w["install.about"]}
+        <a href={`${base}/docs/operating/cloudflare-settings/`}>{w["install.settings"]}</a>
       </p>
       <p class="dim">
-        Later, in the same directory, <code>curl -fsSL https://mailda.site/update.sh | bash</code> pulls the
-        release, backs the Node up, says what its schema will do, and redeploys through the canary. No git
-        command is yours to type, including for a Node the deploy button made.
+        {w["update.before"]}<code>curl -fsSL https://mailda.site/update.sh | bash</code>{words(w["update.after"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}
       </p>
     </section>
 
-    <section class="values" aria-label="What the product is built to be">
+    <section class="values" aria-label={w["values.label"]}>
       <ul>
-        <li><strong>Intelligent.</strong> Your app in your AI, never AI in your app.</li>
-        <li><strong>Reliable.</strong> Every assertion can fail. Every number has a receipt.</li>
-        <li><strong>Flowing.</strong> Mail arrives, gets filed, gets answered, and leaves a record.</li>
-        <li><strong>Helpful.</strong> A refusal names the problem, the reason and the remedy.</li>
+        <li><strong>{w["value.intelligent"]}</strong>{w["value.intelligent.says"]}</li>
+        <li><strong>{w["value.reliable"]}</strong>{w["value.reliable.says"]}</li>
+        <li><strong>{w["value.flowing"]}</strong>{w["value.flowing.says"]}</li>
+        <li><strong>{w["value.helpful"]}</strong>{w["value.helpful.says"]}</li>
       </ul>
     </section>
   </main>
 
   <footer class="foot">
     <span class="mark small" set:html={mark}></span>
-    <span>Mailda · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href="/docs/agents/">how decisions get made</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">security</a></span>
+    <span>{w["brand"]} · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href={`${base}/docs/agents/`}>{w["footer.decisions"]}</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">{w["footer.security"]}</a></span>
   </footer>
 </body>
 </html>
@@ -148,9 +174,17 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
   .mark { display: inline-flex; width: 30px; color: var(--text); }
   .mark :global(svg) { width: 100%; height: auto; }
   .mark.small { width: 22px; opacity: .8; }
-  .masthead-nav { display: flex; gap: 1.25rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .masthead { flex-wrap: wrap; }
+  .masthead-nav { margin-left: auto; display: flex; gap: 1.25rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
   .masthead-nav a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); padding-bottom: .15rem; }
   .masthead-nav a:hover { color: var(--text); border-bottom-color: var(--rule-strong); }
+  .word-secondary { font: 500 .78rem/1 var(--body); color: var(--dim); letter-spacing: 0; }
+  .lang-switch { display: flex; gap: .7rem; font: 400 .78rem/1 var(--body); }
+  .lang-switch a { color: var(--dim); text-decoration: none; }
+  .lang-switch a:hover { color: var(--text); }
+  .lang-switch a[aria-current] { color: var(--text); font-weight: 500; }
+  /* Han is not tracked like Latin capitals: the display headings' negative tracking crowds it. */
+  :global(html:lang(zh)) .hero h1, :global(html:lang(zh)) .install h2 { letter-spacing: 0; }
 
   main { max-width: 74rem; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2.5rem) 4rem; }
   .hero { padding: clamp(2.5rem, 7vw, 5rem) 0 2.5rem; max-width: 46rem; }
@@ -179,6 +213,8 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
   .says { font-size: .95rem; }
   .says .doc { font: 400 .74rem/1 var(--mono); color: var(--dim); white-space: nowrap; margin-left: .35rem; }
   .report-foot { font-size: .85rem; margin: 1rem 0 0; }
+  .gaps-head { border-top: 1px solid var(--rule); padding: .9rem 0 .2rem; }
+  .gaps-head h3 { margin: 0; font: 500 .85rem/1.5 var(--body); color: var(--dim); }
   @media (max-width: 40rem) {
     .finding { grid-template-columns: 3.6rem minmax(0, 1fr); }
     .check { grid-column: 2; }
@@ -202,16 +238,23 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
 </style>
 
 <script>
+  // The switch is plain links; this only remembers the choice, so a reader who chose English is not sent back.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>("a[data-locale]")) {
+    link.addEventListener("click", () => {
+      try { localStorage.setItem("mailda.locale", link.dataset.locale ?? ""); } catch { /* storage refused: the referrer check keeps the choice for this visit */ }
+    });
+  }
   for (const button of document.querySelectorAll<HTMLButtonElement>("button.copy[data-copy]")) {
+    const words = { copy: button.textContent ?? "", copied: button.dataset.copied ?? "", select: button.dataset.select ?? "" };
     button.addEventListener("click", async () => {
       const text = document.getElementById(button.dataset.copy ?? "")?.textContent ?? "";
       try {
         await navigator.clipboard.writeText(text);
-        button.textContent = "copied";
+        button.textContent = words.copied;
         button.setAttribute("data-done", "");
-        setTimeout(() => { button.textContent = "copy"; button.removeAttribute("data-done"); }, 1600);
+        setTimeout(() => { button.textContent = words.copy; button.removeAttribute("data-done"); }, 1600);
       } catch {
-        button.textContent = "select it";
+        button.textContent = words.select;
       }
     });
   }

@@ -1,9 +1,9 @@
 ---
-import { resolve } from "node:path";
+import readme from "../../../../README.md?raw";
 import Landing from "../components/Landing.astro";
 import { readGaps } from "../gaps.ts";
 
 // The landing page reads its facts from the repository at build time, as the docs do (see gaps.ts).
-const gaps = readGaps(resolve(import.meta.dirname, "../../../.."));
+const gaps = readGaps(readme);
 ---
-<Landing gaps={gaps} />
+<Landing gaps={gaps} locale="en" />
