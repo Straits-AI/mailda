@@ -831,7 +831,14 @@ export const providerRoutingRulesResponse = z.object({
          * Node's words. Null on any other rule. On a forward rule `label`/`says` above are the other choice, stopping
          * the forward, and a take-over must name one of the two (`forward`, `E_ROUTING_FORWARD_NEEDS_CHOICE`).
          */
-        keep: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict().nullable(),
+        keep: z.object({
+          label: z.string().min(1), says: z.string().min(1),
+          /**
+           * The fourth choice (ADR 47, amended 3 October 2026): keep, and send a copy when the forward is refused as not
+           * verified (`copy: true` with `forward: "keep"`), in the Node's words, which state what a copy is and its limits.
+           */
+          copy: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict(),
+        }).strict().nullable(),
       }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),

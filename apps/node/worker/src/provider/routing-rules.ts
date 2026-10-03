@@ -1,3 +1,4 @@
+import { BUDGETS } from "@mailda/budgets";
 import { type RecordedAction, recordedInName, takenOverName } from "@mailda/contract/routing-rule-name";
 import type { Ctx } from "@mailda/runtime";
 
@@ -107,6 +108,18 @@ const isKnownAction = (action: string): action is keyof typeof TAKE_OVER => Obje
  * (measured: a caught failure reaches nobody), and Cloudflare reports no delivery for a verified destination.
  */
 const KEEP = (rule: Pick<Listed, "to" | "destinations">) => ({
+  /*
+   * Copies (ADR 47, amended 3 October 2026), the sentence the Setup screen states under its box (`setup.rules.copyAbout`)
+   * in the Node's words, for the CLI: what the recipient sees, where replies go, the limits, and whose authority.
+   */
+  copy: {
+    label: `receive here, keep forwarding to ${rule.destinations[0]}, and send a copy when that forward is refused as not verified`,
+    says: `when Cloudflare refuses the forward as not verified, a copy is sent from ${rule.to}: the recipient sees it from `
+      + `"<sender> via <mailbox>", and replies go to the sender. Up to ${BUDGETS["email.outbound.max_bytes"]} bytes `
+      + "(email.outbound.max_bytes). A message with an attachment this Node judges dangerous, a quarantined one, or one that "
+      + "failed DMARC is not copied. Each copy counts towards today's sending, is in the Outbox like any send, and is sealed "
+      + "under you, so you need send.propose on the mailbox",
+  },
   label: `receive here and keep forwarding to ${rule.destinations[0]}`,
   says: `${rule.to} is stored here first, then this Node forwards each message to ${rule.destinations[0]}, as the rule `
     + `did. The copy leaves before this Node scans the message; a forward that fails is shown on People and is not `

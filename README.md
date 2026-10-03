@@ -139,8 +139,9 @@ These are the defaults, and how to change each:
 - **Rules on names the Node does not receive for** (another subdomain) are a count line with
   `mailda provider --routing-rules <name>` to list them.
 - **`--yes`, or no terminal, changes no rule**: it prints the list and the exact `mailda provider --take-over`
-  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen, and both
-  `--forward stop` and `--forward keep` for a forward.
+  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen, and
+  `--forward stop`, `--forward keep` and `--forward keep --copy` for a forward; the interactive step offers the same
+  three, keep-with-copies in the Node's own sentence about what a copy is.
 - Disabled rules, rules with several destinations, duplicate rules and zones with subaddressing on are listed
   with the reason and never offered.
 

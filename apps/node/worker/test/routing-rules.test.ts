@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 } from "../src/provider/cloudflare-grant.ts";
 import { holdToken } from "./support/provider-token.ts";
+import { BUDGETS } from "@mailda/budgets";
 import { recordedInName } from "@mailda/contract/routing-rule-name";
 import { putBackRule, routingRulesFor, takeOverRule } from "../src/provider/routing-rules.ts";
 import { removeAddress } from "../src/provider/receiving.ts";
@@ -423,6 +424,11 @@ describe("what the listing offers, per kind of rule", () => {
       keep: {
         label: "receive here and keep forwarding to somebody@gmail.test",
         says: expect.stringMatching(/^hello@example.test is stored here first, then this Node forwards each message to somebody@gmail.test, as the rule did\. The copy leaves before this Node scans the message; a forward that fails is shown on People and is not told to the sender; and Cloudflare reports no delivery/),
+        // The fourth (ADR 47 amended): keep with copies, stating what a copy is and its limit, by the budget's name.
+        copy: {
+          label: "receive here, keep forwarding to somebody@gmail.test, and send a copy when that forward is refused as not verified",
+          says: expect.stringContaining(`a copy is sent from hello@example.test: the recipient sees it from "<sender> via <mailbox>", and replies go to the sender. Up to ${BUDGETS["email.outbound.max_bytes"]} bytes (email.outbound.max_bytes)`),
+        },
       },
     });
     expect(by.rule_sales!.takeOver!.keep).toBeNull();
