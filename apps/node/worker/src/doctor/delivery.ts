@@ -540,7 +540,7 @@ const SUBSCRIPTION_FIX = "check the two objects outcomes travel through: the Ema
 const VERIFY_FIRST = "first find out whether these recipients are verified destinations, because that decides the "
   + "rest: mailda setup reads the account's list with wrangler's login, and the Setup screen's Delivery outcomes "
   + "section reads it with this Node's token (POST /api/provider/verified-destinations), which needs the optional "
-  + "permission Email Routing Addresses: Read. A token made from the list before 28 September 2026 may not carry it: "
+  + "permission Email Routing Addresses: Edit. A token made from the list before 28 September 2026 may not carry it: "
   + "add it in Cloudflare's dashboard, or make a new token and register it (mailda provider --token; if the dashboard "
   + "shows a new value after an edit, register that). A read that does not succeed is reported here as could not "
   + "read, never as none verified. If they are not verified destinations, ";
@@ -693,4 +693,51 @@ export async function checkBreakers(
   }
 
   return findings;
+}
+
+/**
+ * Kept forwards (ADR 47): addresses this Node stores and then forwards to the destination of the rule it took over.
+ * A forward that fails is not told to the sender (measured, `docs/receipts/email-worker-forward.md`), so this is
+ * where a failure surfaces besides People: one query, counts only.
+ *
+ * Two kinds of evidence fail it. An attempt with **no recorded answer**: written before `forward()` was called and
+ * never settled, older than the slowest forward measured (8,799 ms, an observation, not a tripwire: a younger
+ * one may simply be in flight). And an address whose **latest attempt was refused**, which means its destination
+ * is getting nothing now. Both are `degraded`: the mail is stored, so nothing is lost here, but somebody expecting
+ * it in their own inbox is not getting it, and nobody else will say so.
+ */
+export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+  const settledBy = new Date(ctx.now() - BUDGETS["forward.slowest_call_ms_observed"]).toISOString();
+  const counted = await env.CATALOG.prepare(
+    `SELECT (SELECT COUNT(*) FROM addresses WHERE org_id = ?1 AND kept_forward_to IS NOT NULL) AS kept,
+            (SELECT COUNT(*) FROM kept_forward_attempts WHERE org_id = ?1 AND state = 'outcome_unknown' AND attempted_at < ?2) AS unanswered,
+            (SELECT COUNT(*) FROM addresses a WHERE a.org_id = ?1 AND a.kept_forward_to IS NOT NULL
+               AND (SELECT x.state FROM kept_forward_attempts x WHERE x.org_id = a.org_id AND x.address = a.address
+                     ORDER BY x.attempted_at DESC, x.receipt_id DESC LIMIT 1) = 'refused') AS refused`,
+  ).bind(orgId, settledBy).first<{ kept: number; unanswered: number; refused: number }>();
+  const kept = Number(counted?.kept ?? 0);
+  const unanswered = Number(counted?.unanswered ?? 0);
+  const refused = Number(counted?.refused ?? 0);
+  const receipt = "docs/receipts/email-worker-forward.md";
+  if (unanswered === 0 && refused === 0) {
+    return [{
+      check: "kept_forwards", severity: "report", discloses: "data", ok: true, receipt,
+      detail: kept === 0
+        ? "No address keeps a forward."
+        : `${kept} address(es) keep a forward, and every attempt older than the slowest forward measured has an answer: `
+          + "handed over (Cloudflare reports no delivery for a verified destination, so this is the most known), or withheld as a loop.",
+    }];
+  }
+  return [{
+    check: "kept_forwards", severity: "degraded", discloses: "data", ok: false, receipt,
+    detail: [
+      unanswered === 0 ? "" : `${unanswered} kept forward attempt(s) have no recorded answer: forward() was called and never `
+        + "settled, so the destination may or may not have the message.",
+      refused === 0 ? "" : `${refused} address(es) whose latest forward was refused by Cloudflare: their destination is getting `
+        + "nothing now, and the senders were not told.",
+    ].filter((one) => one !== "").join(" "),
+    fix: "People shows each address's forward with Cloudflare's words; a destination that is not verified is re-checked with "
+      + "`mailda provider --destinations` and verified by whoever reads it, or the rule is put back (`mailda provider --put-back`)",
+  }];
 }

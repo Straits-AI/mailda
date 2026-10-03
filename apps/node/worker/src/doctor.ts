@@ -5,7 +5,7 @@ import {
   checkSchema, checkEvidenceBucket, planCheck, checkProviderToken, checkInboundRouting,
   checkInboundAuthentication, checkTransportAdapters,
 } from "./doctor/node.ts";
-import { sendingEventsConsumerCheck, checkDeliveryVisibility, checkBreakers } from "./doctor/delivery.ts";
+import { sendingEventsConsumerCheck, checkDeliveryVisibility, checkBreakers, checkKeptForwards } from "./doctor/delivery.ts";
 import { checkVault, checkCredentialKek, checkSigningKeys } from "./doctor/keys.ts";
 import {
   checkOutbox, checkEvidence, strandedDraftBodyFindings, checkEvidenceChanged, checkSearchIndex, checkPreviews,
@@ -241,6 +241,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkTransportAdapters(env)),
     ...(await checkProviderToken(env)),
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
+    ...(await checkKeptForwards(env, ctx, claim?.org_id ?? null)),
     ...(await checkInboundAuthentication(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),

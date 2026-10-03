@@ -45,7 +45,7 @@ Cloudflare's token form names them; the Setup screen prints the same list with w
 | Queues Edit | the `email.sending` subscription that makes a send's outcome reach this Node |
 | the Email Sending group | onboarding a domain for sending; the form's exact name is not published |
 | Registrar Domains Read | only for buying a domain from the Node; leave it off otherwise |
-| Email Routing Addresses Read (optional) | which of the addresses this Node has sent to are verified destinations; no delivery outcome was reported for one in the case measured |
+| Email Routing Addresses Edit (optional) | which of the addresses this Node has sent to are verified destinations (no delivery outcome was reported for one in the case measured); whether a kept forward's destination is verified; and registering a destination (ADR 47). Edit because registering is a write; it includes the read |
 
 Restrict the token to the account the Node runs in, and give it a TTL if one is wanted; a token Cloudflare
 no longer accepts is reported at the act that tried it, in Cloudflare's own words (`10000 Authentication
@@ -339,7 +339,11 @@ reports success. Three routes cover that case, all administrator-only and withhe
   is refused without a `mailboxId` (`E_ROUTING_FORWARD_NEEDS_MAILBOX`, critic M4): a forwarded address is
   usually one person's mail, and the organization's only mailbox is not a default for it. A rule whose action
   is not forward, worker or drop is refused (`E_ROUTING_RULE_ACTION_UNKNOWN`). A rule holds exactly one action
-  (measured, `email-routing-rule-takeover.md`), so this replaces; there is no forward-and-also-here. A
+  (measured, `email-routing-rule-takeover.md`), so this replaces. Since 3 October 2026 (ADR 47) a forward rule
+  must also say `forward: "keep"` or `"stop"` (`E_ROUTING_FORWARD_NEEDS_CHOICE`; on any other rule
+  `E_ROUTING_FORWARD_NOT_A_FORWARD`): keep records the rule's destination on the address, and this Worker stores
+  each message, then forwards it there with `message.forward()` (see *Kept forwards and destination addresses*
+  below). A
   stale digest, the catch-all, and a rule already pointing here are refused. So, since 30 September 2026,
   is every rule a take-over would point here and then receive nothing through, or lose a destination by:
   a disabled rule (`E_ROUTING_RULE_DISABLED`: Cloudflare applies none, and the take-over keeps `enabled`),
@@ -660,3 +664,38 @@ failed `describe` (a Workflow rides the Workers Scripts permission a deploy alre
 owner, since that is wrangler's wording moving under the check, not a diagnostic being unavailable. The Worker's own existence is the exception and
 **does** stop the plan: the two deploy paths differ, and being wrong there means skipping the canary on a live
 Node.
+
+## Kept forwards and destination addresses (ADR 47, 3 October 2026)
+
+A forward rule taken over with `forward: "keep"` keeps its destination receiving: `email()` stores the message,
+then calls `message.forward(destination, X-Mailda-Forwarded-By: <claim id>)`. What the platform does was measured
+on mailda.site on 2 October 2026 (`docs/receipts/email-worker-forward.md`); the parts that shape this:
+
+- **Only a verified destination.** `forward()` to any other throws "destination address not verified", and the
+  rules API refuses to create a forward rule to one (2054). So keep reads the account's destination list first and
+  refuses a destination listed unverified or not at all (`E_FORWARD_DESTINATION_NOT_VERIFIED`); an unreadable
+  list keeps it as "not checked", and the first forward is then the check.
+- **A failure reaches nobody.** A caught `forward()` failure answers the sender 250 and delivers nothing, so every
+  call leaves a row in `kept_forward_attempts`: `handed_over`, `refused` with Cloudflare's words, `withheld` for a
+  message carrying this Node's own marker (a loop), or `outcome_unknown` when the call never answered. People shows
+  each address's latest ("forwards to X (verified) · last forwarded …"), `GET /api/forwards` and
+  `mailda provider --forwards` print the same, and doctor's `kept_forwards` degrades for a refused latest attempt
+  or one with no recorded answer. The handler never rejects or throws after accepting.
+- **Once per receipt.** A redelivery of a stored message forwards nothing; the attempt row is written in the
+  receipt's own batch.
+- **Put back, then remove.** A put-back clears the forward once the rule reads back; removing an address that keeps
+  one is refused (`E_ADDRESS_KEEPS_A_FORWARD`). A put-back that finds the rule re-pointed by hand
+  (`E_ROUTING_RULE_NOT_OURS_NOW`) stops keeping the forward too, since that mail no longer reaches the Node, so the
+  address is never left both forwarding and unremovable. The rule's name already records `was forward <destination>`.
+
+**Destination addresses.** `POST /api/provider/verified-destinations` (`mailda provider --destinations`, the Setup
+screen's Verified destinations) now also counts the account's whole list (verified, waiting for verification),
+re-checks each kept forward's destination, and returns the addresses only when asked (`{ addresses: true }`,
+`--addresses`, the "Show the addresses" box). `POST /api/provider/destination-addresses {email}`
+(`mailda provider --add-destination <email>`, the Setup screen) registers one: Cloudflare mails it a link, and it
+is *waiting for verification* until someone at that address clicks it. An address already listed is answered as
+listed and nothing is sent. A refusal names the permission (`E_DESTINATION_NOT_ADDED`, Email Routing Addresses:
+Edit). The audit entry `provider.destination_added` names Cloudflare's id for the destination and never the address,
+and no log does. This Node deletes no destination: it cannot tell what else relies on one. All three routes are
+withheld from machines.
+

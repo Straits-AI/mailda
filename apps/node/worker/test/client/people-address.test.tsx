@@ -21,8 +21,9 @@ const { People } = await import("../../src/client/app/screens/people.tsx");
 
 const BOX = { id: "mbx_test", name: "Support", unclaimed: 0, claimed: 0, mine: 0, first_response_minutes: null, quarantine_dmarc_fail: 0, quarantine_dangerous_attachments: 0, quarantined: 0, breached: 0, addresses: "support@example.test" as string | null };
 
-function mount(routing: { state: string; detail: string }, boxes = [BOX], receiving: string | null = null) {
+function mount(routing: { state: string; detail: string }, boxes = [BOX], receiving: string | null = null, forwards: unknown[] = []) {
   answerWith((call) => {
+    if (call.path === "/api/forwards") return Response.json({ forwards });
     if (call.path === "/api/provider") {
       return Response.json({
         provider: { state: "no_token" }, permissions: [], note: "",
@@ -190,3 +191,25 @@ describe("the domain beside the local part", () => {
     expect(section().querySelector(".address-domain")).toBeNull();
   });
 });
+
+describe("an address that keeps a forward (ADR 47)", () => {
+  beforeEach(reset);
+  const forward = (last: unknown, verified: string | null = "verified") => ({
+    address: "support@example.test", mailboxId: "mbx_test", to: "me@gmail.test", verified, checkedAt: "2026-10-03T00:00:00.000Z",
+    last, lastHandedOverAt: null,
+  });
+
+  it("says where it forwards, what the last read said, and when it last forwarded", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward({ state: "handed_over", at: "2026-10-03T01:00:00.000Z", error: null })]);
+    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    expect(line.textContent).toMatch(/forwards to me@gmail\.test \(verified\) · last forwarded /);
+  });
+
+  it("says a refused forward was not forwarded, in Cloudflare's words, and a never-read destination as not checked", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward({ state: "refused", at: "2026-10-03T01:00:00.000Z", error: "destination address not verified" }, null)]);
+    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    expect(line.textContent).toContain("forwards to me@gmail.test (not checked)");
+    expect(line.textContent).toMatch(/not forwarded at .*: destination address not verified/);
+  });
+});
+

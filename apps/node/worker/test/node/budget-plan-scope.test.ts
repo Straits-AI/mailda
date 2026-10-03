@@ -377,6 +377,17 @@ const FIGURES: Record<string, Classification> = {
     "routing.catch_all_listed_among_rules", "routing.rule_takeover_through_grant",
   ),
 
+  // docs/receipts/email-worker-forward.md
+  ...bothPlans(
+    "what message.forward() does and refuses, and two single observations of size and time (ADR 47); behaviours of "
+      + "Email Routing's Worker runtime, which no plan was seen to vary",
+    "forward.after_raw_read_works", "forward.largest_measured_bytes", "forward.slowest_call_ms_observed",
+    "forward.keeps_original_from_body_and_message_id", "forward.result_carries_message_id",
+    "forward.unverified_destination_throws", "forward.caught_failure_reaches_sender",
+    "forward.same_destination_twice_delivers_twice", "forward.throw_after_forward_reinvokes", "forward.non_x_headers_kept",
+    "forward.reject_text_reaches_sender", "routing.forward_rule_to_unverified_creatable",
+  ),
+
   // docs/receipts/email-authentication-results.md
   ...bothPlans(
     "what the receiving MX writes on every inbound message; a behaviour of Email Routing, which no plan varies",

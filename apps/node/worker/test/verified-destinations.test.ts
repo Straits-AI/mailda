@@ -142,6 +142,8 @@ describe("what a read stores", () => {
     ]);
     expect(state).toEqual({
       accountId: ACCOUNT, readAt: NOW, attemptedAt: NOW, error: null, recipients: 6, verified: 4,
+      // The whole list counted (ADR 47): `verified` non-null is verified, as listed, parseable or not.
+      listed: { verified: 7, waiting: 1 }, addresses: null,
     });
   });
 
@@ -208,7 +210,7 @@ describe("a failure is could not read, never none verified", () => {
 
     expect(state).toEqual({
       accountId: ACCOUNT, readAt: NOW, attemptedAt: later, error: "? fixture: refused for the test",
-      recipients: 1, verified: 1,
+      recipients: 1, verified: 1, listed: null, addresses: null,
     });
     expect(await stored()).toEqual(before);
     expect(await readRow()).toMatchObject({ account_id: ACCOUNT, read_at: NOW, attempted_at: later });
@@ -223,7 +225,7 @@ describe("a failure is could not read, never none verified", () => {
 
     expect(state).toEqual({
       accountId: null, readAt: null, attemptedAt: NOW, error: "? fixture: refused for the test",
-      recipients: 1, verified: null,
+      recipients: 1, verified: null, listed: null, addresses: null,
     });
     expect(await stored()).toEqual([]);
   });
@@ -347,11 +349,60 @@ describe("who read, with what, and never which addresses", () => {
     expect(trail.map((one) => [one.outcome, one.subject, one.actor_user_id])).toEqual([
       ["ok", ACCOUNT, ADMIN], ["failed", ACCOUNT, ADMIN],
     ]);
-    expect(JSON.parse(trail[0]!.detail)).toEqual({ accountId: ACCOUNT, authority: "token", recipients: 2, kept: 1 });
+    expect(JSON.parse(trail[0]!.detail)).toEqual({
+      accountId: ACCOUNT, authority: "token", recipients: 2, kept: 1, listedVerified: 2, listedWaiting: 0,
+    });
     expect(JSON.parse(trail[1]!.detail)).toEqual({
       accountId: ACCOUNT, authority: "token", error: "? fixture: refused for the test",
     });
     expect(trail.map((one) => one.detail).join("")).not.toContain("@");
+  });
+});
+
+describe("the account's list, and the kept forwards it re-checks (ADR 47)", () => {
+  beforeEach(async () => {
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
+      ...[["addr_vd_1", "one@here.test", "Kept@Gmail.test"], ["addr_vd_2", "two@here.test", "wait@gmail.test"],
+        ["addr_vd_3", "three@here.test", "gone@gmail.test"], ["addr_vd_4", "four@here.test", null]].map(([id, address, to]) =>
+        testEnv.CATALOG.prepare(
+          "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to) VALUES (?,?,?,?,?,?)",
+        ).bind(id, ORG, address, "mbx_vd", NOW, to)),
+    ]);
+  });
+  const forwards = async () => (await testEnv.CATALOG.prepare(
+    "SELECT address, kept_forward_verified AS verified, kept_forward_checked_at AS at FROM addresses WHERE org_id = ? ORDER BY address",
+  ).bind(ORG).all<{ address: string; verified: string | null; at: string | null }>()).results;
+
+  it("records each kept forward's destination as verified, waiting or absent, folded, and touches no other address", async () => {
+    await holdToken(testEnv, ACCOUNT, SEPTEMBER_28);
+    cloudflare([{ email: "kept@gmail.TEST", verified: VERIFIED_AT }, { email: "wait@gmail.test", verified: null }]);
+    await read();
+    expect(await forwards()).toEqual([
+      { address: "four@here.test", verified: null, at: null },
+      { address: "one@here.test", verified: "verified", at: NOW },
+      { address: "three@here.test", verified: "absent", at: NOW },
+      { address: "two@here.test", verified: "waiting", at: NOW },
+    ]);
+  });
+
+  it("leaves what an earlier read found when a read fails, never turning could not read into absent", async () => {
+    await holdToken(testEnv, ACCOUNT, SEPTEMBER_28);
+    cloudflare([{ email: "kept@gmail.test", verified: VERIFIED_AT }]);
+    await read();
+    cloudflare({ status: 403, errors: [{ message: "fixture: refused for the test" }] });
+    await read(SEPTEMBER_28 + 1000);
+    expect((await forwards()).find((one) => one.address === "one@here.test")).toEqual({ address: "one@here.test", verified: "verified", at: NOW });
+  });
+
+  it("answers the addresses only when asked, and never writes one into the trail", async () => {
+    await holdToken(testEnv, ACCOUNT, SEPTEMBER_28);
+    cloudflare([{ email: "kept@gmail.test", verified: VERIFIED_AT }, { email: "wait@gmail.test", verified: null }]);
+    expect((await read()).addresses).toBeNull();
+    const asked = await recordVerifiedDestinations(testEnv, atTime(SEPTEMBER_28), ORG, ADMIN, { addresses: true });
+    expect(asked.addresses).toEqual([{ email: "kept@gmail.test", state: "verified" }, { email: "wait@gmail.test", state: "waiting" }]);
+    expect(asked.listed).toEqual({ verified: 1, waiting: 1 });
+    expect((await entries()).map((one) => one.detail).join("")).not.toContain("@");
   });
 });
 

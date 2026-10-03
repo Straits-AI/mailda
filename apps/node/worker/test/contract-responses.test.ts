@@ -323,7 +323,10 @@ describe("every schema-bearing route answers what the contract says it does", ()
     const listingFetch = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) =>
       String(url).includes("/email/routing/addresses")
-        ? Response.json({ success: true, result: [{ email: "friend@example.test", verified: "2024-11-21T10:00:00Z" }] })
+        ? init?.method === "POST"
+          // Registering (ADR 47): Cloudflare answers the destination it made, unverified until its link is clicked.
+          ? Response.json({ success: true, result: { id: "dest_1", email: "new@example.test", verified: null } })
+          : Response.json({ success: true, result: [{ email: "friend@example.test", verified: "2024-11-21T10:00:00Z" }] })
         : listingFetch(url, init));
     try {
       const recorded = await answers("POST", "/api/provider/verified-destinations", {
@@ -334,6 +337,19 @@ describe("every schema-bearing route answers what the contract says it does", ()
         accountId: "1e0170aaabc90ecf5f466128d1f0466a", error: null, recipients: 0, verified: 0,
       });
       expect(JSON.stringify(recorded)).not.toContain("friend@example.test");
+      const operator = { "x-cloudflare-token": "wrangler-token", "x-cloudflare-account": "1e0170aaabc90ecf5f466128d1f0466a" };
+      // Asked for, the addresses come back, and only then (ADR 47).
+      const listed = await answers("POST", "/api/provider/verified-destinations", { cookie: held, headers: operator, body: { addresses: true } }) as {
+        destinations: { addresses: unknown; listed: unknown };
+      };
+      expect(listed.destinations).toMatchObject({ listed: { verified: 1, waiting: 0 }, addresses: [{ email: "friend@example.test", state: "verified" }] });
+      // Registering a destination: one already listed is answered as listed; a new one waits for its link.
+      expect(await answers("POST", "/api/provider/destination-addresses", { cookie: held, headers: operator, body: { email: "friend@example.test" } }))
+        .toEqual({ destination: { email: "friend@example.test", state: "verified", added: false } });
+      expect(await answers("POST", "/api/provider/destination-addresses", { cookie: held, headers: operator, body: { email: "new@example.test" } }))
+        .toEqual({ destination: { email: "new@example.test", state: "waiting", added: true } });
+      // The kept forwards, read from D1 alone: none on this fixture.
+      expect(await answers("GET", "/api/forwards", { cookie: held })).toEqual({ forwards: [] });
     } finally {
       vi.stubGlobal("fetch", listingFetch);
     }
@@ -2547,8 +2563,12 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The 141st is `POST /api/provider/verified-destinations` (28 September 2026): the read that records which
      * of this Node's recipients were verified Email Routing destinations of the account, for which no outcome
      * is reported. Its answer is counts, and `.strict()` is what keeps an address out of it.
+     *
+     * The 142nd and 143rd are ADR 47's (3 October 2026): `POST /api/provider/destination-addresses`, registering a
+     * destination Cloudflare then mails a link, and `GET /api/forwards`, the addresses that keep a forward with each
+     * one's latest attempt, read from D1 alone.
      */
-    expect(coverage.total).toBe(141);
+    expect(coverage.total).toBe(143);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

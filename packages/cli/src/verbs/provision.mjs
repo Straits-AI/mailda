@@ -84,7 +84,38 @@ export function verifiedDestinationLines(d) {
       : `${d.verified} of ${d.recipients} address(es) this Node has handed mail to (read ${d.readAt}, account ${d.accountId}); `
         + "no outcome is reported for verified destinations, in the one case measured "
         + "(docs/receipts/email-sending-events.md)";
-  return wrapAt(said, 70).map((line, i) => `${i === 0 ? "verified destinations " : "                      "} ${line}`);
+  const lines = wrapAt(said, 70).map((line, i) => `${i === 0 ? "verified destinations " : "                      "} ${line}`);
+  // The account's whole list (ADR 47), counted; the addresses only when the operator asked for them.
+  if ((d.listed ?? null) !== null) {
+    lines.push(`destination addresses  ${d.listed.verified} verified, ${d.listed.waiting} waiting for verification`);
+  }
+  for (const one of d.addresses ?? []) lines.push(`                       ${one.email}  ${one.state === "verified" ? "verified" : "waiting for verification"}`);
+  return lines;
+}
+
+/** What registering a destination left, in one phrase: waiting is said with what ends it. */
+export function destinationSaid(destination) {
+  if (destination.state === "verified") return destination.added ? "registered and verified" : "already verified; nothing was sent";
+  return `${destination.added ? "registered" : "already registered; no second link was sent"}: waiting for verification until `
+    + `someone at ${destination.email} clicks the link Cloudflare mailed them`;
+}
+
+/**
+ * One kept forward (ADR 47) as `mailda provider --forwards` prints it, the same facts People shows: where it forwards,
+ * what the last read of the account's destinations said, and its latest attempt with Cloudflare's words.
+ */
+export function keptForwardLines(one) {
+  const verified = one.verified === null ? "not checked" : one.verified === "waiting" ? "waiting for verification"
+    : one.verified === "absent" ? "not a destination of the account" : "verified";
+  const last = one.last === null ? "nothing has arrived since it was kept"
+    : one.last.state === "handed_over" ? `last forwarded ${one.last.at}`
+      : one.last.state === "refused" ? `not forwarded at ${one.last.at}: ${one.last.error}`
+        : one.last.state === "withheld" ? `withheld at ${one.last.at}: ${one.last.error}`
+          : `no recorded answer for the forward at ${one.last.at}: ${one.to} may or may not have it`;
+  return [
+    `${one.address}  forwards to ${one.to} (${verified}${one.checkedAt === null ? "" : `, read ${one.checkedAt}`})`,
+    ...wrapAt(last, 88).map((line) => `  ${line}`),
+  ];
 }
 
 /**

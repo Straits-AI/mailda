@@ -116,10 +116,33 @@ export const provider = {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     // A POST because it spends the credential and records what it read; a GET changes nothing (agent.ts).
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const { recordVerifiedDestinations } = await import("../provider/cloudflare-grant.ts");
     return Response.json({
-      destinations: await recordVerifiedDestinations(env, operatorCtx(request, clock), who.orgId, who.userId),
+      destinations: await recordVerifiedDestinations(
+        env, operatorCtx(request, clock), who.orgId, who.userId, { addresses: body.addresses === true },
+      ),
     });
+  },
+
+  "POST /api/provider/destination-addresses": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { addDestination } = await import("../provider/destinations.ts");
+    return Response.json({
+      destination: await addDestination(env, operatorCtx(request, clock), who.orgId, who.userId, String(body.email ?? "")),
+    });
+  },
+
+  "GET /api/forwards": async ({ env, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // D1 only: People draws a line per address from it, and a screen that spent the credential to render would be wrong.
+    const { keptForwards } = await import("../kept-forward.ts");
+    return Response.json({ forwards: await keptForwards(env, who.orgId) });
   },
 
   "GET /api/provider/domains/purchase": async ({ env, clock, url, who }) => {
@@ -279,6 +302,7 @@ export const provider = {
         env, operatorCtx(request, clock), who.orgId, who.userId,
         String(body.domain ?? ""), String(body.ruleId ?? ""), String(body.digest ?? ""),
         typeof body.mailboxId === "string" ? body.mailboxId : null,
+        body.forward === "keep" || body.forward === "stop" ? body.forward : null,
       ),
     });
   },

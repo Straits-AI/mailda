@@ -64,6 +64,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
       "butler", "butler-runs", "transport", "search-failed", "passkeys", "approvals", "policies", "people",
       "teams", "team-members", "breakers", "domain-pauses", "suppressions", "matters", "holds", "supervised",
       "exports", "invitations", "agent-capabilities", "agents", "sponsor-mailboxes", "provider", "provider-delivery-events", "provider-routing",
+      "forwards",
     ].map((text) => ({ text, reason: "a TanStack Query cache key: compared and invalidated, never shown" })),
     ...["POST", "PUT", "PATCH", "DELETE"].map((text) => ({ text, reason: "an HTTP method" })),
     { text: "application/json", reason: "a media type in a content-type header" },
@@ -216,6 +217,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
   ],
   "src/client/app/screens/next-steps.tsx": [],
   "src/client/app/screens/people.tsx": [
+    { text: "forwards", reason: "a TanStack Query cache key: invalidated, never shown" },
     { text: "new-address", reason: "a document id, handed to AddressField, which sets it on its input" },
     { text: "invite-mailbox-address", reason: "a document id, handed to AddressField, which sets it on its input" },
     { text: "hello@example.com", reason: "an example address in an address field's placeholder: an address is Latin in every locale" },
@@ -268,6 +270,8 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     })),
   ],
   "src/client/app/screens/setup.tsx": [
+    { text: "forwards", reason: "a TanStack Query cache key: invalidated, never shown" },
+    { text: "someone@example.com", reason: "an example address in a destination field's placeholder: an address is Latin in every locale" },
     { text: "new", reason: "a select's value meaning a new mailbox named after the address, never shown; never a mailbox id" },
     { text: "mailboxes", reason: "a react-query key, invalidated after a take-over made a mailbox" },
     ...["provider", "provider-routing"].map((text) => ({ text, reason: "a react-query key, invalidated after a write" })),

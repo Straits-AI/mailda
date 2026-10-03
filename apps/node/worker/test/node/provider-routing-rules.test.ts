@@ -84,3 +84,47 @@ describe("the CLI's routing rules", () => {
     expect(one.join("")).toContain(`--take-over r5 --domain example.com --confirm ${"e".repeat(64)}\n`);
   });
 });
+
+describe("the CLI's kept forwards and destination addresses (ADR 47)", () => {
+  it("sends --forward as typed with the take-over, and says where the address now forwards", async () => {
+    const sent: unknown[] = [];
+    const out = node({ "/api/provider/routing-rules/take-over": { outcome: {
+      ruleId: "r1", to: "hello@example.com", before: { action: "forward", destinations: ["someone@gmail.test"] },
+      after: { action: "worker", destinations: ["mailda"] }, mailbox: { id: "mbx_1", name: "Hello" }, keptForward: "someone@gmail.test",
+    } } });
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => { if (init?.body !== undefined) sent.push(JSON.parse(String(init.body))); return stubbed(url, init); });
+    await provider(["--take-over", "r1", "--domain", "example.com", "--confirm", "e".repeat(64), "--mailbox", "mbx_1", "--forward", "keep", "--url", "https://node.test"]);
+    expect(sent.at(-1)).toEqual({ domain: "example.com", ruleId: "r1", digest: "e".repeat(64), mailboxId: "mbx_1", forward: "keep" });
+    expect(out.join("")).toContain("     forwards  to someone@gmail.test, after each message is stored here\n");
+  });
+
+  it("lists each kept forward with its latest attempt in Cloudflare's words", async () => {
+    const out = node({ "/api/forwards": { forwards: [{
+      address: "hello@example.com", mailboxId: "mbx_1", to: "someone@gmail.test", verified: "waiting", checkedAt: "2026-10-03T00:00:00.000Z",
+      last: { state: "refused", at: "2026-10-03T01:00:00.000Z", error: "destination address not verified" }, lastHandedOverAt: null,
+    }] } });
+    await provider(["--forwards", "--url", "https://node.test"]);
+    const said = out.join("");
+    expect(said).toContain("hello@example.com  forwards to someone@gmail.test (waiting for verification, read 2026-10-03T00:00:00.000Z)");
+    expect(said).toContain("not forwarded at 2026-10-03T01:00:00.000Z: destination address not verified");
+  });
+
+  it("registers a destination and says what ends the wait", async () => {
+    const out = node({ "/api/provider/destination-addresses": { destination: { email: "new@gmail.test", state: "waiting", added: true } } });
+    await provider(["--add-destination", "new@gmail.test", "--url", "https://node.test"]);
+    expect(out.join("").replace(/\s+/g, " ")).toContain("registered: waiting for verification until someone at new@gmail.test clicks the link Cloudflare mailed them");
+  });
+
+  it("prints the account's addresses only when they came back, and the counts always", async () => {
+    const destinations = { accountId: "acc", readAt: "2026-10-03T00:00:00.000Z", attemptedAt: "2026-10-03T00:00:00.000Z", error: null, recipients: 0, verified: 0, listed: { verified: 1, waiting: 1 } };
+    const counted = node({ "/api/provider/verified-destinations": { destinations: { ...destinations, addresses: null } } });
+    await provider(["--destinations", "--url", "https://node.test"]);
+    expect(counted.join("")).toContain("destination addresses  1 verified, 1 waiting for verification");
+    expect(counted.join("")).not.toContain("@gmail.test");
+    const listed = node({ "/api/provider/verified-destinations": { destinations: { ...destinations, addresses: [{ email: "b@gmail.test", state: "waiting" }] } } });
+    await provider(["--destinations", "--addresses", "--url", "https://node.test"]);
+    expect(listed.join("")).toContain("b@gmail.test  waiting for verification");
+  });
+});
+

@@ -1289,9 +1289,15 @@ record of an act, not a live read, and the row says so in those words.
 **Which recipients are verified destinations** (28 September 2026). Section 5 ends with one button, *Read
 verified destinations*, which posts `POST /api/provider/verified-destinations` with the Node's token (the
 section renders only when the Node holds one; `mailda setup` and `mailda upgrade` make the same read with
-wrangler's login). It needs the optional permission Email Routing Addresses: Read, and the section says so.
+wrangler's login). It needs the optional permission Email Routing Addresses: Edit, and the section says so.
 The answer is counts, never an address: which recipients they are is the Outbox's to show, bounded by who may
-read the send. Three answers, checked in this order (`test/client/setup-screen.test.tsx`):
+read the send. Since 3 October 2026 (ADR 47) the read also counts the account's whole list (verified, waiting for
+verification) and re-checks each kept forward's destination; a *Show the addresses* box asks for the addresses
+themselves, listed under the counts with their state, and a *Register a destination address* form below posts
+`POST /api/provider/destination-addresses` and says the address waits for verification until someone there clicks
+Cloudflare's link. People draws a line under each address that keeps a forward: where it forwards, what the last
+read said of the destination, and its latest attempt, a refusal in Cloudflare's words, marked. Three answers,
+checked in this order (`test/client/setup-screen.test.tsx`):
 a failed read (`error` set) renders as a refusal naming the failure as reported and the permission, and says that
 the previous successful read still stands or, when there is none, that these recipients show as unobserved
 until one succeeds; it never shows a count, because a failed read is could not read, not none verified. A read

@@ -140,14 +140,30 @@ export const setup: Twin<typeof source> = {
 
   "setup.verified.title": "已验证的目标地址",
   "setup.verified.about":
-    "在测量过的唯一一例中，Cloudflare 没有为发往此账户已验证目标地址的邮件报告任何投递结果。读取本节点的哪些收件人是已验证的目标地址，可以让发件箱和诊断如实说明，而不是一直等待。这需要本节点的令牌拥有可选权限 Email Routing Addresses: Read；{command} 则改用 wrangler 的登录来读取。",
+    "在测量过的唯一一例中，Cloudflare 没有为发往此账户已验证目标地址的邮件报告任何投递结果。读取本节点的哪些收件人是已验证的目标地址，可以让发件箱和诊断如实说明，而不是一直等待。这需要本节点的令牌拥有可选权限 Email Routing Addresses: Edit；{command} 则改用 wrangler 的登录来读取。",
   "setup.verified.read": "读取已验证的目标地址",
   "setup.verified.failed":
-    "读取没有成功：{said}。如果 Cloudflare 因缺少权限而拒绝，令牌需要 Email Routing Addresses: Read 权限：在 Cloudflare 控制台中添加它，或者新建一个令牌并在上方注册（如果编辑后控制台显示了新的值，请注册那个值）。",
+    "读取没有成功：{said}。如果 Cloudflare 因缺少权限而拒绝，令牌需要 Email Routing Addresses: Edit 权限：在 Cloudflare 控制台中添加它，或者新建一个令牌并在上方注册（如果编辑后控制台显示了新的值，请注册那个值）。",
   "setup.verified.failed.never": "在读取成功之前，这些收件人显示为未观测到。",
   "setup.verified.failed.stands": "{at} 的那次读取仍然有效。",
   "setup.verified.nobody": "已于 {at} 从账户 {account} 读取。本节点还没有向任何人移交过邮件，所以没有可比较的内容。",
   "setup.verified.some":
     "已于 {at} 从账户 {account} 读取。本节点移交过邮件的 {recipients}中，有 {n} 个是已验证的目标地址。已验证的目标地址不会报告投递结果；发件箱会标记在它们处于已验证状态时完成的移交。",
   "setup.verified.recipients": "{n} 个邮件地址",
+  "setup.verified.listed": "账户中列有 {verified} 个已验证的目标地址，{waiting} 个等待验证。",
+  "setup.verified.showAddresses": "显示这些地址",
+  "setup.verified.addresses": "账户的目标地址",
+  "setup.verified.state.verified": "已验证",
+  "setup.verified.state.waiting": "等待验证",
+
+  "setup.destination.title": "登记目标地址",
+  "setup.destination.about":
+    "保留的转发只会发往已验证的目标地址。登记一个地址后，Cloudflare 会向它发送一封带链接的邮件；在该地址的收件人点击链接之前，它一直等待验证，任何邮件都不能转发给它。本节点不会删除任何目标地址。",
+  "setup.destination.email": "地址",
+  "setup.destination.add": "登记",
+  "setup.destination.waiting": "{email} 正在等待验证，直到该地址的收件人点击 Cloudflare 发给他们的链接。",
+  "setup.destination.alreadyWaiting": "{email} 已经登记过，正在等待验证；没有再次发送链接。",
+  "setup.destination.verified": "{email} 是已验证的目标地址。",
+
+  "setup.rules.keptForward": "每封邮件在这里存储之后，它会继续转发到 {to}。",
 };

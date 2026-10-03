@@ -32,6 +32,7 @@ const AREAS: readonly HealthArea[] = ["inbound", "outbound", "worker", "storage"
 /** `null` = not a health area: `report_reduced` is rendered as the reduced-report note instead. */
 export const HEALTH_AREA: Record<DoctorCheck, HealthArea | null> = {
   inbound_routing: "inbound",
+  kept_forwards: "inbound",
   inbound_authentication: "inbound",
 
   outbox_draining: "outbound",
