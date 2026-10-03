@@ -4453,7 +4453,7 @@ refused, which is next.
 Email Routing destination, so a kept forward whose destination was removed, or never verified, delivered nothing and
 told nobody. The owner approved the fallback that day, with one condition: "make sure to state properly what is
 happening". An address may opt in to a copy: when the forward is refused as not verified, the stored message is
-filed, judged, and sealed as an ordinary send from the address, as a mailing list sends it, "Alice via <mailbox>" in
+filed, judged, and sealed as an ordinary send from the address, as a mailing list sends it, "Alice via \<mailbox>" in
 the From display name, Alice in Reply-To, her body byte for byte. ADR 36 gains its one exception (a copy carries the
 external sender's name, never staff's, and nothing an author composes can set either header). No person releases each
 copy, so the administrator's opt-in is the authority, read again at every copy and at dispatch, and the trail names
@@ -4512,3 +4512,26 @@ sends present: 6 rows read, against 1,006 with the indexes dropped, on the local
 (`cron-lateness` is about timing, and `doctor-check-cost` covers doctor), so the figure is recorded here and
 asserted in the test, which checks that it does not grow with the table. Once the repair has caught up, any further
 `outbound.reasons_repaired` line means an older version is still serving, or a current writer has regressed.
+
+**Two docs are in Simplified Chinese, and a translation cannot fall behind its English silently** (3 October 2026,
+with the owner's approval). `docs/cloudflare-settings.md` and the runbook part of `docs/disaster-recovery.md` are
+translated in `docs/zh-cn/`, in the glossary's words, and mailda.site renders each at its English page's path under
+`/zh-cn/` in place of Starlight's fallback. Each records the SHA-256 of the English it covers, and
+`apps/site/test/translations.test.mjs` fails when that English changes, naming both files and saying to update the
+translation or remove it. For the runbook the hash covers only the translated part, from the top to the heading where
+the drill reports begin, so a new drill report does not fail it. The README's opening part was translated as well and
+dropped before merging: hashed whole, it would have gone red at the README's rate (71 commits in the month before),
+taxing every unrelated pull request, and the `/zh-cn/` landing page already carries its pitch and status in Chinese.
+The same test holds each translation to its English's code blocks byte for byte, its links, inline code, tables and
+headings, to the glossary's `NEVER` list and to the register, and every one of those assertions was seen to fail on a
+mutation before it was kept. `docs/onboarding-journey.md`, proposed with them, was left in English: it is an analysis,
+and its operator steps are the README's. Turbo's cache for the site's tests now keys on the README, `docs/` and the
+glossary, so an English edit alone re-runs the hash check locally rather than only in CI.
+
+**Translating the README found two things wrong in its English.** "One step neither path can do for you" said the
+delivery-events subscription is made only from the Setup screen with the Node's own token, while the install paragraph
+above it said the install subscribes; the install is right (`provisionNode` in `packages/cli/src/verbs/provision.mjs`
+posts `/api/provider/subscription` with wrangler's login, and attaches the queue's consumer when nothing consumes it).
+The paragraph now says the installer does both, and that a button-deployed Node, or one whose setup step was declined,
+gets them from `pnpm mailda setup` or the Setup screen. And `"Alice via <mailbox>"` was raw HTML to a Markdown renderer,
+so the site drew "Alice via"; it is escaped, here and in the README.

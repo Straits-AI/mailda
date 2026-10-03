@@ -7,10 +7,15 @@
  * first paragraph) and otherwise unchanged. A receipt's own YAML frontmatter — id, kind, measured_on,
  * stale_when, values — is kept and rendered as a table at the top of its page, because the frontmatter *is*
  * the receipt. Relative links between docs are rewritten to their site paths.
+ *
+ * A doc with a translation in `docs/zh-cn/` (docs/i18n.md, *Doc translations*) is also rendered in Chinese at its
+ * slug under /zh-cn/, which replaces Starlight's English fallback there; every other /zh-cn/docs/* page stays the
+ * fallback. Whether a translation still matches its English is `test/translations.test.mjs`'s job, not this one's.
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { translations } from "./translations.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../..");
@@ -38,14 +43,14 @@ function descriptionOf(md) {
 function yamlEscape(value) { return JSON.stringify(String(value)); }
 
 /** Rewrites relative Markdown links — dot-slash, parent, and repository-rooted forms alike — to the site's own paths. */
-function rewriteLinks(md, fromDir) {
+function rewriteLinks(md, fromDir, prefix = "") {
   return md.replace(/\]\(([^)\s]+\.md)(#[^)]*)?\)/g, (whole, target, hash) => {
     if (/^https?:/.test(target)) return whole;
     const abs = resolve(fromDir, target);
     const rel = abs.startsWith(repo) ? abs.slice(repo.length + 1) : null;
     if (rel === null) return whole;
     const slug = slugFor(rel);
-    return slug === null ? whole : `](/docs/${slug}/${hash ?? ""})`;
+    return slug === null ? whole : `](${prefix}/docs/${slug}/${hash ?? ""})`;
   });
 }
 function slugFor(rel) {
@@ -84,6 +89,30 @@ for (const file of readdirSync(join(repo, "docs/receipts")).filter((one) => one.
   emit(`docs/receipts/${file}`, join(out, "receipts", file)); n += 1;
 }
 if (existsSync(join(repo, "docs/agents"))) { /* the agents/ subfolder is prompts, not docs */ }
+
+// The translations, each at its English page's slug under /zh-cn/. Links stay inside /zh-cn/, where every doc has a
+// page (translated or the fallback). The notes say what the page is: a translation, the English the authority, and,
+// for one that covers only the English's opening part, where the English goes on.
+const zhOut = resolve(here, "../src/content/docs/zh-cn");
+rmSync(zhOut, { recursive: true, force: true });
+let zh = 0;
+for (const one of translations()) {
+  const slug = slugFor(one.from);
+  if (slug === null) throw new Error(`${one.rel} translates ${one.from}, which the site does not render`);
+  const dest = join(zhOut, "docs", `${slug}.md`);
+  mkdirSync(dirname(dest), { recursive: true });
+  const title = titleOf(one.body, slug);
+  const body = rewriteLinks(one.body.replace(/^#\s+.+\n/m, ""), dirname(join(repo, one.rel)), "/zh-cn");
+  const english = `[英文原文](/docs/${slug}/)`;
+  const head = `\n:::note[译文]\n本页译自 \`${one.from}\`，以${english}为准。\n:::\n`;
+  let tail = "";
+  if (one.until !== undefined) {
+    const heading = one.until.replace(/^#+\s*/, "").replace(/[`*_]/g, "");
+    tail = `\n\n:::note[其余部分仅有英文]\n本页只翻译到英文原文的“${heading}”一节之前。从那一节起的内容见${english}。\n:::\n`;
+  }
+  writeFileSync(dest, `---\ntitle: ${yamlEscape(title)}\ndescription: ${yamlEscape(descriptionOf(one.body))}\neditUrl: ${yamlEscape(`https://github.com/Straits-AI/mailda/blob/main/${one.rel}`)}\n---\n${head}${body}${tail}`);
+  zh += 1;
+}
 // The receipts' own index: what a receipt is, and every one of them with its kind and when it was measured.
 const receipts = readdirSync(join(repo, "docs/receipts")).filter((one) => one.endsWith(".md")).map((file) => {
   const fm = /^---\n([\s\S]*?)\n---/.exec(readFileSync(join(repo, "docs/receipts", file), "utf8"))?.[1] ?? "";
@@ -118,4 +147,4 @@ mkdirSync(resolve(here, "../public"), { recursive: true });
 writeFileSync(resolve(here, "../public/install.sh"), readFileSync(join(repo, "install.sh"), "utf8"));
 // And the updater beside it, for the same reason: the command in the README has to be the script in the repo.
 writeFileSync(resolve(here, "../public/update.sh"), readFileSync(join(repo, "update.sh"), "utf8"));
-console.log(`rendered ${n + 1} pages into src/content/docs/docs, Starlight's zh words into src/content/i18n, and install.sh and update.sh into public/`);
+console.log(`rendered ${n + 1} pages into src/content/docs/docs, ${zh} translations into src/content/docs/zh-cn/docs, Starlight's zh words into src/content/i18n, and install.sh and update.sh into public/`);

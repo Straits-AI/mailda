@@ -4,11 +4,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import vm from "node:vm";
 import { NEVER } from "../../node/worker/src/i18n/glossary.ts";
+import { translations } from "../scripts/translations.mjs";
 
 /**
  * The site is a rendering of the repository: every Markdown file in docs/ and docs/receipts/ must be a page,
- * in English and under /zh-cn/, the landing pages must carry the README's status rows, and nothing may be fetched
- * from another origin. The Simplified Chinese landing page is held to the glossary's NEVER list, and the English
+ * in English and under /zh-cn/ (translated where `docs/zh-cn/` has a translation, Starlight's English fallback
+ * elsewhere), the landing pages must carry the README's status rows, and nothing may be fetched from another origin. The Simplified Chinese landing page is held to the glossary's NEVER list, and the English
  * one to a golden of its markup.
  */
 const site = resolve(import.meta.dirname, "..");
@@ -123,13 +124,36 @@ test("hreflang alternates name both languages on the landing pages and on the do
   assert.match(page("docs/readme/index.html"), /hreflang="zh-Hans" href="https:\/\/mailda\.site\/zh-cn\/docs\/readme\/"/);
 });
 
-test("/zh-cn/docs/* is the English page under Chinese menus and Starlight's not-yet-translated notice", () => {
-  const html = page("zh-cn/docs/readme/index.html");
+test("an untranslated /zh-cn/docs/* page is the English page under Chinese menus and Starlight's not-yet-translated notice", () => {
+  const html = page("zh-cn/docs/agents/index.html");
   assert.match(html, /<html lang="zh-Hans"/);
   assert.match(html, /<main[^>]* lang="en"/, "the English body is not marked as English");
   assert.ok(html.includes("此内容尚不支持你的语言。"), "no notice that the page is English");
   assert.ok(html.includes("搜索") && html.includes("跳转到内容"), "Starlight's own zh words are missing");
   for (const label of ["从这里开始", "产品", "运维节点", "测量记录"]) assert.ok(html.includes(label), `sidebar lacks ${label}`);
+});
+
+test("a translated doc is Chinese under /zh-cn/, at its English page's path, with no fallback notice", () => {
+  const all = translations();
+  assert.ok(all.length >= 2, "no translations found");
+  for (const one of all) {
+    // The English page's path, found in the build rather than recomputed, so the two cannot agree on a wrong slug.
+    const name = one.from === "README.md" ? "readme" : one.from.replace(/^docs\//, "").replace(/\.md$/, "").toLowerCase();
+    const path = ["docs", "docs/product", "docs/operating"].map((dir) => `${dir}/${name}/index.html`).find((one) => existsSync(join(dist, one)));
+    assert.ok(path, `${one.from} has no English page`);
+    const html = page(`zh-cn/${path}`);
+    const h1 = /^#\s+(.+)$/m.exec(one.body)[1].replace(/[`*_]/g, "");
+    assert.ok(html.includes(`<h1 id="_top"`) && html.includes(h1), `zh-cn/${path} is not ${one.rel} (no ${h1})`);
+    assert.doesNotMatch(html, /<main[^>]* lang="en"/, `zh-cn/${path} is marked English`);
+    assert.ok(!html.includes("此内容尚不支持你的语言。"), `zh-cn/${path} still carries the fallback notice`);
+    if (one.until !== undefined) assert.ok(html.includes("其余部分仅有英文"), `zh-cn/${path} covers part of its English and does not say so`);
+    assert.ok(html.includes(`href="/docs/${path.slice(5, -11)}/"`), `zh-cn/${path} does not link its English`);
+    // Its links to other docs stay in Chinese menus: the only English page it links is its own original.
+    const main = /<main[\s\S]*?<\/main>/.exec(html)[0];
+    const english = [...main.matchAll(/href="(\/docs\/[^"]*)"/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(english)], [`/docs/${path.slice(5, -11)}/`], `zh-cn/${path} links English pages`);
+    assert.match(main, /href="\/zh-cn\/docs\//, `zh-cn/${path} links no doc under /zh-cn/`);
+  }
 });
 
 /** The first-visit redirect on `/`, run as the browser would, with everything it reads handed in. */
