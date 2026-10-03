@@ -84,6 +84,18 @@ function notice(said, kind = "") {
 }
 
 /**
+ * A catalog sentence whose backticked spans are commands (`mailda claim-secret`): each span in `<code>`, the
+ * backticks dropped, as the shell puts a token in `<code>`. Backticks in a catalog sentence mean an identifier, never
+ * translated (`prose` in `src/i18n/glossary.ts`); the Node's own words are shown as it sent them (`nodeWords`).
+ *
+ * @param {string} said
+ * @returns {Array<string | HTMLElement>}
+ */
+function coded(said) {
+  return said.split("`").map((part, index) => (index % 2 === 1 ? el("code", { text: part }) : part));
+}
+
+/**
  * The Node's own English, marked as English: the pre-authentication twin of the shell's `<NodeWords>`
  * (`src/client/app/words.tsx`). Its `message`s stay English and byte-stable for the agents that read them (ADR 46).
  */
@@ -102,9 +114,9 @@ function nodeWords(message) {
 function refusal(body, fallback) {
   const said = typeof body?.message === "string" && body.message !== "" ? body.message : null;
   const headline = refusalHeadline(body?.error);
-  if (said === null) return notice(headline ?? fallback, "bad");
+  if (said === null) return notice(headline === null ? fallback : coded(headline), "bad");
   if (headline === null || said.startsWith(headline)) return notice(nodeWords(said), "bad");
-  return notice([headline, el("br"), nodeWords(said)], "bad");
+  return notice([...coded(headline), el("br"), nodeWords(said)], "bad");
 }
 
 /* ------------------------------------------------------------------ status strip ---------- */
@@ -214,7 +226,7 @@ function renderClaim() {
     password.node,
     el("p", { class: "hint", text: t("preauth.password.rule") }),
     secret.node,
-    el("p", { class: "hint", text: t("preauth.claim.secretHint") }),
+    el("p", { class: "hint" }, coded(t("preauth.claim.secretHint"))),
     submit, errors,
   ]);
 
@@ -313,7 +325,7 @@ export function renderRecoveryCodes(codes) {
       ]),
       panel(t("preauth.codes.heading"), t("preauth.codes.once"), [
         el("ol", { class: "codes" }, codes.map((code) => el("li", { class: "mono", text: code }))),
-        el("p", { class: "hint", text: t("preauth.codes.next") }),
+        el("p", { class: "hint" }, coded(t("preauth.codes.next"))),
         acknowledged,
       ]),
     ]),

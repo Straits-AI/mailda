@@ -4501,3 +4501,8 @@ said "go close them all" (`docs/i18n.md`, Layer 3's questions). Each is a commit
 Node's two refusals that name it still said "bootstrap secret". They say claim secret now, as does the English
 headline above each, which is the Node's sentence word for word. **For an agent:** the codes `bad_secret` and
 `not_installed` and the response's fields are unchanged; text matched on "bootstrap secret" no longer appears.
+
+**A command in a sentence before sign-in is in `<code>` (H14).** The claim's secret hint, the recovery codes' next
+step and two claim refusals showed their commands between literal backticks. The page now draws a backticked span
+of a catalog sentence as `<code>`, in every locale, with the catalogs' text unchanged; backticks there already meant
+an identifier the glossary does not translate. The Node's own English beside a headline stays as it was sent.
