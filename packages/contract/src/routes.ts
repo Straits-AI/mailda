@@ -752,9 +752,27 @@ export const ROUTES = [
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/verified-destinations",
-    summary: "Read which of the addresses this Node has handed mail to are verified Email Routing destinations of the "
-      + "account, and record when. Answers with counts. No outcome is reported for verified destinations",
+    summary: "Read the account's Email Routing destination addresses: record which of the addresses this Node has handed "
+      + "mail to are verified destinations, and whether each kept forward's destination is verified, waiting for "
+      + "verification or gone. Answers with counts, and the addresses only when asked. No outcome is reported for "
+      + "verified destinations",
+    request: S.providerVerifiedDestinationsRequest,
     response: S.providerVerifiedDestinationsResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/destination-addresses",
+    summary: "Register a destination address with the account's Email Routing, which mails it a verification link. It "
+      + "stays waiting for verification until somebody at that address clicks the link. An address already listed is "
+      + "answered as it is, and nothing is sent. Nothing here deletes a destination",
+    request: S.providerDestinationAddRequest, response: S.providerDestinationAddResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/forwards",
+    summary: "The addresses that keep forwarding to the destination of the rule this Node took over (ADR 47): where each "
+      + "forwards, what the latest read of the account's destinations said of it, and its latest attempt. No Cloudflare call",
+    response: S.keptForwardsResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
@@ -848,14 +866,16 @@ export const ROUTES = [
       + "mailbox it already files into) and recording the action it had on the audit entry and in the rule's own "
       + "name, then reading the rule back. Refuses the catch-all, a stale digest, a rule already here, a disabled "
       + "rule, an action other than forward, worker or drop, one with more than one destination, an address with "
-      + "more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it",
+      + "more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it. A forward "
+      + "rule also needs forward: keep (this Node forwards each stored message to the rule's destination, which must "
+      + "not be listed unverified) or stop",
     request: S.providerRoutingRuleTakeOverRequest, response: S.providerRoutingRuleOutcomeResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/routing-rules/put-back",
-    summary: "Restore a rule this Node took over to the action and name the take-over recorded, then read it back. "
-      + "Refuses a rule this Node never took, or one that no longer routes here",
+    summary: "Restore a rule this Node took over to the action and name the take-over recorded, then read it back, and "
+      + "stop a kept forward once it reads back. Refuses a rule this Node never took, or one that no longer routes here",
     request: S.providerRoutingRulePutBackRequest, response: S.providerRoutingRuleOutcomeResponse,
   },
   {

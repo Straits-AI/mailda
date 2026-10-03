@@ -25,6 +25,12 @@ import { putEvidence } from "./evidence-store.ts";
 export interface IngressResult {
   status: "accepted" | "already_accepted" | "unknown_recipient";
   receiptId?: string;
+  /**
+   * The destination this delivery is to be forwarded to now (ADR 47): set only on `accepted`, when the address keeps
+   * a forward and the message does not carry this Node's own loop marker, after the attempt row was committed with
+   * the receipt. The caller makes the call and settles the row (`forwardKept`).
+   */
+  forward?: string;
 }
 
 export interface InboundMessage {
@@ -33,6 +39,11 @@ export interface InboundMessage {
   envelopeFrom: string;
   envelopeTo: string;
   raw: Bytes;
+  /**
+   * Whether the message carries this Node's own `X-Mailda-Forwarded-By` marker, so it is one this Node forwarded
+   * and has come back. Stored like any other; never forwarded again (the attempt is recorded `withheld`).
+   */
+  forwardedByThisNode?: boolean;
 }
 
 export async function acceptInbound(
@@ -44,10 +55,10 @@ export async function acceptInbound(
   // §13: resolve the recipient before touching content. An address this Node does not
   // serve is rejected without reading, storing or paying for the message.
   const address = await env.CATALOG.prepare(
-    "SELECT mailbox_id FROM addresses WHERE org_id = ? AND address = ? LIMIT 1",
+    "SELECT mailbox_id, kept_forward_to FROM addresses WHERE org_id = ? AND address = ? LIMIT 1",
   )
     .bind(orgId, message.envelopeTo.toLowerCase())
-    .first<{ mailbox_id: string }>();
+    .first<{ mailbox_id: string; kept_forward_to: string | null }>();
 
   if (address === null) {
     return { status: "unknown_recipient" };
@@ -84,6 +95,25 @@ export async function acceptInbound(
   const blobKey = `${orgId}/raw/${timeBucket}/${receiptId}.eml`;
   const stored = await putEvidence(env, blobKey, message.raw);
 
+  /*
+   * A kept forward's attempt row (ADR 47), in the same batch so a stored message at such an address always has
+   * one, and only when the receipt row above was inserted: `INSERT OR IGNORE` loses a race silently, and a plain
+   * insert here would then record an attempt for a receipt that does not exist.
+   */
+  const keeps = address.kept_forward_to;
+  const loop = keeps !== null && message.forwardedByThisNode === true;
+  const attempt = keeps === null ? [] : [
+    env.CATALOG.prepare(
+      `INSERT INTO kept_forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at, settled_at)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM ingress_receipts WHERE id = ?1)`,
+    ).bind(
+      receiptId, orgId, message.envelopeTo.toLowerCase(), keeps,
+      loop ? "withheld" : "outcome_unknown",
+      loop ? "the message carries this Node's own X-Mailda-Forwarded-By marker: it was forwarded by this Node and came back, so forwarding it again would loop" : null,
+      at, loop ? at : null,
+    ),
+  ];
+
   // (2) Receipt and outbox row atomically. INSERT OR IGNORE on the receipt because the
   // UNIQUE index is the real guarantee: a concurrent duplicate loses here rather than
   // creating a second receipt, and repeating the batch is always safe (#9).
@@ -118,6 +148,7 @@ export async function acceptInbound(
       JSON.stringify({ receiptId, mailboxId: address.mailbox_id, blobKey: stored.blobKey }),
       at,
     ),
+    ...attempt,
   ]);
 
   // If the receipt was ignored, a concurrent delivery won the race. The blob we wrote is
@@ -133,7 +164,7 @@ export async function acceptInbound(
     return { status: "already_accepted", receiptId: winner?.id };
   }
 
-  return { status: "accepted", receiptId };
+  return { status: "accepted", receiptId, ...(keeps === null || loop ? {} : { forward: keeps }) };
 }
 
 /**

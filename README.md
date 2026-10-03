@@ -103,7 +103,7 @@ One case no subscription fixes: in the one case measured, mail to a verified des
 account (one verified for Email Routing forwarding) produced no delivery event at all
 ([receipt](./docs/receipts/email-sending-events.md), which also records the send that told it apart from
 delivery outside Cloudflare, and that it rests on one verified address). The Node reads which of its recipients those are (`mailda setup` and `mailda upgrade` with wrangler's
-login, or the Setup screen with a token carrying the optional Email Routing Addresses: Read), the Outbox marks them `verified destination`, and
+login, or the Setup screen with a token carrying the optional Email Routing Addresses: Edit), the Outbox marks them `verified destination`, and
 `mailda doctor` does not call that silence blind.
 
 **A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
@@ -121,15 +121,20 @@ These are the defaults, and how to change each:
 - **Each rule defaults to "leave it".** A forward (often someone's personal mail) offers *receive here only*:
   the destination gets nothing more, and replies sent from there are not seen here. A rule to another Worker
   offers *receive here*: that Worker stops receiving the address, and this Node cannot see what it did. A drop
-  offers *receive here*: mail Cloudflare was discarding is kept from now on. Keeping a forward while
-  receiving here is not built.
+  offers *receive here*: mail Cloudflare was discarding is kept from now on. A forward also offers *receive
+  here and keep forwarding to X* (ADR 47): the Node stores each message, then forwards it to X, the rule's own
+  verified destination. The copy leaves before the Node scans it, a failed forward is shown on People and not
+  told to the sender, and Cloudflare reports no delivery for X. `mailda provider --forwards` lists them;
+  `mailda provider --destinations [--addresses]` and `--add-destination <email>` list and register the account's
+  destination addresses (a new one waits for verification until someone there clicks Cloudflare's link).
 - **A forward goes only into a mailbox you choose**, a new one named after the address offered first (or the
   mailbox already named after it, never a second), never into the only mailbox by default (the API refuses it,
   `E_ROUTING_FORWARD_NEEDS_MAILBOX`).
 - **Rules on names the Node does not receive for** (another subdomain) are a count line with
   `mailda provider --routing-rules <name>` to list them.
 - **`--yes`, or no terminal, changes no rule**: it prints the list and the exact `mailda provider --take-over`
-  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen.
+  command for each, with `--mailbox <mailbox id>` and the mailboxes listed wherever one must be chosen, and both
+  `--forward stop` and `--forward keep` for a forward.
 - Disabled rules, rules with several destinations, duplicate rules and zones with subaddressing on are listed
   with the reason and never offered.
 

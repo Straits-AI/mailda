@@ -71,12 +71,14 @@ export const REQUIRED_PERMISSIONS = [
     optional: false,
   },
   {
-    name: "Email Routing Addresses: Read",
+    name: "Email Routing Addresses: Edit",
     scope: "account",
     why: "which of the addresses this Node has handed mail to are verified destinations of the account, for which "
-      + "Cloudflare reported no delivery outcome in the one case measured. It lets the token read the account's "
-      + "whole destination list; this Node keeps only the addresses it has sent to. Leave it out and `mailda setup` "
-      + "still reads the list with wrangler's login",
+      + "Cloudflare reported no delivery outcome in the one case measured; whether a kept forward's destination is "
+      + "verified; and registering a destination, which Cloudflare then mails a verification link (ADR 47). Edit, "
+      + "because registering is a write and Edit includes the read. It lets the token read the account's whole "
+      + "destination list; this Node keeps only the addresses it has sent to or forwards to, and deletes none. Leave "
+      + "it out and `mailda setup` and `mailda provider` still read and register with wrangler's login",
     optional: true,
   },
   {

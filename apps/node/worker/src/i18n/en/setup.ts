@@ -168,10 +168,10 @@ export const setup = {
 
   "setup.verified.title": "Verified destinations",
   "setup.verified.about":
-    "Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Read on this Node's token; {command} reads it with wrangler's login instead.",
+    "Cloudflare reported no delivery outcome for mail to a verified destination address of this account, in the one case measured. Reading which of this Node's recipients are verified destinations lets the Outbox and doctor say so instead of waiting. It needs the optional permission Email Routing Addresses: Edit on this Node's token; {command} reads it with wrangler's login instead.",
   "setup.verified.read": "Read verified destinations",
   "setup.verified.failed":
-    "The read did not succeed: {said}. When Cloudflare refuses it for lack of permission, the token needs Email Routing Addresses: Read: add it in Cloudflare's dashboard, or make a new token and register it above (if the dashboard shows a new value after the edit, register that).",
+    "The read did not succeed: {said}. When Cloudflare refuses it for lack of permission, the token needs Email Routing Addresses: Edit: add it in Cloudflare's dashboard, or make a new token and register it above (if the dashboard shows a new value after the edit, register that).",
   "setup.verified.failed.never": "Until a read succeeds, these recipients show as unobserved.",
   "setup.verified.failed.stands": "The read of {at} still stands.",
   "setup.verified.nobody": "Read {at} from account {account}. This Node has handed mail to nobody yet, so there was nothing to compare.",
@@ -181,4 +181,22 @@ export const setup = {
     other: "Read {at} from account {account}. {n} of the {recipients} this Node has handed mail to are verified destinations. No outcome is reported for verified destinations; the Outbox marks their hand-overs made while they were verified.",
   },
   "setup.verified.recipients": { one: "{n} address", other: "{n} addresses" },
+  /** The account's whole destination list, counted (ADR 47); the addresses only when the box below is ticked. */
+  "setup.verified.listed": "Destination addresses in the account: {verified} verified, {waiting} waiting for verification.",
+  "setup.verified.showAddresses": "Show the addresses",
+  "setup.verified.addresses": "The account's destination addresses",
+  "setup.verified.state.verified": "verified",
+  "setup.verified.state.waiting": "waiting for verification",
+
+  "setup.destination.title": "Register a destination address",
+  "setup.destination.about":
+    "A kept forward goes only to a verified destination. Registering one makes Cloudflare mail it a link; until someone at that address clicks it, it is waiting for verification and nothing can be forwarded to it. This Node deletes no destination.",
+  "setup.destination.email": "Address",
+  "setup.destination.add": "Register",
+  "setup.destination.waiting": "{email} is waiting for verification until someone at that address clicks the link Cloudflare mailed them.",
+  "setup.destination.alreadyWaiting": "{email} was already registered and is waiting for verification; no second link was sent.",
+  "setup.destination.verified": "{email} is a verified destination.",
+
+  /** A forward rule's choice, and what a take-over that kept the forward left (ADR 47). */
+  "setup.rules.keptForward": "It keeps forwarding to {to}, after each message is stored here.",
 } as const satisfies Area<"setup">;

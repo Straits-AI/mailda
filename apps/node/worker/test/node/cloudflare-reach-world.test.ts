@@ -146,10 +146,11 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
   /*
    * The account's verified Email Routing destinations (28 September 2026), read to record which of this
    * Node's recipients were verified destinations, for which no outcome is reported. Optional: `mailda setup`
-   * reads it with wrangler's login, measured 200 (`docs/receipts/wrangler-login-reach.md`).
+   * reads it with wrangler's login, measured 200 (`docs/receipts/wrangler-login-reach.md`). Since ADR 47 also
+   * written: `POST` registers a destination (the drill did it with wrangler's login), so the scope is the write form.
    */
   "/accounts/{}/email/routing/addresses": {
-    scope: "Email Routing Addresses: Read",
+    scope: "Email Routing Addresses: Edit",
     reference: "Email Routing Addresses Write | Email Routing Addresses Read",
   },
   "/zones": { scope: "Zone: Read", reference: "Zone Zone Read" },
@@ -183,7 +184,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope).filter((one): one is string => one !== null));
     expect([...spent].sort()).toEqual([
-      "Account Settings: Read", "Email Routing Addresses: Read", "Email Routing Rules: Edit", "Email Sending: Edit",
+      "Account Settings: Read", "Email Routing Addresses: Edit", "Email Routing Rules: Edit", "Email Sending: Edit",
       "Queues: Edit",
       "Registrar Domains: Read", "Zone Settings: Edit", "Zone: Read",
     ]);

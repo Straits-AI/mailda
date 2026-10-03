@@ -17,7 +17,8 @@ const { verifiedDestinationLines, verifiedDestinationsStep } = await import("../
 const said = (lines: string[]) => lines.join(" ").replace(/\s+/g, " ");
 const read = (overrides: Record<string, unknown> = {}) => ({
   accountId: "acc", readAt: "2026-09-28T05:00:00.000Z", attemptedAt: "2026-09-28T05:00:00.000Z",
-  error: null as string | null, recipients: 2, verified: 1 as number | null, ...overrides,
+  error: null as string | null, recipients: 2, verified: 1 as number | null,
+  listed: null as { verified: number; waiting: number } | null, addresses: null as Array<{ email: string; state: "verified" | "waiting" }> | null, ...overrides,
 });
 
 describe("verifiedDestinationLines", () => {

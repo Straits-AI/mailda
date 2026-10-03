@@ -9,7 +9,7 @@ import {
   GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam,
   revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
-  useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
+  type KeptForward, useInvitations, useKeptForwards, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
   type PersonRow, type TeamRow,
   type AddressRemoval, type AddressRouting, type MailboxQueue, type Said,
 } from "../api.ts";
@@ -266,7 +266,33 @@ const REMOVAL_WORDS: Record<AddressRemoval["state"], OutcomeKey | null> = {
   not_removed: null,
 };
 
-function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => Promise<void> }) {
+const FORWARD_STATE = {
+  verified: "people.forward.state.verified", waiting: "people.forward.state.waiting",
+  absent: "people.forward.state.absent", unchecked: "people.forward.state.unchecked",
+} as const satisfies Record<NonNullable<KeptForward["verified"]> | "unchecked", Key>;
+
+/**
+ * A kept forward under its address (ADR 47): "forwards to X (verified) · last forwarded <when>", or why the latest
+ * message was not. "verified" is only what a read of the account's list said, never assumed from the take-over.
+ */
+function KeptForwardLine({ one }: { one: KeptForward }) {
+  const last = one.last;
+  const latest = last === null ? t("people.forward.none")
+    : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
+      : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
+        : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
+          : t("people.forward.unknown", { when: dateTime(last.at) });
+  return (
+    <span className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : "dim"}>
+      {" "}{sentence("people.forward.to", { to: <span className="mono">{one.to}</span>, state: t(FORWARD_STATE[one.verified ?? "unchecked"]) })}
+      {" · "}{latest}
+    </span>
+  );
+}
+
+function MailboxHead({ box, onChanged, forwards }: {
+  box: MailboxQueue; onChanged: () => Promise<void>; forwards: ReadonlyMap<string, KeptForward>;
+}) {
   const [name, setName] = useState(box.name);
   const [problem, setProblem] = useState<Said | null>(null);
   const [said, setSaid] = useState<ReactNode>(null);
@@ -321,6 +347,7 @@ function MailboxHead({ box, onChanged }: { box: MailboxQueue; onChanged: () => P
                 <span className="mono">{address}</span>
                 {" "}
                 <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
+                {forwards.has(address) ? <KeptForwardLine one={forwards.get(address)!} /> : null}
               </li>
             ))}
           </ul>
@@ -869,6 +896,8 @@ export function People() {
   const me = useMe();
   // The provisioned receiving domain, for the address fields' fixed suffix: an audit-trail read, no Cloudflare call.
   const provider = useProvider();
+  // Only an administrator reads People at all, so the forwards are asked for once the people read succeeded.
+  const kept = useKeptForwards(people.isSuccess);
   const queryClient = useQueryClient();
 
   async function refresh() {
@@ -880,6 +909,7 @@ export function People() {
     // Access decides what the rest of the interface can see, so a grant that did not refresh the rail would
     // leave somebody looking at a mailbox list that no longer matches what they hold.
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    await queryClient.invalidateQueries({ queryKey: ["forwards"] });
   }
 
   const heading = (
@@ -905,6 +935,7 @@ export function People() {
   const mailboxRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "mailbox");
   const orgRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "organization");
   const orgId = me.data?.organizationId ?? "";
+  const forwards = new Map((kept.data?.forwards ?? []).map((one) => [one.address, one]));
 
   return (
     <>
@@ -915,7 +946,7 @@ export function People() {
 
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={t("people.mailbox.access", { name: box.name })}>
-          <MailboxHead box={box} onChanged={refresh} />
+          <MailboxHead box={box} onChanged={refresh} forwards={forwards} />
           <Scroller label={t("people.mailbox.who", { name: box.name })}>
             <table>
               <thead>

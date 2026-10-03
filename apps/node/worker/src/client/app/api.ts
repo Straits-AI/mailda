@@ -2,7 +2,7 @@ import { useQuery, type QueryClient, type UseQueryResult } from "@tanstack/react
 import { apiFetch } from "/app/session.js";
 import { t } from "/app/locale.js";
 import type {
-  AddressRemoval, AddressRouting, MatterType, ProviderRoutingRules, ProviderVerifiedDestinations, RetryOffer,
+  AddressRemoval, AddressRouting, KeptForwardRow, MatterType, ProviderRoutingRules, ProviderVerifiedDestinations, RetryOffer,
 } from "@mailda/contract/schemas";
 export type { AddressRemoval, AddressRouting };
 import {
@@ -2288,14 +2288,16 @@ export interface RoutingRuleOutcome {
   mailbox: { id: string; name: string } | null;
   /** Whether the rule's name reads back recording where it went; null on a put-back, absent from an older Node. */
   nameRecorded?: boolean | null;
+  /** The destination a take-over kept forwarding to (ADR 47); null otherwise, absent from an older Node. */
+  keptForward?: string | null;
 }
 
 export const routingRulesOn = (domain: string) =>
   proposalFor<{ routing: RoutingRules }>(GET("/api/provider/routing-rules"), domain);
 
-export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string) =>
+export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string, forward?: "keep" | "stop") =>
   act<{ outcome: RoutingRuleOutcome }>(at("POST", "/api/provider/routing-rules/take-over"), "POST", {
-    domain, ruleId, digest, ...(mailboxId === undefined ? {} : { mailboxId }),
+    domain, ruleId, digest, ...(mailboxId === undefined ? {} : { mailboxId }), ...(forward === undefined ? {} : { forward }),
   });
 
 export const putBackRule = (domain: string, ruleId: string) =>
@@ -2341,5 +2343,23 @@ export const subscribeDeliveryEvents = (domain: string, digest: string) =>
 export type VerifiedDestinationsState = ProviderVerifiedDestinations;
 
 /** Reads the account's list with this Node's token and records which of its recipients are on it. */
-export const recordVerifiedDestinations = () =>
-  act<{ destinations: VerifiedDestinationsState }>(at("POST", "/api/provider/verified-destinations"), "POST");
+export const recordVerifiedDestinations = (addresses = false) =>
+  act<{ destinations: VerifiedDestinationsState }>(at("POST", "/api/provider/verified-destinations"), "POST", addresses ? { addresses: true } : {});
+
+/** Registers a destination address with the account (ADR 47); Cloudflare mails it the verification link. */
+export const addDestination = (email: string) =>
+  act<{ destination: { email: string; state: "verified" | "waiting"; added: boolean } }>(
+    at("POST", "/api/provider/destination-addresses"), "POST", { email },
+  );
+
+export type KeptForward = KeptForwardRow;
+
+/** The addresses keeping a forward, each with its latest attempt (ADR 47). Administrators only; no Cloudflare call. */
+export function useKeptForwards(enabled: boolean): UseQueryResult<{ forwards: KeptForward[] }, Error> {
+  return useQuery({
+    queryKey: ["forwards"],
+    queryFn: () => read<{ forwards: KeptForward[] }>(GET("/api/forwards")),
+    ...AUTHORIZATION_SENSITIVE,
+    enabled,
+  });
+}

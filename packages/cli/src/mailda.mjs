@@ -57,8 +57,15 @@ const USAGE = `mailda — operate a Mailda Node
                                               (addresses then live in the Node; the proposal lists the ones with rules)
   mailda provider --routing-rules <domain>     the routing rules already on its zone, and which point here
   mailda provider --take-over <rule id> --domain <domain>  point that rule at this Node; --confirm <digest> to do it
-                                                         (a forward rule also needs --mailbox <id>)
-  mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced
+                                                         (a forward rule also needs --mailbox <id> and
+                                                         --forward keep|stop: keep, and this Node forwards each
+                                                         stored message to the rule's verified destination)
+  mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced, and stop a kept forward
+  mailda provider --forwards                   the addresses that keep a forward, and each one's latest attempt
+  mailda provider --destinations [--addresses] the account's Email Routing destinations, counted (listed with --addresses);
+                                               re-checks each kept forward's destination
+  mailda provider --add-destination <email>    register one; Cloudflare mails it a link, and it waits for verification
+                                               until someone there clicks it
   mailda provider --put-back <rule id> --domain <domain> --without-node
                                                          the same from the rule's own name, with your wrangler
                                                          login, when the Node is gone (no audit entry)

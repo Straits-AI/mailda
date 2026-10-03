@@ -4432,6 +4432,21 @@ alternatives store less but end phrase queries, which CJK search is built on. Th
 keep `detail=full`. ADR 28, `docs/receipts/d1-fts5-search.md` and `docs/message-search.md` now say the trade is
 decided, not open. No code changed.
 
+## Kept forwards (3 October 2026, ADR 47)
+
+**Taking over a forward rule no longer has to end the forward.** A Cloudflare rule holds one action, so pointing
+`me@` at the Node stopped `me@`'s mail reaching the inbox it used to forward to. The question the 1 October amendment
+left open, whether the Node's own Worker can carry the forward, was answered by a drill on mailda.site on 2 October
+(`docs/receipts/email-worker-forward.md`): `message.forward()` works after the message has been read and stored, up
+to 24.4 MB, and the copy is the original (DKIM still passes). The one finding that shaped the design is the
+uncomfortable one: a Worker that catches a failed `forward()` and returns leaves the sender with no bounce and the
+destination with nothing. So the Node never bounces after storing, and instead records every call: a row per
+receipt, written with the receipt and settled after the call, shown on People and counted by doctor. A forward rule
+now offers three choices; keep is refused when the account lists the destination unverified; the destinations can
+be listed and registered from the CLI and Setup; a put-back clears the forward; an address keeping one cannot be
+removed. Not built: forwarding to a destination the rule did not have, and sending a copy instead when a forward is
+refused, which is next.
+
 
 ## mailda.site in Simplified Chinese (3 October 2026)
 

@@ -273,7 +273,7 @@ describe("the permissions an operator ticks", () => {
     // The registrar read only buys a domain; the destination-address read (28 September 2026) has wrangler's
     // login on `mailda setup` as its ordinary path, and widens what a token held at rest can see.
     expect(REQUIRED_PERMISSIONS.filter((one) => one.optional).map((one) => one.name))
-      .toEqual(["Email Routing Addresses: Read", "Registrar Domains: Read"]);
+      .toEqual(["Email Routing Addresses: Edit", "Registrar Domains: Read"]);
     expect(new Set(REQUIRED_PERMISSIONS.map((one) => one.name)).size).toBe(REQUIRED_PERMISSIONS.length);
     // The admission travels with the list: verify reports no permissions, so a missing one is found late.
     expect(PROVIDER_NOTE).toContain("does not report permissions");

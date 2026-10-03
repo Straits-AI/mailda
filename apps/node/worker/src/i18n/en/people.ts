@@ -40,6 +40,20 @@ export const people = {
   "people.mailbox.rename": "Rename",
   "people.mailbox.renamed": "renamed to {name}",
   "people.mailbox.noAddress": "No address yet: nothing is routed here, and a send from it is refused until one is.",
+  /**
+   * A kept forward under its address (ADR 47): where it goes, what the last read of the account's destinations said,
+   * and its latest attempt. A refusal is Cloudflare's own words, in `<NodeWords>`.
+   */
+  "people.forward.to": "forwards to {to} ({state})",
+  "people.forward.state.verified": "verified",
+  "people.forward.state.waiting": "waiting for verification",
+  "people.forward.state.absent": "not a destination of the account",
+  "people.forward.state.unchecked": "not checked",
+  "people.forward.handedOver": "last forwarded {when}",
+  "people.forward.none": "nothing has arrived since it was kept",
+  "people.forward.refused": "not forwarded at {when}: {reason}",
+  "people.forward.withheld": "not forwarded at {when}: it came back from a forward of this Node's own",
+  "people.forward.unknown": "no recorded answer for the forward at {when}: the destination may or may not have it",
   "people.mailbox.addresses": "Addresses of {name}",
   "people.mailbox.remove": "Remove",
   "people.mailbox.access": "Access to {name}",
