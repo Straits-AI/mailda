@@ -112,9 +112,17 @@ export function keptForwardLines(one) {
       : one.last.state === "refused" ? `not forwarded at ${one.last.at}: ${one.last.error}`
         : one.last.state === "withheld" ? `withheld at ${one.last.at}: ${one.last.error}`
           : `no recorded answer for the forward at ${one.last.at}: ${one.to} may or may not have it`;
+  // A copy (ADR 47, amended 3 October 2026): whether copies are on, and what became of the latest one. `?? null`, so an
+  // older Node, which sends neither field, reads as off.
+  const copy = one.last?.copy ?? null;
+  const copied = copy === null ? null
+    : copy.state === "sealed" ? `a copy was sealed as ${copy.sendId}${copy.sendState === null ? "" : `, ${copy.sendState.replace(/_/g, " ")}`}`
+      : `${copy.error}`;
   return [
     `${one.address}  forwards to ${one.to} (${verified}${one.checkedAt === null ? "" : `, read ${one.checkedAt}`})`,
     ...wrapAt(last, 88).map((line) => `  ${line}`),
+    ...(copied === null ? [] : wrapAt(copied, 88).map((line) => `  ${line}`)),
+    `  ${(one.copy ?? null) === null ? "copies off" : `copies on, by ${one.copy.by} at ${one.copy.at}: when the forward is refused as not verified, the message is sent from ${one.address}`}`,
   ];
 }
 

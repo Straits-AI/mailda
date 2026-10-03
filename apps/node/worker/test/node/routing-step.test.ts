@@ -247,7 +247,7 @@ describe("the question", () => {
   it("offers a forward rule its third choice, keep forwarding, in the Node's words, and sends the choice (ADR 47)", async () => {
     const keep = { label: "receive here and keep forwarding to <personal-1>", says: "me@ is stored here first, then forwarded" };
     const rules = RULES.map((one) => one.id === "r_me"
-      ? { ...one, takeOver: offered("<personal-1> gets nothing more for me@", { label: "receive here only", filesInto: { id: "mbx_me", name: "Me" }, keep }) } : one);
+      ? { ...one, takeOver: offered("<personal-1> gets nothing more for me@", { label: "receive here only", filesInto: { id: "mbx_me", name: "Me" }, keep: keep as never /* a Node before copies */ }) } : one);
     node({ rules });
     const tty = terminal(["y", "y"], [(options) => options[2]!.value, leave, leave]);
     await step({ ask: tty.ask, choose: tty.choose });
@@ -261,7 +261,7 @@ describe("the question", () => {
 
   it("sends stop for a forward rule's 'receive here only' to a Node that offers the choice, and prints both commands under --yes", async () => {
     const keep = { label: "receive here and keep forwarding to <personal-1>", says: "s" };
-    const rules = RULES.map((one) => one.id === "r_me" ? { ...one, takeOver: offered("x", { label: "receive here only", filesInto: { id: "mbx_me", name: "Me" }, keep }) } : one);
+    const rules = RULES.map((one) => one.id === "r_me" ? { ...one, takeOver: offered("x", { label: "receive here only", filesInto: { id: "mbx_me", name: "Me" }, keep: keep as never /* a Node before copies */ }) } : one);
     node({ rules });
     const tty = terminal(["y", "y"], [take, leave, leave]);
     await step({ ask: tty.ask, choose: tty.choose });
@@ -272,6 +272,25 @@ describe("the question", () => {
     await step({ yes: true });
     expect(printed()).toContain(`--take-over r_me --domain ${DOMAIN} --confirm ${digest(4)} --forward stop --url ${ORIGIN}`);
     expect(printed()).toContain(`--take-over r_me --domain ${DOMAIN} --confirm ${digest(4)} --forward keep --url ${ORIGIN}`);
+  });
+
+  it("offers keep forwarding with copies as a fourth choice, in the Node's words, sends copy: true, and prints its command under --yes", async () => {
+    const copy = { label: "receive here, keep forwarding to <personal-1>, and send a copy when it is refused", says: "a copy is sent from me@ as \"<sender> via <mailbox>\"" };
+    const keep = { label: "receive here and keep forwarding to <personal-1>", says: "me@ is stored here first, then forwarded", copy };
+    const rules = RULES.map((one) => one.id === "r_me"
+      ? { ...one, takeOver: offered("<personal-1> gets nothing more for me@", { label: "receive here only", filesInto: { id: "mbx_me", name: "Me" }, keep }) } : one);
+    node({ rules });
+    const tty = terminal(["y", "y"], [(options) => options[3]!.value, leave, leave]);
+    await step({ ask: tty.ask, choose: tty.choose });
+    expect(tty.offered[0]).toEqual({ prompt: `   me@${DOMAIN}`, labels: ["leave it", "receive here only", keep.label, copy.label] });
+    expect(posts()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: DOMAIN, ruleId: "r_me", digest: digest(4), mailboxId: "mbx_me", forward: "keep", copy: true,
+    }]]);
+    expect(printed()).toContain(copy.says);
+    out = [];
+    await step({ yes: true });
+    expect(printed()).toContain(`${copy.label}:`);
+    expect(printed()).toContain(`--take-over r_me --domain ${DOMAIN} --confirm ${digest(4)} --forward keep --copy --url ${ORIGIN}`);
   });
 
   it("changes nothing when the plan is not confirmed", async () => {

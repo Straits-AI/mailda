@@ -83,9 +83,10 @@ import { log } from "./audit.ts";
  * A handler can finish while the published-flag write fails, a pass can be killed after a handler finished, and
  * a handler that outlives its lease can be claimed again. At-least-once is the model, and no per-consumer
  * `(consumer, event_id)` record exists yet (§22 asks for one), so each handler must be idempotent on its own
- * terms. `mail.ingress.accepted`, the only topic, is: `materialiseReceipt` finds the message by
+ * terms. `mail.ingress.accepted` is: `materialiseReceipt` finds the message by
  * `messages.ingress_receipt_id` (unique index `msg_by_receipt`) and answers `already_present`, and the Butler
- * trigger's Workflow instance id refuses a second run (`src/pipeline.ts`).
+ * trigger's Workflow instance id refuses a second run (`src/pipeline.ts`). `mail.kept_forward.copy` (ADR 47) is: the
+ * copy returns once the attempt row has a copy state, and a second seal fails on `send_copies`' unique receipt.
  */
 
 /**

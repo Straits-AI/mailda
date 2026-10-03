@@ -69,7 +69,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postQuarantineByMessageIdHold` | Hold a received message back from its mailbox's queue, with the reason in words. The act a customer's own classifier reaches; an administrator releases it from GET /api/quarantine |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 119 withheld
+## What you cannot do, and why — 120 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -136,7 +136,7 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read, draft and place mail; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (60)
+### Operator — running the Node rather than using it (61)
 
 - **`deleteAddresses`, `patchMailboxesByMailboxId`, `postAddresses`, `postMailboxes`, `postMaintenanceReconcile`, `postMaintenanceRequeuePreviews`, `postMaintenanceReseal`**
 
@@ -150,7 +150,7 @@ so you are that one person and can never be the second. These are not permission
 
   Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or register a passkey would be administering the way in rather than using it.
 
-- **`deleteProviderToken`, `getForwards`, `getProvider`, `getProviderDeliveryEvents`, `getProviderDomains`, `getProviderDomainsPurchase`, `getProviderDomainsPurchaseStatus`, `getProviderEmailRouting`, `getProviderHandover`, `getProviderOwnership`, `getProviderReceiving`, `getProviderRoutingRules`, `getProviderSending`, `getProviderSubscription`, `postProviderDestinationAddresses`, `postProviderDomainsCheck`, `postProviderDomainsPurchase`, `postProviderReceiving`, `postProviderRoutingRulesPutBack`, `postProviderRoutingRulesTakeOver`, `postProviderSending`, `postProviderSubscription`, `postProviderVerifiedDestinations`, `putProviderToken`**
+- **`deleteProviderToken`, `getForwards`, `getProvider`, `getProviderDeliveryEvents`, `getProviderDomains`, `getProviderDomainsPurchase`, `getProviderDomainsPurchaseStatus`, `getProviderEmailRouting`, `getProviderHandover`, `getProviderOwnership`, `getProviderReceiving`, `getProviderRoutingRules`, `getProviderSending`, `getProviderSubscription`, `postForwardsCopy`, `postProviderDestinationAddresses`, `postProviderDomainsCheck`, `postProviderDomainsPurchase`, `postProviderReceiving`, `postProviderRoutingRulesPutBack`, `postProviderRoutingRulesTakeOver`, `postProviderSending`, `postProviderSubscription`, `postProviderVerifiedDestinations`, `putProviderToken`**
 
   The Node's own Cloudflare credential. Registering the API token cannot be completed by a machine — the token is made by a person in Cloudflare's dashboard past its own sign-in challenge — and forgetting it is an act of running the Node. The read is declared because the derivation rule would otherwise offer it: it is the map of the infrastructure the mail sits on.
 

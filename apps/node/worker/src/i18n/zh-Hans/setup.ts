@@ -166,4 +166,8 @@ export const setup: Twin<typeof source> = {
   "setup.destination.verified": "{email} 是已验证的目标地址。",
 
   "setup.rules.keptForward": "每封邮件在这里存储之后，它会继续转发到 {to}。",
+  "setup.rules.copy": "Cloudflare 以未验证为由拒绝转发时，同时发送一份副本",
+  "setup.rules.copyAbout":
+    "副本由 {address} 发出：收件人看到的发件人是“<发件人> via {mailbox}”，回复会发给原发件人。最大 {size}。带有本节点判定为危险的附件的邮件、已隔离的邮件或 DMARC 未通过的邮件不会发送副本。每份副本计入今天的发送量，像其他发送一样出现在发件箱中，并以你的名义定稿，因此你需要在该邮箱上拥有 send.propose。",
+  "setup.rules.copyOn": "转发以未验证为由被拒绝时，会由 {address} 发出一份副本。",
 };

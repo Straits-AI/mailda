@@ -45,7 +45,7 @@ const recipient = (kind: string, address: string, delivery_state: string | null,
 function send(id: string, extra: Record<string, unknown>) {
   return {
     id, subject: `subject ${id}`, envelope_to: JSON.stringify(["a@example.test"]), state: "handed_over", state_at: AT,
-    release_at: AT, attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 0,
+    release_at: AT, attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 0, is_copy: 0,
     state_reason: null, policy_outcome: "allow", retry: { mode: null, why: "acceptance_observed" }, recipients: [], ...extra,
   };
 }
@@ -499,5 +499,34 @@ describe("a remedy's answer in zh-Hans", () => {
     const status = await screen.findByRole("status");
     expect(status.textContent).toBe("已重新排队 2 项。Queued for the preview backfill.");
     expect(screen.getByText("Queued for the preview backfill.").getAttribute("lang")).toBe("en");
+  });
+});
+
+describe("a copy in the Outbox (ADR 47, amended 3 October 2026)", () => {
+  const copy = (extra: Record<string, unknown>) => send("snd_copy", { is_copy: 1, subject: "Quarterly figures", ...extra });
+
+  it("is labelled a copy, saying what one is", async () => {
+    answerSends({ sends: [copy({})], truncated: false, daily: DAILY, capability: CAN });
+    mount(<Outbox />);
+    const chip = await screen.findByText("copy");
+    expect(chip.getAttribute("title")).toContain("a kept forward was refused as not verified");
+  });
+
+  it("offers no resend when its outcome is unknown, and says what can be done instead", async () => {
+    answerSends({
+      sends: [copy({ state: "outcome_unknown", retry: { mode: null, why: "copy_not_resent" } })],
+      truncated: false, daily: DAILY, capability: CAN,
+    });
+    mount(<Outbox />);
+    expect((await screen.findByText(/A copy is not resent/)).textContent)
+      .toBe("A copy is not resent: forward the message from its mailbox if it is still owed.");
+    expect(screen.queryByRole("button", { name: "Resend…" })).toBeNull();
+  });
+
+  it("labels no other send", async () => {
+    answerSends({ sends: [send("snd_plain", { is_copy: 0 })], truncated: false, daily: DAILY, capability: CAN });
+    mount(<Outbox />);
+    await screen.findByText("subject snd_plain");
+    expect(screen.queryByText("copy")).toBeNull();
   });
 });

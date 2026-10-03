@@ -308,6 +308,8 @@ describe("the policy is honest, because the document it governs contains no inli
     // "Up to NaN MB" and, comparing against undefined, never disable Seal and send.
     expect(source).toContain(`"attachmentBudgetBytes":${ATTACHMENT_BUDGET}`);
     expect(source).toContain(`"maxAttachments":${MAX_ATTACHMENTS}`);
+    // And the copy's limit (ADR 47), which People and Setup state where copies are turned on.
+    expect(source).toContain(`"outboundMaxBytes":${BUDGETS["email.outbound.max_bytes"]}`);
     expect(source, "the cookie name the client watches for expiry").toContain(`"${EXPIRY_COOKIE}"`);
   });
 

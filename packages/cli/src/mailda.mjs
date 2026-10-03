@@ -59,9 +59,16 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --take-over <rule id> --domain <domain>  point that rule at this Node; --confirm <digest> to do it
                                                          (a forward rule also needs --mailbox <id> and
                                                          --forward keep|stop: keep, and this Node forwards each
-                                                         stored message to the rule's verified destination)
+                                                         stored message to the rule's verified destination;
+                                                         --copy with keep also sends a copy when the forward is
+                                                         refused as not verified)
   mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced, and stop a kept forward
   mailda provider --forwards                   the addresses that keep a forward, and each one's latest attempt
+  mailda provider --copy <address> on|off      when that address's forward is refused as not verified, send the message
+                                               from the address instead: the recipient sees "<sender> via <mailbox>",
+                                               replies go to the sender; up to email.outbound.max_bytes, no dangerous
+                                               attachment, counted
+                                               towards today's sending
   mailda provider --destinations [--addresses] the account's Email Routing destinations, counted (listed with --addresses);
                                                re-checks each kept forward's destination
   mailda provider --add-destination <email>    register one; Cloudflare mails it a link, and it waits for verification

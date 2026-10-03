@@ -699,3 +699,20 @@ Edit). The audit entry `provider.destination_added` names Cloudflare's id for th
 and no log does. This Node deletes no destination: it cannot tell what else relies on one. All three routes are
 withheld from machines.
 
+
+**Copies, when a forward cannot be used** (ADR 47, amended 3 October 2026). An address that keeps a forward may opt
+in to a copy, off by default: `POST /api/forwards/copy {address, copy}` (`mailda provider --copy <address> on|off`,
+People), or `copy: true` beside `forward: "keep"` on the take-over (`--copy`, the Setup screen's box under keep), which
+then also keeps a destination listed unverified or not at all. When `forward()` throws "destination address not
+verified", the one refusal measured to deliver nothing, the stored message is filed, judged, and sealed as an ordinary
+send through Email Sending, not through Email Routing: From is the address itself with "<sender> via <mailbox>" as its
+display name (DMARC aligns on the customer's domain, so the address's domain must be onboarded for sending like any
+send from it), Reply-To and `X-Original-From` are the sender, `X-Mailda-Copy-Of` is this Node's claim id, and the body
+is the original's, byte for byte. So a copy needs no Email Routing permission at all, and the destination need not be
+verified; it does need the `send_email` binding (`E_COPY_NEEDS_SENDING` without one) and counts against the account's
+daily sending like any send. The opt-in's administrator must hold `send.propose` on the mailbox
+(`E_COPY_NEEDS_SEND_PROPOSE`) and is read again at every copy and at dispatch. A copy is refused, and the reason left
+on the attempt (`copy_state`), for a message over `email.outbound.max_bytes`, one quarantined, one failing DMARC, one
+with an attachment this Node judges dangerous or could not read, one whose body is 8-bit and not UTF-8, and a
+destination on any domain this organisation receives at (`E_COPY_WOULD_LOOP` at the opt-in). People shows the copy's
+send and its state; doctor's `kept_forwards` counts the refused. The opt-in route is withheld from machines.

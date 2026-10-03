@@ -207,7 +207,9 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       + "it afterwards: the route that would does not exist, which is what 'pinned' means here.",
   },
   // Was exempt as "set at claim time and never since"; `POST /api/addresses` adds one and says how it is routed.
-  addresses: { actions: ["address.added", "address.removed"] },
+  // `kept_forward.copy_set` (ADR 47 amended): an administrator turning copies on or off, the authority each copy is
+  // sealed under, written on the address row.
+  addresses: { actions: ["address.added", "address.removed", "kept_forward.copy_set"] },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   /*
@@ -256,6 +258,11 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * an inbound delivery's machine record, made by no person, and the act a person did make, keeping the forward, is
    * `provider.routing_rule_taken_over` with `forward: "keep"` on its detail.
    */
+  /*
+   * Migration 0075 (ADR 47 amended): one row per copy sealed, written in the seal's own batch. Audited there: it is a
+   * send, and `send.sealed` names the Node as actor and the opting administrator as accountable, with `copyOf`.
+   */
+  send_copies: { actions: ["send.sealed"] },
   kept_forward_attempts: {
     exempt: "an inbound delivery's own record of its kept forward, written with the receipt and settled by the email "
       + "handler; no person acts here, and keeping the forward is audited as provider.routing_rule_taken_over",

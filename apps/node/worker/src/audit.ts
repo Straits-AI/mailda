@@ -936,6 +936,14 @@ export const AUDIT_ACTIONS = {
    * A destination address registered with the account's Email Routing (ADR 47). The subject is Cloudflare's id for
    * it and the entry never names the address: the trail is permanent and the address is somebody's own inbox.
    */
+  /**
+   * Copies turned on or off for an address that keeps a forward (ADR 47, amended 3 October 2026). The actor is the
+   * administrator whose opt-in each later copy is sealed under; the entry names the address and never the destination.
+   */
+  "kept_forward.copy_set": {
+    says: "An administrator turned copies on or off for an address that keeps a forward; on, each forward Cloudflare "
+      + "refuses as not verified is followed by a copy sealed under them.",
+  },
   "provider.destination_added": {
     says: "An administrator asked Cloudflare to register a destination address, which Cloudflare then mails a "
       + "verification link; the entry names Cloudflare's id for it and never the address.",

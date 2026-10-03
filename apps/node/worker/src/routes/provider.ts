@@ -145,6 +145,17 @@ export const provider = {
     return Response.json({ forwards: await keptForwards(env, who.orgId) });
   },
 
+  "POST /api/forwards/copy": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { setKeptForwardCopy } = await import("../kept-forward.ts");
+    return Response.json({
+      copy: await setKeptForwardCopy(env, clock, who.orgId, who.userId, String(body.address ?? ""), body.copy === true),
+    });
+  },
+
   "GET /api/provider/domains/purchase": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -303,6 +314,7 @@ export const provider = {
         String(body.domain ?? ""), String(body.ruleId ?? ""), String(body.digest ?? ""),
         typeof body.mailboxId === "string" ? body.mailboxId : null,
         body.forward === "keep" || body.forward === "stop" ? body.forward : null,
+        body.copy === true,
       ),
     });
   },

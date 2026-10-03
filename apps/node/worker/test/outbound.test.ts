@@ -12,6 +12,7 @@ import {
 import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
 import { HeaderBlock, normalizeAddress, safeFilename } from "../src/outbound/headers.ts";
 import { MAX_ATTACHMENTS } from "../src/outbound/attachment-budget.ts";
+import { resendMayDuplicate } from "../src/outbound/retry.ts";
 import { CallerError } from "../src/errors.ts";
 import { classifyError, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
@@ -1520,5 +1521,53 @@ describe("whether the submitted bytes are producible", () => {
       .bind(sealed.id).first<{ state: string }>();
     expect(state?.state).toBe("outcome_unknown");
     expect(await hasSubmitted(sealed.id)).toBe(0);
+  });
+});
+
+describe("a resend carries what the first send carried (resend-may-duplicate, #53)", () => {
+  const PDF = utf8("%PDF-1.7\nresend\n");
+  const unknown = async (manifestId: string) => await testEnv.CATALOG.prepare(
+    "UPDATE send_manifests SET state = 'outcome_unknown', submitted_key = 'k', submitted_sha256 = 'h' WHERE id = ?",
+  ).bind(manifestId).run();
+  const resend = async (manifestId: string) => (await resendMayDuplicate(testEnv, createSystemCtx(), ORG,
+    { userId: AUTHOR, acceptDuplicateRisk: true, reason: "the first may not have gone" }, manifestId)).sealedAs!;
+
+  it("forwards the same original again, as the first send did", async () => {
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at) VALUES ('rt_resend', ?, ?, 'mailbox.content.read', 'mailbox', ?, ?)",
+    ).bind(ORG, AUTHOR, MAILBOX, new Date().toISOString()).run();
+    const original = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId: MAILBOX, address: ADDRESS }, { subject: "Original" });
+    const first = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, subject: "Fwd: Original", bodyTyped: "See below.", forwardOfMessageId: original.messageId,
+    });
+    await unknown(first.id);
+    const again = await resend(first.id);
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, again)).raw);
+    expect(text).toContain("Content-Type: message/rfc822");
+    expect(text).toContain("Subject: Original");
+  });
+
+  it("attaches the same files again, as the first send did", async () => {
+    const first = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    await unknown(first.id);
+    const again = await resend(first.id);
+    const rows = await testEnv.CATALOG.prepare("SELECT author_filename, sha256 FROM send_attachments WHERE manifest_id IN (?, ?) ORDER BY manifest_id")
+      .bind(first.id, again).all<{ author_filename: string; sha256: string }>();
+    expect(rows.results).toHaveLength(2);
+    expect(rows.results[1]).toEqual(rows.results[0]);
+  });
+
+  it("lets a file through again that the author let through the first time, and no other", async () => {
+    const MZ = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]);
+    const first = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, allowDangerousAttachments: true,
+      attachments: [{ filename: "setup.exe", contentType: "application/octet-stream", content: MZ }],
+    });
+    await unknown(first.id);
+    const again = await resend(first.id);
+    expect((await testEnv.CATALOG.prepare("SELECT verdict FROM send_attachments WHERE manifest_id = ?").bind(again)
+      .first<{ verdict: string }>())?.verdict).toBe("executable");
   });
 });

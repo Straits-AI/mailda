@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { triggerButlers } from "./butler/trigger.ts";
+import { COPY_TOPIC, copyKept } from "./kept-forward.ts";
 import { materialiseReceipt } from "./materialise.ts";
 import type { OutboxEvent } from "./outbox.ts";
 
@@ -93,6 +94,27 @@ export const HANDLERS: Record<string, Handler> = {
     ).bind(outcome.messageId).first<{ org_id: string }>();
     if (owner === null) return;
     await triggerButlers(env, ctx, owner.org_id, outcome.messageId);
+  },
+
+  /**
+   * A kept forward was refused as not verified and its address opted in to a copy (ADR 47, amended 3 October 2026).
+   * Written by `forwardKept` after `mail.ingress.accepted`, which may not have been consumed yet: so the message is
+   * filed here first, by the same idempotent call, and the copy is decided from the filed row, quarantine and
+   * attachment verdicts included. Idempotent on its own terms: `copyKept` returns once the attempt has a copy state,
+   * and a second seal of one delivery fails on `send_copies`' unique receipt.
+   */
+  [COPY_TOPIC]: async (env, ctx, event) => {
+    const payload = JSON.parse(event.payload) as { receiptId?: string; marker?: string };
+    if (typeof payload.receiptId !== "string" || typeof payload.marker !== "string") {
+      throw new Error(
+        `E_MALFORMED_EVENT  ${event.id} on topic ${event.topic} has no receiptId or marker\n` +
+          "  why      the event stays unpublished, so nothing is lost — `doctor` reports a stalled outbox\n" +
+          "  fix      kept-forward.ts writes this payload; a change there without a change here is the cause",
+      );
+    }
+    const outcome = await materialiseReceipt(env, ctx, payload.receiptId);
+    if (outcome.messageId === undefined) return;
+    await copyKept(env, ctx, payload.receiptId, outcome.messageId, payload.marker);
   },
 };
 

@@ -432,9 +432,43 @@ export const keptForwardsResponse = z.object({
     verified: z.enum(["verified", "waiting", "absent"]).nullable(),
     checkedAt: isoDate.nullable(),
     /** The latest attempt; `error` is Cloudflare's words on `refused`, the loop reason on `withheld`. Null: none yet. */
-    last: z.object({ state: keptForwardAttemptState, at: isoDate, error: z.string().nullable() }).strict().nullable(),
+    last: z.object({
+      state: keptForwardAttemptState, at: isoDate, error: z.string().nullable(),
+      /**
+       * What became of the copy that attempt asked for (ADR 47, amended 3 October 2026), or null when none was asked
+       * for. `sealed` names the send, whose own `sendState` says the rest; `refused` says why in `error`.
+       */
+      copy: z.object({
+        state: z.enum(["sealed", "refused"]), at: isoDate.nullable(), error: z.string().nullable(),
+        sendId: z.string().nullable(), sendState: z.string().nullable(),
+      }).strict().nullable(),
+    }).strict().nullable(),
     lastHandedOverAt: isoDate.nullable(),
+    /**
+     * Whether a copy is sent when the forward is refused as not verified, who turned that on and when; null when off,
+     * which is the default.
+     */
+    copy: z.object({ by: z.string(), at: isoDate }).strict().nullable(),
   }).strict()),
+}).strict();
+
+/**
+ * Turning copies on or off for an address that keeps a forward (`POST /api/forwards/copy`, ADR 47). On: when the
+ * forward is refused as not verified, the stored message is sealed again as a send from the address, the sender's name
+ * in the From display name and their address in Reply-To, under the administrator who turned it on.
+ */
+export const keptForwardCopyRequest = z.object({
+  address: z.string().min(3).max(254),
+  copy: z.boolean(),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+export const keptForwardCopyResponse = z.object({
+  copy: z.object({
+    address: z.string(),
+    to: z.string(),
+    /** Null when copies are off. */
+    by: z.string().nullable(),
+    at: isoDate.nullable(),
+  }).strict(),
 }).strict();
 export type KeptForwardRow = z.infer<typeof keptForwardsResponse>["forwards"][number];
 /** The `destinations` object, for the consumers that print it (the client and the CLI's declaration). */
@@ -797,7 +831,14 @@ export const providerRoutingRulesResponse = z.object({
          * Node's words. Null on any other rule. On a forward rule `label`/`says` above are the other choice, stopping
          * the forward, and a take-over must name one of the two (`forward`, `E_ROUTING_FORWARD_NEEDS_CHOICE`).
          */
-        keep: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict().nullable(),
+        keep: z.object({
+          label: z.string().min(1), says: z.string().min(1),
+          /**
+           * The fourth choice (ADR 47, amended 3 October 2026): keep, and send a copy when the forward is refused as not
+           * verified (`copy: true` with `forward: "keep"`), in the Node's words, which state what a copy is and its limits.
+           */
+          copy: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict(),
+        }).strict().nullable(),
       }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),
@@ -829,6 +870,8 @@ export const providerRoutingRuleOutcomeResponse = z.object({
      * (ADR 47); null when nothing is forwarded, and on a put-back, which clears it.
      */
     keptForward: z.string().nullable(),
+    /** Whether that take-over also turned copies on (ADR 47, amended 3 October 2026); null on a put-back. */
+    copy: z.boolean().nullable(),
   }).strict(),
 }).strict();
 
@@ -847,6 +890,12 @@ export const providerRoutingRuleTakeOverRequest = z.object({
    * rule (`E_ROUTING_FORWARD_NOT_A_FORWARD`), and missing on a forward rule (`E_ROUTING_FORWARD_NEEDS_CHOICE`).
    */
   forward: z.enum(["keep", "stop"]).optional(),
+  /**
+   * With `forward: "keep"` only (ADR 47, amended 3 October 2026): also send a copy when the forward is refused as not
+   * verified, which lets a destination that is not verified be kept. The administrator taking the rule over is the
+   * authority each copy is sealed under. Refused with anything else (`E_COPY_NEEDS_KEEP`).
+   */
+  copy: z.boolean().optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 export const providerRoutingRulePutBackRequest = z.object({
@@ -2414,7 +2463,7 @@ export const recipientRow = z.object({
  * original idempotency key and provably cannot duplicate, and `proof` is the recorded non-acceptance that makes
  * it so (`refused`, `throttled`, `suppressed`, `never_submitted`); `resend-may-duplicate` mints a new key and
  * might. Only `mode: null` carries `why`, the reason neither is offered (`not_yet_attempted`, `decided`,
- * `acceptance_observed`, `state_not_classified`). Until 2 October 2026 this schema had the null arm alone, and
+ * `acceptance_observed`, `state_not_classified`, `copy_not_resent`). Until 2 October 2026 this schema had the null arm alone, and
  * the Outbox titled its Retry button with a `why` no offered mode has.
  */
 const retryOffer = z.union([
@@ -2440,6 +2489,11 @@ export const sendRow = z.object({
   policy_outcome: z.string().nullable(),
   /** 0 or 1, not a boolean: it is `EXISTS` from SQL, and the client reads it as a number. */
   has_submitted: z.number().int(),
+  /**
+   * 0 or 1, as `has_submitted`: whether this send is a copy of a stored message that a refused kept forward asked for
+   * (ADR 47). Its retry offer is then never a resend (`why: copy_not_resent`).
+   */
+  is_copy: z.number().int(),
   recipients: z.array(recipientRow),
   retry: retryOffer,
 }).strict();

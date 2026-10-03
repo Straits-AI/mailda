@@ -24,6 +24,10 @@ const BOX = { id: "mbx_test", name: "Support", unclaimed: 0, claimed: 0, mine: 0
 function mount(routing: { state: string; detail: string }, boxes = [BOX], receiving: string | null = null, forwards: unknown[] = []) {
   answerWith((call) => {
     if (call.path === "/api/forwards") return Response.json({ forwards });
+    if (call.path === "/api/forwards/copy") {
+      const asked = call.body as { address: string; copy: boolean };
+      return Response.json({ copy: { address: asked.address, to: "me@gmail.test", by: asked.copy ? "usr_me" : null, at: asked.copy ? "2026-10-03T00:00:00.000Z" : null } });
+    }
     if (call.path === "/api/provider") {
       return Response.json({
         provider: { state: "no_token" }, permissions: [], note: "",
@@ -194,9 +198,9 @@ describe("the domain beside the local part", () => {
 
 describe("an address that keeps a forward (ADR 47)", () => {
   beforeEach(reset);
-  const forward = (last: unknown, verified: string | null = "verified") => ({
+  const forward = (last: unknown, verified: string | null = "verified", copy: unknown = null) => ({
     address: "support@example.test", mailboxId: "mbx_test", to: "me@gmail.test", verified, checkedAt: "2026-10-03T00:00:00.000Z",
-    last, lastHandedOverAt: null,
+    last, lastHandedOverAt: null, copy,
   });
 
   it("says where it forwards, what the last read said, and when it last forwarded", async () => {
@@ -213,3 +217,46 @@ describe("an address that keeps a forward (ADR 47)", () => {
   });
 });
 
+describe("copies, under an address that keeps a forward (ADR 47, amended 3 October 2026)", () => {
+  beforeEach(reset);
+  const refusedWith = (copy: unknown) => ({ state: "refused", at: "2026-10-03T01:00:00.000Z", error: "destination address not verified", copy });
+  const forward = (last: unknown, copy: unknown = null) => ({
+    address: "support@example.test", mailboxId: "mbx_test", to: "me@gmail.test", verified: "absent", checkedAt: null,
+    last, lastHandedOverAt: null, copy,
+  });
+
+  it("says copies are off, offers to send them, and states what a copy is, with the limit", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(null)]);
+    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    expect(line.textContent).toContain("Copies off.");
+    expect(line.textContent).toContain("Send copies");
+    expect(line.textContent).toContain('a copy from support@example.test: the recipient sees it from "<sender> via Support", and replies go to the sender. Up to 5.0 MB.');
+    expect(line.textContent).toContain("Each copy counts towards today's sending");
+  });
+
+  it("names the sealed copy's send and its state, and who turned copies on", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(
+      refusedWith({ state: "sealed", at: "2026-10-03T01:00:01.000Z", error: null, sendId: "snd_COPY", sendState: "handed_over" }),
+      { by: "usr_nobody", at: "2026-10-02T00:00:00.000Z" },
+    )]);
+    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    expect(line.textContent).toContain("a copy was sealed as snd_COPY (handed over)");
+    expect(line.textContent).toMatch(/Copies on, turned on by usr_nobody on /);
+    expect(line.textContent).toContain("Stop copies");
+  });
+
+  it("turns copies on for that address when asked, and says so", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(null)]);
+    fireEvent.click(await screen.findByText("Send copies"));
+    expect(await status()).toBe("Copies on for support@example.test.");
+    expect(calls.find((call) => call.path === "/api/forwards/copy")?.body).toEqual({ address: "support@example.test", copy: true });
+  });
+
+  it("says why no copy was sealed, in the Node's words", async () => {
+    mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(refusedWith({
+      state: "refused", at: "2026-10-03T01:00:01.000Z", error: "the message failed DMARC for its sender's domain", sendId: null, sendState: null,
+    }))]);
+    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    expect(line.textContent).toContain("no copy: the message failed DMARC for its sender's domain");
+  });
+});
