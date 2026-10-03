@@ -5,6 +5,9 @@
  * and are not here: check ids, file names, paths, the install command and `mailda doctor` stay in
  * `apps/site/src/components/Landing.astro`.
  *
+ * An identifier inside a sentence is written in backticks and drawn as <code> (where the component draws a value
+ * through `words()`), so a Chinese sentence never shows one bare (docs/i18n.md, Register).
+ *
  * `null` means the locale draws no such element: English has no secondary mark in the lockup and no heading
  * over the README's rows, which are already in its own language. zh-Hans has both.
  */
@@ -95,13 +98,13 @@ const zhHans: Words = {
   "ok.receiving": "带队列的共享收件箱：认领、转交、关闭，每个邮箱一个首次回复计时。会话、标签、已读状态、归档和回收站（可恢复），可搜索主题、发件人和正文。",
   "ok.mail_security": "每封邮件都带有接收服务器的 SPF/DKIM/DMARC 判定；附件按文件名和魔数判断；链接对照其显示的文字和你自己的域名判断；隔离和抑制，都按邮箱设置。不用模型。",
   "ok.sending": "每次发送先定稿为一份清单，再暂留十五秒，然后移交给邮件服务商。规则、需两人的审批、域名暂停、速率熔断器，以及由服务商自己的退信建立的抑制列表。",
-  "ok.butlers": "管家是作用于邮件的程序：确定性执行；运行预算不够的，发布时即被拒绝；出现循环就暂停；任何邮件离开之前都要由人放行。llm.* 步骤类型已声明，并被拒绝。",
-  "ok.your_ai": "由契约生成的 SDK、Agent Skill 和 MCP 服务器，全部来自同一份路由注册表。代理持有固定的能力上限，永远无法签发 org.admin。",
+  "ok.butlers": "管家是作用于邮件的程序：确定性执行；运行预算不够的，发布时即被拒绝；出现循环就暂停；任何邮件离开之前都要由人放行。`llm.*` 步骤类型已声明，并被拒绝。",
+  "ok.your_ai": "由契约生成的 SDK、Agent Skill 和 MCP 服务器，全部来自同一份路由注册表。代理持有固定的能力上限，永远无法签发 `org.admin`。",
   "ok.governance": "任何东西都不会删减的审计记录、事项、需两人才能解除的法律保全、留下记录的受监督查阅、执行前须经批准的电子取证导出。",
   "ok.custody": "证据用只有你的节点持有的密钥加密，密钥恢复副本由十个恢复码打开；备份可以离线验证；恢复已演练三次，其中一次一直走到接收邮件。",
-  "gaps.heading": "以下 warn 行是仓库 README 自己的话，保留英文原文。",
+  "gaps.heading": "以下 `warn` 行是仓库 README 自己的话，保留英文原文。",
   "receipts.says": "产品里的每个限额、成本和耗时都有一份测量记录，写明它如何测得、何时过时。缺少测量记录的常量，构建会拒绝。",
-  "foot.before": "warn 行是 README 自己的话。厂商的页面会把它们删掉。",
+  "foot.before": "`warn` 行是 README 自己的话。厂商的页面会把它们删掉。",
   "foot.link": "先读完整的状态说明",
   "foot.after": "，再依赖这里的任何内容。",
   "install.title": "一条命令，一个下午",
@@ -112,7 +115,7 @@ const zhHans: Words = {
   "install.about": "它帮你登录 Cloudflare，部署到你的账户，在同一个终端里认领节点，询问应在哪个域名收信，并用同一次登录启用路由、为发信接入域名、订阅投递结果，每一项都读回核对，缺少记录就拒绝继续。命令结束时，节点已在接收。不用控制台，不用 API 令牌，不用 OAuth 客户端。打开节点：在它有了地址、邮件路由到它之前，它显示下一步和完成这一步的命令，之后才是收件箱。使用你自己的主机名只需再回答一个问题，由部署来绑定。节点自己的凭据（在配置页粘贴一个 API 令牌）是可选的，只用于以后在浏览器里修改这些配置。如果你更想手动安排账户，控制台里的做法也写下来了。",
   "install.settings": "它需要的每项设置，都在一页里。",
   "update.before": "之后，在同一个目录里运行 ",
-  "update.after": "，它会拉取新版本、备份节点、说明数据库结构将有什么变化，然后经由金丝雀版本重新部署。你不需要输入任何 git 命令，用部署按钮创建的节点也一样。",
+  "update.after": "，它会拉取新版本、备份节点、说明数据库结构将有什么变化，然后经由金丝雀版本重新部署。你不需要输入任何 `git` 命令，用部署按钮创建的节点也一样。",
   "values.label": "这个产品要成为什么",
   "value.intelligent": "智能。",
   "value.intelligent.says": "让你的 AI 用上你的应用，而不是往应用里塞 AI。",

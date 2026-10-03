@@ -28,6 +28,8 @@ const checks = [
   { check: "custody", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
 ] as const;
 const status = `${base}/docs/readme/#status-functional-alpha-not-production-ready`;
+/** A value's `backticked` identifiers, drawn as <code> (the Register: a token is never bare beside Han). */
+const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part, i) => (i % 2 === 1 ? { code: part } : part));
 ---
 <html lang={locale}>
 <head>
@@ -108,10 +110,10 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
           <li class="finding">
             <span class="sev ok">ok</span>
             <span class="check">{one.check}</span>
-            <span class="says">{w[`ok.${one.check}`]} <a class="doc" href={`${base}${one.href}`}>{one.doc}</a></span>
+            <span class="says">{words(w[`ok.${one.check}`]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)} <a class="doc" href={`${base}${one.href}`}>{one.doc}</a></span>
           </li>
         ))}
-        {w["gaps.heading"] !== null && <li class="gaps-head"><h3>{w["gaps.heading"]}</h3></li>}
+        {w["gaps.heading"] !== null && <li class="gaps-head"><h3>{words(w["gaps.heading"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}</h3></li>}
         {gaps.map((gap) => (
           <li class="finding" lang={readmeLang}>
             <span class="sev warn">warn</span>
@@ -126,7 +128,7 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
         </li>
       </ol>
       <p class="report-foot dim">
-        {w["foot.before"]}
+        {words(w["foot.before"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}
         <a href={status}>{w["foot.link"]}</a>{w["foot.after"]}
       </p>
     </section>
@@ -142,7 +144,7 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
         <a href={`${base}/docs/operating/cloudflare-settings/`}>{w["install.settings"]}</a>
       </p>
       <p class="dim">
-        {w["update.before"]}<code>curl -fsSL https://mailda.site/update.sh | bash</code>{w["update.after"]}
+        {w["update.before"]}<code>curl -fsSL https://mailda.site/update.sh | bash</code>{words(w["update.after"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}
       </p>
     </section>
 

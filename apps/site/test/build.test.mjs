@@ -54,7 +54,9 @@ test("/zh-cn/ is Simplified Chinese, under the mark 淼达, with the README's ro
   assert.match(html, /<title>淼达，/);
   const rows = html.match(englishRows) ?? [];
   assert.ok(rows.length >= 3 && rows.every((row) => row.includes('class="sev warn')), "the README's rows are not marked lang=en");
-  assert.match(html, /<li class="gaps-head[^"]*"><h3[^>]*>[^<]*README[^<]*保留英文/, "no Chinese heading says the rows are kept in English");
+  assert.match(html, /<li class="gaps-head[^"]*"><h3[^>]*>.*?README[^<]*保留英文/, "no Chinese heading says the rows are kept in English");
+  // The Register: an identifier beside Han is in <code>, never bare.
+  for (const token of ["llm.*", "org.admin", "warn", "git"]) assert.match(html, new RegExp(`<code[^>]*>${token.replace(/[.*]/g, "\\$&")}</code>`), `${token} is bare`);
   // The English page marks nothing: its rows are in its own language.
   assert.doesNotMatch(page("index.html"), /<li[^>]* lang="en"/);
 });
@@ -79,6 +81,7 @@ test("the Chinese words on /zh-cn/ use none of the glossary's NEVER phrases", ()
 test("the English landing page is unchanged (golden)", () => {
   const body = page("index.html")
     .replace(/<li class="finding[^"]*">\s*<span class="sev warn[\s\S]*?<\/li>/g, "<li>(a README row)</li>")
+    .replace(/(<li>\(a README row\)<\/li>)+/g, "<li>(the README's rows)</li>")
     .replace(/<svg[\s\S]*?<\/svg>/g, "<svg/>")
     .replace(/<style>[\s\S]*?<\/style>/g, "<style/>")
     .replace(/<script type="module">[\s\S]*?<\/script>/g, "<script/>")
