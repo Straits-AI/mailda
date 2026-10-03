@@ -805,14 +805,16 @@ function noticeText(notice: NotificationRow): { headline: ReactNode; meta: React
   const matter = fact(body.matterId) ?? t("chrome.notice.none_cited");
   const type = fact(body.matterType);
   const scope = fact(body.scope);
+  const grant = {
+    reader: fact(body.readerEmail) ?? fact(body.readerId) ?? t("chrome.notice.somebody"),
+    mailbox: fact(body.mailboxName) ?? fact(body.mailboxId) ?? t("chrome.notice.a_mailbox"),
+    from: instant(body.grantedAt, t("chrome.notice.unrecorded_at")),
+    to: instant(body.expiresAt, unrecorded),
+  };
   return {
-    headline: sentence("chrome.notice.supervised", {
-      reader: fact(body.readerEmail) ?? fact(body.readerId) ?? t("chrome.notice.somebody"),
-      scope: scope === null ? t("chrome.notice.read") : <code>{scope}</code>,
-      mailbox: fact(body.mailboxName) ?? fact(body.mailboxId) ?? t("chrome.notice.a_mailbox"),
-      from: instant(body.grantedAt, t("chrome.notice.unrecorded_at")),
-      to: instant(body.expiresAt, unrecorded),
-    }),
+    // The read, and its scope beside it as the Node's token (H6): "a supervised read (content)", never "a supervised content".
+    headline: scope === null ? sentence("chrome.notice.supervised.unscoped", grant)
+      : sentence("chrome.notice.supervised", { ...grant, scope: <code>{scope}</code> }),
     // The counts are the part that makes this actionable rather than ceremonial: the difference between a
     // grant nobody used and one under which everything was opened.
     meta: facts([

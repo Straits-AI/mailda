@@ -380,8 +380,11 @@ export const CONCEPTS: readonly Concept[] = [
     note: "D3: one verb for a domain or a Butler held until somebody lifts or resumes it; never stopped, never restarted",
   }),
   row("supervised-read", "supervised read", "受监督查阅", {
-    sentences: ["matters.read.empty", "chrome.notice.kind.supervised_read"], avoid: { "zh-Hans": ["监控", "监视"] },
-    note: "a time-boxed grant to read a mailbox one holds nothing on; already the word of `chrome.notice.supervised`",
+    sentences: [
+      "matters.read.empty", "chrome.notice.kind.supervised_read", "chrome.notice.supervised", "chrome.notice.supervised.unscoped",
+    ],
+    avoid: { "zh-Hans": ["监控", "监视"] },
+    note: "a time-boxed grant to read a mailbox one holds nothing on",
   }),
   row("export", "export", "导出", {
     sentences: [

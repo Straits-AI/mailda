@@ -4511,3 +4511,8 @@ an identifier the glossary does not translate. The Node's own English beside a h
 minute(s).". It now has a real plural. The page's headline above it carries no count and did not change.
 **For an agent:** the code `locked_out`, the 429 and the `retry-after` header (the exact seconds) are unchanged;
 text matched on "minute(s)" no longer appears.
+
+**The notices band says "a supervised read (content)" (H6).** The headline put the Node's scope token where the
+noun goes: "was granted a supervised content of Support". It now names the read and gives the scope beside it, and a
+grant whose scope was not recorded has its own sentence, where English said "a supervised read" by filling the token's
+place with a word and Chinese said （范围：查阅）.

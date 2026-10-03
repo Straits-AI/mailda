@@ -75,9 +75,9 @@ export const chrome = {
   "chrome.notice.a_mailbox": "a mailbox",
   "chrome.notice.unrecorded": "an unrecorded instant",
   "chrome.notice.unrecorded_at": "at an unrecorded instant",
-  /** `{scope}` is the grant's scope as the Node recorded it, or `chrome.notice.read`. */
-  "chrome.notice.supervised": "{reader} was granted a supervised {scope} of {mailbox}, {from} to {to}.",
-  "chrome.notice.read": "read",
+  /** `{scope}` is the grant's scope as the Node recorded it, in `<code>`; `.unscoped` where the Node recorded none. */
+  "chrome.notice.supervised": "{reader} was granted a supervised read ({scope}) of {mailbox}, {from} to {to}.",
+  "chrome.notice.supervised.unscoped": "{reader} was granted a supervised read of {mailbox}, {from} to {to}.",
   /** Two counts, so two plurals: `{listed}` is `chrome.notice.listed` on its own `n`. */
   "chrome.notice.queries": { one: "{n} query listing {listed}", other: "{n} queries listing {listed}" },
   "chrome.notice.listed": { one: "{n} message", other: "{n} messages" },

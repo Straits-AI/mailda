@@ -61,7 +61,7 @@ function SameTwice() {
 const NOTICE = {
   id: "ntf_1", kind: "supervised_read", subjectId: "sgr_1", mailboxId: "mbx_test", matterId: "mat_1",
   dueAt: null, deliveredAt: "2026-09-26T09:00:00.000Z",
-  body: { readerEmail: "legal@example.test", mailboxName: "Support", scope: "read", acts: { queries: 1 } },
+  body: { readerEmail: "legal@example.test", mailboxName: "Support", scope: "content", acts: { queries: 1 } },
 };
 
 let client: QueryClient;
@@ -98,7 +98,7 @@ describe("the bands above every screen (R10)", () => {
     answer("/api/notifications", () => ({ notifications: [NOTICE], truncated: false }));
     mount(1440);
     const band = await screen.findByRole("region", { name: "Notifications" });
-    expect(band.textContent).toContain("legal@example.test was granted a supervised read of Support");
+    expect(band.textContent).toContain("legal@example.test was granted a supervised read (content) of Support");
     expect(band.getAttribute("tabindex")).toBe("0");
     expect(within(band).queryAllByRole("button"), "a notice gained a control that could clear it").toEqual([]);
     const outlet = screen.getByTestId("outlet");
