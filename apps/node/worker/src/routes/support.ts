@@ -180,6 +180,15 @@ export async function armSweeper(env: Env): Promise<void> {
   }
 }
 
+/**
+ * The Node's sentence for a locked-out sign-in, its minutes rounded up and pluralised (H8, D36). The `retry-after`
+ * header carries the exact seconds; this is the sentence an agent or a person reads.
+ */
+export function lockedOutMessage(retryAfterSeconds: number): string {
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return `Too many failed sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
 export function claimMessage(status: string): string {
   switch (status) {
     case "already_claimed":

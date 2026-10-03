@@ -4506,3 +4506,8 @@ headline above each, which is the Node's sentence word for word. **For an agent:
 step and two claim refusals showed their commands between literal backticks. The page now draws a backticked span
 of a catalog sentence as `<code>`, in every locale, with the catalogs' text unchanged; backticks there already meant
 an identifier the glossary does not translate. The Node's own English beside a headline stays as it was sent.
+
+**The lockout says "1 minute" and "5 minutes" (H8, D36).** The Node's `locked_out` sentence read "Try again in 5
+minute(s).". It now has a real plural. The page's headline above it carries no count and did not change.
+**For an agent:** the code `locked_out`, the 429 and the `retry-after` header (the exact seconds) are unchanged;
+text matched on "minute(s)" no longer appears.

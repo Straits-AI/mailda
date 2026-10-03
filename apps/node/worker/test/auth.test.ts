@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createFrozenCtx, createSystemCtx, type Ctx } from "@mailda/runtime";
@@ -11,6 +11,7 @@ import {
   issueSession, login, refreshSession, revokeAllSessions, sessionCookies, setPassword, signOut,
   ACCESS_COOKIE, EXPIRY_COOKIE, REFRESH_COOKIE,
 } from "../src/auth/session.ts";
+import { lockedOutMessage } from "../src/routes/support.ts";
 
 const ORG = "org_test";
 const EMAIL = "owner@example.com";
@@ -322,6 +323,37 @@ describe("sign-in", () => {
 
     // And the lockout holds even against the *correct* password — otherwise it is not a lockout.
     expect((await login(env, ctx, ORG, EMAIL, PASSWORD)).status).toBe("locked_out");
+  });
+
+  /**
+   * The Node's sentence for it has a real plural (H8, D36): it said "5 minute(s)". Prose only, for the agents that
+   * read it; the code, the status and `retry-after` are unchanged.
+   */
+  it("says how long in words, one minute or several, and the route says exactly that", async () => {
+    expect([1, 60, 61, 300, 900].map(lockedOutMessage)).toEqual([
+      "Too many failed sign-in attempts. Try again in 1 minute.",
+      "Too many failed sign-in attempts. Try again in 1 minute.",
+      "Too many failed sign-in attempts. Try again in 2 minutes.",
+      "Too many failed sign-in attempts. Try again in 5 minutes.",
+      "Too many failed sign-in attempts. Try again in 15 minutes.",
+    ]);
+
+    await env.CATALOG.prepare("INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('clm_lock','x',?,?)")
+      .bind(new Date().toISOString(), ORG).run();
+    try {
+      const attempt = () => SELF.fetch("https://node/api/auth/login", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: EMAIL, password: "wrong-but-long-enough" }),
+      });
+      for (let failed = 0; failed < BUDGETS["auth.max_failed_logins_per_15min"]; failed++) expect((await attempt()).status).toBe(401);
+      const locked = await attempt();
+      expect(locked.status).toBe(429);
+      const body = await locked.json() as { error: string; message: string };
+      expect(body.error).toBe("locked_out");
+      expect(body.message).toBe(lockedOutMessage(Number(locked.headers.get("retry-after"))));
+    } finally {
+      await env.CATALOG.prepare("DELETE FROM node_claim WHERE id = 'clm_lock'").run();
+    }
   });
 
   it("clears the failure count on success, so a typo is not punished", async () => {

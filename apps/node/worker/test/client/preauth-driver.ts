@@ -141,7 +141,7 @@ export const CLAIM_REFUSALS: Record<string, [number, object]> = {
 
 export const LOGIN_REFUSALS: Record<string, [number, object]> = {
   invalid_credentials: [401, { error: "invalid_credentials", message: "That email and password do not match." }],
-  locked_out: [429, { error: "locked_out", message: "Too many failed sign-in attempts. Try again in 5 minute(s)." }],
+  locked_out: [429, { error: "locked_out", message: "Too many failed sign-in attempts. Try again in 5 minutes." }],
   not_claimed: [503, { error: "not_claimed", message: "This Node has not been claimed yet." }],
   cross_site: [403, CROSS_SITE],
   internal: [500, INTERNAL],
