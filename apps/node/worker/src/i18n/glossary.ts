@@ -122,6 +122,15 @@ const OWNER_ROUND_FIVE = {
   record: "round five: the owner accepted kept forward, waiting for verification and register as listed, in the working session on 3 October 2026, without a review page",
 } as const;
 const ROUND_FIVE: ReadonlySet<string> = new Set(["kept-forward", "destination.waiting", "destination.register"]);
+/**
+ * Round six, with no review page: the copy (PR #326), shown to the owner in the working session with its English and
+ * accepted there on 3 October 2026 ("accept"), together with keeping "via" English in the copy's From line.
+ */
+const OWNER_ROUND_SIX = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "round six: the owner accepted copy as 副本, and via kept English in the From line, in the working session on 3 October 2026, without a review page",
+} as const;
+const ROUND_SIX: ReadonlySet<string> = new Set(["kept-forward.copy"]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -546,12 +555,20 @@ export const CONCEPTS: readonly Concept[] = [
     sentences: ["setup.destination.title", "setup.destination.add"],
     note: "adding an address to the account's destination list, which makes Cloudflare mail it a verification link",
   }),
+  // The copy (PR #326, 3 October 2026), accepted in round six (`OWNER_ROUND_SIX`).
+  row("kept-forward.copy", "copy", "副本", {
+    keys: ["ledgers.outbox.copy"],
+    sentences: ["people.forward.copy.sealed", "people.forward.copy.refused"],
+    avoid: { "zh-Hans": ["同步"] },
+    note: "a sealed send of a stored message that a refused kept forward asked for, from the address, \"<sender> via <mailbox>\". Never 同步; not e-discovery's export",
+  }),
 ].map((concept) => (CONFIRMED.has(concept.id) ? { ...concept, status: OWNER_REVIEW }
   : ANSWERED.has(concept.id) ? { ...concept, status: OWNER_ANSWER }
   : ROUND_TWO.has(concept.id) ? { ...concept, status: OWNER_ROUND_TWO }
   : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE }
   : ROUND_FOUR.has(concept.id) ? { ...concept, status: OWNER_ROUND_FOUR }
-  : ROUND_FIVE.has(concept.id) ? { ...concept, status: OWNER_ROUND_FIVE } : concept));
+  : ROUND_FIVE.has(concept.id) ? { ...concept, status: OWNER_ROUND_FIVE }
+  : ROUND_SIX.has(concept.id) ? { ...concept, status: OWNER_ROUND_SIX } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only
