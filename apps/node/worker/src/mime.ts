@@ -47,22 +47,23 @@ export function headerBlock(raw: Uint8Array): string {
  * `mime.max_header_bytes` and the message is longer than that, so what is returned is a prefix rather than
  * the whole block. The headers route says so rather than presenting a prefix as the block.
  */
-export function splitHeaders(raw: Uint8Array): { block: string; truncated: boolean } {
+export function splitHeaders(raw: Uint8Array): { block: string; truncated: boolean; bodyAt: number | null } {
   const limit = Math.min(raw.length, MAX_HEADER_BYTES);
   for (let i = 0; i + 1 < limit; i++) {
     if (raw[i] === 0x0a && raw[i + 1] === 0x0a) {
-      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false };
+      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false, bodyAt: i + 2 };
     }
     if (
       i + 3 < limit &&
       raw[i] === 0x0d && raw[i + 1] === 0x0a && raw[i + 2] === 0x0d && raw[i + 3] === 0x0a
     ) {
-      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false };
+      return { block: new TextDecoder().decode(raw.subarray(0, i)), truncated: false, bodyAt: i + 4 };
     }
   }
   // No separator found. Treat what we have as headers rather than discarding the message: §24 says
-  // accepted mail is never lost, and a header-only message is still readable.
-  return { block: new TextDecoder().decode(raw.subarray(0, limit)), truncated: raw.length > MAX_HEADER_BYTES };
+  // accepted mail is never lost, and a header-only message is still readable. `bodyAt` is null: where the body
+  // starts is not known, which a copy (ADR 47) refuses on rather than guesses.
+  return { block: new TextDecoder().decode(raw.subarray(0, limit)), truncated: raw.length > MAX_HEADER_BYTES, bodyAt: null };
 }
 
 /**

@@ -18,6 +18,7 @@ import { domainOf, type Outcome } from "../policy.ts";
 import { stagePolicy } from "../governed.ts";
 import { domainPaused } from "./recheck.ts";
 import { attachmentName, HeaderBlock, normalizeAddress, safeFilename } from "./headers.ts";
+import { copyMessage } from "./copy.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
 
@@ -182,6 +183,30 @@ export interface Composition {
     readonly ofManifestId: string;
     readonly requestedByUserId: string;
     readonly reason: string;
+  };
+  /**
+   * That this send is a **copy** of a stored message whose kept forward was refused (ADR 47, amended 3 October 2026),
+   * sealed by `copyKept` in `src/kept-forward.ts` and by nothing else.
+   *
+   * `authorUserId` is then the administrator whose opt-in on the address is the authority, and the audit entries name
+   * the Node as the actor and that administrator as the one accountable: nobody sealed this by hand. The body is the
+   * original's own (`copy.ts`), so `bodyTyped` is empty and no attachment is taken; the original's body is checked
+   * against `email.outbound.max_bytes` here, at its exact rendered size, before anything is stored. Its
+   * `send_copies` row and the attempt's `copy_state` ride in the seal's batch, and the receipt is unique there, so a
+   * second seal of one delivery fails whole instead of sending twice.
+   */
+  copy?: {
+    readonly receiptId: string;
+    readonly messageId: string;
+    /** The stored original, read once by the caller. */
+    readonly original: Bytes;
+    readonly fromName: string;
+    readonly replyTo: string;
+    readonly replyToName: string | null;
+    readonly inReplyTo: string | null;
+    readonly references: string | null;
+    readonly marker: string;
+    readonly optedInAt: string;
   };
 }
 
@@ -399,9 +424,15 @@ export async function rebuildReferences(
     chain = [];
   }
 
-  const full = [...chain, parentRfcMessageId].filter(
-    (id, index, all) => all.indexOf(id) === index,
-  );
+  return boundedReferences([...chain, parentRfcMessageId]);
+}
+
+/**
+ * A `References` value from a chain of ids, deduplicated and bounded the way `rebuildReferences` explains: the root
+ * and the most recent entries, the middle dropped. A copy (ADR 47) carries its original's chain through this too.
+ */
+export function boundedReferences(chain: readonly string[]): string | null {
+  const full = chain.filter((id, index, all) => all.indexOf(id) === index);
   if (full.length === 0) return null;
   if (full.length <= REFERENCES_MAX) return full.map((id) => `<${id}>`).join(" ");
 
@@ -571,8 +602,8 @@ export async function sealManifest(
   const hold = mailbox.hold_window_seconds ?? HOLD_DEFAULT;
   const releaseAt = new Date(ctx.now() + hold * 1000).toISOString();
 
-  // Threading. A reply's chain is rebuilt from the original's evidence, bounded.
-  let referencesHeader: string | null = null;
+  // Threading. A reply's chain is rebuilt from the original's evidence, bounded; a copy carries its original's.
+  let referencesHeader: string | null = composition.copy?.references ?? null;
   if (composition.inReplyToMessageId !== undefined) {
     // Bounded by **read authority on the parent**, not merely by organization.
     //
@@ -825,6 +856,30 @@ export async function sealManifest(
     });
   }
 
+  /*
+   * A copy's size, exactly: the bytes `renderRfc822` will hand over, rendered now from the same inputs (the manifest
+   * id and the seal time are both known here), and checked before anything is stored. Its own unreadable-original
+   * refusals come from the same call.
+   */
+  if (composition.copy !== undefined) {
+    const copySenderDomain = address.address.split("@")[1] ?? "invalid";
+    const bytes = copyMessage({
+      from: address.address, fromName: composition.copy.fromName, replyTo: composition.copy.replyTo,
+      replyToName: composition.copy.replyToName, to, subject: composition.subject,
+      rfcMessageId: `${manifestId}@${copySenderDomain}`, sealedAt: at, inReplyTo: composition.copy.inReplyTo,
+      references: referencesHeader, marker: composition.copy.marker,
+    }, composition.copy.original).byteLength;
+    if (bytes > MAX_OUTBOUND_BYTES) {
+      throw unprocessable("E_COPY_TOO_LARGE", {
+        what: `email.outbound.max_bytes=${MAX_OUTBOUND_BYTES}, this copy is ${bytes} bytes`,
+        why: "Cloudflare refuses an outbound message over that to an arbitrary recipient (receipt: "
+          + "cloudflare-email-service-limits.md), and a copy carries the whole original",
+        fix: "nothing changes this limit, which is Cloudflare's: the message is stored here, and a destination that is "
+          + "verified receives the forward itself, up to the 25 MiB measured (email-worker-forward.md)",
+      });
+    }
+  }
+
   const normalized = normalizeBody(composition.bodyTyped);
 
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
@@ -932,11 +987,19 @@ export async function sealManifest(
   // The manifest row and the entry recording the seal commit together. §12's invariant is that the
   // approved bytes are what gets sent; a manifest with no record of who sealed it, or a record of a
   // seal with no manifest, both break the account of that.
+  /*
+   * Who the trail names. A copy (ADR 47) is sealed by this Node on its own, from the outbox, under an administrator's
+   * standing opt-in: the actor is the Node (`node`, no id) and the administrator is the one accountable, the shape a
+   * Butler's send has with its sponsor. Naming the administrator as the actor would say they sealed it, and they did
+   * not: they said, once, that copies may be sent.
+   */
+  const actorUserId = composition.copy === undefined ? composition.authorUserId : null;
+  const delegatorUserId = composition.copy === undefined ? composition.delegatorUserId ?? null : composition.authorUserId;
   const sealEvent: AuditEvent = {
     action: "send.sealed",
     outcome: "ok",
-    actorUserId: composition.authorUserId,
-    delegatorUserId: composition.delegatorUserId ?? null,
+    actorUserId,
+    delegatorUserId,
     subject: manifestId,
     // Recipients and subject are the *action*, not the content — but they are still the most
     // sensitive thing here, so only counts and the mailbox go in. §12 keeps the rest in R2.
@@ -946,6 +1009,10 @@ export async function sealManifest(
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
       forwardOf: composition.forwardOfMessageId ?? null,
+      // The delivery a copy carries, and when the opt-in it was sealed under was made. Absent on every other send.
+      ...(composition.copy === undefined ? {} : {
+        copyOf: { receiptId: composition.copy.receiptId, messageId: composition.copy.messageId, optedInAt: composition.copy.optedInAt },
+      }),
       // Files the seal let through although this Node judged them dangerous, because the author said to: their
       // ordinals, which key the `send_attachments` rows (manifest_id, ordinal) that hold each name and verdict.
       // Not the names: twenty long ones pass `audit.max_detail_bytes`, and `boundedDetail` would then replace
@@ -996,8 +1063,8 @@ export async function sealManifest(
     // `refused` would overclaim in the direction this whole design exists to avoid: nothing was refused. The
     // send is waiting, and `ok` is what the trail's other gates record.
     outcome: "ok",
-    actorUserId: composition.authorUserId,
-    delegatorUserId: composition.delegatorUserId ?? null,
+    actorUserId,
+    delegatorUserId,
     subject: manifestId,
     detail: {
       breaker: breakerGate.breaker,
@@ -1047,6 +1114,24 @@ export async function sealManifest(
     },
   };
 
+  /*
+   * A copy's record (ADR 47), in the seal's batch: what its headers say about the original, frozen, and the attempt's
+   * `copy_state`. `send_copies.receipt_id` is unique, so a second seal of one delivery (the outbox is at-least-once)
+   * fails this whole batch, manifest included, instead of sealing a second send.
+   */
+  const copyRows = composition.copy === undefined ? [] : [
+    env.CATALOG.prepare(
+      `INSERT INTO send_copies (manifest_id, org_id, receipt_id, message_id, from_name, reply_to, reply_to_name, in_reply_to,
+                                marker, opted_in_by, opted_in_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(manifestId, orgId, composition.copy.receiptId, composition.copy.messageId, composition.copy.fromName,
+      composition.copy.replyTo, composition.copy.replyToName, composition.copy.inReplyTo, composition.copy.marker,
+      composition.authorUserId, composition.copy.optedInAt),
+    env.CATALOG.prepare(
+      "UPDATE kept_forward_attempts SET copy_state = 'sealed', copy_error = NULL, copy_at = ? WHERE receipt_id = ? AND org_id = ?",
+    ).bind(at, composition.copy.receiptId, orgId),
+  ];
+
   // Two entries, one transaction. `approval.requested` is a fact about the people being asked — its subject is
   // the approval id and its detail is the stage set — which `send.sealed` cannot carry without becoming an entry
   // about two different things. See `auditedBatchMany`.
@@ -1055,7 +1140,7 @@ export async function sealManifest(
     [sealEvent, ...(approvalEvent === null ? [] : [approvalEvent]),
       ...(breakerEvent === null ? [] : [breakerEvent]),
       ...(resendEvent === null ? [] : [resendEvent])],
-    (entries) => [manifestRow, ...recipientRows, ...attachmentRows, ...approvalStatements, ...entries],
+    (entries) => [manifestRow, ...recipientRows, ...attachmentRows, ...copyRows, ...approvalStatements, ...entries],
   );
 
   return {
@@ -1109,8 +1194,14 @@ export async function renderRfc822(
   manifestId: string,
 ): Promise<{ raw: Bytes; sha256: string }> {
   const m = await env.CATALOG.prepare(
+    // A copy's frozen headers and its original's evidence key ride in this one read (ADR 47): every other send pays
+    // nothing for them, since widening a SELECT already being issued costs no subrequest.
     `SELECT envelope_from, envelope_to, envelope_cc, subject, rfc_message_id, references_header,
-            in_reply_to_message_id, body_normalized_key, sealed_at, org_id, forward_of_message_id
+            in_reply_to_message_id, body_normalized_key, sealed_at, org_id, forward_of_message_id,
+            (SELECT json_object('fromName', c.from_name, 'replyTo', c.reply_to, 'replyToName', c.reply_to_name,
+                                'inReplyTo', c.in_reply_to, 'marker', c.marker, 'blobKey', m.blob_key)
+               FROM send_copies c LEFT JOIN messages m ON m.org_id = c.org_id AND m.id = c.message_id
+              WHERE c.manifest_id = send_manifests.id) AS copy_json
        FROM send_manifests WHERE id = ? LIMIT 1`,
   )
     .bind(manifestId)
@@ -1122,6 +1213,30 @@ export async function renderRfc822(
       why: "rendering requires a sealed manifest; nothing is composed on the fly",
       fix: "seal a manifest first",
     });
+  }
+
+  /*
+   * A copy (ADR 47): the original's body under the headers the seal froze, through the same function the seal sized
+   * it with. Org-scoped by the join above. Nothing of the manifest's own body is read: a copy has none.
+   */
+  if (m.copy_json != null) {
+    const copy = JSON.parse(m.copy_json) as {
+      fromName: string; replyTo: string; replyToName: string | null; inReplyTo: string | null; marker: string; blobKey: string | null;
+    };
+    // A LEFT JOIN, so a copy whose original is gone refuses here rather than rendering as an empty send.
+    if (copy.blobKey === null) {
+      throw conflict("E_ORIGINAL_NOT_IN_ORG", {
+        what: `manifest ${manifestId} is a copy of a message this organization no longer holds`,
+        why: "a copy carries the original's body, and there is none to carry",
+        fix: "this manifest cannot be sent",
+      });
+    }
+    const raw = copyMessage({
+      from: m.envelope_from!, fromName: copy.fromName, replyTo: copy.replyTo, replyToName: copy.replyToName,
+      to: JSON.parse(m.envelope_to ?? "[]") as string[], subject: m.subject!, rfcMessageId: m.rfc_message_id!,
+      sealedAt: m.sealed_at!, inReplyTo: copy.inReplyTo, references: m.references_header ?? null, marker: copy.marker,
+    }, await getEvidence(env, copy.blobKey));
+    return { raw, sha256: await sha256Hex(raw) };
   }
 
   const body = new TextDecoder().decode(await getEvidence(env, m.body_normalized_key!));

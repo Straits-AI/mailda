@@ -2290,14 +2290,17 @@ export interface RoutingRuleOutcome {
   nameRecorded?: boolean | null;
   /** The destination a take-over kept forwarding to (ADR 47); null otherwise, absent from an older Node. */
   keptForward?: string | null;
+  /** Whether that take-over turned copies on (ADR 47, amended 3 October 2026); absent from an older Node. */
+  copy?: boolean | null;
 }
 
 export const routingRulesOn = (domain: string) =>
   proposalFor<{ routing: RoutingRules }>(GET("/api/provider/routing-rules"), domain);
 
-export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string, forward?: "keep" | "stop") =>
+export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string, forward?: "keep" | "stop", copy = false) =>
   act<{ outcome: RoutingRuleOutcome }>(at("POST", "/api/provider/routing-rules/take-over"), "POST", {
     domain, ruleId, digest, ...(mailboxId === undefined ? {} : { mailboxId }), ...(forward === undefined ? {} : { forward }),
+    ...(copy ? { copy: true } : {}),
   });
 
 export const putBackRule = (domain: string, ruleId: string) =>
@@ -2353,6 +2356,10 @@ export const addDestination = (email: string) =>
   );
 
 export type KeptForward = KeptForwardRow;
+
+/** Turns copies on or off for an address that keeps a forward (ADR 47, amended 3 October 2026). */
+export const setKeptForwardCopy = (address: string, copy: boolean) =>
+  act<{ copy: { address: string; to: string; by: string | null; at: string | null } }>(at("POST", "/api/forwards/copy"), "POST", { address, copy });
 
 /** The addresses keeping a forward, each with its latest attempt (ADR 47). Administrators only; no Cloudflare call. */
 export function useKeptForwards(enabled: boolean): UseQueryResult<{ forwards: KeptForward[] }, Error> {

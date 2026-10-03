@@ -776,6 +776,16 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/forwards/copy",
+    summary: "Turn copies on or off for an address that keeps a forward (ADR 47). On, a forward Cloudflare refuses as not "
+      + "verified is followed by a copy: the stored message sealed as a send from the address, the sender's name in the "
+      + "From display name and their address in Reply-To, up to email.outbound.max_bytes, never with an attachment this "
+      + "Node judges dangerous, counted against today's sending and the rate breakers, under the administrator who turned "
+      + "it on, who must hold send.propose on the address's mailbox and stay an administrator",
+    request: S.keptForwardCopyRequest, response: S.keptForwardCopyResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/domains",
     summary: "Domain suggestions with indicative prices. Cloudflare describes these as cached and "
       + "non-authoritative, so they are never a basis to buy",
@@ -868,7 +878,8 @@ export const ROUTES = [
       + "rule, an action other than forward, worker or drop, one with more than one destination, an address with "
       + "more than one rule, a zone with subaddressing on, and a forward rule with no mailbox chosen for it. A forward "
       + "rule also needs forward: keep (this Node forwards each stored message to the rule's destination, which must "
-      + "not be listed unverified) or stop",
+      + "not be listed unverified unless copy is true) or stop; copy: true with keep also sends a copy when the "
+      + "forward is refused as not verified",
     request: S.providerRoutingRuleTakeOverRequest, response: S.providerRoutingRuleOutcomeResponse,
   },
   {

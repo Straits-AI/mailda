@@ -14,7 +14,7 @@ import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import themeScript from "./client/theme.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
-import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS } from "./outbound/attachment-budget.ts";
+import { ATTACHMENT_BUDGET, MAX_ATTACHMENTS, MAX_OUTBOUND_BYTES } from "./outbound/attachment-budget.ts";
 import { MARK_IS_AUTHORED, faviconDataUri, markSvg } from "./brand.ts";
 import { parts } from "./i18n/format.ts";
 import { LOCALES } from "./i18n/locales.ts";
@@ -99,6 +99,9 @@ function configModule(): string {
     // From the module the seal itself reads (`src/outbound/attachment-budget.ts`), so the two cannot disagree.
     attachmentBudgetBytes: ATTACHMENT_BUDGET,
     maxAttachments: MAX_ATTACHMENTS,
+    // The most a copy (ADR 47) may be, which People and Setup state where copies are turned on: the same figure the
+    // seal refuses past, `email.outbound.max_bytes`.
+    outboundMaxBytes: MAX_OUTBOUND_BYTES,
   };
   // `<` escaped as \\u003c: valid JSON, valid JavaScript, and inert if this string is ever interpolated
   // into markup by something that does not know it was not meant to be. Nothing in here is

@@ -127,6 +127,12 @@ These are the defaults, and how to change each:
   told to the sender, and Cloudflare reports no delivery for X. `mailda provider --forwards` lists them;
   `mailda provider --destinations [--addresses]` and `--add-destination <email>` list and register the account's
   destination addresses (a new one waits for verification until someone there clicks Cloudflare's link).
+- **Copies are off.** An address that keeps a forward may opt in to a copy (`mailda provider --copy <address> on`,
+  People, or `--copy` with `--forward keep`): when Cloudflare refuses the forward as not verified, the message is
+  sent on from the address itself through Email Sending. The recipient sees it from "Alice via <mailbox>", replies go
+  to Alice, the body is hers as written; up to 5 MiB (`email.outbound.max_bytes`); a message with a dangerous
+  attachment, a quarantined one or one that failed DMARC is not copied; each copy counts towards today's sending and
+  is in the Outbox like any send, sealed under the administrator who turned copies on.
 - **A forward goes only into a mailbox you choose**, a new one named after the address offered first (or the
   mailbox already named after it, never a second), never into the only mailbox by default (the API refuses it,
   `E_ROUTING_FORWARD_NEEDS_MAILBOX`).

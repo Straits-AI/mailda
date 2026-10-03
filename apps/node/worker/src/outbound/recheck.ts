@@ -170,6 +170,20 @@ function withheld(
   return { reason, lastError: `${entry.sentence} ${because}`.slice(0, 500), raises: entry.raises, evidence };
 }
 
+/**
+ * ADR 47's: a copy is sealed under an administrator's opt-in on the address it is from, and that authority is read
+ * again at dispatch. Gone (the opt-in turned off or moved to somebody else, the address removed, or the administrator
+ * no longer one) is `authority_lost`, the same reason a person's withdrawn send.propose gives.
+ */
+export function copyAuthorityLost(actorUserId: string, address: string | null): Withholding {
+  return withheld(
+    "authority_lost",
+    `This is a copy sealed under ${actorUserId}'s opt-in on ${address ?? "an address that is gone"}, and that opt-in `
+    + "is no longer theirs to give: copies were turned off there, or they are no longer an administrator.",
+    { actorUserId, address, copy: true },
+  );
+}
+
 /** ADR 39's refusal, built here so the seven reasons and their sentences live in one place. */
 export function authorityLost(actorUserId: string, mailboxId: string): Withholding {
   return withheld(
@@ -357,7 +371,10 @@ export const ENVELOPE_COLUMNS =
    body_normalized_key, body_normalized_sha256, policy_outcome, policy_versions,
    (SELECT json_group_array(json_object('key', a.blob_key, 'sha256', a.sha256))
       FROM (SELECT blob_key, sha256 FROM send_attachments
-             WHERE manifest_id = send_manifests.id ORDER BY ordinal) a) AS attachments_json`;
+             WHERE manifest_id = send_manifests.id ORDER BY ordinal) a) AS attachments_json,
+   (SELECT json_object('address', d.address, 'copyBy', d.copy_by, 'optedInBy', c.opted_in_by, 'inReplyTo', c.in_reply_to)
+      FROM send_copies c LEFT JOIN addresses d ON d.org_id = c.org_id AND d.address = send_manifests.envelope_from
+     WHERE c.manifest_id = send_manifests.id) AS copy_json`;
 
 export interface EnvelopeRow {
   author_user_id: string;
@@ -377,6 +394,11 @@ export interface EnvelopeRow {
   policy_versions: string | null;
   /** 0060: `[{key, sha256}]` in ordinal order, as one column of the same read — `[]` when nothing was attached. */
   attachments_json: string | null;
+  /**
+   * ADR 47: a copy's record, `{address, copyBy, optedInBy, inReplyTo}` (`copyBy` is the address's opt-in now), or null for every other send. `address` is null when
+   * the address the copy is from is gone. Read in the same widened SELECT, so a send that is not a copy pays nothing.
+   */
+  copy_json?: string | null;
 }
 
 function attachmentsOf(row: EnvelopeRow): Array<{ key: string; sha256: string }> {
@@ -428,6 +450,20 @@ function emittedHeadersFor(
   row: EnvelopeRow,
   parameters: { to: string[]; cc: string[] },
 ): string[] {
+  /*
+   * A copy (ADR 47) is `copyMessage`'s header set: Reply-To after From, the original's Content-Transfer-Encoding,
+   * its In-Reply-To (frozen on `send_copies`, so it is a column here like a reply's), and the two `X-` headers that
+   * say what the copy is. No Cc: a copy has one recipient.
+   */
+  const copy = row.copy_json == null ? null : JSON.parse(row.copy_json) as { inReplyTo: string | null };
+  if (copy !== null) {
+    return [
+      "From", "Reply-To", "To", "Subject", "Message-ID", "Date", "MIME-Version", "Content-Type", "Content-Transfer-Encoding",
+      ...(copy.inReplyTo === null ? [] : ["In-Reply-To"]),
+      ...(row.references_header === null ? [] : ["References"]),
+      "X-Original-From", "X-Mailda-Copy-Of",
+    ];
+  }
   return [
     "From",
     ...(parameters.to.length === 0 ? [] : ["To"]),

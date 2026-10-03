@@ -1,6 +1,7 @@
 import { MAX_MAILBOX_NAME_CHARS } from "@mailda/contract/schemas";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { CONFIG } from "/app/config.js";
 import { t } from "/app/locale.js";
 
 import type { Text } from "../../../i18n/format.ts";
@@ -467,6 +468,9 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
   const [arming, setArming] = useState<string | null>(null);
   // A forward rule's choice (ADR 47): which of its two buttons armed the confirm. Undefined on any other rule.
   const [forward, setForward] = useState<"keep" | "stop" | undefined>(undefined);
+  // With keep: also send a copy when the forward is refused as not verified (ADR 47, amended 3 October 2026). Off
+  // until ticked, every time the confirm is armed.
+  const [copy, setCopy] = useState(false);
   const [problem, setProblem] = useState<ReactNode>(null);
   const [outcome, setOutcome] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
@@ -485,6 +489,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
   function arm(rule: RoutingRule, choice?: "keep" | "stop") {
     setArming(rule.id);
     setForward(choice);
+    setCopy(false);
     // The mailbox already named after the address first, then (a forward) a new one, else the only one, else none yet.
     const { named, fresh } = namedAfter(rule, boxes);
     setMailboxId(named?.id ?? (rule.takeOver?.asksMailbox ? (fresh ? NEW_MAILBOX : "") : boxes.length === 1 ? boxes[0]!.id : ""));
@@ -506,7 +511,8 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     }
     const answer = rule.offer === "put_back"
       ? await putBackRule(listing.domain, rule.id)
-      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined, forward);
+      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined, forward,
+        forward === "keep" && copy);
     setBusy(false);
     setArming(null);
     if (!answer.ok) {
@@ -523,6 +529,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
         {done.mailbox === null ? null : <>{t("join.sentence")}{t("setup.rules.filedInto", { name: done.mailbox.name })}</>}
         {done.nameRecorded === false ? <>{t("join.sentence")}{t("setup.rules.nameNotRecorded")}</> : null}
         {(done.keptForward ?? null) === null ? null : <>{t("join.sentence")}{t("setup.rules.keptForward", { to: done.keptForward ?? "" })}</>}
+        {done.copy === true ? <>{t("join.sentence")}{t("setup.rules.copyOn", { address: done.to })}</> : null}
       </>,
     );
   }
@@ -578,6 +585,19 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                           <p>{t("setup.rules.filesInto", { name: rule.takeOver.filesInto?.name ?? boxes[0]!.name })}</p>
                         ) : (
                           <MailboxChoice rule={rule} boxes={boxes} value={mailboxId} onChange={setMailboxId} />
+                        )}
+                        {forward !== "keep" ? null : (
+                          <>
+                            <label className="field-row" htmlFor={`setup-copy-${rule.id}`}>
+                              <input id={`setup-copy-${rule.id}`} type="checkbox" checked={copy} onChange={(event) => setCopy(event.target.checked)} />
+                              <span>{t("setup.rules.copy")}</span>
+                            </label>
+                            <p className="dim">{t("setup.rules.copyAbout", {
+                              address: rule.to,
+                              mailbox: rule.takeOver?.filesInto?.name ?? boxes.find((box) => box.id === mailboxId)?.name ?? rule.to,
+                              size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
+                            })}</p>
+                          </>
                         )}
                         <button type="button" className="primary" disabled={busy} onClick={() => void act(rule)}>
                           {busy ? t("setup.working") : rule.offer === "put_back" ? t("setup.rules.putBack.confirm") : t("setup.rules.takeOver.confirm", { address: rule.to })}

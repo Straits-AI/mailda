@@ -221,3 +221,20 @@ so binding costs nothing; verifying costs what the table says.
 on both paths between 20 August and now and no correction was written for it. This one records the
 reading rather than the cause, which it did not establish. The headroom on both budgets is therefore **2**,
 not 3.
+
+## Correction, 3 October 2026 (ADR 47, the copy): a copy, priced
+
+A copy of a stored message (`src/outbound/copy.ts`) dispatches on the unapproved path like any send, with three
+differences: it reads no body of its own (the manifest's typed and normalized bodies are empty and never read at
+render), it reads the original's evidence instead (one R2 get, one vault RPC), and it reads its opt-in's administrator
+again (`isAdmin`, one or two D1 statements). Its frozen headers and its opt-in ride in the two `SELECT`s dispatch
+already issues (`ENVELOPE_COLUMNS` and `renderRfc822`'s row), so they cost nothing. Measured in
+`test/kept-forward-copy.test.ts` ("costs what a plain send does …"), same instrument, same runtime:
+
+| Scenario | Subrequests | D1 | R2 | DO RPC |
+|:--|--:|--:|--:|--:|
+| `dispatchOne`, unapproved, a copy, handed over | **18** | 14 | 2 | 2 |
+
+18 is the plain send's figure read on 17 September; the budgets do not move. The test bounds a copy at the plain
+budget plus 2, the per-part figure, since the original's size does not change the count (one evidence read whatever
+its length) and the `isAdmin` team arm can add a statement.

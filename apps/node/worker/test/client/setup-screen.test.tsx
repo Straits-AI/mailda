@@ -706,10 +706,30 @@ describe("the rules already on a zone", () => {
     expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "keep" }]]);
   });
 
+  it("offers copies under keep only, unticked, states what a copy is, and sends copy: true when ticked", async () => {
+    mount({ rules: listing([keeping]), takenOver: { outcome: { ...TAKEN.outcome, keptForward: "someone@gmail.test", copy: true } } });
+    await list();
+    expect(screen.queryByLabelText(/Also send a copy/)).toBeNull();
+    fireEvent.click(await screen.findByText(KEEP.label));
+    const box = screen.getByLabelText(/Also send a copy/) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(screen.getByText(/^A copy is sent from hello@example.com/).textContent)
+      .toContain('the recipient sees it from "<sender> via Me", and replies go to the sender. Up to 5.0 MB.');
+    fireEvent.click(box);
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
+      .toContain("When the forward is refused as not verified, a copy is sent from hello@example.com.");
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "keep", copy: true,
+    }]]);
+  });
+
   it("sends forward: stop for receive here only when the Node offers the choice", async () => {
     mount({ rules: listing([keeping]), takenOver: TAKEN });
     await list();
     fireEvent.click(await screen.findByText("receive here only"));
+    // No copy box beside receive here only: a copy follows a kept forward.
+    expect(screen.queryByLabelText(/Also send a copy/)).toBeNull();
     fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
     await screen.findByText(/hello@example.com: was forward/);
     expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "stop" }]]);

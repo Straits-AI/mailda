@@ -5,6 +5,7 @@ import { auditedBatch, log } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
 import { cloudflareGet, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
+import { copyRefusal } from "../kept-forward.ts";
 import { readDestinations, stateIn } from "./destinations.ts";
 import { type CloudflareRule, mailboxForAddress, routingRulesOf, workerNameFor } from "./receiving.ts";
 import { routesHere } from "./routing-classify.ts";
@@ -244,6 +245,8 @@ export interface TakeoverOutcome {
   nameRecorded: boolean | null;
   /** The destination the address keeps forwarding to after a take-over that kept it (ADR 47); null otherwise. */
   keptForward: string | null;
+  /** Whether the take-over turned copies on (ADR 47, amended 3 October 2026); null on a put-back. */
+  copy: boolean | null;
 }
 
 async function ruleNow(
@@ -453,6 +456,7 @@ function takeOverRefusal(rules: Listed[], rule: Listed, zone: string, settings: 
 export async function takeOverRule(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string,
   domain: string, ruleId: string, digest: string, mailboxId: string | null, forward: "keep" | "stop" | null = null,
+  copy = false,
 ): Promise<TakeoverOutcome> {
   const { listing, rule, raw } = await ruleNow(env, ctx, orgId, domain, ruleId);
   const refusal = takeOverRefusal(listing.rules, rule, listing.zone ?? domain, await zoneSettings(env, ctx, orgId, listing.zoneId!));
@@ -515,6 +519,13 @@ export async function takeOverRule(
       fix: "send the take-over without forward",
     });
   }
+  if (copy && forward !== "keep") {
+    throw unprocessable("E_COPY_NEEDS_KEEP", {
+      what: `copy was asked for the rule for ${rule.to}, which is not being taken over with forward: "keep"`,
+      why: "a copy is what follows a kept forward that Cloudflare refuses as not verified, so without one there is nothing to follow",
+      fix: rule.action === "forward" ? 'send forward: "keep" with copy: true, or leave copy out' : "leave copy out",
+    });
+  }
   const keep = forward === "keep" ? rule.destinations[0]! : null;
   /*
    * The destination as the account lists it now. Cloudflare refuses to create a forward rule to an unverified one
@@ -525,7 +536,8 @@ export async function takeOverRule(
    */
   const checked = keep === null ? null : await readDestinations(env, ctx, orgId);
   const verified = checked === null || !checked.ok ? null : stateIn(checked.listed, keep!);
-  if (keep !== null && verified !== null && verified !== "verified") {
+  // With copies on, a destination that is not verified is kept: each forward is refused at once and a copy follows.
+  if (keep !== null && !copy && verified !== null && verified !== "verified") {
     throw unprocessable("E_FORWARD_DESTINATION_NOT_VERIFIED", {
       what: `${keep} is ${verified === "waiting" ? "registered but not yet verified" : "not a destination address of this account"}`,
       why: "Cloudflare forwards only to a verified destination, and a forward to any other throws \"destination address "
@@ -533,10 +545,15 @@ export async function takeOverRule(
       fix: verified === "waiting"
         ? `somebody at ${keep} clicks the link Cloudflare mailed them, then take the rule over again; or take it over with forward: "stop"`
         : `register it (\`mailda provider --add-destination ${keep}\`, or the Setup screen), have somebody at ${keep} click `
-          + `the link Cloudflare mails them, then take the rule over again; or take it over with forward: "stop"`,
+          + `the link Cloudflare mails them, then take the rule over again; or take it over with forward: "stop"; or keep `
+          + "it with copy: true, so each message is sent on as a copy from this address instead",
     });
   }
   const mailbox = existing ?? await mailboxForAddress(env, orgId, mailboxId);
+  if (copy) {
+    const refusal = await copyRefusal(env, orgId, actorUserId, mailbox.id, rule.to, keep!);
+    if (refusal !== null) throw refusal;
+  }
   const before = { action: rule.action, destinations: rule.destinations };
   /*
    * The action it had goes into the rule's own name as well as the audit entry (critic H1, 1 October 2026): the
@@ -554,6 +571,8 @@ export async function takeOverRule(
       mailboxId: mailbox.id, addressExisted: existing !== null, readBackFollows: true,
       // The choice, and what the account's list said of the destination: never null for keep unless it was unreadable.
       forward, keptForwardVerified: keep === null ? null : verified,
+      // Whether copies were turned on with it (ADR 47, amended 3 October 2026): the actor is who turned them on.
+      copy,
     },
   }, (entry) => {
     const at = new Date(ctx.now()).toISOString();
@@ -561,12 +580,14 @@ export async function takeOverRule(
     return [
       ...(existing === null
         ? [env.CATALOG.prepare(
-          "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to, kept_forward_verified, kept_forward_checked_at) "
-          + "VALUES (?,?,?,?,?,?,?,?)",
-        ).bind(ctx.id("addr"), orgId, rule.to, mailbox.id, at, keep, verified, verified === null ? null : at)]
+          "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to, kept_forward_verified, kept_forward_checked_at, "
+          + "copy_by, copy_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ).bind(ctx.id("addr"), orgId, rule.to, mailbox.id, at, keep, verified, verified === null ? null : at,
+          copy ? actorUserId : null, copy ? at : null)]
         : keep === null ? [] : [env.CATALOG.prepare(
-          "UPDATE addresses SET kept_forward_to = ?, kept_forward_verified = ?, kept_forward_checked_at = ? WHERE org_id = ? AND address = ?",
-        ).bind(keep, verified, verified === null ? null : at, orgId, rule.to)]),
+          "UPDATE addresses SET kept_forward_to = ?, kept_forward_verified = ?, kept_forward_checked_at = ?, copy_by = ?, copy_at = ? "
+          + "WHERE org_id = ? AND address = ?",
+        ).bind(keep, verified, verified === null ? null : at, copy ? actorUserId : null, copy ? at : null, orgId, rule.to)]),
       entry,
     ];
   });
@@ -582,7 +603,7 @@ export async function takeOverRule(
     throw error;
   }
   const { name: nameNow, ...after } = confirmed;
-  return { ruleId, to: rule.to, before, after, mailbox, nameRecorded: nameNow === name, keptForward: keep };
+  return { ruleId, to: rule.to, before, after, mailbox, nameRecorded: nameNow === name, keptForward: keep, copy };
 }
 
 /** After a take-over that did not confirm: the kept forward goes when the rule reads back not routing here. */
@@ -595,7 +616,8 @@ async function dropForwardUnlessHere(
   // no stub reproduces that transient, so dropping it survives a mutant (accepted; the unknown case is tested).
   if (!back.ok || routesHere(back.result, worker)) return;
   await env.CATALOG.prepare(
-    "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL WHERE org_id = ? AND address = ?",
+    "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL, copy_by = NULL, copy_at = NULL "
+    + "WHERE org_id = ? AND address = ?",
   ).bind(orgId, address).run();
 }
 
@@ -638,8 +660,8 @@ export async function putBackRule(
      */
     const named: string | undefined = env.WORKER_NAME; // typed as wrangler.jsonc's names; a fork renames it
     const cleared = named === undefined || named === "" ? 0 : (await env.CATALOG.prepare(
-      "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL "
-      + "WHERE org_id = ? AND address = ? AND kept_forward_to IS NOT NULL",
+      "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL, copy_by = NULL, "
+      + "copy_at = NULL WHERE org_id = ? AND address = ? AND kept_forward_to IS NOT NULL",
     ).bind(orgId, rule.to).run()).meta.changes;
     throw conflict("E_ROUTING_RULE_NOT_OURS_NOW", {
       what: `${rule.to} no longer routes to this Worker (${rule.action} → ${rule.destinations.join(", ")})`,
@@ -661,7 +683,7 @@ export async function putBackRule(
     const after = await putAndConfirm(env, ctx, orgId, actorUserId, "put_back", listing.zone ?? domain,
       `/zones/${listing.zoneId}/email/routing/rules/catch_all`,
       { name: raw.name ?? "", enabled: wasEnabled, matchers: [{ type: "all" }], actions });
-    return { ruleId, to: "*", before, after: { action: after.action, destinations: after.destinations }, mailbox: null, nameRecorded: null, keptForward: null };
+    return { ruleId, to: "*", before, after: { action: after.action, destinations: after.destinations }, mailbox: null, nameRecorded: null, keptForward: null, copy: null };
   }
   /*
    * The name the rule had before the take-over wrote its record into it, while that record is still the name: a
@@ -685,10 +707,10 @@ export async function putBackRule(
    * put-back that happened; the address still reads as forwarding until it is cleared, which People shows.
    */
   await env.CATALOG.prepare(
-    "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL "
-    + "WHERE org_id = ? AND address = ? AND kept_forward_to IS NOT NULL",
+    "UPDATE addresses SET kept_forward_to = NULL, kept_forward_verified = NULL, kept_forward_checked_at = NULL, copy_by = NULL, "
+    + "copy_at = NULL WHERE org_id = ? AND address = ? AND kept_forward_to IS NOT NULL",
   ).bind(orgId, rule.to).run().catch(async (unrecorded: Error) => await log(env, ctx, {
     level: "error", event: "kept_forward.not_cleared", orgId, message: unrecorded.message, detail: { ruleId },
   }));
-  return { ruleId, to: rule.to, before, after, mailbox: null, nameRecorded: null, keptForward: null };
+  return { ruleId, to: rule.to, before, after, mailbox: null, nameRecorded: null, keptForward: null, copy: null };
 }

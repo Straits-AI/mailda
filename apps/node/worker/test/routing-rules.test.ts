@@ -623,3 +623,47 @@ describe("a forward rule's third choice: receive here and keep forwarding (ADR 4
       .rejects.toThrow(/E_ADDRESS_KEEPS_A_FORWARD[\s\S]*put the rule back first/);
   });
 });
+
+describe("a kept forward with copies turned on at the take-over (ADR 47, amended 3 October 2026)", () => {
+  const copyOf = async () => await testEnv.CATALOG.prepare(
+    "SELECT kept_forward_to AS too, copy_by AS by, copy_at AS at FROM addresses WHERE org_id = ? AND address = ?",
+  ).bind(ORG, "hello@example.test").first<{ too: string | null; by: string | null; at: string | null }>();
+  const takeOverCopying = async (forward: "keep" | "stop") => {
+    const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
+    return await takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX, forward, true);
+  };
+  const mayPropose = async () => await testEnv.CATALOG.prepare(
+    "INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at) VALUES ('rt_copy', ?, ?, 'send.propose', 'mailbox', ?, ?)",
+  ).bind(ORG, ADMIN, MAILBOX, new Date(AT).toISOString()).run();
+
+  it("refuses copy without keep, and writes nothing", async () => {
+    const { puts } = serving([FORWARD]);
+    await expect(takeOverCopying("stop")).rejects.toThrow(/E_COPY_NEEDS_KEEP/);
+    expect(puts).toEqual([]);
+  });
+
+  it("keeps a destination the account lists unverified, records who turned copies on, and says so", async () => {
+    await mayPropose();
+    serving([FORWARD], { destinations: [{ email: "somebody@gmail.test", verified: null }] });
+    const outcome = await takeOverCopying("keep");
+    expect(outcome).toMatchObject({ keptForward: "somebody@gmail.test", copy: true });
+    expect(await copyOf()).toMatchObject({ too: "somebody@gmail.test", by: ADMIN });
+    const [entry] = await entries("provider.routing_rule_taken_over");
+    expect(entry!.detail).toMatchObject({ forward: "keep", copy: true });
+  });
+
+  it("refuses copies when the administrator may not send as the mailbox, and writes nothing", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE id = 'rt_copy'").run();
+    const { puts } = serving([FORWARD]);
+    await expect(takeOverCopying("keep")).rejects.toThrow(/E_COPY_NEEDS_SEND_PROPOSE/);
+    expect(puts).toEqual([]);
+  });
+
+  it("clears copies with the forward when the rule is put back", async () => {
+    await mayPropose();
+    serving([FORWARD]);
+    await takeOverCopying("keep");
+    await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello");
+    expect(await copyOf()).toMatchObject({ too: null, by: null, at: null });
+  });
+});

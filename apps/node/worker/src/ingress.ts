@@ -31,6 +31,8 @@ export interface IngressResult {
    * the receipt. The caller makes the call and settles the row (`forwardKept`).
    */
   forward?: string;
+  /** Whether the address opted in to a copy when that forward is refused as not verified (ADR 47); set with `forward`. */
+  copy?: boolean;
 }
 
 export interface InboundMessage {
@@ -55,10 +57,10 @@ export async function acceptInbound(
   // §13: resolve the recipient before touching content. An address this Node does not
   // serve is rejected without reading, storing or paying for the message.
   const address = await env.CATALOG.prepare(
-    "SELECT mailbox_id, kept_forward_to FROM addresses WHERE org_id = ? AND address = ? LIMIT 1",
+    "SELECT mailbox_id, kept_forward_to, copy_by FROM addresses WHERE org_id = ? AND address = ? LIMIT 1",
   )
     .bind(orgId, message.envelopeTo.toLowerCase())
-    .first<{ mailbox_id: string; kept_forward_to: string | null }>();
+    .first<{ mailbox_id: string; kept_forward_to: string | null; copy_by: string | null }>();
 
   if (address === null) {
     return { status: "unknown_recipient" };
@@ -109,7 +111,7 @@ export async function acceptInbound(
     ).bind(
       receiptId, orgId, message.envelopeTo.toLowerCase(), keeps,
       loop ? "withheld" : "outcome_unknown",
-      loop ? "the message carries this Node's own X-Mailda-Forwarded-By marker: it was forwarded by this Node and came back, so forwarding it again would loop" : null,
+      loop ? "the message carries this Node's own X-Mailda-Forwarded-By or X-Mailda-Copy-Of marker: it left this Node and came back, so forwarding it again would loop" : null,
       at, loop ? at : null,
     ),
   ];
@@ -164,7 +166,7 @@ export async function acceptInbound(
     return { status: "already_accepted", receiptId: winner?.id };
   }
 
-  return { status: "accepted", receiptId, ...(keeps === null || loop ? {} : { forward: keeps }) };
+  return { status: "accepted", receiptId, ...(keeps === null || loop ? {} : { forward: keeps, copy: address.copy_by !== null }) };
 }
 
 /**

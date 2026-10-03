@@ -28,6 +28,8 @@ export interface MaildaConfig {
   readonly attachmentBudgetBytes: number;
   /** How many files a send may carry: provisional, with no receipt (`src/outbound/attachment-budget.ts`). */
   readonly maxAttachments: number;
+  /** The most a copy (ADR 47) may be: `email.outbound.max_bytes`, Cloudflare's outbound ceiling, which the seal refuses past. */
+  readonly outboundMaxBytes: number;
 }
 
 export const CONFIG: MaildaConfig;

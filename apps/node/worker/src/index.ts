@@ -9,6 +9,7 @@ import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/eve
 import { EvidenceMissing } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { FORWARDED_BY_HEADER, forwardKept, forwardedBy } from "./kept-forward.ts";
+import { COPY_OF_HEADER } from "./outbound/copy.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
@@ -370,8 +371,10 @@ const handler = {
       envelopeFrom: message.from,
       envelopeTo: message.to,
       raw,
-      // The claim id is this Node's loop marker (ADR 47): random per Node, and already in hand here.
-      forwardedByThisNode: forwardedBy(message.headers.get(FORWARDED_BY_HEADER), claimed.id),
+      // The claim id is this Node's loop marker (ADR 47): random per Node, and already in hand here. A forward carries
+      // it as X-Mailda-Forwarded-By and a copy as X-Mailda-Copy-Of; either coming back is stored and not sent on.
+      forwardedByThisNode: forwardedBy(message.headers.get(FORWARDED_BY_HEADER), claimed.id)
+        || forwardedBy(message.headers.get(COPY_OF_HEADER), claimed.id),
     });
 
     if (result.status === "unknown_recipient") {
@@ -391,7 +394,12 @@ const handler = {
      * recorded and shown, not bounced.
      */
     if (result.status === "accepted" && result.forward !== undefined && result.receiptId !== undefined) {
-      await forwardKept(env, clock, message, claimed.org_id, result.receiptId, result.forward, claimed.id);
+      const { copyQueued } = await forwardKept(
+        env, clock, message, claimed.org_id, result.receiptId, result.forward, claimed.id, result.copy === true,
+      );
+      // A copy was asked for after the arm above, so the sweeper is armed again for it: otherwise it waits for the
+      // minute cron (`src/outbox.ts`).
+      if (copyQueued) ctx.waitUntil(armSweeper(env));
     }
   },
 
