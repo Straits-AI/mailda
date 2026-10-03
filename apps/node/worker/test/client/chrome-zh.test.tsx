@@ -87,7 +87,7 @@ describe("a notice in Chinese", () => {
     render(<QueryClientProvider client={client()}><Notices /></QueryClientProvider>);
     const band = await screen.findByRole("region", { name: "通知" });
     expect(band.querySelector(".notice.told")?.textContent).toBe(
-      "legal@example.test 获得了对 Support 的受监督查阅授权（范围：查阅），时间为 未记录的时刻 至 未记录的时刻。 "
+      "legal@example.test 获得了对 Support 的受监督查阅授权，时间为 未记录的时刻 至 未记录的时刻。 "
         + "2 次查询，列出 0 封邮件 · 打开 0 封 · 读取原始邮件 0 封 · 事项：未注明 · 授权 sgr_1",
     );
   });

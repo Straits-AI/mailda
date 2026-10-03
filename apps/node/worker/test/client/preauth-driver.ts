@@ -130,8 +130,8 @@ export const UNKNOWN = { error: "E_SOMETHING_NEW", message: "A refusal this inte
 
 export const CLAIM_REFUSALS: Record<string, [number, object]> = {
   already_claimed: [409, { error: "already_claimed", message: "This Node has already been claimed. Sign in instead, or restore from backup to start over." }],
-  bad_secret: [403, { error: "bad_secret", message: "That bootstrap secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost." }],
-  not_installed: [503, { error: "not_installed", message: "This Node has no bootstrap secret recorded. Run `mailda deploy` to complete installation." }],
+  bad_secret: [403, { error: "bad_secret", message: "That claim secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost." }],
+  not_installed: [503, { error: "not_installed", message: "This Node has no claim secret recorded. Run `mailda deploy` to complete installation." }],
   weak_password: [422, { error: "weak_password", message: "E_PASSWORD_TOO_SHORT  minimum=12, got 5\n  why      length is the only property that reliably resists offline guessing\n  fix      use a longer passphrase; there are no character-class requirements" }],
   cross_site: [403, CROSS_SITE],
   internal: [500, INTERNAL],
@@ -141,7 +141,7 @@ export const CLAIM_REFUSALS: Record<string, [number, object]> = {
 
 export const LOGIN_REFUSALS: Record<string, [number, object]> = {
   invalid_credentials: [401, { error: "invalid_credentials", message: "That email and password do not match." }],
-  locked_out: [429, { error: "locked_out", message: "Too many failed sign-in attempts. Try again in 5 minute(s)." }],
+  locked_out: [429, { error: "locked_out", message: "Too many failed sign-in attempts. Try again in 5 minutes." }],
   not_claimed: [503, { error: "not_claimed", message: "This Node has not been claimed yet." }],
   cross_site: [403, CROSS_SITE],
   internal: [500, INTERNAL],

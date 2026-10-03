@@ -7,7 +7,7 @@ import { assertAdmin, isAdmin } from "../access.ts";
 import { inviteToOrganization, openInvitations, redeemInvitation } from "../invitations.ts";
 import { publicJwks, rotateSigningKey } from "../auth/keys.ts";
 import { cookieValue, login, refreshSession, revokeAllSessions, signOut, REFRESH_COOKIE } from "../auth/session.ts";
-import { sessionResponse, signedOutResponse, unauthenticated, organizationId } from "./support.ts";
+import { lockedOutMessage, sessionResponse, signedOutResponse, unauthenticated, organizationId } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const session = {
@@ -85,9 +85,7 @@ export const session = {
       return Response.json(
         {
           error: "locked_out",
-          message:
-            `Too many failed sign-in attempts. Try again in ` +
-            `${Math.ceil(outcome.retryAfterSeconds / 60)} minute(s).`,
+          message: lockedOutMessage(outcome.retryAfterSeconds),
         },
         { status: 429, headers: { "retry-after": String(outcome.retryAfterSeconds) } },
       );

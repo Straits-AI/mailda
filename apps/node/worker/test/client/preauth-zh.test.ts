@@ -105,6 +105,12 @@ describe("the pages before sign-in, in Simplified Chinese", () => {
     expect(got["weak_password"]?.[0]).toBe("密码太短。");
     expect(got["weak_password"]?.[1]).toMatch(/^<en>E_PASSWORD_TOO_SHORT/);
     expect(got["cross_site"]?.[0]).toBe(zh["preauth.refusal.E_CROSS_SITE_REQUEST"]);
+    // A command in a headline is in <code> (H14), its backticks dropped; the Node's English after it is as it was sent.
+    const node = (name: string) => `<en>${(CLAIM_REFUSALS[name]![1] as { message: string }).message}`;
+    expect(got["bad_secret"]).toEqual([
+      "认领码不匹配。它只由 ", "<>mailda claim-secret", " 显示过一次，本节点只保存它的哈希值；如果丢失了，请重新生成。", node("bad_secret"),
+    ]);
+    expect(got["not_installed"]).toEqual(["本节点没有记录认领码。运行 ", "<>mailda deploy", " 完成安装。", node("not_installed")]);
     expect(got["unknown"]).toEqual([`<en>${UNKNOWN.message}`]);
     expect(got["silent"]).toEqual(["认领失败。"]);
   });
@@ -113,7 +119,7 @@ describe("the pages before sign-in, in Simplified Chinese", () => {
     await signInScreen();
     const login = await refusals(LOGIN_REFUSALS, "/api/auth/login");
     expect(login["invalid_credentials"]).toEqual(["邮件地址和密码不匹配。", "<en>That email and password do not match."]);
-    expect(login["locked_out"]).toEqual(["登录失败次数过多。", "<en>Too many failed sign-in attempts. Try again in 5 minute(s)."]);
+    expect(login["locked_out"]).toEqual(["登录失败次数过多。", "<en>Too many failed sign-in attempts. Try again in 5 minutes."]);
     expect(login["silent"]).toEqual(["登录失败。"]);
 
     await joinScreen();

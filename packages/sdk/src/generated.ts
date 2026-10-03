@@ -1001,7 +1001,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Butlers a machine has stopped
+   * Butlers a machine has paused
    *
    * `GET /api/butler-pauses`
    */
@@ -1010,7 +1010,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Restart a stopped Butler, with a reason
+   * Resume a paused Butler, with a reason
    *
    * `POST /api/butler-pauses/:pauseId/resume`
    */

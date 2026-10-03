@@ -1,19 +1,24 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { exposureOf } from "@mailda/contract/agent";
+import { ROUTES } from "@mailda/contract/routes";
 import { utf8 } from "@mailda/evidence";
 import { BUDGETS } from "@mailda/budgets";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
 import { grant } from "../src/access.ts";
+import { AUDIT_ACTIONS } from "../src/audit.ts";
 import { interpret, type RunSteps } from "../src/butler/interpret.ts";
-import { isPauseReason, loopReading } from "../src/butler/pause.ts";
+import { describeLoopTrip, describePause, isPauseReason, loopReading } from "../src/butler/pause.ts";
 import { placeButlerPause, resumeButlerPause } from "../src/butler/pause-acts.ts";
 import { runRow } from "../src/butler/record.ts";
 import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, editButlerDraft, publishButler } from "../src/butlers.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { runDoctor } from "../src/doctor.ts";
+import { butlerExecutionCheck } from "../src/doctor/butlers.ts";
+import { CONCEPTS } from "../src/i18n/glossary.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { capabilitiesFor } from "./butler-capabilities.ts";
 
@@ -787,6 +792,85 @@ describe("who may resume, and what it records", () => {
       detail: "it looped again", trippedBy: "msg_again",
     });
     expect(third).not.toBeNull();
+  });
+});
+
+/* ---------------------------------------------------- the Node's own words -------------------------- */
+
+/**
+ * D3's one verb in the Node's own English for a Butler too (`docs/i18n.md`, the Butler pause's follow-up to G6). The
+ * screens say a Butler is paused and resumed; the refusals, doctor's findings, the audit vocabulary and the route
+ * summaries an agent reads said stopped and restarted. The words to avoid are the glossary's `pause` row's. Only what
+ * is said about the pause is held: a revoked relation still "stops it on the next node", which is not a pause, and a
+ * run a `stop` node ended is `stopped` (`butler-run.stopped`). The codes are the contract and none changed.
+ */
+describe("the Node's own English says pause and resume, as every screen does", () => {
+  const AVOID = CONCEPTS.find((concept) => concept.id === "pause")!.avoid.en!;
+  const said = (text: string) => AVOID.filter((word) => text.includes(word));
+  async function refusal(act: Promise<unknown>): Promise<string> {
+    const error = await act.then(() => null, (thrown: unknown) => thrown);
+    expect(error, "expected a refusal").toBeInstanceOf(Error);
+    return (error as Error).message;
+  }
+
+  it("finds the avoided words to look for, so nothing below passes by checking none", () => {
+    expect(AVOID).toContain("stop");
+    expect(AVOID).toContain("restart");
+  });
+
+  it("in every refusal of a resume, and the sentences the pause itself stores and logs", async () => {
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE);
+    const reading = { prior: 3, thisOne: true, selfProvoked: 4, limit: 3, windowSeconds: 3600, tripped: true };
+    const detail = describeLoopTrip(reading, { id: ids.butlerId, name: "acknowledge" }, "msg_tripper");
+    const placed = await placeButlerPause(testEnv, ctx, ORG, {
+      butlerId: ids.butlerId, butlerName: "acknowledge", reason: "loop_detected", detail, trippedBy: "msg_tripper",
+    });
+    const texts = [
+      await refusal(resumeButlerPause(testEnv, atTime(T0 + 1), ORG, ADMIN, placed!.pauseId, " ")),
+      await refusal(resumeButlerPause(testEnv, atTime(T0 + 2), ORG, ADMIN, "bpz_nothing", "fixed")),
+    ];
+    await resumeButlerPause(testEnv, atTime(T0 + 3), ORG, ADMIN, placed!.pauseId, "fixed");
+    texts.push(await refusal(resumeButlerPause(testEnv, atTime(T0 + 4), ORG, ADMIN, placed!.pauseId, "again")));
+
+    expect(texts.map((text) => text.split(" ")[0])).toEqual([
+      "E_BUTLER_PAUSE_REASON_REQUIRED", "E_NO_BUTLER_PAUSE", "E_BUTLER_PAUSE_ALREADY_RESUMED",
+    ]);
+    texts.push(detail, describePause({ pauseId: placed!.pauseId, reason: "loop_detected", placedAt: "2026-10-03T00:00:00Z" },
+      { id: ids.butlerId, name: "acknowledge" }));
+    expect(texts.filter((text) => said(text).length > 0)).toEqual([]);
+    // Released is a held send's and a gate's verb (放行); a resume ends a pause.
+    expect(texts.filter((text) => /\brelease/.test(text))).toEqual([]);
+  });
+
+  it("in doctor's findings, whichever way the pause is read", async () => {
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('claim', 'x', ?, ?)",
+    ).bind(new Date(T0).toISOString(), ORG).run();
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE);
+    await placeButlerPause(testEnv, ctx, ORG, {
+      butlerId: ids.butlerId, butlerName: "acknowledge", reason: "loop_detected", detail: "over the limit", trippedBy: "msg_t",
+    });
+    const paused = (await runDoctor(testEnv, atTime(T0 + 1000))).findings.find((one) => one.check === "butler_paused")!;
+    expect(paused.ok).toBe(false);
+    // The capability's sentences about the pause, and not its sentence about revocation, which is not one.
+    const aboutThePause = butlerExecutionCheck().detail.split(". ").filter((one) => one.includes("pause"));
+    expect(aboutThePause.length).toBeGreaterThan(0);
+    const texts = [paused.detail, paused.fix!, ...aboutThePause];
+    expect(texts.filter((text) => said(text).length > 0)).toEqual([]);
+  });
+
+  it("in the audit vocabulary, the routes' summaries and the reason the Skill gives for withholding the resume", () => {
+    const routes = ROUTES.filter((one) => one.path.startsWith("/api/butler-pauses"));
+    const texts = [
+      AUDIT_ACTIONS["butler.paused"].says, AUDIT_ACTIONS["butler.resumed"].says,
+      ...routes.map((one) => one.summary),
+      ...routes.filter((one) => one.method === "POST").map((one) => exposureOf(one).why),
+    ];
+    expect(texts).toHaveLength(5);
+    expect(texts.filter((text) => said(text).length > 0)).toEqual([]);
+    expect(AUDIT_ACTIONS["butler.resumed"].says).toContain("resumed");
   });
 });
 

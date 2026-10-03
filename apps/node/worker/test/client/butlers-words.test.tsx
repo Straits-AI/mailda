@@ -29,6 +29,8 @@ const { Policies } = await import("../../src/client/app/screens/policies.tsx");
 const AT = "2026-09-28T04:36:51.379Z";
 /** A read answered 404, which is what a reader who is not an administrator is told (§5C). */
 const NOT_ADMIN = Symbol("404");
+/** A read that failed for a reason other than who is asking: a 503 with the Node's words. */
+const FAILED = Symbol("503");
 const REFUSED = { error: "E_REFUSED_FOR_TEST", message: "Refused, for the test: the four-part message the Node writes." };
 
 function mount(element: ReactNode) {
@@ -51,6 +53,7 @@ function node(bodies: Record<string, unknown>, acted: (call: Call) => Response |
     if (call.method !== "GET") return acted(call) ?? Response.json(REFUSED, { status: 409 });
     const body = bodies[path];
     if (body === NOT_ADMIN) return Response.json({ error: "E_NOT_FOUND", message: "Not found." }, { status: 404 });
+    if (body === FAILED) return Response.json({ error: "E_UNAVAILABLE_FOR_TEST", message: "The catalog could not be read, for the test." }, { status: 503 });
     return body === undefined ? undefined : Response.json(body);
   });
 }
@@ -187,6 +190,13 @@ describe("Butlers in English", () => {
     await screen.findByText(/you do not hold org.admin/);
     await expect(html(container, ["h1", ".notice"])).toMatchFileSnapshot("./golden/butlers.not-admin.en.html");
   });
+
+  it("shows a read that failed as failed, never as not an administrator (H13)", async () => {
+    node({ "/api/butlers": FAILED, "/api/butler-runs": FAILED });
+    const { container } = mount(<Butlers />);
+    expect((await screen.findByRole("alert")).textContent).toBe("The catalog could not be read, for the test.");
+    expect(container.textContent).not.toContain("org.admin");
+  });
 });
 
 /* ------------------------------------------------------------------------------------------- Rules --- */
@@ -249,6 +259,13 @@ describe("Rules in English", () => {
     const { container } = mount(<Policies />);
     await screen.findByText(/you do not hold org.admin/);
     await expect(html(container, ["h1", ".notice"])).toMatchFileSnapshot("./golden/policies.not-admin.en.html");
+  });
+
+  it("shows a read that failed as failed, never as not an administrator (H13)", async () => {
+    node({ "/api/policies": FAILED });
+    const { container } = mount(<Policies />);
+    expect((await screen.findByRole("alert")).textContent).toBe("The catalog could not be read, for the test.");
+    expect(container.textContent).not.toContain("org.admin");
   });
 });
 

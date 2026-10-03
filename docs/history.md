@@ -4535,3 +4535,51 @@ posts `/api/provider/subscription` with wrangler's login, and attaches the queue
 The paragraph now says the installer does both, and that a button-deployed Node, or one whose setup step was declined,
 gets them from `pnpm mailda setup` or the Setup screen. And `"Alice via <mailbox>"` was raw HTML to a Markdown renderer,
 so the site drew "Alice via"; it is escaped, here and in the README.
+
+## The round-four follow-ups (3 October 2026)
+
+The owner accepted layer 3's questions in round four with seven follow-ups, each its own change, and on 3 October
+said "go close them all" (`docs/i18n.md`, Layer 3's questions). Each is a commit of its own.
+
+**The Node says claim secret (D35).** The claim's field and the CLI said claim secret since round four, and the
+Node's two refusals that name it still said "bootstrap secret". They say claim secret now, as does the English
+headline above each, which is the Node's sentence word for word. **For an agent:** the codes `bad_secret` and
+`not_installed` and the response's fields are unchanged; text matched on "bootstrap secret" no longer appears.
+
+**A command in a sentence before sign-in is in `<code>` (H14).** The claim's secret hint, the recovery codes' next
+step and two claim refusals showed their commands between literal backticks. The page now draws a backticked span
+of a catalog sentence as `<code>`, in every locale, with the catalogs' text unchanged; backticks there already meant
+an identifier the glossary does not translate. The Node's own English beside a headline stays as it was sent.
+
+**The lockout says "1 minute" and "5 minutes" (H8, D36).** The Node's `locked_out` sentence read "Try again in 5
+minute(s).". It now has a real plural. The page's headline above it carries no count and did not change.
+**For an agent:** the code `locked_out`, the 429 and the `retry-after` header (the exact seconds) are unchanged;
+text matched on "minute(s)" no longer appears.
+
+**The notices band says "a supervised read (content)" (H6).** The headline put the Node's scope token where the
+noun goes: "was granted a supervised content of Support". It now names the read and gives the scope beside it, and a
+grant whose scope was not recorded has its own sentence, where English said "a supervised read" by filling the token's
+place with a word and Chinese said （范围：查阅）.
+
+**A body's problem is said when the plain text is shown instead, and an empty body says so (H12).** A text-only body
+with a problem (an HTML part that sanitised to nothing or could not be rendered) showed the plain text with no word
+that the HTML had been set aside, though the Node sent the sentence. A message with neither HTML nor text showed an
+empty panel, the blank §5C and ADR 37 rule out. The first now shows the Node's sentence for that case, in the viewer's
+language, above the text. The second says "This message has no body.".
+
+**"Not an administrator" only when the Node said so (H13).** People, Rules, Butlers and Matters read any failed read
+as "No …, or you do not hold org.admin.", so a Node that could not reach its catalog told an administrator they were
+not one. The Node answers a non-administrator 404 on People, Rules, Butlers and the holds list, and those screens now
+say it on a 404 only and show any other failure as failed, in the Node's words, as Limits has since G5. The matters
+list is never refused to a member (it lists their own), so its sentence is gone and every failure there is failed.
+
+**The API says a Butler is paused and resumed (G6's Butler half).** The screens say a Butler is paused and an
+administrator resumes it (D26); the Node said a machine "stopped" it and an administrator "restarted" it, in the two
+`/api/butler-pauses` summaries (so the SDK's comments), the audit vocabulary, the resume's refusals and doctor. They
+say pause and resume now, and a resume no longer "releases" a pause, a held send's verb. **For an agent:** every code
+and field name is byte-identical (`E_BUTLER_PAUSE_REASON_REQUIRED`, `E_NO_BUTLER_PAUSE`,
+`E_BUTLER_PAUSE_ALREADY_RESUMED`, `E_BUTLER_PAUSED`, `butler_paused`, `butler.paused`, `butler.resumed`, `pauseId`), so
+matching on codes is unaffected; text matched on "Restart a stopped Butler", "Butlers a machine has stopped",
+"This Node stopped a Butler" or "restarted a paused Butler" no longer appears. The audit vocabulary's `says` is the
+code's description of an action and no entry stores it; a stored `butler_pauses.detail`, and the `said` an audit entry
+recorded, are records and are not rewritten (both already said paused).

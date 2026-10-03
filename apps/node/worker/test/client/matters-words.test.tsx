@@ -54,7 +54,10 @@ function owned(container: HTMLElement, selectors: readonly string[]): string {
   return blocks.map((one) => html(one!)).join("");
 }
 
-/** GETs answered from `bodies` by pathname (a number is that status, refused); every other call refused unless `acted` answers. */
+/**
+ * GETs answered from `bodies` by pathname (a number is that status, refused: 404 in the Node's shape for an
+ * administrator's read asked by somebody else, `{ error: "not_found" }`); every other call refused unless `acted` answers.
+ */
 function node(bodies: Record<string, unknown>, acted: (path: string) => Response | undefined = () => undefined) {
   answerWith((call) => {
     const url = new URL(call.path, "https://node.example");
@@ -62,6 +65,8 @@ function node(bodies: Record<string, unknown>, acted: (path: string) => Response
       return acted(url.pathname) ?? Response.json({ error: "E_REFUSED_FOR_TEST", message: "Refused, for the test." }, { status: 409 });
     }
     const body = bodies[url.pathname];
+    if (body === 404) return Response.json({ error: "not_found" }, { status: 404 });
+    if (body === 503) return Response.json({ error: "E_UNAVAILABLE_FOR_TEST", message: "The catalog could not be read, for the test." }, { status: 503 });
     if (typeof body === "number") return Response.json({ error: "E_FORBIDDEN", message: "You do not hold org.admin." }, { status: body });
     return body === undefined ? undefined : Response.json(body);
   });
@@ -149,12 +154,22 @@ describe("Matters in English", () => {
     await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.empty.en.html");
   });
 
-  it("renders a reader without org.admin", async () => {
-    node({ ...MATTERS_EMPTY, "/api/matters": 403, "/api/holds": 403 });
+  it("renders a reader without org.admin as the Node answers one: their own matters, and holds a 404", async () => {
+    node({ ...MATTERS_EMPTY, "/api/holds": 404 });
     const { container } = mount(<Matters />);
-    await screen.findByText(/No holds, or you do not hold org.admin\./);
-    await screen.findByText(/No matters, or you do not hold org.admin\./);
+    await screen.findByText(/No holds, or you do not hold org\.admin\./);
+    await screen.findByText(/No matters have been opened\./);
     await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.refused-read.en.html");
+  });
+
+  it("shows a read that failed as failed, never as not an administrator (H13)", async () => {
+    node({ ...MATTERS_EMPTY, "/api/matters": 503, "/api/holds": 503 });
+    const { container } = mount(<Matters />);
+    await waitFor(() => { expect(container.querySelectorAll("[role=alert]").length).toBe(2); });
+    expect([...container.querySelectorAll("[role=alert]")].map((alert) => alert.textContent))
+      .toEqual(["The catalog could not be read, for the test.", "The catalog could not be read, for the test."]);
+    expect(container.textContent).not.toContain("org.admin");
+    await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.failed-read.en.html");
   });
 
   it("says what each act asked for, and shows a refusal as the Node wrote it", async () => {

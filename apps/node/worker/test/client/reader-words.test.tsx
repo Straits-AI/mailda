@@ -142,7 +142,7 @@ function pane(message: MessageRow, over: { sendable?: boolean | null; back?: boo
 }
 
 const bodyShown = () => waitFor(() => {
-  expect(document.querySelector("iframe.message-body, pre.message-text, .notice.bad")).not.toBeNull();
+  expect(document.querySelector("iframe.message-body, pre.message-text, [data-body=none], .notice.bad")).not.toBeNull();
 });
 
 describe("the reading pane in English", () => {
@@ -228,6 +228,23 @@ describe("the reading pane in English", () => {
       const { container, unmount } = mount(pane(row()));
       await bodyShown();
       expect(container.querySelector(".notice.bad")!.innerHTML).toBe(problem);
+      unmount();
+    }
+    // A text-only body with a problem is the plain-text alternative shown instead (H12): the Node's sentence for that
+    // case, above the text, which is still shown.
+    const instead: Record<string, string> = {
+      sanitised_empty: "Nothing in this message's HTML survived sanitising. Its plain-text alternative is shown instead.",
+      unrenderable: "This message's HTML could not be rendered safely (memory limit exceeded). Its plain-text alternative is shown instead.",
+    };
+    for (const [code, problem] of Object.entries(instead)) {
+      body = () => Response.json({
+        ...FULL_BODY, state: "text-only", html: null, text: "the real words", blockedRemote: 0, truncated: false,
+        attachments: [], links: [], problem, problemCode: code, problemCause: causes[code],
+      });
+      const { container, unmount } = mount(pane(row()));
+      await bodyShown();
+      expect([...container.querySelectorAll(".notice")].map((notice) => notice.innerHTML)).toEqual([problem]);
+      expect(container.querySelector("pre.message-text")?.textContent).toBe("the real words");
       unmount();
     }
   });
@@ -373,6 +390,21 @@ describe("the reading pane in Chinese", () => {
     const second = mount(pane(row()));
     await bodyShown();
     expect(second.container.querySelector(".notice.bad")!.innerHTML).toBe('<span lang="en">The Node\'s own words.</span>');
+    second.unmount();
+    // The plain-text alternative shown instead (H12), and a message with no body (§5C), each said in Chinese.
+    body = () => Response.json({
+      ...FULL_BODY, state: "text-only", html: null, text: "the real words", blockedRemote: 0, truncated: false, attachments: [],
+      links: [], problem: "The Node's own words.", problemCode: "unrenderable", problemCause: "memory limit exceeded",
+    });
+    const third = mount(pane(row()));
+    await bodyShown();
+    expect([...third.container.querySelectorAll(".notice")].map((notice) => notice.innerHTML))
+      .toEqual(['无法安全地呈现此邮件的 HTML（<span lang="en">memory limit exceeded</span>）。改为显示它的纯文本版本。']);
+    third.unmount();
+    body = () => Response.json({ ...FULL_BODY, state: "no-body", html: null, text: null, blockedRemote: 0, truncated: false, attachments: [], links: [] });
+    const fourth = mount(pane(row()));
+    await bodyShown();
+    expect(fourth.container.querySelector("[data-body=none]")?.textContent).toBe("此邮件没有正文。");
   });
 
   it("marks the Node's own words as English wherever the pane shows a refusal or a problem it sent", async () => {

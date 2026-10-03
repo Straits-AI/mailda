@@ -373,7 +373,7 @@ Onboarding has one resumable setup state whether installation begins from the De
 
 ### Entry paths
 
-**Guided installation:** review resources and estimated Cloudflare cost; authorize granular Cloudflare access or use repository deployment; select account/zone/name; provision resources; open the new Node; claim it with the one-time bootstrap secret; create the first owner and passkey.
+**Guided installation:** review resources and estimated Cloudflare cost; authorize granular Cloudflare access or use repository deployment; select account/zone/name; provision resources; open the new Node; claim it with the one-time claim secret; create the first owner and passkey.
 
 **CLI installation:**
 

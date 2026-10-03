@@ -97,7 +97,7 @@ const INVITATIONS = [
 ];
 
 interface PeopleNode {
-  people?: unknown[] | "refused";
+  people?: unknown[] | "refused" | "failed";
   boxes?: unknown[];
   invitations?: unknown[];
   teams?: unknown[];
@@ -132,6 +132,9 @@ function peopleNode(opts: PeopleNode = {}) {
     if (call.path.startsWith("/api/mailboxes")) return Response.json({ mailboxes: opts.boxes ?? BOXES });
     if (call.path === "/api/me") return Response.json(ME);
     if (call.path.startsWith("/api/people")) {
+      if (opts.people === "failed") {
+        return Response.json({ error: "E_UNAVAILABLE_FOR_TEST", message: "The catalog could not be read, for the test." }, { status: 503 });
+      }
       return opts.people === "refused"
         ? Response.json({ error: "E_FORBIDDEN", message: "Not yours." }, { status: 404 })
         : Response.json({ people: opts.people ?? PEOPLE });
@@ -181,6 +184,12 @@ describe("People in English", () => {
     const refused = peopleNode({ people: "refused" });
     await screen.findByText(/No directory, or you do not hold org.admin/);
     await expect(html(owned(refused.container, ["h1", ".notice"]))).toMatchFileSnapshot("./golden/people.forbidden.en.html");
+    refused.unmount();
+    reset();
+    // Any other failure is a failed read, never "not an administrator" (H13).
+    const failed = peopleNode({ people: "failed" });
+    expect((await screen.findByText("The catalog could not be read, for the test.")).closest("[role=alert]")).not.toBeNull();
+    expect(failed.container.textContent).not.toContain("org.admin");
   });
 
   it("says what each act did: an invitation with its mailbox, a mailbox, an address, a rename and a removal", async () => {
