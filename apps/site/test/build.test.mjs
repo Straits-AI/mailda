@@ -146,6 +146,7 @@ test("a translated doc is Chinese under /zh-cn/, at its English page's path, wit
     assert.ok(html.includes(`<h1 id="_top"`) && html.includes(h1), `zh-cn/${path} is not ${one.rel} (no ${h1})`);
     assert.doesNotMatch(html, /<main[^>]* lang="en"/, `zh-cn/${path} is marked English`);
     assert.ok(!html.includes("此内容尚不支持你的语言。"), `zh-cn/${path} still carries the fallback notice`);
+    if (one.until !== undefined) assert.ok(html.includes("其余部分仅有英文"), `zh-cn/${path} covers part of its English and does not say so`);
     assert.ok(html.includes(`href="/docs/${path.slice(5, -11)}/"`), `zh-cn/${path} does not link its English`);
     // Its links to other docs stay in Chinese menus: the only English page it links is its own original.
     const main = /<main[\s\S]*?<\/main>/.exec(html)[0];

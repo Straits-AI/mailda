@@ -40,7 +40,7 @@ curl -fsSL https://mailda.site/install.sh | bash
 
 **有一步两条路径都替你做不了。** 投递结果（`accepted`、`bounced`，按收件人）经由队列到达，要观测它们，你的账户里需要两样东西：该队列上的一个消费者，以及一个发布到该队列的 `email.sending` 事件订阅。安装程序会挂上消费者。订阅在节点持有你账户的 API 令牌之后，从节点自己的配置页面创建（[`docs/cloudflare-settings.md`](../cloudflare-settings.md)）。两者都存在之前，每个收件人都停在 `unobserved`，`mailda doctor` 会指出缺的是哪一半，而不是让静默被读成“没有退信”（[测量记录](../receipts/queue-provisioning.md)）。
 
-有一种情况任何订阅都解决不了：在测量过的那一个案例中，发往你自己账户中已验证目标地址（为 Email Routing 转发而验证的地址）的邮件根本没有产生投递事件（[测量记录](../receipts/email-sending-events.md)，其中也记录了把它与 Cloudflare 以外的投递区分开的那次发信，以及这一结论只建立在一个已验证地址之上）。节点会读出它的收件人中哪些是这种地址（`mailda setup` 和 `mailda upgrade` 借用 wrangler 的登录，或在配置页面使用带有可选权限 Email Routing Addresses: Edit 的令牌），发件箱把它们标为 `verified destination`，`mailda doctor` 也不会把那种静默算作看不见。
+有一种情况任何订阅都解决不了：在测量过的那一个案例中，发往你自己账户中已验证的目标地址（为 Email Routing 转发而验证的地址）的邮件根本没有产生投递事件（[测量记录](../receipts/email-sending-events.md)，其中也记录了把它与 Cloudflare 以外的投递区分开的那次发信，以及这一结论只建立在一个已验证地址之上）。节点会读出它的收件人中哪些是这种地址（`mailda setup` 和 `mailda upgrade` 借用 wrangler 的登录，或在配置页面使用带有可选权限 Email Routing Addresses: Edit 的令牌），发件箱把它们标为 `verified destination`，`mailda doctor` 也不会把那种静默算作看不见。
 
 **已经在路由邮件的域名。** 配置页面会列出你区域上的 Email Routing 规则，让你把其中一条指向节点。这会替换该邮件地址的去向（Cloudflare 每条规则只允许一个动作），原来的目的地会保留在审计记录中，并写进规则自己的名称，*恢复原样*可以还原它。每条规则都能改回去；在此期间到达这里的邮件留在这里。其他邮件地址已有的规则保持不动。
 
@@ -64,7 +64,7 @@ curl -fsSL https://mailda.site/install.sh | bash
 curl -fsSL https://mailda.site/update.sh | bash
 ```
 
-它会转交给 `pnpm mailda upgrade`，在克隆的仓库中两者是一回事。它拉取发布用的远程仓库，克隆落后时快进合并并说明，重新安装依赖，账户中有多个节点时问是哪一个；然后在触碰数据库结构之前，先做一次 `mailda backup`，存入被 git 忽略的 `.mailda/backups/<node>/<time>` 目录，没有备份就拒绝继续。它按阶段列出每个待执行的迁移：*expand*（只做添加，对正在运行的版本安全）或 *contract*（删除或收窄，除非带 `--contract`，否则拒绝），只问一次，然后运行与 `mailda deploy` 相同的 expand、金丝雀、关卡、推广流程。从未配置过接收的节点，之后会被提供安装时的那一步配置，使用同一次登录。只要它能登录节点，就会接着用同一次登录读出节点的收件人中哪些是账户的已验证目标地址，并打印数量；wrangler 不给它令牌时，它用 wrangler 的原话打印原因，然后继续。它从不创建节点；用已有名称运行 `mailda install` 同样会升级，但用的是克隆中现有的代码，这正是这个命令存在的原因。
+它会转交给 `pnpm mailda upgrade`，在克隆的仓库中两者是一回事。它拉取发布用的远程仓库，克隆落后时快进合并并说明，重新安装依赖，账户中有多个节点时问是哪一个；然后在触碰数据库结构之前，先做一次 `mailda backup`，存入被 git 忽略的 `.mailda/backups/<node>/<time>` 目录，没有备份就拒绝继续。它按阶段列出每个待执行的迁移：*expand*（只做添加，对正在运行的版本安全）或 *contract*（删除或收窄，除非带 `--contract`，否则拒绝），只问一次，然后运行与 `mailda deploy` 相同的 expand、金丝雀、关卡、推广流程。从未配置过接收的节点，之后会被提供安装时的那一步配置，使用同一次登录。只要它能登录节点，就会接着用同一次登录读出节点的收件人中哪些是账户的已验证的目标地址，并打印数量；wrangler 不给它令牌时，它用 wrangler 的原话打印原因，然后继续。它从不创建节点；用已有名称运行 `mailda install` 同样会升级，但用的是克隆中现有的代码，这正是这个命令存在的原因。
 
 按钮克隆时不带历史，也不带远程仓库。升级在第一次运行时处理这一点：它添加发布用的远程仓库，允许不相关的历史合并一次，并解决更新路径允许的唯一冲突 `package.json`：保留你的 Worker 的 `name`，其余一切取上游的。如果还有其他冲突，它会中止合并并列出文件名，因为那是有人改过的克隆。保证 `package.json` 是唯一冲突文件的是 `test/node/update-path.test.ts`；同样的步骤手动执行是：
 
