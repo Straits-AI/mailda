@@ -4463,3 +4463,10 @@ attempt row, over 5 MiB, for a dangerous or unread attachment, a quarantined mes
 like any send, and a second seal of one delivery fails on a unique receipt. Unmeasured: how the copy's headers fare on
 Email Sending's raw path (whether `Reply-To` and the `X-` headers arrive, how a client shows "via"), which the next
 drill should look at.
+
+**A resend now carries what the first send carried** (3 October 2026). `resendMayDuplicate` rebuilt its
+composition from the envelope and the typed text alone, so resending a person's forward went out without the
+original, and resending a send with files went out without them: "the same content under a new key" was a different
+message. It now names the same original (`forward_of_message_id`) and re-attaches each file from its evidence, a
+dangerous part only when the first seal let it through on its author's word. A copy is still never resent
+(`E_RESEND_NOT_FOR_A_COPY`).

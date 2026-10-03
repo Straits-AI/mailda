@@ -2,6 +2,8 @@ import { type Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
+import { DANGEROUS } from "../attachments.ts";
+import type { AttachmentVerdict } from "@mailda/contract/schemas";
 import { getEvidence } from "../evidence-store.ts";
 import { dispatchOne, type DispatchResult, type SendState } from "./dispatch.ts";
 import { sealManifest } from "./manifest.ts";
@@ -217,6 +219,8 @@ interface ManifestRow {
   envelope_bcc: string | null;
   in_reply_to_message_id: string | null;
   body_typed_key: string;
+  /** 0059: the stored message a person's forward carries whole, or null. */
+  forward_of_message_id: string | null;
   /** ADR 47: 1 when the send is a copy of a stored message (`send_copies`), whose body is not its own. */
   is_copy: number;
 }
@@ -225,7 +229,7 @@ type RetryRow = ManifestRow & RetryFacts;
 
 const RETRY_COLUMNS =
   `state, fidelity, submitted_key IS NOT NULL AS has_submitted, mailbox_id, author_user_id, subject,
-   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key,
+   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key, forward_of_message_id,
    EXISTS (SELECT 1 FROM send_copies c WHERE c.manifest_id = send_manifests.id) AS is_copy`;
 
 async function retryRow(env: Env, orgId: string, manifestId: string): Promise<RetryRow | null> {
@@ -479,6 +483,21 @@ export async function resendMayDuplicate(
     });
   }
   const body = new TextDecoder().decode(await getEvidence(env, row.body_typed_key));
+  /*
+   * Everything the first send carried, not only its text (3 October 2026). This rebuilt the composition from the
+   * envelope and the typed body alone, so a resend of a person's forward went out without the original (0059) and a
+   * resend of a send with files went out without them (0060): "the same content under a new key" was a different
+   * message. The files are read back from their evidence, by the author's own names, and a part the first seal let
+   * through as dangerous is let through again, because its author said so then and the seal recorded which.
+   */
+  const { results: parts } = await env.CATALOG.prepare(
+    `SELECT COALESCE(author_filename, filename) AS filename, content_type, blob_key, verdict
+       FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal`,
+  ).bind(manifestId).all<{ filename: string; content_type: string; blob_key: string; verdict: string }>();
+  const attachments = [];
+  for (const part of parts) {
+    attachments.push({ filename: part.filename, contentType: part.content_type, content: await getEvidence(env, part.blob_key) });
+  }
   const sealed = await sealManifest(env, ctx, orgId, {
     mailboxId: row.mailbox_id,
     // The **original author**, not the person asking. `sealManifest` re-checks that the author may still send
@@ -492,6 +511,10 @@ export async function resendMayDuplicate(
     // here by omission.
     senderAddress: row.envelope_from,
     inReplyToMessageId: row.in_reply_to_message_id ?? undefined,
+    forwardOfMessageId: row.forward_of_message_id ?? undefined,
+    ...(attachments.length === 0 ? {} : {
+      attachments, allowDangerousAttachments: parts.some((part) => DANGEROUS.has(part.verdict as AttachmentVerdict)),
+    }),
     to: JSON.parse(row.envelope_to) as string[],
     cc: row.envelope_cc === null ? undefined : (JSON.parse(row.envelope_cc) as string[]),
     bcc: row.envelope_bcc === null ? undefined : (JSON.parse(row.envelope_bcc) as string[]),
