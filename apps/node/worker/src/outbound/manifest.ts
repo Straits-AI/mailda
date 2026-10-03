@@ -1199,7 +1199,7 @@ export async function renderRfc822(
     `SELECT envelope_from, envelope_to, envelope_cc, subject, rfc_message_id, references_header,
             in_reply_to_message_id, body_normalized_key, sealed_at, org_id, forward_of_message_id,
             (SELECT json_object('fromName', c.from_name, 'replyTo', c.reply_to, 'replyToName', c.reply_to_name,
-                                'inReplyTo', c.in_reply_to, 'marker', c.marker, 'blobKey', m.blob_key)
+                                'inReplyTo', c.in_reply_to, 'marker', c.marker, 'blobKey', m.blob_key, 'sha256', m.blob_sha256)
                FROM send_copies c LEFT JOIN messages m ON m.org_id = c.org_id AND m.id = c.message_id
               WHERE c.manifest_id = send_manifests.id) AS copy_json
        FROM send_manifests WHERE id = ? LIMIT 1`,
@@ -1221,7 +1221,8 @@ export async function renderRfc822(
    */
   if (m.copy_json != null) {
     const copy = JSON.parse(m.copy_json) as {
-      fromName: string; replyTo: string; replyToName: string | null; inReplyTo: string | null; marker: string; blobKey: string | null;
+      fromName: string; replyTo: string; replyToName: string | null; inReplyTo: string | null; marker: string;
+      blobKey: string | null; sha256: string | null;
     };
     // A LEFT JOIN, so a copy whose original is gone refuses here rather than rendering as an empty send.
     if (copy.blobKey === null) {
@@ -1231,11 +1232,21 @@ export async function renderRfc822(
         fix: "this manifest cannot be sent",
       });
     }
+    // Hashed against the receipt's record before it leaves, as an attachment is: the bytes a copy carries must be
+    // the bytes this Node received.
+    const original = await getEvidence(env, copy.blobKey);
+    if ((await sha256Hex(original)) !== copy.sha256) {
+      throw conflict("E_ORIGINAL_CHANGED", {
+        what: `the original that copy ${manifestId} carries no longer hashes to what its receipt recorded`,
+        why: "a copy must carry the message as this Node received it, and the archive cannot answer for this one",
+        fix: "this manifest cannot be sent; run the evidence verifier",
+      });
+    }
     const raw = copyMessage({
       from: m.envelope_from!, fromName: copy.fromName, replyTo: copy.replyTo, replyToName: copy.replyToName,
       to: JSON.parse(m.envelope_to ?? "[]") as string[], subject: m.subject!, rfcMessageId: m.rfc_message_id!,
       sealedAt: m.sealed_at!, inReplyTo: copy.inReplyTo, references: m.references_header ?? null, marker: copy.marker,
-    }, await getEvidence(env, copy.blobKey));
+    }, original);
     return { raw, sha256: await sha256Hex(raw) };
   }
 

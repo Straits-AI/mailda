@@ -12,6 +12,7 @@ import { dispatch } from "../src/pipeline.ts";
 import { metering } from "../src/cost-meter.ts";
 import { dispatchOne } from "../src/outbound/dispatch.ts";
 import { renderRfc822 } from "../src/outbound/manifest.ts";
+import { resendMayDuplicate, retryEffect } from "../src/outbound/retry.ts";
 import { bindEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow } from "../src/outbound/recheck.ts";
 import type { TransportAdapter } from "../src/outbound/transport.ts";
 
@@ -421,5 +422,52 @@ describe("what People and doctor read of copies", () => {
     const [finding] = await checkKeptForwards(testEnv, createSystemCtx(), ORG);
     expect(finding).toMatchObject({ ok: false });
     expect(finding!.detail).toContain("1 of them asked for a copy that was refused");
+  });
+});
+
+describe("a copy after its first dispatch", () => {
+  const due = () => ({ ...createSystemCtx(), now: () => Date.now() + 3_600_000 });
+  const transport = (outcome: object) => ({
+    name: "test", capability: async () => ({ canSend: true, arbitraryRecipients: true, verifiedAt: null }),
+    submitted: [] as Uint8Array[],
+    async submit(_env: Env, request: { raw?: Uint8Array }) { this.submitted.push(request.raw!); return outcome; },
+  });
+
+  it("is never resent from its manifest, whose own body is empty", async () => {
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET state = 'outcome_unknown', submitted_key = 'x' WHERE id = ?").bind(copy!.manifest_id).run();
+    await expect(resendMayDuplicate(testEnv, createSystemCtx(), ORG, { userId: ADMIN, acceptDuplicateRisk: true, reason: "again" }, copy!.manifest_id))
+      .rejects.toThrow("E_RESEND_NOT_FOR_A_COPY");
+  });
+
+  it("is retried, after a throttle, with the original's body again", async () => {
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    const throttled = transport({ kind: "throttled", reason: "slow down" });
+    expect((await dispatchOne(testEnv, due(), ORG, copy!.manifest_id, throttled as never)).state).toBe("throttled");
+    const again = transport({ kind: "handed_over", transportMessageId: "<cf@keptcopy.example>" });
+    await retryEffect(testEnv, due(), ORG, ADMIN, copy!.manifest_id, again as never);
+    expect(new TextDecoder().decode(again.submitted[0])).toContain(BODY);
+  });
+
+  it("is refused at render when the original no longer hashes to its receipt", async () => {
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    await testEnv.CATALOG.prepare("UPDATE messages SET blob_sha256 = 'f00d'").run();
+    await expect(renderRfc822(testEnv, copy!.manifest_id)).rejects.toThrow("E_ORIGINAL_CHANGED");
+  });
+
+  it("whose send stopped for good leaves doctor saying the destination is getting nothing", async () => {
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET state = 'refused' WHERE id = ?").bind(copy!.manifest_id).run();
+    const [finding] = await checkKeptForwards(testEnv, createSystemCtx(), ORG);
+    expect(finding).toMatchObject({ ok: false });
+    expect(finding!.detail).toContain("with no copy that is still going");
   });
 });

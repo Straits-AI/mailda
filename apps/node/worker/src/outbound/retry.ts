@@ -217,13 +217,16 @@ interface ManifestRow {
   envelope_bcc: string | null;
   in_reply_to_message_id: string | null;
   body_typed_key: string;
+  /** ADR 47: 1 when the send is a copy of a stored message (`send_copies`), whose body is not its own. */
+  is_copy: number;
 }
 
 type RetryRow = ManifestRow & RetryFacts;
 
 const RETRY_COLUMNS =
   `state, fidelity, submitted_key IS NOT NULL AS has_submitted, mailbox_id, author_user_id, subject,
-   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key`;
+   envelope_from, envelope_to, envelope_cc, envelope_bcc, in_reply_to_message_id, body_typed_key,
+   EXISTS (SELECT 1 FROM send_copies c WHERE c.manifest_id = send_manifests.id) AS is_copy`;
 
 async function retryRow(env: Env, orgId: string, manifestId: string): Promise<RetryRow | null> {
   const row = await env.CATALOG.prepare(
@@ -462,6 +465,19 @@ export async function resendMayDuplicate(
     });
   }
 
+  /*
+   * A copy (ADR 47) is refused: its manifest's own body is empty (the original's is carried at render), its authority
+   * is an administrator's opt-in rather than the person asking, and `send_copies` holds one copy per delivery. A
+   * resend sealed from it would be an empty message from the customer's domain.
+   */
+  if (row.is_copy === 1) {
+    throw conflict("E_RESEND_NOT_FOR_A_COPY", {
+      what: `${manifestId} is a copy of a stored message that a refused kept forward asked for`,
+      why: "a copy's body is the original's, carried at render and nowhere in this manifest, and one delivery is copied "
+        + "at most once, so a resend from it would be a different, empty message",
+      fix: "forward the stored message from its mailbox if it is still owed, which is a send of your own",
+    });
+  }
   const body = new TextDecoder().decode(await getEvidence(env, row.body_typed_key));
   const sealed = await sealManifest(env, ctx, orgId, {
     mailboxId: row.mailbox_id,
