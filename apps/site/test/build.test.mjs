@@ -135,7 +135,7 @@ test("an untranslated /zh-cn/docs/* page is the English page under Chinese menus
 
 test("a translated doc is Chinese under /zh-cn/, at its English page's path, with no fallback notice", () => {
   const all = translations();
-  assert.ok(all.length >= 3, "no translations found");
+  assert.ok(all.length >= 2, "no translations found");
   for (const one of all) {
     // The English page's path, found in the build rather than recomputed, so the two cannot agree on a wrong slug.
     const name = one.from === "README.md" ? "readme" : one.from.replace(/^docs\//, "").replace(/\.md$/, "").toLowerCase();

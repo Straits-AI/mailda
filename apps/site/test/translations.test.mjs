@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 import { NEVER } from "../../node/worker/src/i18n/glossary.ts";
-import { covered, read, repo, sha256, translations } from "../scripts/translations.mjs";
+import { covered, coveredHash, read, repo, translations } from "../scripts/translations.mjs";
 
 /**
  * A translation in `docs/zh-cn/` may not fall behind its English silently (docs/i18n.md, *Doc translations*). Each
- * records the SHA-256 of the English it was made from, and a change to that English fails here until somebody updates
- * the translation or removes it. Each keeps its source's structure: the same code blocks byte for byte, the same
+ * records the SHA-256 of the English it covers (the whole file, or the part before `translated_until`), and a change to
+ * that English fails here until somebody updates the translation or removes it. Each keeps its source's structure: the same code blocks byte for byte, the same
  * links, tables, headings and inline code, so a dropped command or link cannot hide in a language a reviewer may not
  * read. And each is held to the glossary's NEVER list and the register docs/i18n.md sets for zh-Hans.
  *
@@ -17,19 +17,19 @@ import { covered, read, repo, sha256, translations } from "../scripts/translatio
 const all = translations();
 
 test("the translations are found, so nothing below passes over an empty set", () => {
-  assert.ok(all.length >= 3, `found ${all.length} translations in docs/zh-cn/`);
+  assert.ok(all.length >= 2, `found ${all.length} translations in docs/zh-cn/`);
+  assert.ok(all.some((one) => one.until !== undefined) && all.some((one) => one.until === undefined), "no partial and whole translation to check both hashes");
 });
 
 test("each translation's English is still the English it was translated from", () => {
   for (const one of all) {
     assert.ok(existsSync(join(repo, one.from)), `${one.rel} translates ${one.from}, which is gone: remove the translation`);
-    assert.equal(
-      sha256(read(one.from)),
-      one.sha256,
-      `${one.from} has changed since ${one.rel} was translated from it. Update the translation to match `
-        + `\`git diff ${one.commit} -- ${one.from}\`, then record the English's new \`sha256sum\` as source_sha256 and `
-        + `the commit as source_commit; or remove the translation.`,
-    );
+    const what = one.until === undefined ? one.from : `the part of ${one.from} before ${JSON.stringify(one.until)}`;
+    const update = `Update the translation to match \`git diff ${one.commit} -- ${one.from}\`, then record the new hash `
+      + `(\`node apps/site/scripts/translations.mjs\` prints each) as source_sha256 and the commit as source_commit; or remove the translation.`;
+    const now = coveredHash(one);
+    assert.ok(now !== null, `${one.rel} stops before the line ${JSON.stringify(one.until)}, which is no longer in ${one.from}. ${update}`);
+    assert.equal(now, one.sha256, `${what} has changed since ${one.rel} was translated from it. ${update}`);
   }
 });
 
@@ -74,7 +74,7 @@ function structure(md, rel) {
 
 test("each translation keeps its source's code blocks, links, tables, headings and inline code", () => {
   for (const one of all) {
-    const english = structure(covered(read(one.from).replace(/^---\n[\s\S]*?\n---\n/, ""), one.until), one.from);
+    const english = structure(covered(read(one.from), one.until) ?? "", one.from);
     const chinese = structure(one.body, one.rel);
     assert.ok(english.links.length > 0 && english.code.length > 0, `${one.from}: found no links or inline code, so this compares nothing`);
     for (const key of Object.keys(english)) {

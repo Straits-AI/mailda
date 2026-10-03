@@ -91,10 +91,12 @@ no ids into your clone; the Node applies its own schema when it is claimed. You 
 which `pnpm mailda claim-secret` prints from a clone. The first click produced a dead Node, and what that
 found and fixed is in the [receipt](./docs/receipts/deploy-button-install.md).
 
-**One step neither path can do for you.** Delivery outcomes (`accepted`, `bounced`, per recipient) arrive
-on a queue, and observing them needs two things in your account: a consumer on that queue, and an
-`email.sending` event subscription publishing to it. The installer attaches the consumer. The
-subscription is created from the Node's own Setup screen once the Node holds an API token for your account
+**Delivery outcomes need two things in your account.** Delivery outcomes (`accepted`, `bounced`, per
+recipient) arrive on a queue, and observing them needs a consumer on that queue and an `email.sending` event
+subscription publishing to it. The installer's deploy attaches the consumer, and its setup step creates the
+subscription with the same wrangler login, attaching the consumer too if nothing consumes the queue yet. The button
+does neither: on a button-deployed Node, or one whose setup step was declined, `pnpm mailda setup` from a clone does
+both, and so does the Node's own Setup screen once the Node holds an API token for your account
 ([`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md)). Until both exist every recipient stays
 `unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as
 "nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
@@ -129,7 +131,7 @@ These are the defaults, and how to change each:
   destination addresses (a new one waits for verification until someone there clicks Cloudflare's link).
 - **Copies are off.** An address that keeps a forward may opt in to a copy (`mailda provider --copy <address> on`,
   People, or `--copy` with `--forward keep`): when Cloudflare refuses the forward as not verified, the message is
-  sent on from the address itself through Email Sending. The recipient sees it from "Alice via <mailbox>", replies go
+  sent on from the address itself through Email Sending. The recipient sees it from "Alice via \<mailbox>", replies go
   to Alice, the body is hers as written; up to 5 MiB (`email.outbound.max_bytes`); a message with a dangerous
   attachment, a quarantined one or one that failed DMARC is not copied; each copy counts towards today's sending and
   is in the Outbox like any send, sealed under the administrator who turned copies on.

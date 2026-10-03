@@ -1,11 +1,14 @@
 /**
  * The repository's doc translations: `docs/zh-cn/<name>.md`, each naming the English file it was translated from and
- * that file's SHA-256 at the time (docs/i18n.md, *Doc translations*). Read here once, for the generator that renders
- * them and for the test that refuses one whose English has moved since.
+ * the SHA-256 of the English it covers at the time: the whole file, or for a translation of the file's opening part
+ * (`translated_until`) only that part, so an edit further down does not fail it (docs/i18n.md, *Doc translations*).
+ * Read here once, for the generator that renders them and for the test that refuses one whose English has moved since.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 export const repo = resolve(import.meta.dirname, "../../..");
 export const DIR = "docs/zh-cn";
@@ -46,10 +49,24 @@ export function translations() {
   return readdirSync(join(repo, DIR)).filter((one) => one.endsWith(".md")).sort().map((file) => translation(`${DIR}/${file}`));
 }
 
-/** The part of the English a translation covers: all of it, or everything before its `translated_until` line. */
+/**
+ * The part of the English a translation covers: all of it, or everything before its `translated_until` line. Null when
+ * that line is gone from the English, which is a change to the covered part too: where it ends is no longer known.
+ */
 export function covered(source, until) {
   if (until === undefined) return source;
-  const at = source.split("\n").indexOf(until);
-  if (at === -1) throw new Error(`the line ${JSON.stringify(until)} is no longer in the English`);
-  return source.split("\n").slice(0, at).join("\n");
+  const lines = source.split("\n");
+  const at = lines.indexOf(until);
+  return at === -1 ? null : lines.slice(0, at).join("\n");
+}
+
+/** What `source_sha256` records: the hash of the covered part, or null when it cannot be found. */
+export function coveredHash(one) {
+  const part = covered(read(one.from), one.until);
+  return part === null ? null : sha256(part);
+}
+
+// `node apps/site/scripts/translations.mjs` prints each translation's current hash, for updating one (docs/i18n.md).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  for (const one of translations()) console.log(`${one.rel}  ${coveredHash(one) ?? `(no line ${JSON.stringify(one.until)} in ${one.from})`}`);
 }

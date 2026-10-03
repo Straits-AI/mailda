@@ -1,6 +1,6 @@
 ---
 translated_from: docs/disaster-recovery.md
-source_sha256: fb201c17bdb439ac8023b363c576cc2b360e98f0f62a756358c1a89bba927782
+source_sha256: f7f3980d5161fdb693c7b58bc1fea4478b15bb146ab932dbc0058b394b6638bc
 source_commit: bb5f130
 translated_until: "## What this runbook has established, and what it has not"
 ---
