@@ -19,8 +19,9 @@ const SKIP = new Set(["node_modules", ".git", "dist", ".turbo", ".wrangler", "co
 /**
  * The site's docs pages are the repository's Markdown rendered with links rewritten to site paths, so every
  * reference in them is already checked at its source and would only fail again here, relative to the wrong root.
+ * The translations' pages (`docs/zh-cn/`, rendered into the zh-cn locale) are the same case.
  */
-const SKIP_PATHS = new Set(["apps/site/src/content/docs/docs"]);
+const SKIP_PATHS = new Set(["apps/site/src/content/docs/docs", "apps/site/src/content/docs/zh-cn"]);
 
 /** Extensions worth resolving. A path-shaped token ending in anything else is prose about a file type. */
 const EXT = "(?:ts|tsx|mjs|js|sql|md|json|yml|yaml|toml)";
