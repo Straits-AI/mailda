@@ -1,10 +1,12 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { createExecutionContext, env, SELF, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import worker from "../src/index.ts";
+import { hashPassword } from "../src/auth/password.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import { checkKeptForwards } from "../src/doctor/delivery.ts";
 import { COPY_TOPIC, keptForwards, setKeptForwardCopy } from "../src/kept-forward.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
@@ -12,7 +14,7 @@ import { dispatch } from "../src/pipeline.ts";
 import { metering } from "../src/cost-meter.ts";
 import { dispatchOne } from "../src/outbound/dispatch.ts";
 import { renderRfc822 } from "../src/outbound/manifest.ts";
-import { resendMayDuplicate, retryEffect } from "../src/outbound/retry.ts";
+import { resendMayDuplicate, retryEffect, retryOffer } from "../src/outbound/retry.ts";
 import { bindEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow } from "../src/outbound/recheck.ts";
 import type { TransportAdapter } from "../src/outbound/transport.ts";
 
@@ -433,6 +435,15 @@ describe("a copy after its first dispatch", () => {
     async submit(_env: Env, request: { raw?: Uint8Array }) { this.submitted.push(request.raw!); return outcome; },
   });
 
+  it("is offered no resend when its outcome is unknown, and the Outbox listing says it is a copy", async () => {
+    expect(retryOffer({ state: "outcome_unknown", fidelity: "authored", hasSubmitted: true, isCopy: true }))
+      .toEqual({ mode: null, why: "copy_not_resent" });
+    expect(retryOffer({ state: "outcome_unknown", fidelity: "authored", hasSubmitted: true, isCopy: false }).mode)
+      .toBe("resend-may-duplicate");
+    // A copy whose bytes were never submitted is still retried on the same key: that cannot duplicate.
+    expect(retryOffer({ state: "outcome_unknown", fidelity: "authored", hasSubmitted: false, isCopy: true }).mode).toBe("retry-effect");
+  });
+
   it("is never resent from its manifest, whose own body is empty", async () => {
     await deliver();
     await drainCopies();
@@ -469,5 +480,30 @@ describe("a copy after its first dispatch", () => {
     const [finding] = await checkKeptForwards(testEnv, createSystemCtx(), ORG);
     expect(finding).toMatchObject({ ok: false });
     expect(finding!.detail).toContain("with no copy that is still going");
+  });
+});
+
+describe("the Outbox listing of a copy", () => {
+  it("says it is a copy and, its outcome unknown, offers no resend", async () => {
+    const PASSWORD = "fixture-password-not-a-real-secret";
+    const verifier = await hashPassword(PASSWORD);
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
+      testEnv.CATALOG.prepare("DELETE FROM sessions"),
+      testEnv.CATALOG.prepare("DELETE FROM login_attempts"),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO users (id, org_id, email, created_at, password_hash, password_iterations, password_updated_at) VALUES (?,?,?,?,?,?,?)",
+      ).bind(ADMIN, ORG, "admin@keptcopy.example", new Date().toISOString(), verifier.encoded, verifier.effectiveIterations, new Date().toISOString()),
+    ]);
+    await tuple(ADMIN, "mailbox.content.read", "mailbox", MAILBOX);
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET state = 'outcome_unknown', submitted_key = 'k' WHERE id = ?").bind(copy!.manifest_id).run();
+    const signedIn = await login(testEnv, createSystemCtx(), ORG, "admin@keptcopy.example", PASSWORD);
+    if (signedIn.status !== "signed_in") throw new Error(signedIn.status);
+    const response = await SELF.fetch("https://node.test/api/sends", { headers: { cookie: `${ACCESS_COOKIE}=${signedIn.session.accessToken}` } });
+    const { sends } = await response.json() as { sends: Array<{ id: string; is_copy: number; retry: unknown }> };
+    expect(sends.find((one) => one.id === copy!.manifest_id)).toMatchObject({ is_copy: 1, retry: { mode: null, why: "copy_not_resent" } });
   });
 });

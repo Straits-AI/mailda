@@ -33,6 +33,10 @@ export const ledgers: Twin<typeof source> = {
   "ledgers.outbox.stop": "停止",
   "ledgers.outbox.retry": "重试",
   "ledgers.outbox.resend": "重新发出…",
+  "ledgers.outbox.copy": "副本",
+  "ledgers.outbox.copy.note":
+    "这封邮件不是有人写的：保留的转发因未验证被拒绝，所以本节点把存储的邮件定稿为一次发送，从邮件到达的邮件地址发出，发件人中显示原发件人的名字，回复地址是原发件人。",
+  "ledgers.outbox.copy.noResend": "副本不会重发：如果仍需送出，请从它所在的邮箱转发这封邮件。",
   "ledgers.outbox.means": "这意味着什么",
   "ledgers.outbox.why": "原因",
   "ledgers.outbox.recipients": "收件人",

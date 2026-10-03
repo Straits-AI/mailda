@@ -82,7 +82,13 @@ export type NoRetryReason =
   /** The transport took the bytes. Non-acceptance is *disproven*; a second copy would be certain. */
   | "acceptance_observed"
   /** A state this Node's code does not classify. Fails closed rather than guessing. */
-  | "state_not_classified";
+  | "state_not_classified"
+  /**
+   * A copy (ADR 47) whose outcome is unknown: a resend would mint an empty message (its body is the original's,
+   * carried at render), so it is not offered, and `resendMayDuplicate` refuses it by name. Forwarding the stored
+   * message from its mailbox is the person's act if it is still owed.
+   */
+  | "copy_not_resent";
 
 export type RetryOffer =
   | { readonly mode: "retry-effect"; readonly proof: NonAcceptanceProof }
@@ -95,6 +101,8 @@ export interface RetryFacts {
   readonly fidelity: string;
   /** Whether `submitted_key` is non-NULL. A boolean rather than the key: nothing here needs the R2 path. */
   readonly hasSubmitted: boolean;
+  /** Whether the send is a copy (ADR 47), which is never resent. Absent reads as not a copy. */
+  readonly isCopy?: boolean;
 }
 
 const proven = (proof: NonAcceptanceProof): RetryOffer => ({ mode: "retry-effect", proof });
@@ -121,7 +129,7 @@ const OFFER_FOR: { [S in SendState]: (facts: RetryFacts) => RetryOffer } = {
     // would be the permissive failure on the one path ADR 33 keeps for non-customer mail.
     facts.fidelity === "authored" && !facts.hasSubmitted
       ? proven("never_submitted")
-      : { mode: "resend-may-duplicate", duplicatePossible: true },
+      : facts.isCopy === true ? none("copy_not_resent") : { mode: "resend-may-duplicate", duplicatePossible: true },
 };
 
 /**

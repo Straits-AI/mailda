@@ -2456,7 +2456,7 @@ export const recipientRow = z.object({
  * original idempotency key and provably cannot duplicate, and `proof` is the recorded non-acceptance that makes
  * it so (`refused`, `throttled`, `suppressed`, `never_submitted`); `resend-may-duplicate` mints a new key and
  * might. Only `mode: null` carries `why`, the reason neither is offered (`not_yet_attempted`, `decided`,
- * `acceptance_observed`, `state_not_classified`). Until 2 October 2026 this schema had the null arm alone, and
+ * `acceptance_observed`, `state_not_classified`, `copy_not_resent`). Until 2 October 2026 this schema had the null arm alone, and
  * the Outbox titled its Retry button with a `why` no offered mode has.
  */
 const retryOffer = z.union([
@@ -2482,6 +2482,11 @@ export const sendRow = z.object({
   policy_outcome: z.string().nullable(),
   /** 0 or 1, not a boolean: it is `EXISTS` from SQL, and the client reads it as a number. */
   has_submitted: z.number().int(),
+  /**
+   * 0 or 1, as `has_submitted`: whether this send is a copy of a stored message that a refused kept forward asked for
+   * (ADR 47). Its retry offer is then never a resend (`why: copy_not_resent`).
+   */
+  is_copy: z.number().int(),
   recipients: z.array(recipientRow),
   retry: retryOffer,
 }).strict();

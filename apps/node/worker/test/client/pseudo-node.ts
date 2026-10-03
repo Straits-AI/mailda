@@ -62,7 +62,7 @@ const recipient = (address: string, over: Record<string, unknown> = {}) => ({
 const send = (id: string, state: string, over: Record<string, unknown> = {}) => ({
   retry: { mode: null, why: NODE_SAYS.error }, id, subject: "Απάντηση στο τιμολόγιο", envelope_to: JSON.stringify([OUTSIDE]), state,
   state_at: AT, release_at: AT, attempts: 1, last_error: null, transport_message_id: null, fidelity: "exact",
-  has_submitted: 1, state_reason: null, policy_outcome: null, recipients: [recipient(OUTSIDE)], ...over,
+  has_submitted: 1, is_copy: 0, state_reason: null, policy_outcome: null, recipients: [recipient(OUTSIDE)], ...over,
 });
 
 const SENDS = [

@@ -471,7 +471,9 @@ export const sending = {
       // first time somebody adds a LIMIT above it.
       `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
               transport_message_id, fidelity, state_reason, policy_outcome,
-              submitted_key IS NOT NULL AS has_submitted
+              submitted_key IS NOT NULL AS has_submitted,
+              -- A copy (ADR 47): labelled in the Outbox and never offered a resend. One EXISTS on the same read.
+              EXISTS (SELECT 1 FROM send_copies c WHERE c.manifest_id = send_manifests.id) AS is_copy
          FROM send_manifests
         WHERE org_id = ?
           AND mailbox_id IN (
@@ -551,6 +553,7 @@ export const sending = {
           state: String(send.state),
           fidelity: String(send.fidelity),
           hasSubmitted: Number(send.has_submitted) === 1,
+          isCopy: Number(send.is_copy) === 1,
         }),
       })),
       daily: await dailySendState(env, clock, who.orgId),

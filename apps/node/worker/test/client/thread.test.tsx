@@ -46,7 +46,7 @@ beforeEach(() => {
       return Response.json({
         sends: url.searchParams.get("conversation") === "cnv_1"
           ? [{ id: "snd_1", subject: "Re: message 1", envelope_to: '["a@b.test","c@d.test"]', state: "sent", state_at: "2026-08-23T09:00:00.000Z",
-               release_at: "", attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 1,
+               release_at: "", attempts: 1, last_error: null, transport_message_id: null, fidelity: "authored", has_submitted: 1, is_copy: 0,
                state_reason: null, policy_outcome: null, recipients: [] }]
           : [],
         daily: {}, capability: {},

@@ -1302,7 +1302,7 @@ the Node's words, marked), whether copies are on and who turned them on, a *Send
 (`POST /api/forwards/copy`), and what a copy is, in full, every time: from the address, "<sender> via <mailbox>",
 replies to the sender, up to `email.outbound.max_bytes` (from `/app/config.js`), never with a dangerous attachment,
 quarantined or failing DMARC, counted towards today's sending, sealed under that administrator. The Setup screen's
-take-over offers the same as a box under *keep*, with the same statement, unticked each time it is armed. Three answers,
+take-over offers the same as a box under *keep*, with the same statement, unticked each time it is armed. In the Outbox a copy carries a *copy* chip whose title says nobody composed it and why it was sealed (`is_copy` on `GET /api/sends`), and a copy whose outcome is unknown offers no *Resend…*: its action cell says a copy is not resent and to forward the message from its mailbox if it is still owed (`retry.why: copy_not_resent`). Three answers,
 checked in this order (`test/client/setup-screen.test.tsx`):
 a failed read (`error` set) renders as a refusal naming the failure as reported and the permission, and says that
 the previous successful read still stands or, when there is none, that these recipients show as unobserved

@@ -277,6 +277,8 @@ export interface SendRow {
    * anyway produced a 409 with a clear explanation that a person should never have been shown.
    */
   has_submitted: number;
+  /** 1 when the send is a copy a refused kept forward asked for (ADR 47); absent from an older Node. */
+  is_copy?: number;
   /**
    * The machine token behind a gated or refused state, or null when the state needs no reason (#60).
    *
