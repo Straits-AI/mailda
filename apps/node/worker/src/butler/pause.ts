@@ -1,6 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 import { BUTLER_PAUSE_REASONS, type ButlerPauseReason } from "@mailda/contract/schemas";
 import { butler as butlerSchema } from "@mailda/butler-ast";
+import { plural } from "@mailda/runtime";
 
 /**
  * The Butler pause: #66's second abuse breaker, latched on the Butler, evaluated at trigger time (#75, §18).
@@ -262,7 +263,7 @@ export function describeLoopTrip(
   messageId: string,
 ): string {
   return `E_BUTLER_LOOP  butler.loop_max_self_provoked_runs=${reading.limit}, ${JSON.stringify(butler.name)} `
-    + `has been re-triggered ${reading.selfProvoked} time(s) by replies to mail it sent itself in the last `
+    + `has been re-triggered ${reading.selfProvoked} ${plural(reading.selfProvoked, "time", "times")} by replies to mail it sent itself in the last `
     + `${Math.round(reading.windowSeconds / 60)} minutes. butler ${butler.id}  delivery ${messageId}. `
     + "This Butler is paused: it will start no further runs until an administrator resumes it with a reason "
     + "— POST /api/butler-pauses/:id/resume. Republishing it does NOT clear this. "

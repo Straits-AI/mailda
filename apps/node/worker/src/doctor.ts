@@ -13,6 +13,7 @@ import {
 import { checkHolds, checkSelfGrants, checkSupervisionNotices, checkAgentCeilings } from "./doctor/governance.ts";
 import { butlerExecutionCheck, checkButlerPauses } from "./doctor/butlers.ts";
 import { checkRecoveryEscrow, checkRecoveryConflicts, checkRecoveryRestores } from "./doctor/recovery.ts";
+import { plural } from "@mailda/runtime";
 /**
  * `doctor` — the thing that checks the claims every other decision made.
  *
@@ -261,7 +262,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     // finding in this same report says exactly that. Printing only the Paid figure told an operator on
     // Free a ceiling ten times theirs, and a wrong number ends the question a blank would have prompted
     // (#68, docs/receipts/doctor-check-cost.md).
-    detail: `${cost.subrequests} subrequest(s): ${cost.d1Queries} D1 quer${cost.d1Queries === 1 ? "y" : "ies"}, ${cost.r2Reads} R2 read(s). Cap per invocation is ${BUDGETS["doctor.paid.max_subrequests"]} on Workers Paid and ${BUDGETS["doctor.free.max_subrequests"]} on Workers Free; a Worker cannot tell which plan it is on.`,
+    detail: `${cost.subrequests} ${plural(cost.subrequests, "subrequest", "subrequests")}: ${cost.d1Queries} D1 ${plural(cost.d1Queries, "query", "queries")}, ${cost.r2Reads} R2 ${plural(cost.r2Reads, "read", "reads")}. Cap per invocation is ${BUDGETS["doctor.paid.max_subrequests"]} on Workers Paid and ${BUDGETS["doctor.free.max_subrequests"]} on Workers Free; a Worker cannot tell which plan it is on.`,
     ...(cost.subrequests <= BUDGETS["doctor.max_subrequests_per_run"] ? {} : {
       fix: `a doctor run now costs more than the tripwire allows — a check has become proportional to mailbox size, which is how the authorization path grew a full table scan unnoticed`,
     }),
@@ -404,6 +405,7 @@ const REDUCTION_WORDING: Record<ReductionReason, string> = {
  */
 export function withoutDataFindings(report: DoctorReport, reason: ReductionReason): DoctorReport {
   const findings = report.findings.filter((f) => f.discloses === "infrastructure");
+  const withheld = report.findings.length - findings.length;
   return {
     ...report,
     findings: [
@@ -413,9 +415,8 @@ export function withoutDataFindings(report: DoctorReport, reason: ReductionReaso
         severity: "report",
         ok: true,
         discloses: "infrastructure",
-        detail: `${REDUCTION_WORDING[reason]} `
-          + `${report.findings.length - findings.length} finding(s) that would describe this `
-          + `organization's mail are withheld.`,
+        detail: `${REDUCTION_WORDING[reason]} ${withheld} `
+          + `${plural(withheld, "finding that would describe this organization's mail is", "findings that would describe this organization's mail are")} withheld.`,
       },
     ],
   };

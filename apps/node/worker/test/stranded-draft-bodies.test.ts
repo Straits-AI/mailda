@@ -215,7 +215,7 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
     expect(finding.ok, "a body with no drafts row is residue and must be reported").toBe(false);
-    expect(finding.detail).toContain("1 draft body object(s) have no drafts row");
+    expect(finding.detail).toContain("1 draft body object has no drafts row");
     expect(finding.detail).toContain(`${ORG}/drafts/`);
   });
 
@@ -319,7 +319,7 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
     await aSealedDraftsResidue("dft_three");
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
-    expect(finding.detail).toContain("3 draft body object(s)");
+    expect(finding.detail).toContain("3 draft body objects");
   });
 
   it("does not accuse a live draft's body of being residue", async () => {
@@ -329,7 +329,7 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
     expect(finding.ok, "a draft somebody is still writing is not residue").toBe(true);
     expect(finding.detail).toContain("No draft body without a drafts row among those judged");
-    expect(finding.detail).toContain("1 object(s)");
+    expect(finding.detail).toContain("1 object");
     // Nothing was skipped here, so this pass may say so — and does, explicitly, rather than leaving the
     // reader to infer completeness from the absence of a caveat.
     expect(finding.detail).toContain("Every object under the prefix was listed and judged");
@@ -407,7 +407,7 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
     await aSealedDraftsResidue("dft_sealed");
 
     const detail = find((await runDoctor(withTruncatedListing(), ctx)).findings, "evidence_present").detail;
-    expect(detail).toContain(`object(s) examined under ${ORG}/raw/, ${ORG}/drafts/`);
+    expect(detail).toContain(`1 object examined under ${ORG}/raw/, ${ORG}/drafts/`);
     expect(detail).toContain("listing truncated");
     // The clause goes after the prefixes, never inside the phrase it used to split.
     expect(detail).not.toContain("truncated examined");
@@ -560,7 +560,7 @@ describe("a legal hold suppresses draft-body collection org-wide", () => {
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: MAILBOX });
 
     const text = formatReconcile(await reconcileEvidence(testEnv, ctx, ORG, { collect: true }));
-    expect(text).toContain("HELD      2 collectable object(s) not collected");
+    expect(text).toContain("HELD      2 collectable objects not collected");
   });
 
   it("collects when nothing is held, so the suppression is the hold and not the code path", async () => {
@@ -597,7 +597,7 @@ describe("reconcile says what it scanned, and what it could not read", () => {
     expect(text).toContain(`${ORG}/drafts/`);
     expect(text).toContain("any other prefix");
     // The draft-body line is its own, because "no receipt" is not the test that produced it.
-    expect(text).toContain("1 body object(s) with no drafts row");
+    expect(text).toContain("1 body object with no drafts row");
   });
 
   it("counts every object it lists, so the reported prefixes cannot outrun the scan", async () => {
@@ -668,6 +668,6 @@ describe("the predicate has one definition", () => {
     expect(viaPass.draftBodies).toEqual(direct);
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
-    expect(finding.detail).toContain(`${direct.stranded.length} draft body object(s)`);
+    expect(finding.detail).toContain(`${direct.stranded.length} draft body object has`);
   });
 });

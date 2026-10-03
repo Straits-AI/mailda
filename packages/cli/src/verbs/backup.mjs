@@ -3,6 +3,7 @@ import {
   backupIndex, checkBackup, exportableTables, needsIndexRebuild, searchIndexReset, whyAdminCannotExist,
 } from "../backup.mjs";
 import { api, capture, claimState, configFor, doctorReport, fail, flag, run, runPreflight, sessionCookie, useConfig, WRANGLER_ARGS } from "../support.mjs";
+import { plural } from "@mailda/runtime";
 /* ------------------------------------------------------------------ backup ------------------------- */
 
 /**
@@ -110,7 +111,7 @@ export async function backup(argv) {
   }
   const { included, excluded } = exportableTables(master);
   if (included.length === 0) fail("the catalog reported no exportable tables. Nothing was written.");
-  process.stdout.write(`   ${included.length} table(s) to export, ${excluded.length} left out\n`);
+  process.stdout.write(`   ${included.length} ${plural(included.length, "table", "tables")} to export, ${excluded.length} left out\n`);
   for (const one of excluded) process.stdout.write(`   omitting  ${one.name}  — ${one.why}\n`);
 
   process.stdout.write("\n== exporting the catalog\n");
@@ -150,7 +151,7 @@ export async function backup(argv) {
     }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
     if (!response.ok) {
       fail(`/api/evidence/inventory answered ${response.status}, so the backup is incomplete and was not `
-        + `indexed. ${objects} object(s) had been listed.`);
+        + `indexed. ${objects} ${plural(objects, "object", "objects")} had been listed.`);
     }
     const page = await response.json();
     for (const object of page.objects ?? []) lines.push(JSON.stringify(object));
@@ -160,11 +161,11 @@ export async function backup(argv) {
      * `\r` only on a terminal. Piped or captured, a carriage return is not a rewind — the drill's log read
      * `3 object(s)   3 object(s)   3 object(s) listed`, one copy per page, because nothing overwrote anything.
      */
-    if (process.stdout.isTTY) process.stdout.write(`   ${objects} object(s)\r`);
+    if (process.stdout.isTTY) process.stdout.write(`   ${objects} ${plural(objects, "object", "objects")}\r`);
     if (page.resumeAfter === null || page.resumeAfter === undefined) break;
     cursor = page.resumeAfter;
   }
-  process.stdout.write(`   ${objects} object(s) listed\n`);
+  process.stdout.write(`   ${objects} ${plural(objects, "object", "objects")} listed\n`);
 
   let verified = null;
   if (argv.includes("--verify")) {
@@ -188,7 +189,7 @@ export async function backup(argv) {
       after = page.resumeAfter;
     }
     verified = { checked, faults };
-    process.stdout.write(`   ${checked} checked, ${faults} fault(s)\n`);
+    process.stdout.write(`   ${checked} checked, ${faults} ${plural(faults, "fault", "faults")}\n`);
   }
 
   const inventoryText = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
@@ -212,7 +213,7 @@ export async function backup(argv) {
   process.stdout.write(
     `\n   written to ${out}\n`
     + `   catalog    ${index.catalog.bytes} bytes\n`
-    + `   inventory  ${objects} object(s), ${unaccounted} named by no live row\n`
+    + `   inventory  ${objects} ${plural(objects, "object", "objects")}, ${unaccounted} named by no live row\n`
     + `   version    ${index.nodeVersion ?? "not reported by this Node"}\n`,
   );
   /*
@@ -273,7 +274,7 @@ export function verifyBackup(argv) {
 
   if (!outcome.ok) {
     fail(
-      `${outcome.problems.length} problem(s) with this backup.\n\n`
+      `${outcome.problems.length} ${plural(outcome.problems.length, "problem", "problems")} with this backup.\n\n`
       + outcome.problems.map((one, at) => `  ${at + 1}. ${one.what}\n     fix      ${one.fix}`).join("\n\n"),
     );
   }

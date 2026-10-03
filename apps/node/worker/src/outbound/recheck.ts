@@ -9,6 +9,7 @@ import { decidersOf } from "../deciders.ts";
 import { getEvidence, sha256Hex } from "../evidence-store.ts";
 import { domainOf, evaluate, isStricter, OUTCOMES, type Outcome } from "../policy.ts";
 import type { TransportAdapter } from "./transport.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * The effect envelope, and the recheck an **approved** send gets immediately before the transport is asked
@@ -689,7 +690,7 @@ export async function recheckApproved(
       envelope,
       withholding: withheld(
         "approval_revoked",
-        `Approval ${approval.approvalId} has ${approval.approvers.length} standing approval(s) and `
+        `Approval ${approval.approvalId} has ${approval.approvers.length} standing ${plural(approval.approvers.length, "approval", "approvals")} and `
         + `${approval.withdrawn.length} withdrawn.`,
         {
           approvalId: approval.approvalId,
@@ -735,7 +736,8 @@ export async function recheckApproved(
       envelope,
       withholding: withheld(
         "approver_ineligible",
-        `${lost.join(", ")} no longer hold(s) approval.decide on ${envelope.mailboxId}, or is the author of `
+        `${lost.join(", ")} ${plural(lost.length, "no longer holds", "no longer hold")} approval.decide on ${envelope.mailboxId}, or `
+        + `${plural(lost.length, "is", "are")} the author of `
         + "this send. §18's separation of duty is evaluated live, so an approval given by somebody who has "
         + "since lost the relation is not an approval this Node will act on.",
         { approvalId: approval.approvalId, ineligible: lost, eligibleNow: eligible.size },
@@ -762,7 +764,7 @@ export async function recheckApproved(
         `Policy now says ${current.outcome} for this send; it was approved under ${bound}. `
         + (current.matched.length === 0
           ? "No policy matched, which cannot be stricter than anything — investigate."
-          : `The rule(s) that apply now: ${current.matched
+          : `${plural(current.matched.length, "The rule that applies", "The rules that apply")} now: ${current.matched
             .map((match) => `${match.policyName}@${match.version}`).join(", ")}.`),
         {
           approvalId: approval.approvalId,

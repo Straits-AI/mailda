@@ -842,7 +842,7 @@ describe("suppressing a notice requires deleting an audited row, and doctor says
     expect(finding.severity).toBe("degraded");
     // The count comes off the hash-linked trail, so the other half of the suppression — deleting the
     // `supervised.granted` entry instead — breaks `verifyChain` at a nameable point rather than hiding here.
-    expect(finding.detail).toContain("1 supervised grant(s) taking effect");
+    expect(finding.detail).toContain("1 supervised grant taking effect");
     expect(finding.detail).toContain("removed outside the product");
   });
 
@@ -873,7 +873,7 @@ describe("suppressing a notice requires deleting an audited row, and doctor says
     );
     expect(finding.ok).toBe(false);
     expect(finding.severity).toBe("degraded");
-    expect(finding.detail).toContain("1 notification(s) have no due date");
+    expect(finding.detail).toContain("1 notification has no due date");
     // And the deletion checks stay quiet, which is exactly why this one has to exist.
     expect(find((await runDoctor(testEnv, atTime(AUGUST_20))).findings, "supervision_notices_overdue").ok)
       .toBe(true);
@@ -888,7 +888,7 @@ describe("suppressing a notice requires deleting an audited row, and doctor says
     expect(finding.ok).toBe(false);
     expect(finding.severity).toBe("degraded");
     // Three: the §7 notice, plus #61's two approval requests, all past the grace and none delivered.
-    expect(finding.detail).toContain("3 notification(s) fell due");
+    expect(finding.detail).toContain("3 notifications fell due");
 
     await deliverDueNotifications(testEnv, atTime(AUGUST_20 + 2 * HOUR), ORG);
     const cleared = find(

@@ -214,7 +214,7 @@ describe("a Butler that cannot afford itself is refused, naming the arithmetic (
     expect(found.node).toBe("fan_out");
     expect(found.what).toContain("10018 subrequests per run");
     expect(found.what).toContain("workflow.paid.subrequest_budget_per_instance=10000");
-    expect(found.what).toContain("6 node(s) outside a loop cost 38");
+    expect(found.what).toContain("6 nodes outside a loop cost 38");
     expect(found.what).toContain("foreach fan_out costs maxItems=499 × 20 per item = 9980");
     // Which node inside the loop makes it expensive, and which receipted bound priced it.
     expect(found.what).toContain("send_one, a mail.send.propose at butler.step_cost_max_send_propose=20");
@@ -249,7 +249,7 @@ describe("a Butler that cannot afford itself is refused, naming the arithmetic (
      */
     const found = finding(manyCheapNodes(3_334));
     expect(found.what).toContain("10002 subrequests per run");
-    expect(found.what).toContain("3334 node(s) outside a loop cost 10002");
+    expect(found.what).toContain("3334 nodes outside a loop cost 10002");
     // No loop to blame and none to shrink, so the fix says so instead of inventing one.
     expect(found.fix).toContain("Nothing here is a loop bound that could be lowered");
     // And no node is named: the "dearest" of 3,334 identical nodes is whichever the scan reached first, and

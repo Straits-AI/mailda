@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { plural } from "@mailda/runtime";
 
 /**
  * The parts of `mailda deploy` that read text, split out so they can be tested (#98).
@@ -208,7 +209,7 @@ export function promotionVerdict({ canary, incumbent }) {
       promote: false,
       blocking,
       carried,
-      why: `the canary has ${blocking.length} finding(s) the version now serving does not: ${blocking.join(", ")}`,
+      why: `the canary has ${blocking.length} ${plural(blocking.length, "finding", "findings")} the version now serving does not: ${blocking.join(", ")}`,
     };
   }
   /*

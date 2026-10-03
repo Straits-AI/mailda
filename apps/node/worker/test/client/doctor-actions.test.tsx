@@ -106,7 +106,7 @@ describe("recovery codes in the browser", () => {
 
   it("confirms the one code typed, sends no other, and clears the field either way", async () => {
     mount([finding("recovery_escrow", false)], {
-      "POST /api/recovery-codes/confirm": { body: { confirmed: 10, alreadyConfirmed: false, message: "Confirmed. 10 code(s) marked as held; none were spent." } },
+      "POST /api/recovery-codes/confirm": { body: { confirmed: 10, alreadyConfirmed: false, message: "Confirmed. 10 codes marked as held; none were spent." } },
     });
     const field = await screen.findByLabelText("Confirm one code") as HTMLInputElement;
     const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
@@ -114,7 +114,7 @@ describe("recovery codes in the browser", () => {
     fireEvent.change(field, { target: { value: " dddd-eeee-ffff " } });
     expect(confirm.disabled).toBe(false);
     fireEvent.click(confirm);
-    await screen.findByText("Confirmed. 10 code(s) marked as held; none were spent.");
+    await screen.findByText("Confirmed. 10 codes marked as held; none were spent.");
     expect(posts().map((call) => [call.path, call.body])).toEqual([["/api/recovery-codes/confirm", { code: "dddd-eeee-ffff" }]]);
     expect(field.value).toBe("");
   });
@@ -133,10 +133,10 @@ describe("recovery codes in the browser", () => {
 describe("the fix buttons", () => {
   it("applies migrations and shows the Node's own sentence", async () => {
     mount([finding("migrations_applied", false)], {
-      "POST /api/prepare": { body: { applied: ["0070"], raced: [], alreadyCurrent: false, message: "Applied 1 migration(s)." } },
+      "POST /api/prepare": { body: { applied: ["0070"], raced: [], alreadyCurrent: false, message: "Applied 1 migration." } },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Apply migrations" }));
-    expect((await screen.findByRole("status")).textContent).toBe("Applied 1 migration(s).");
+    expect((await screen.findByRole("status")).textContent).toBe("Applied 1 migration.");
   });
 
   it("shows a refusal of the migration as the refusal, not as an empty result", async () => {

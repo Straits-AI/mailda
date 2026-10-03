@@ -113,7 +113,7 @@ describe("the pages before sign-in, in Simplified Chinese", () => {
     await signInScreen();
     const login = await refusals(LOGIN_REFUSALS, "/api/auth/login");
     expect(login["invalid_credentials"]).toEqual(["邮件地址和密码不匹配。", "<en>That email and password do not match."]);
-    expect(login["locked_out"]).toEqual(["登录失败次数过多。", "<en>Too many failed sign-in attempts. Try again in 5 minute(s)."]);
+    expect(login["locked_out"]).toEqual(["登录失败次数过多。", "<en>Too many failed sign-in attempts. Try again in 5 minutes."]);
     expect(login["silent"]).toEqual(["登录失败。"]);
 
     await joinScreen();

@@ -1,5 +1,5 @@
 import { type Bytes, utf8 } from "@mailda/evidence";
-import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
+import { type Ctx, ID_PREFIXES, plural } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, auditedBatchMany } from "../audit.ts";
@@ -660,7 +660,7 @@ export async function sealManifest(
     }
     if ((original.attachments_dangerous ?? 0) > 0) {
       throw unprocessable("E_FORWARD_CARRIES_DANGEROUS", {
-        what: `${composition.forwardOfMessageId} carries ${original.attachments_dangerous} attachment(s) this Node judged dangerous`,
+        what: `${composition.forwardOfMessageId} carries ${original.attachments_dangerous} ${plural(original.attachments_dangerous ?? 0, "attachment", "attachments")} this Node judged dangerous`,
         why: "a forward sends the original whole, and the person forwarding did not attach its flagged files, so "
           + "there is no author to say send them anyway",
         fix: "download the original .eml and hand it over some other way, or forward with the text alone",

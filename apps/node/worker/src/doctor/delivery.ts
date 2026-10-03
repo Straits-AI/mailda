@@ -2,6 +2,7 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "../breakers.ts";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * Two things a Node needs before a delivery outcome can reach it, and **neither is in this Worker's
  * config** — so neither can be checked from inside a Worker, and both are reported rather than omitted.
@@ -294,8 +295,9 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
    */
   const visibility = (): Finding[] => {
     const base = { check: "delivery_visibility", severity: "degraded", discloses: "data" } as const;
-    const observed = `${counted.awaiting - counted.unobserved} of ${counted.awaiting} handed-over recipient(s) `
-      + `have an observed outcome, from ${counted.attributed} attributed event(s).`;
+    const heard = counted.awaiting - counted.unobserved;
+    const observed = `${heard} of ${counted.awaiting} handed-over ${plural(counted.awaiting, "recipient", "recipients")} `
+      + `${plural(heard, "has", "have")} an observed outcome, from ${counted.attributed} attributed ${plural(counted.attributed, "event", "events")}.`;
     const laterFailure = counted.read_at !== null && counted.read_error !== null
       ? ` A later attempt, at ${counted.attempted_at}, did not succeed (${counted.read_error}).`
       : "";
@@ -305,17 +307,18 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
     const listedAgainst = counted.contradicting > 0 || counted.contradicting_unattributed > 0;
     const againstIt = [
       counted.unusable > 0
-        ? `${counted.unusable} delivery event(s) reached this Node without an event id or a recipient and could `
+        ? `${counted.unusable} delivery ${plural(counted.unusable, "event", "events")} reached this Node without an event id or a recipient and could `
           + "not be used (logged as sending_event.unusable), so no silence here is counted as explained: one of "
           + "them may have been the outcome."
         : null,
       counted.contradicting > 0
-        ? `${counted.contradicting} recipient(s) that a read showed as verified destinations when handed over had `
+        ? `${counted.contradicting} ${plural(counted.contradicting, "recipient", "recipients")} that a read showed as verified destinations when handed over had `
           + `a delivery event published for them, which no verified destination did ${MEASURED}, so no silence here `
           + "is counted as explained until that is resolved."
         : null,
       counted.contradicting_unattributed > 0
-        ? `${counted.contradicting_unattributed} delivery event(s) this Node could not tie to a send were for `
+        ? `${counted.contradicting_unattributed} delivery ${plural(counted.contradicting_unattributed, "event", "events")} this Node could not tie to a send `
+          + `${plural(counted.contradicting_unattributed, "was", "were")} for `
           + "addresses a read showed as verified destinations when the event arrived, so no silence here is "
           + "counted as explained: either Cloudflare published an outcome for a verified destination, or one of "
           + "them was the outcome of a send here."
@@ -350,8 +353,9 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
       return [{
         ...base,
         ok: false,
-        detail: `${known} recipient(s) handed over more than ${MINUTES} minutes ago were not shown as verified `
-          + `Email Routing destinations at hand-over by this Node's read of Cloudflare account `
+        detail: `${known} ${plural(known, "recipient", "recipients")} handed over more than ${MINUTES} minutes ago `
+          + `${plural(known, "was not shown as a verified Email Routing destination", "were not shown as verified Email Routing destinations")} `
+          + `at hand-over by this Node's read of Cloudflare account `
           + `${counted.read_account}'s list at ${counted.read_at}, taken after their sends had finished, and this `
           + `Node has received no delivery event it could attribute. ${NOTHING_HEARD}`
           + (unchecked > 0
@@ -392,7 +396,7 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
       return [{
         ...base,
         ok: false,
-        detail: `${unexplained} recipient(s) were handed over more than ${MINUTES} minutes ago and this Node `
+        detail: `${unexplained} ${plural(unexplained, "recipient was", "recipients were")} handed over more than ${MINUTES} minutes ago and this Node `
           + `has received no delivery event it could attribute. ${uncovered} If they are verified Email Routing `
           + "destinations of this Cloudflare account, the silence "
           // Voided, the conditional must not resolve to "expected": that is the conclusion the evidence withholds,
@@ -439,7 +443,7 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
       return [{
         ...base,
         ok: true,
-        detail: `${explained} recipient(s) were handed over more than ${MINUTES} minutes ago and none has an `
+        detail: `${explained} ${plural(explained, "recipient was", "recipients were")} handed over more than ${MINUTES} minutes ago and none has an `
           + "observed outcome, and every one of them was shown as a verified Email Routing destination, verified "
           + "before it was handed over, by a read of this Cloudflare account's list (the latest at "
           + `${counted.read_at}, account ${counted.read_account}). No outcome is reported for verified `
@@ -462,7 +466,7 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
 
   const stale = counted.unattributed_ever - counted.unattributed;
   const recorded = stale === 0 ? "" :
-    ` ${stale} older one(s) are also unattributed and are not counted here: they stopped arriving, ` +
+    ` ${stale} ${plural(stale, "older one is also unattributed and is", "older ones are also unattributed and are")} not counted here: they stopped arriving, ` +
     `nothing resolves them, and they are kept because an unattributable bounce that was discarded would ` +
     `be silence.`;
 
@@ -479,7 +483,7 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
       severity: "report",
       discloses: "data",
       ok: true,
-      detail: `${stale} delivery event(s) were never matched to anything this Node sent, the most recent ` +
+      detail: `${stale} delivery ${plural(stale, "event was", "events were")} never matched to anything this Node sent, the most recent ` +
         `outside the window this check looks at. They are kept rather than discarded — an unattributable ` +
         `bounce that was thrown away is silence — and nothing resolves them: the usual cause is a message ` +
         `sent from this Node's sending domain by something that is not this Node. Ongoing ones would be ` +
@@ -488,13 +492,14 @@ export async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string 
     }, ...visibility()];
   }
 
+  const silenceMinutes = Math.round(DELIVERY_SILENCE_MS / 60000);
   const attribution: Finding[] = counted.unattributed === 0 ? [] : [{
     check: "delivery_attribution",
     severity: "degraded",
     discloses: "data",
     ok: false,
-    detail: `${counted.unattributed} delivery event(s) in the last ${Math.round(DELIVERY_SILENCE_MS / 60000)} ` +
-      `minute(s) could not be matched to anything this Node sent. Their outcome is recorded against no ` +
+    detail: `${counted.unattributed} delivery ${plural(counted.unattributed, "event", "events")} in the last ${silenceMinutes} ` +
+      `${plural(silenceMinutes, "minute", "minutes")} could not be matched to anything this Node sent. Their outcome is recorded against no ` +
       `recipient, so those sends stay unobserved however many events arrive. This is not the same as ` +
       `receiving no events, and not the same as being healthy.${recorded}`,
     fix: "check that the event subscription is scoped to this Node's sending domain and no other — the " +
@@ -651,7 +656,7 @@ export async function checkBreakers(
     detail: decision.rates.map((rate) => {
       const window = `${Math.round(rate.windowSeconds / 60)}m`;
       if (!rate.armed) {
-        return `${rate.breaker}: armed=false (${rate.unarmedReason}) — ${rate.observations} observation(s) `
+        return `${rate.breaker}: armed=false (${rate.unarmedReason}) — ${rate.observations} ${plural(rate.observations, "observation", "observations")} `
           + `in ${window}, and this breaker needs more before a rate means anything. It is NOT 0%.`;
       }
       const at = rate.percent === null ? `${rate.observed}` : `${rate.percent}% of ${rate.observations}`;
@@ -739,7 +744,7 @@ export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null
       check: "kept_forwards", severity: "report", discloses: "data", ok: true, receipt,
       detail: kept === 0
         ? "No address keeps a forward."
-        : `${kept} address(es) keep a forward, and every attempt older than the slowest forward measured has an answer: `
+        : `${kept} ${plural(kept, "address keeps", "addresses keep")} a forward, and every attempt older than the slowest forward measured has an answer: `
           + "handed over (Cloudflare reports no delivery for a verified destination, so this is the most known), withheld as a loop, "
           + "or refused and followed by a copy whose send is in the Outbox.",
     }];
@@ -747,9 +752,9 @@ export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null
   return [{
     check: "kept_forwards", severity: "degraded", discloses: "data", ok: false, receipt,
     detail: [
-      unanswered === 0 ? "" : `${unanswered} kept forward attempt(s) have no recorded answer: forward() was called and never `
+      unanswered === 0 ? "" : `${unanswered} kept forward ${plural(unanswered, "attempt has", "attempts have")} no recorded answer: forward() was called and never `
         + "settled, so the destination may or may not have the message.",
-      refused === 0 ? "" : `${refused} address(es) whose latest forward was refused by Cloudflare, with no copy that is still `
+      refused === 0 ? "" : `${refused} ${plural(refused, "address", "addresses")} whose latest forward was refused by Cloudflare, with no copy that is still `
         + "going (none sealed, or its send withheld, cancelled, refused or suppressed, which the Outbox shows): their "
         + "destination is getting nothing now, and the senders were not told.",
       copiesRefused === 0 ? "" : `${copiesRefused} of them asked for a copy that was refused: People names each reason (too large, `

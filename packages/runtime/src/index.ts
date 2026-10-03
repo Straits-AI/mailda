@@ -2,3 +2,4 @@ export { createCtx, createFrozenCtx, createSystemCtx, systemSources, ULID_ALPHAB
 export type { Ctx, CtxSources } from "./ctx.ts";
 export { ID_PREFIXES, idPattern, idPatternSource } from "./ids.ts";
 export type { IdEntity, IdPrefix } from "./ids.ts";
+export { plural } from "./plural.ts";

@@ -373,7 +373,7 @@ spent 38:
 ```
 E_BUTLER_UNAFFORDABLE  this Butler costs 10018 subrequests per run against
                        workflow.paid.subrequest_budget_per_instance=10000;
-                       6 node(s) outside a loop cost 38;
+                       6 nodes outside a loop cost 38;
                        foreach fan_out costs maxItems=499 × 20 per item = 9980
                        (dearest inside it: send_one, a mail.send.propose at
                         butler.step_cost_max_send_propose=20)

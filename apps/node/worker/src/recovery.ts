@@ -1,4 +1,4 @@
-import { ID_PREFIXES, ULID_ALPHABET, type Ctx } from "@mailda/runtime";
+import { type Ctx, ID_PREFIXES, plural, ULID_ALPHABET } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
@@ -831,7 +831,7 @@ export async function redeemForVault(
   if (failure !== null) {
     throw unprocessable("E_RECOVERY_RESTORE_INCOMPLETE", {
       what: `the vault refused part way through: ${failure}`,
-      why: `${installed} generation(s) were installed before it stopped. The code has **not** been spent, `
+      why: `${installed} ${plural(installed, "generation was", "generations were")} installed before it stopped. The code has **not** been spent, `
         + "because a failed attempt must not cost one of ten — and every step is idempotent, so running it "
         + "again resumes rather than repeats",
       fix: "check `doctor`'s `recovery_escrow` finding, then redeem the same code again",
@@ -871,8 +871,8 @@ export function conflictNotice(
     conflicted.credential.length > 0 ? `credential ${conflicted.credential.join(", ")}` : null,
   ].filter((one) => one !== null).join("; ");
 
-  return `${collided} escrowed key generation(s) could not be installed (${generations})`
-    + (installed === 0 ? " and nothing was restored" : `; ${installed} was installed`)
+  return `${collided} escrowed key ${plural(collided, "generation", "generations")} could not be installed (${generations})`
+    + (installed === 0 ? " and nothing was restored" : `; ${installed} ${plural(installed, "was", "were")} installed`)
     + ". This Node already holds keys of those generation numbers under a different secret, and one number "
     + "cannot hold both — it keeps the live key, because losing newer mail to recover older is the worse "
     + "trade. The code is spent, and mail sealed under the escrowed key stays unreadable. Redeeming another "

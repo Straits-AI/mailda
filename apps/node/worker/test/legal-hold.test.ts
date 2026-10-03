@@ -477,7 +477,7 @@ describe("lifting a hold takes two people, a reason, and somebody who did not as
     const message = (error as Error).message;
     expect(message).toContain("E_HOLD_LIFT_UNSATISFIABLE");
     // The shortfall, named: which stage, how many short, and how many are eligible. An agent can act on this.
-    expect(message).toContain("stage 1 needs 2 distinct approver(s)");
+    expect(message).toContain("stage 1 needs 2 distinct approvers");
     expect(message).toContain("approval.decide");
     // Refused before anything is written, so there is no request sitting in a queue nobody can clear.
     const lifts = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM hold_lifts").first<{ n: number }>();
@@ -792,11 +792,11 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
 
     expect(finding.severity, "a hold is a normal state of a governed Node").toBe("report");
     expect(finding.ok).toBe(true);
-    expect(finding.detail).toContain("1 legal hold(s) in force");
+    expect(finding.detail).toContain("1 legal hold in force");
     expect(finding.detail).toContain(HELD_MAILBOX);
     expect(finding.detail).toContain("2026-08-01");
     expect(finding.detail).toContain("mat_acme");
-    expect(finding.detail).toContain("10 day(s) ago");
+    expect(finding.detail).toContain("10 days ago");
     // And it says why collection stopped, because suppression that cannot be seen is indistinguishable from
     // a reconciler that has stopped working.
     expect(finding.detail).toContain("suppressed");
@@ -836,7 +836,7 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
     // And the hold is still in force while the request is open, which is the sentence that stops a reader
     // treating a pending lift as a lifted one.
     expect(finding.detail).toContain("still in force");
-    expect(find(report.findings, "legal_holds_active").detail).toContain("1 legal hold(s) in force");
+    expect(find(report.findings, "legal_holds_active").detail).toContain("1 legal hold in force");
   });
 
   it("raises no pending-lift finding when nobody has asked", async () => {
@@ -858,7 +858,7 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
     expect(finding.severity).toBe("degraded");
     expect(finding.ok).toBe(false);
     expect(finding.detail).toContain(hold.id);
-    expect(finding.detail).toContain("1 person(s) hold approval.decide");
+    expect(finding.detail).toContain("1 person holds approval.decide");
     // Not a preservation failure, and it says so: the failure direction is over-holding.
     expect(finding.detail).toContain("Preservation is unaffected");
     // A fix somebody can run, which is what separates this from a permanent WARN nobody can clear.
@@ -912,7 +912,7 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
     const finding = find(report.findings, "legal_hold_mailbox_missing");
     expect(finding.severity).toBe("degraded");
     expect(finding.ok).toBe(false);
-    expect(finding.detail).toContain("enforce nothing");
+    expect(finding.detail).toContain("so it enforces nothing");
     // The fix used to point at the lift path that did not exist. It now points at the finding that says
     // whether this hold can be lifted at all, which is the next thing a reader needs.
     expect(finding.fix).toContain("legal_hold_unliftable");

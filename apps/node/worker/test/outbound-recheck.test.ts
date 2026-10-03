@@ -237,7 +237,7 @@ describe("the six reasons a dispatch withholds a send (#62)", () => {
     expect(result.state).toBe("withheld");
     const row = await manifestRow(manifestId);
     expect(row?.state_reason).toBe("approval_revoked");
-    expect(row?.last_error).toContain("0 standing approval(s) and 1 withdrawn");
+    expect(row?.last_error).toContain("0 standing approvals and 1 withdrawn");
     expect(transport.submitted).toHaveLength(0);
   });
 
@@ -258,7 +258,7 @@ describe("the six reasons a dispatch withholds a send (#62)", () => {
     expect(result.state).toBe("withheld");
     const row = await manifestRow(manifestId);
     expect(row?.state_reason).toBe("approval_revoked");
-    expect(row?.last_error).toContain("1 standing approval(s) and 1 withdrawn");
+    expect(row?.last_error).toContain("1 standing approval and 1 withdrawn");
     expect(transport.submitted).toHaveLength(0);
   });
 
@@ -278,7 +278,7 @@ describe("the six reasons a dispatch withholds a send (#62)", () => {
       expect(result.state).toBe("withheld");
       const row = await manifestRow(manifestId);
       expect(row?.state_reason).toBe("approval_revoked");
-      expect(row?.last_error).toContain("0 standing approval(s) and 0 withdrawn");
+      expect(row?.last_error).toContain("0 standing approvals and 0 withdrawn");
       expect(transport.submitted).toHaveLength(0);
     });
 

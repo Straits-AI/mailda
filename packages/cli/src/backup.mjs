@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { plural } from "@mailda/runtime";
 
 /**
  * What a backup is, and what checking one offline can establish (#92).
@@ -135,7 +136,7 @@ export function checkBackup({ index, catalog, inventory }) {
     const lines = inventory.toString("utf8").split("\n").filter((line) => line.trim() !== "").length;
     if (lines !== index.inventory.objects) {
       problems.push({
-        what: `inventory.jsonl holds ${lines} object(s), and the index says ${index.inventory.objects}`,
+        what: `inventory.jsonl holds ${lines} ${plural(lines, "object", "objects")}, and the index says ${index.inventory.objects}`,
         fix: "the inventory was rewritten. Take the backup again",
       });
     }
@@ -144,7 +145,7 @@ export function checkBackup({ index, catalog, inventory }) {
   const notes = [];
   if (index.inventory?.unaccounted > 0) {
     notes.push(
-      `${index.inventory.unaccounted} object(s) in this backup are named by no live row. A restore puts them `
+      `${index.inventory.unaccounted} ${plural(index.inventory.unaccounted, "object in this backup is", "objects in this backup are")} named by no live row. A restore puts them `
       + "back and nothing will reference them — `mailda doctor` reports the same figure as evidence orphans.",
     );
   }
@@ -178,7 +179,7 @@ export function checkBackup({ index, catalog, inventory }) {
     );
   } else if (index.verified.faults > 0) {
     problems.push({
-      what: `${index.verified.faults} fault(s) were already present when this backup was taken`,
+      what: `${index.verified.faults} ${plural(index.verified.faults, "fault was", "faults were")} already present when this backup was taken`,
       fix: "the evidence was not intact at the time. `mailda verify-evidence` names each one",
     });
   }

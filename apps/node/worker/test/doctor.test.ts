@@ -253,8 +253,8 @@ describe("doctor", () => {
     }
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "evidence_present");
-    expect(finding.detail).toContain("3 of 3 receipt(s)");
-    expect(finding.detail).toContain("object(s) examined");
+    expect(finding.detail).toContain("3 of 3 receipts");
+    expect(finding.detail).toContain("objects examined");
     expect(finding.receipt).toBe("docs/receipts/evidence-lifecycle.md");
   });
 

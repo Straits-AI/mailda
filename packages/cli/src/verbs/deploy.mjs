@@ -4,6 +4,7 @@ import { activeVersionFrom, contractingAmong, deployExitCode, deploymentIdFrom, 
 import { planFor, renderPlan, workflowGuard, resourcesFrom as resourcesFromConfig } from "../deploy-plan.mjs";
 import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, configFor, useConfig } from "../support.mjs";
 import { wranglerSaid } from "../wrangler-config.mjs";
+import { plural } from "@mailda/runtime";
 /**
  * Whether this account has no `mailda` Worker yet.
  *
@@ -625,7 +626,7 @@ export async function deploy(argv, { beforeReport = async () => {} } = {}) {
    */
   const withheld = (report.findings ?? []).find((one) => one?.check === "report_reduced");
   process.stdout.write(
-    `   compared ${(report.findings ?? []).length} finding(s)`
+    `   compared ${(report.findings ?? []).length} ${plural((report.findings ?? []).length, "finding", "findings")}`
     + `${withheld === undefined ? " — the whole report" : `, and ${withheld.detail}`}\n`,
   );
 

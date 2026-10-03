@@ -1,4 +1,4 @@
-import { createSystemCtx } from "@mailda/runtime";
+import { createSystemCtx, plural } from "@mailda/runtime";
 
 import { log, trimLogs } from "./audit.ts";
 import { CallerError } from "./errors.ts";
@@ -145,7 +145,7 @@ const handler = {
           await log(env, clock, {
             level: "warn",
             event: "sla.first_response_breached",
-            message: `${outcome.breached.length} case(s) passed their first-response time unanswered.`,
+            message: `${outcome.breached.length} ${plural(outcome.breached.length, "case", "cases")} passed their first-response time unanswered.`,
             orgId,
             detail: { cases: outcome.breached.slice(0, 20) },
           });
@@ -178,7 +178,7 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "search.backfilled",
-            message: `Wrote the subject index for ${indexed} message(s) not yet in its current form `
+            message: `Wrote the subject index for ${indexed} ${plural(indexed, "message", "messages")} not yet in its current form `
               + "(never indexed, or indexed in an older form).",
             orgId,
             detail: { indexed },
@@ -210,7 +210,7 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "authentication.backfilled",
-            message: `Evaluated the sender of ${evaluated} message(s) that arrived before this Node checked senders.`,
+            message: `Evaluated the sender of ${evaluated} ${plural(evaluated, "message", "messages")} that arrived before this Node checked senders.`,
             orgId,
             detail: { evaluated },
           });
@@ -241,7 +241,7 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "search.bodies_backfilled",
-            message: `Settled the body index for ${bodies} message(s) (never indexed, retried, or re-formed from `
+            message: `Settled the body index for ${bodies} ${plural(bodies, "message", "messages")} (never indexed, retried, or re-formed from `
               + "an older form).",
             orgId,
             detail: { settled: bodies },
@@ -267,7 +267,7 @@ const handler = {
             await log(env, clock, {
               level: "info",
               event: "preview.backfilled",
-              message: `Projected the row preview and sender name of ${previews.projected} message(s).`,
+              message: `Projected the row preview and sender name of ${previews.projected} ${plural(previews.projected, "message", "messages")}.`,
               orgId,
               detail: { projected: previews.projected },
             });
@@ -276,7 +276,7 @@ const handler = {
             await log(env, clock, {
               level: "warn",
               event: "preview.backfill_failed",
-              message: `${previews.retried + previews.failed} message(s) could not be projected: ${previews.reason ?? "unknown"}`,
+              message: `${previews.retried + previews.failed} ${plural(previews.retried + previews.failed, "message", "messages")} could not be projected: ${previews.reason ?? "unknown"}`,
               orgId,
               detail: { retried: previews.retried, failed: previews.failed, reason: previews.reason },
             });
@@ -299,7 +299,7 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "notifications.delivered",
-            message: `${notices.delivered} notification(s) delivered.`,
+            message: `${notices.delivered} ${plural(notices.delivered, "notification", "notifications")} delivered.`,
             orgId,
             detail: { delivered: notices.delivered, batchWasFull: notices.batchWasFull },
           });
@@ -361,8 +361,8 @@ const handler = {
           await log(env, clock, {
             level: "info",
             event: "outbound.reasons_repaired",
-            message: `Cleared state_reason on ${repaired.reasons.length} send(s) neither awaiting nor withheld, `
-              + `and last_error on ${repaired.cancelledErrors.length} cancelled send(s).`,
+            message: `Cleared state_reason on ${repaired.reasons.length} ${plural(repaired.reasons.length, "send", "sends")} neither awaiting nor withheld, `
+              + `and last_error on ${repaired.cancelledErrors.length} cancelled ${plural(repaired.cancelledErrors.length, "send", "sends")}.`,
             orgId,
             detail: {
               reasons: repaired.reasons.slice(0, 20),

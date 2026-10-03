@@ -177,6 +177,7 @@ export const CONCEPTS: readonly Concept[] = [
   row("address", "address", "邮件地址", { sentences: ["reader.assign.email"], avoid: { "zh-Hans": ["邮箱"] } }),
   row("case", "case", "工单", { sentences: ["reader.assign.noCase", "reader.assign.closed"], avoid: { "zh-Hans": ["案件", "案例"] } }),
   row("matter", "Matter", "事项", {
+    sentences: ["matters.empty"],
     avoid: { "zh-Hans": ["调查", "案件"] },
     note: "a supervised read, legal hold, departure handover or regulatory request; 调查 would call a routine handover an investigation (critic H3, D9)",
   }),
@@ -412,7 +413,7 @@ export const CONCEPTS: readonly Concept[] = [
       "health.reduced", "composer.from.none", "composer.from.more", "queue.restricted.subject", "queue.restricted.sender",
       "queue.quarantine.dmarc.on", "queue.quarantine.attachments.on", "queue.noMailbox", "send.reason.domain_paused.note",
       "people.forbidden", "people.arrival.unread", "limits.pauses.lead", "limits.pauses.asked", "limits.suppressed.lead",
-      "butlers.notAdmin", "policies.notAdmin",
+      "butlers.notAdmin", "policies.notAdmin", "matters.empty",
     ],
     note: "whoever holds org.admin. An export's or a hold lift's approvers hold approval.decide instead, so their sentences say people (D3)",
   }),

@@ -15,6 +15,7 @@ import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
 import { sessionResponse, unauthenticated, organizationId, armSweeper, claimMessage } from "./support.ts";
 import { page } from "../ui.ts";
 import type { Some } from "../router.ts";
+import { plural } from "@mailda/runtime";
 
 /** The audit trail and the log each show this many entries, newest first, and say when older ones exist. */
 const AUDIT_LIST_CAP = 200;
@@ -49,7 +50,7 @@ export const node = {
       ...outcome,
       message: outcome.alreadyCurrent
         ? "The schema was already current. Nothing changed."
-        : `Applied ${outcome.applied.length} migration(s). This Node can now accept mail once claimed.`,
+        : `Applied ${outcome.applied.length} ${plural(outcome.applied.length, "migration", "migrations")}. This Node can now accept mail once claimed.`,
     });
   },
 
@@ -431,7 +432,7 @@ export const node = {
       message: outcome.alreadyConfirmed
         ? "That code is from the set already confirmed for this Node. Nothing changed, and any newer "
           + "unconfirmed sheet is still waiting to be confirmed."
-        : `Confirmed. ${outcome.confirmed} code(s) marked as held; none were spent. Any previous sheet is `
+        : `Confirmed. ${outcome.confirmed} ${plural(outcome.confirmed, "code", "codes")} marked as held; none were spent. Any previous sheet is `
           + "now retired and will no longer open this vault.",
     });
   },

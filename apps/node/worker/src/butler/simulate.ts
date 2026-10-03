@@ -14,6 +14,7 @@ import type { EffectOutcome, TerminalState } from "./record.ts";
 import { RUN_NODE_COST } from "./interpret.ts";
 import { walk, type Terminal, type WalkCounts, type Walkable } from "./walk.ts";
 import type { EffectHandle } from "./world.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * The dry run (#87, §5's fifth charted answer, blueprint:347 *"simulation cannot affect production"*).
@@ -186,7 +187,7 @@ export async function simulateButler(
      * is what stops a dry run reporting a terminal state for a program the engine would not accept.
      */
     throw unprocessable("E_BUTLER_DOES_NOT_CHECK", {
-      what: `this Butler has ${checked.findings.length} problem(s):\n${describeFindings(checked.findings)}`,
+      what: `this Butler has ${checked.findings.length} ${plural(checked.findings.length, "problem", "problems")}:\n${describeFindings(checked.findings)}`,
       why: "a dry run walks the same checked AST a live run does, so a program the checker refuses has "
         + "nothing to simulate — and reporting a walk over it would be a green light for a Butler that "
         + "cannot be published",

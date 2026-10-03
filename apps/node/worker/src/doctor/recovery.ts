@@ -3,6 +3,7 @@ import { vault } from "../keyvault.ts";
 import { escrowState, RESTORE_LEASE_MS } from "../recovery.ts";
 import { conflictKey, restoreDetail } from "../restore-detail.ts";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * Whether this Node's keys can be recovered if its Durable Object storage is lost (#92, ADR 28/29).
  *
@@ -265,9 +266,9 @@ export async function checkRecoveryConflicts(env: Env, orgId: string | null): Pr
       ? "No vault restore on this Node has collided with a live key."
       : [
         unresolved.length === 0
-          ? `${settled.length} restore(s) collided with a live key. Every one has been assessed, and every `
+          ? `${settled.length} ${plural(settled.length, "restore", "restores")} collided with a live key. Every one has been assessed, and every `
             + "collision is still permanent: the loss does not clear, only the alarm does."
-          : `${unresolved.length} restore(s) collided with a live key and have not been assessed: `
+          : `${unresolved.length} ${plural(unresolved.length, "restore", "restores")} collided with a live key and have not been assessed: `
             + `${unresolved.map(describe).join("; ")}. Two different secrets cannot share one generation `
             + "number, so mail sealed under the escrowed key of that generation stays unreadable. A "
             + "collision against a generation this Node had already sealed under is permanent, and that is "
@@ -408,7 +409,7 @@ export async function checkRecoveryRestores(env: Env, ctx: Ctx, orgId: string | 
       severity: "degraded",
       discloses: "infrastructure",
       ok: false,
-      detail: `The last vault restore (${latest.id}) failed after installing ${installed} generation(s)`
+      detail: `The last vault restore (${latest.id}) failed after installing ${installed} ${plural(installed, "generation", "generations")}`
         + `${carried.error === undefined ? "" : `: ${carried.error.slice(0, 200)}`}. The code was not spent.`,
       fix: "redeem the same recovery code again — every step is idempotent, so it resumes",
     }];
@@ -427,9 +428,9 @@ export async function checkRecoveryRestores(env: Env, ctx: Ctx, orgId: string | 
     ok: conflicted.length === 0,
     detail: conflicted.length === 0
       ? `The last vault restore (${latest.id}) completed at ${latest.settled_at}, installing ${installed} `
-        + "generation(s) with no collisions."
-      : `The last vault restore (${latest.id}) completed and **${conflicted.length} generation(s) collided `
-        + `with a live key and were not installed**: ${conflicted.join(", ")}. The vault kept the live key, `
+        + `${plural(installed, "generation", "generations")} with no collisions.`
+      : `The last vault restore (${latest.id}) completed and **${conflicted.length} ${plural(conflicted.length, "generation", "generations")} collided `
+        + `with a live key and ${plural(conflicted.length, "was", "were")} not installed**: ${conflicted.join(", ")}. The vault kept the live key, `
         + "which preserves mail sealed since the loss — and mail sealed under the escrowed key of the same "
         + "generation number stays unreadable. Generation counts agree, so the `recovery_escrow` finding "
         + "above cannot see this.",

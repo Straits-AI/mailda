@@ -1,4 +1,5 @@
 import { api, fail, flag, sessionCookie } from "../support.mjs";
+import { plural } from "@mailda/runtime";
 /**
  * Listing and repairing what the body index failed on.
  *
@@ -48,9 +49,9 @@ export async function search(argv) {
       process.stdout.write("\nthe body index has failed on nothing\n\n");
       return;
     }
-    process.stdout.write(`\n== ${failures.length} message(s) the body index failed on\n\n`);
+    process.stdout.write(`\n== ${failures.length} ${plural(failures.length, "message", "messages")} the body index failed on\n\n`);
     for (const row of failures) {
-      process.stdout.write(`   ${row.messageId}  ${row.state}  ${row.attempts} attempt(s)\n`);
+      process.stdout.write(`   ${row.messageId}  ${row.state}  ${row.attempts} ${plural(row.attempts, "attempt", "attempts")}\n`);
       process.stdout.write(`      ${row.error ?? "no reason recorded"}\n`);
     }
     /*
@@ -80,5 +81,5 @@ export async function search(argv) {
   }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) fail(`repair refused (${response.status})\n  ${payload.what ?? "no detail"}`);
-  process.stdout.write(`\n${payload.requeued} message(s) re-queued. ${payload.message}\n\n`);
+  process.stdout.write(`\n${payload.requeued} ${plural(payload.requeued, "message", "messages")} re-queued. ${payload.message}\n\n`);
 }

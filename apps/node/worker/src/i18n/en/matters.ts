@@ -44,7 +44,7 @@ export const matters = {
   "matters.new.describe": "Describe it",
   "matters.new.asked": "Matter opened.",
   "matters.refused": "No matters, or you do not hold org.admin.",
-  "matters.empty": "No matters have been opened.",
+  "matters.empty": "No matters you can see. An administrator sees every matter; anybody else sees the ones they opened.",
   "matters.col.matter": "Matter",
   "matters.col.kind": "Kind",
   "matters.col.opened": "Opened",

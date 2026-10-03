@@ -150,7 +150,7 @@ describe("signing out everywhere", () => {
     answerWith((call) => {
       if (call.path === "/api/auth/logout-everywhere") {
         return ok
-          ? Response.json({ error: "signed_out", message: "Signed out of 3 session(s).", refreshable: false })
+          ? Response.json({ error: "signed_out", message: "Signed out of 3 sessions.", refreshable: false })
           : Response.json({ error: "E_REFUSED_FOR_TEST", message: REFUSED }, { status: 409 });
       }
       return undefined;
@@ -194,7 +194,7 @@ describe("signing out saves the open draft first", () => {
           ? Response.json({ error: "E_LEGAL_HOLD", message: "A legal hold covers this mailbox." }, { status: 409 })
           : Response.json({ draft: { id: "dft_1", to: [], cc: [], bcc: [], subject: "", body: "", updatedAt: "2026-09-26T09:00:00.000Z" } });
       }
-      if (call.path === "/api/auth/logout-everywhere") return Response.json({ error: "signed_out", message: "Signed out of 1 session(s).", refreshable: false });
+      if (call.path === "/api/auth/logout-everywhere") return Response.json({ error: "signed_out", message: "Signed out of 1 session.", refreshable: false });
       return undefined;
     });
     mount(<ShellProvider><OpenComposer /><Settings /></ShellProvider>);

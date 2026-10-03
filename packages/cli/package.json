@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
-    "@mailda/contract": "workspace:*"
+    "@mailda/contract": "workspace:*",
+    "@mailda/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2"

@@ -1,5 +1,6 @@
 import { whyAdminCannotExist } from "../backup.mjs";
 import { api, claimState, fail, flag, sessionCookie } from "../support.mjs";
+import { plural } from "@mailda/runtime";
 /* ------------------------------------------------------------------ dispatch ----------------------- */
 
 /* ------------------------------------------------------------------ verify-evidence ---------------- */
@@ -79,14 +80,14 @@ export async function verifyEvidence(argv) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       fail(`/api/evidence/verify refused (${response.status})\n  ${payload.what ?? payload.message ?? "no detail"}`
-        + `\n\n  covered ${checked} message(s) before this, so the sweep is incomplete rather than clean.`);
+        + `\n\n  covered ${checked} ${plural(checked, "message", "messages")} before this, so the sweep is incomplete rather than clean.`);
     }
 
     batches += 1;
     checked += payload.checked ?? 0;
     bytes += payload.bytesRead ?? 0;
     faults.push(...(payload.faults ?? []));
-    process.stdout.write(`   batch ${batches}: ${payload.checked} checked, ${(payload.faults ?? []).length} fault(s)\n`);
+    process.stdout.write(`   batch ${batches}: ${payload.checked} checked, ${(payload.faults ?? []).length} ${plural((payload.faults ?? []).length, "fault", "faults")}\n`);
 
     if (payload.resumeAfter === null || payload.resumeAfter === undefined) break;
     after = payload.resumeAfter;
@@ -112,7 +113,7 @@ export async function verifyEvidence(argv) {
 
   if (faults.length === 0) {
     process.stdout.write(
-      `\n   ${checked} message(s) checked in ${batches} batch(es), ${megabytes} MiB read. Every one opened and\n`
+      `\n   ${checked} ${plural(checked, "message", "messages")} checked in ${batches} ${plural(batches, "batch", "batches")}, ${megabytes} MiB read. Every one opened and\n`
       + "   hashed to what was recorded when it arrived.\n\n",
     );
     /*
@@ -126,7 +127,7 @@ export async function verifyEvidence(argv) {
     return;
   }
 
-  process.stdout.write(`\n   ${faults.length} fault(s) across ${checked} object(s) checked:\n\n`);
+  process.stdout.write(`\n   ${faults.length} ${plural(faults.length, "fault", "faults")} across ${checked} ${plural(checked, "object", "objects")} checked:\n\n`);
   for (const kind of ["altered", "missing", "unreadable"]) {
     const group = faults.filter((one) => one.kind === kind);
     if (group.length === 0) continue;

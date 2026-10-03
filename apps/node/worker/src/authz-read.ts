@@ -1,7 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 import { agentGrantableActions } from "@mailda/contract/agent";
 import { MESSAGE_PAGE_PARAMS, PLACES, specFor } from "@mailda/contract/routes";
-import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
+import { type Ctx, ID_PREFIXES, idPattern, plural } from "@mailda/runtime";
 import {
   BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, STANDING_CONTENT_RELATIONS, type MailboxRelation,
 } from "./access.ts";
@@ -2322,7 +2322,7 @@ async function openedPreviews(
     await log(env, ctx, {
       level: "warn",
       event: "preview.unopenable",
-      message: `${failed} row preview(s) on a page could not be opened and listed without one: ${reason ?? "unknown"}`,
+      message: `${failed} row ${plural(failed, "preview", "previews")} on a page could not be opened and listed without one: ${reason ?? "unknown"}`,
       orgId,
       detail: { count: failed, reason },
     });

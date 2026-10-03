@@ -202,7 +202,7 @@ describe("delivery visibility distinguishes blind from attributing-badly", () =>
     expect(unattributed.severity).toBe("degraded");
     // One is the fault; the two behind it are context, and conflating them is what made this fail for ever.
     expect(unattributed.detail).toContain("1 delivery event");
-    expect(unattributed.detail).toContain("2 older one(s)");
+    expect(unattributed.detail).toContain("2 older ones");
   });
 
   it("says nothing about attribution when every event was attributed", async () => {
@@ -306,7 +306,7 @@ describe("delivery visibility and verified destinations", () => {
 
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
-    expect(finding.detail).toContain("were not shown as verified");
+    expect(finding.detail).toContain("not shown as");
     // Nothing unchecked and nothing explained, so neither "more" sentence is said with a zero in it.
     expect(finding.detail).not.toContain("have not been checked");
     expect(finding.detail).not.toContain("more were verified destinations");
@@ -354,7 +354,7 @@ describe("delivery visibility and verified destinations", () => {
 
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
-    expect(finding.detail).toContain("1 recipient(s) handed over");
+    expect(finding.detail).toContain("1 recipient handed over");
     expect(finding.detail).toContain(`account ${ACCOUNT}`);
     expect(finding.detail).toContain("1 more are not covered by that read, because the latest dispatch pass");
     expect(finding.detail).toContain("1 more were verified destinations");
@@ -399,7 +399,7 @@ describe("delivery visibility and verified destinations", () => {
     expect(finding.ok).toBe(false);
     expect(finding.detail).toContain("fixture: refused for the test");
     expect(finding.detail).toContain("could not read, not none verified");
-    expect(finding.detail).not.toContain("were not shown as verified");
+    expect(finding.detail).not.toContain("not shown as");
   });
 
   it("does not count a send as checked by a read that ran while it was still dispatching", async () => {
@@ -412,7 +412,7 @@ describe("delivery visibility and verified destinations", () => {
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
     expect(finding.detail).toContain("None of them is covered");
-    expect(finding.detail).not.toContain("were not shown as verified");
+    expect(finding.detail).not.toContain("not shown as");
   });
 
   it("never counts a send whose pass died as checked", async () => {
@@ -441,12 +441,12 @@ describe("delivery visibility and verified destinations", () => {
     // It can see, so it is not blind, and the breakers must not be told it is.
     const finding = visibility(report);
     expect(finding.ok).toBe(true);
-    expect(finding.detail).toBe("1 of 2 handed-over recipient(s) have an observed outcome, from 1 attributed event(s).");
+    expect(finding.detail).toBe("1 of 2 handed-over recipients has an observed outcome, from 1 attributed event.");
     // The receipt's tripwire firing is a degradation of its own, with the way to resolve it.
     const against = voidFinding(report);
     expect(against.ok).toBe(false);
     expect(against.severity).toBe("degraded");
-    expect(against.detail).toContain("1 recipient(s) that a read showed as verified destinations when handed over had a delivery event published for them");
+    expect(against.detail).toContain("1 recipient that a read showed as verified destinations when handed over had a delivery event published for them");
     expect(against.detail).toContain("which no verified destination did in the one case measured");
     expect(against.detail).toContain("still counts as verified here until the list is read again");
     expect(against.detail).not.toContain("could not be used");
@@ -476,10 +476,10 @@ describe("delivery visibility and verified destinations", () => {
     const finding = visibility(report);
     // Heard from, so not blind, and not branch 5 or 6: nothing here is called explained.
     expect(finding.ok).toBe(true);
-    expect(finding.detail).toBe("0 of 1 handed-over recipient(s) have an observed outcome, from 1 attributed event(s).");
+    expect(finding.detail).toBe("0 of 1 handed-over recipient have an observed outcome, from 1 attributed event.");
     const against = voidFinding(report);
     expect(against.ok).toBe(false);
-    expect(against.detail).toContain("1 recipient(s) that a read showed as verified destinations when handed over had a delivery event published for them");
+    expect(against.detail).toContain("1 recipient that a read showed as verified destinations when handed over had a delivery event published for them");
   });
 
   it("degrades on an unusable event even on a Node that is hearing outcomes", async () => {
@@ -514,7 +514,7 @@ describe("delivery visibility and verified destinations", () => {
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
     expect(finding.detail).not.toContain("not a fault this Node can fix");
-    expect(finding.detail).toContain("1 delivery event(s) this Node could not tie to a send were for addresses");
+    expect(finding.detail).toContain("1 delivery event this Node could not tie to a send was for addresses");
     expect(finding.fix).toContain("The delivery_attribution finding counts the events");
     expect(finding.fix!.startsWith("remeasure docs/receipts/email-sending-events.md")).toBe(true);
     // A read listed every silent recipient, and the evidence voids that: the conditional must not resolve to
@@ -601,7 +601,7 @@ describe("delivery visibility and verified destinations", () => {
 
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
-    expect(finding.detail).toContain("1 recipient(s) handed over more than 15 minutes ago were not shown as verified");
+    expect(finding.detail).toContain("1 recipient handed over more than 15 minutes ago was not shown as a verified Email Routing destination");
     expect(finding.detail).toContain("could not be used");
     // The read already answered for it, so the fix does not ask for the read.
     expect(finding.fix!.startsWith("read the sending_event.unusable")).toBe(true);
@@ -620,7 +620,7 @@ describe("delivery visibility and verified destinations", () => {
 
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(false);
-    expect(finding.detail).toContain("1 recipient(s) handed over");
+    expect(finding.detail).toContain("1 recipient handed over");
     expect(finding.detail).toContain("1 more were shown as verified destinations when handed over, and are not counted as explained.");
     // It relies on the extrapolation, and no evidence sentence said so first.
     expect(finding.detail).toContain("still counts as verified here until the list is read again");
@@ -670,7 +670,7 @@ describe("delivery visibility and verified destinations", () => {
 
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok).toBe(true);
-    expect(finding.detail).toContain("1 of 2 handed-over recipient(s) have an observed outcome");
+    expect(finding.detail).toContain("1 of 2 handed-over recipients has an observed outcome");
     expect(finding.detail).toContain("1 of the 1 without one were shown as verified");
     expect(finding.detail).toContain("still counts as verified here until the list is read again");
   });

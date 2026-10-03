@@ -237,7 +237,7 @@ describe("the corruptions that actually happen", () => {
       inventory: bytes(shortened),
     });
     expect(outcome.ok).toBe(false);
-    expect(outcome.problems[0]?.what).toContain("holds 1 object(s), and the index says 2");
+    expect(outcome.problems[0]?.what).toContain("holds 1 object, and the index says 2");
   });
 
   it("names a missing file rather than failing on its hash", () => {
@@ -293,7 +293,7 @@ describe("what the index says about its own limits", () => {
       inventory: bytes(INVENTORY),
     });
     expect(outcome.ok).toBe(false);
-    expect(outcome.problems[0]?.what).toContain("3 fault(s) were already present");
+    expect(outcome.problems[0]?.what).toContain("3 faults were already present");
   });
 
   it("says how many objects nothing references, rather than hiding them", () => {

@@ -4,6 +4,7 @@ import { decidersByMailbox } from "../deciders.ts";
 import { holdsForReport } from "../holds.ts";
 import { noticeState } from "../notifications.ts";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * Legal hold (#64): what is held, what a hold is failing to enforce, and whether anybody could lift it.
  *
@@ -99,7 +100,7 @@ export async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Prom
       ? "all dates"
       : `${hold.fromDate ?? "the beginning"} to ${hold.toDate ?? "ongoing"}`;
     return `${hold.id} on mailbox ${hold.mailboxId}, ${window}, ` +
-      `matter ${hold.matterId ?? "none cited"}, placed by ${hold.placedBy} ${age} day(s) ago`;
+      `matter ${hold.matterId ?? "none cited"}, placed by ${hold.placedBy} ${age} ${plural(age, "day", "days")} ago`;
   };
 
   const findings: Finding[] = [{
@@ -110,7 +111,7 @@ export async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Prom
     ok: true,
     detail: holds.length === 0
       ? "No legal hold is in force, so nothing suppresses orphan collection."
-      : `${holds.length} legal hold(s) in force. Orphan collection is suppressed for the whole ` +
+      : `${holds.length} legal ${plural(holds.length, "hold", "holds")} in force. Orphan collection is suppressed for the whole ` +
         `organization while any hold stands — an orphan is unattributable by definition, so nothing can ` +
         `prove one is not responsive; they are still enumerated by reconcile and never deleted. ` +
         holds.map(scope).join("; ") + ".",
@@ -128,7 +129,7 @@ export async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Prom
       severity: "report",
       discloses: "data",
       ok: true,
-      detail: `${pending.length} lift request(s) waiting on two distinct approvers: ` +
+      detail: `${pending.length} lift ${plural(pending.length, "request", "requests")} waiting on two distinct approvers: ` +
         pending.map((hold) =>
           `${hold.id} on mailbox ${hold.mailboxId}, requested by ${hold.pendingLift?.requestedBy} ` +
           `(approval ${hold.pendingLift?.approvalId}), reason: ${hold.pendingLift?.reason}`).join("; ") +
@@ -146,7 +147,8 @@ export async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Prom
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `${orphaned.length} hold(s) name a mailbox that no longer exists, so they enforce nothing ` +
+      detail: `${orphaned.length} ${plural(orphaned.length, "hold names", "holds name")} a mailbox that no longer exists, so `
+        + `${plural(orphaned.length, "it enforces", "they enforce")} nothing ` +
         `while reporting as active: ${orphaned.map((hold) => `${hold.id} on ${hold.mailboxId}`).join(", ")}.`,
       fix: "this Node cannot reach that state on its own — placing refuses an absent mailbox and nothing " +
         "deletes a mailbox — so either the mailbox row was removed outside the product or the hold was " +
@@ -191,10 +193,11 @@ export async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Prom
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `${stuck.length} hold(s) in force cannot be lifted by anybody: ` +
-        stuck.map((hold) =>
-          `${hold.id} on mailbox ${hold.mailboxId}, where ${eligible.get(hold.mailboxId)?.size ?? 0} ` +
-          "person(s) hold approval.decide").join("; ") +
+      detail: `${stuck.length} ${plural(stuck.length, "hold", "holds")} in force cannot be lifted by anybody: ` +
+        stuck.map((hold) => {
+          const holders = eligible.get(hold.mailboxId)?.size ?? 0;
+          return `${hold.id} on mailbox ${hold.mailboxId}, where ${holders} ${plural(holders, "person holds", "people hold")} approval.decide`;
+        }).join("; ") +
         ". A lift takes two distinct approvers and excludes whoever requested it (#64), so this hold is " +
         "permanent until somebody is granted the relation. Preservation is unaffected — the failure " +
         "direction is over-holding.",
@@ -408,7 +411,7 @@ export async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string 
       ? "No notification is due and undelivered. §7's notices to the people whose mail was read are dated "
         + "when the matter closes — or when the grant expires, if it cited no matter — and delivered by the "
         + "one-minute cron into those people's own interface."
-      : `${state.overdue} notification(s) fell due and have not been delivered, the oldest at `
+      : `${state.overdue} ${plural(state.overdue, "notification fell due and has", "notifications fell due and have")} not been delivered, the oldest at `
         + `${state.oldestOverdueDueAt ?? "an unrecorded instant"}. Each one is a person who has not been told `
         + `their mail was read, or somebody who has not been told they are being asked to decide something.`,
     ...(state.overdue === 0 ? {} : {
@@ -425,8 +428,8 @@ export async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string 
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `${state.stranded} notification(s) have no due date and cite a matter that has already closed, `
-        + "so they can never fall due and nobody will be told their mail was read. This Node writes a due "
+      detail: `${state.stranded} ${plural(state.stranded, "notification has no due date and cites", "notifications have no due date and cite")} a matter that has already closed, `
+        + `so ${plural(state.stranded, "it", "they")} can never fall due and nobody will be told their mail was read. This Node writes a due `
         + "date on both orderings — when the matter closes, and when a grant takes effect under a matter that "
         + "is already closed — so it cannot produce this state.",
       fix: "read the supervised.granted entries for the grants these notices name (GET /api/audit) — they "
@@ -442,10 +445,10 @@ export async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string 
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `The trail records ${state.grantsRecorded} supervised grant(s) taking effect and this Node holds `
-        + `${state.noticesOwed} notification(s) for them. Every notice is written in the same transaction as `
+      detail: `The trail records ${state.grantsRecorded} supervised ${plural(state.grantsRecorded, "grant", "grants")} taking effect and this Node holds `
+        + `${state.noticesOwed} ${plural(state.noticesOwed, "notification", "notifications")} for them. Every notice is written in the same transaction as `
         + `the grant, so this Node cannot produce that difference: ${state.grantsRecorded - state.noticesOwed} `
-        + `row(s) were removed outside the product.`,
+        + `${plural(state.grantsRecorded - state.noticesOwed, "row was", "rows were")} removed outside the product.`,
       fix: "do not re-create the rows by hand — a notice minted now would carry a due date nobody decided. "
         + "Run the audit verification (GET /api/audit) to see whether the trail itself was edited too, then "
         + "read the supervised.granted entries: they name the grant, the mailbox, the scope, the matter and "
@@ -520,7 +523,7 @@ export async function checkAgentCeilings(env: Env, ctx: Ctx, orgId: string | nul
     ok: affected.length === 0,
     detail: affected.length === 0
       ? "Every live agent's pinned ceiling is within what a machine may hold today."
-      : `${affected.length} live agent(s) hold capabilities no machine may have any more, and those acts are `
+      : `${affected.length} ${plural(affected.length, "live agent holds", "live agents hold")} capabilities no machine may have any more, and those acts are `
         + `refused: ${affected.map((one) => `${one.name} (${one.actions.join(", ")})`).join("; ")}. A ceiling `
         + "is pinned at mint and the classification is not, so a route reclassified as needing a person "
         + "narrows every agent already holding it. Nothing is exposed — the refusal is in force — but an "

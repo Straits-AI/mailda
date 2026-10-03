@@ -3,7 +3,7 @@ import type { ButlerVersionState } from "@mailda/contract/schemas";
 import {
   astSha256, canonicalButlerJson, checkButler, describeFindings, textSha256, type Butler, type Finding,
 } from "@mailda/butler-ast";
-import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
+import { type Ctx, ID_PREFIXES, plural } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
@@ -115,7 +115,7 @@ function requireAdminOrThrow(actorUserId: string): CallerError {
 
 function refuseFindings(findings: readonly Finding[]): CallerError {
   return unprocessable("E_BUTLER_DOES_NOT_CHECK", {
-    what: `this Butler has ${findings.length} problem(s):\n${describeFindings(findings)}`,
+    what: `this Butler has ${findings.length} ${plural(findings.length, "problem", "problems")}:\n${describeFindings(findings)}`,
     why: "a stored AST is read by the checker and by the engine, and a store that can hold a program which "
       + "does not check would make every later reader validate it again, defensively, forever",
     fix: "fix the findings above and submit again. Each one names its node",

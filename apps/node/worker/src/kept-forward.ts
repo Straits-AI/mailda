@@ -8,6 +8,7 @@ import { getEvidence } from "./evidence-store.ts";
 import { headerBlock, headerFields, messageIds, parseHeaders } from "./mime.ts";
 import { COPY_OF_HEADER } from "./outbound/copy.ts";
 import { boundedReferences, sealManifest } from "./outbound/manifest.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * Kept forwards (ADR 47, 3 October 2026): an address taken over from an Email Routing forward rule whose destination
@@ -206,7 +207,7 @@ export async function copyKept(env: Env, ctx: Ctx, receiptId: string, messageId:
   if (row.quarantined_at !== null) return await refuse("the message is quarantined in its mailbox, and a copy would send what the mailbox held back");
   if (row.attachments_dangerous === null) return await refuse("this Node could not read the message's attachments, so it cannot say none is dangerous");
   if (row.attachments_dangerous > 0) {
-    return await refuse(`the message carries ${row.attachments_dangerous} attachment(s) this Node judges dangerous, and an automatic copy has no author to say send them anyway`);
+    return await refuse(`the message carries ${row.attachments_dangerous} ${plural(row.attachments_dangerous, "attachment", "attachments")} this Node judges dangerous, and an automatic copy has no author to say send them anyway`);
   }
   // DMARC failed: the sender's own domain disowned this message. The copy is From the customer's domain and passes
   // DMARC there, so copying it would launder a forged sender's name into a message that authenticates.
