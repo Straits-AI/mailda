@@ -4522,3 +4522,9 @@ with a problem (an HTML part that sanitised to nothing or could not be rendered)
 that the HTML had been set aside, though the Node sent the sentence. A message with neither HTML nor text showed an
 empty panel, the blank §5C and ADR 37 rule out. The first now shows the Node's sentence for that case, in the viewer's
 language, above the text. The second says "This message has no body.".
+
+**"Not an administrator" only when the Node said so (H13).** People, Rules, Butlers and Matters read any failed read
+as "No …, or you do not hold org.admin.", so a Node that could not reach its catalog told an administrator they were
+not one. The Node answers a non-administrator 404 on People, Rules, Butlers and the holds list, and those screens now
+say it on a 404 only and show any other failure as failed, in the Node's words, as Limits has since G5. The matters
+list is never refused to a member (it lists their own), so its sentence is gone and every failure there is failed.

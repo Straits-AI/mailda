@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
-  createButler, publishButlerVersion, resumeButler, saveButlerDraft,
+  answeredNotFound, createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
   replayButlerRun, runFacts, simulateButler,
   type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Said, type Simulation,
@@ -568,13 +568,16 @@ export function Butlers() {
   /*
    * A 404 here means "not an administrator", by §5C — the read deliberately cannot distinguish that from an
    * organization with no Butlers, and this screen must not undo that by guessing which it was. So the
-   * message says what somebody in either position can act on and asserts neither.
+   * message says what somebody in either position can act on and asserts neither. Any other failure is a
+   * failed read, and says so.
    */
   if (butlers.isError) {
     return (
       <>
         {heading}
-        <Nothing kind="empty" detail={t("butlers.notAdmin")} />
+        {answeredNotFound(butlers.error)
+          ? <Nothing kind="empty" detail={t("butlers.notAdmin")} />
+          : <Nothing kind="failed" detail={marked(butlers.error)} />}
       </>
     );
   }

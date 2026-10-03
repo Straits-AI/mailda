@@ -68,6 +68,15 @@ export class ReadFailure extends Error implements Said {
 }
 
 /**
+ * Whether a read failed with the Node's 404. For an administrator's read (People, Rules, Butlers, holds) that is what
+ * the Node answers somebody who is not an administrator, on purpose the same as "none here" (§5C). Any other failure
+ * is a failed read, and a screen says so rather than "not an administrator" (H13, as G5 did for Limits).
+ */
+export function answeredNotFound(error: unknown): boolean {
+  return error instanceof ReadFailure && error.status === 404;
+}
+
+/**
  * Every path this client asks for, built from the shared contract (#85, ADR 12).
  *
  * ADR 12 locks *"UI, CLI, SDK, Skill and MCP parity is generated from shared contracts"*, and this file used
