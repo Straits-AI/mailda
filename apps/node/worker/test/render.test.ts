@@ -443,6 +443,11 @@ describe("a body's problem, by code", () => {
       text(en[`reader.body.problem.${code}`] as string, { cause: "a parser's line" }, "en", undefined)
         !== problemSentence(code, "a parser's line", false));
     expect(differing).toEqual([]);
+    // And where the plain-text alternative is shown instead (H12): `unreadable` never has one, the parse having failed.
+    const instead = (["sanitised_empty", "unrenderable"] as const).filter((code) =>
+      text(en[`reader.body.fallback.${code}`] as string, { cause: "a parser's line" }, "en", undefined)
+        !== problemSentence(code, "a parser's line", true));
+    expect(instead).toEqual([]);
   });
 
   it("names the code and the cause beside the sentence, and none when there is no problem", async () => {

@@ -4516,3 +4516,9 @@ text matched on "minute(s)" no longer appears.
 noun goes: "was granted a supervised content of Support". It now names the read and gives the scope beside it, and a
 grant whose scope was not recorded has its own sentence, where English said "a supervised read" by filling the token's
 place with a word and Chinese said （范围：查阅）.
+
+**A body's problem is said when the plain text is shown instead, and an empty body says so (H12).** A text-only body
+with a problem (an HTML part that sanitised to nothing or could not be rendered) showed the plain text with no word
+that the HTML had been set aside, though the Node sent the sentence. A message with neither HTML nor text showed an
+empty panel, the blank §5C and ADR 37 rule out. The first now shows the Node's sentence for that case, in the viewer's
+language, above the text. The second says "This message has no body.".

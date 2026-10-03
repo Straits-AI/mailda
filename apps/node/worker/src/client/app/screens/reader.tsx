@@ -235,14 +235,16 @@ function useFrameFocus(frame: React.RefObject<HTMLIFrameElement | null>): boolea
 
 /**
  * Why a body could not be shown: this interface's sentence for the Node's code (`BODY_PROBLEMS`), with the
- * parser's own words inside it marked, or the Node's whole sentence for a code this interface does not know.
+ * parser's own words inside it marked, or the Node's whole sentence for a code this interface does not know. A
+ * text-only body with a problem is the plain-text alternative shown instead, and its sentence says so.
  */
 function bodyProblem(rendered: RenderedBody): ReactNode {
   const code = rendered.problemCode;
   const cause = <NodeWords>{rendered.problemCause ?? ""}</NodeWords>;
-  if (code === "sanitised_empty") return t("reader.body.problem.sanitised_empty");
+  const instead = rendered.state === "text-only";
+  if (code === "sanitised_empty") return t(instead ? "reader.body.fallback.sanitised_empty" : "reader.body.problem.sanitised_empty");
   if (code === "unreadable") return sentence("reader.body.problem.unreadable", { cause });
-  if (code === "unrenderable") return sentence("reader.body.problem.unrenderable", { cause });
+  if (code === "unrenderable") return sentence(instead ? "reader.body.fallback.unrenderable" : "reader.body.problem.unrenderable", { cause });
   return rendered.problem === null ? t("reader.body.unparsed") : <NodeWords>{rendered.problem}</NodeWords>;
 }
 
@@ -269,6 +271,7 @@ export function MessageBody({ id }: { id: string }) {
         <p className="notice dim">{t("reader.body.remote", { n: rendered.blockedRemote })}</p>
       ) : null}
       {rendered.truncated ? <p className="notice dim">{t("reader.body.truncated")}</p> : null}
+      {rendered.state === "text-only" && rendered.problem !== null ? <p className="notice dim">{bodyProblem(rendered)}</p> : null}
       <Attachments parts={rendered.attachments} receiptId={id} />
       <Links links={rendered.links} />
       {rendered.state === "html" && rendered.html !== null ? (
@@ -283,6 +286,8 @@ export function MessageBody({ id }: { id: string }) {
           // Read when the frame renders. The theme changes only on /settings, where no reader is mounted.
           srcDoc={frameHead(currentTheme(), bodyScriptOf(rendered)) + rendered.html}
         />
+      ) : rendered.state === "no-body" ? (
+        <p className="notice dim" data-body="none">{t("reader.body.none")}</p>
       ) : (
         // The sender's text, in the shell's document: `lang=""` so it does not claim the interface's language
         // (ADR 46), and the message's script, as the frame has, so its Han is drawn in the message's forms
