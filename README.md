@@ -310,6 +310,10 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
   SPF and DKIM. Until then a Node can only send to addresses already verified in your account, so it can
   receive a customer's message and be unable to answer it. The outbox says when the capability was never
   verified.
+- **Until a deploy is promoted, an outbox row can show a reason its state no longer has.** Versions before 1
+  October 2026 kept a gate's reason, such as *too much, too fast*, and its sentence after the send moved on or was
+  cancelled. Such a version keeps serving until the new one is promoted, indefinitely if its canary check fails.
+  Once a fixed version is promoted, the scheduled handler clears them within a minute, or a few for more than 500.
 - **Nobody is emailed an invitation.** An administrator mints a secret and hands it over however they
   already trust; the person redeems it and chooses their own password. Emailing it would post a credential
   to an address nobody has verified.

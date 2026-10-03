@@ -33,9 +33,9 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  *
  * **A `state_reason` exists exactly on `awaiting` and `withheld`**, the gates and the refusals (0019). Every
  * writer into another state clears it: the releases into `held`, the claim into `outcome_unknown` (which every
- * later outcome passes through), and `cancelSend`. `0073_state_reason_invariant.sql` repairs the rows the claim
- * and the cancel left before they did, except those the previous version writes while this one is still a
- * canary; its header says why, and that the next release re-runs it.
+ * later outcome passes through), and `cancelSend`. `0073_state_reason_invariant.sql` repaired the rows the claim
+ * and the cancel left before they did. `repairStaleReasons` repairs every minute from the cron, so the rows the
+ * previous version writes while this one is still a canary are cleared too (#319).
  *
  * `sent` and `delivered` do not exist here and must never be added. §5C forbids claiming an outcome
  * nobody observed, and the transport reports acceptance rather than arrival.
@@ -260,6 +260,57 @@ export async function cancelSend(
       current.state === "handed_over"
         ? "This message was already handed to the mail service and cannot be recalled."
         : `This message can no longer be stopped; it is ${current.state}.`,
+  };
+}
+
+/**
+ * How many sends one statement of `repairStaleReasons` changes per pass. Not a capacity: it caps one statement's
+ * work while the repair drains a backlog, and the next minute takes the rest. 500 is the subject backfill's
+ * `BACKFILL_LIMIT`, the per-pass size the scheduled handler already writes, and the writes are needed anyway.
+ */
+export const REASON_REPAIR_LIMIT = 500;
+
+/**
+ * Restores the invariant in this file's header (a `state_reason` exists exactly on `awaiting` and `withheld`, and a
+ * cancelled send has no `last_error`) on rows an earlier version wrote. #319.
+ *
+ * `0073_state_reason_invariant.sql` did this once, but the version before 1 October 2026 keeps serving through the
+ * canary (the cron, the `OutboxSweeper` alarm, the API's `cancelSend`), and for good if the canary check fails, so it
+ * can write a stale pair after 0073 ran. Running 0073 again in a later release would depend on every Node upgrading
+ * through that release. This runs every minute from the scheduled handler in whatever version serves, so once a
+ * version containing it is promoted, every stale pair any earlier version wrote is gone within a minute (or a few,
+ * for a backlog over `REASON_REPAIR_LIMIT`), whatever order the Node upgraded in.
+ *
+ * The same two statements as 0073, with a `LIMIT` and an org. They are idempotent, and atomic per statement, so a
+ * row that a current writer moves into `awaiting` or `withheld` in the meantime is not matched. The predicates are
+ * spelled exactly as the partial indexes in `0076_state_reason_repair_index.sql` spell them. That is what keeps a
+ * pass with nothing to repair at a constant 6 rows read however many sends the Node holds, against 1,006 without
+ * the indexes (local D1 in `test/breakers.test.ts`, which asserts only that the figure does not grow). Returns the ids changed, so the caller can log them.
+ *
+ * Current writers never produce these rows, so once the repair has caught up, a send it repairs means an older
+ * version is still writing them, or a current writer has regressed. That is why the caller logs every repair.
+ */
+export async function repairStaleReasons(
+  env: Env,
+  orgId: string,
+): Promise<{ reasons: string[]; cancelledErrors: string[] }> {
+  const reasons = await env.CATALOG.prepare(
+    `UPDATE send_manifests SET state_reason = NULL
+      WHERE id IN (SELECT id FROM send_manifests
+                    WHERE org_id = ? AND state_reason IS NOT NULL AND state NOT IN ('awaiting', 'withheld')
+                    LIMIT ?)
+      RETURNING id`,
+  ).bind(orgId, REASON_REPAIR_LIMIT).all<{ id: string }>();
+  const cancelledErrors = await env.CATALOG.prepare(
+    `UPDATE send_manifests SET last_error = NULL
+      WHERE id IN (SELECT id FROM send_manifests
+                    WHERE org_id = ? AND state = 'cancelled' AND last_error IS NOT NULL
+                    LIMIT ?)
+      RETURNING id`,
+  ).bind(orgId, REASON_REPAIR_LIMIT).all<{ id: string }>();
+  return {
+    reasons: reasons.results.map((row) => row.id),
+    cancelledErrors: cancelledErrors.results.map((row) => row.id),
   };
 }
 

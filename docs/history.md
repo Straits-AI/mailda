@@ -4308,9 +4308,9 @@ outcome after it is written through it. A reason now exists exactly on `awaiting
 where a stale word and a true one cannot be told apart. **It is not a complete repair on its own.** `mailda deploy`
 applies it in the expand step, and the previous version (the cron backstop, the `OutboxSweeper` Durable Object, and
 `cancelSend` behind the API) keeps serving until promotion, so it can write a stale pair after 0073 has run. If the
-canary check fails, that window has no end until a later deploy promotes. 0073 never runs twice, so the next release
-ships the same two statements again as a new expand migration; by then the fixed claim and cancel are the incumbent, so nothing writes a stale pair after
-it runs. The gate's history stays where it was: the
+canary check fails, that window has no end until a later deploy promotes. 0073 never runs twice. The plan was for
+the next release to ship the same two statements again as a migration; on 3 October 2026 the cron took that job
+instead (#319, "The reason repair runs every minute" below). The gate's history stays where it was: the
 `send.rate_limited` entry, the seal entry, the approvals and `policy_outcome`. A database trigger that would refuse
 a stale pair, and a state guard in the Outbox's chip, were both considered and not built: the trigger would be a
 fourth copy of the list of states with a reason, and the guard would hide the token in one channel while the API,
@@ -4491,6 +4491,27 @@ script itself under `node:vm`.
 Both pages now import the README as `?raw`, which Vite resolves from the source. And Starlight finds its built-in
 words by stripping a region from `lang` with `-[a-zA-Z]{2}`, which turns zh-Hans into `zhns`. Under zh-Hans the docs
 had English menus until the build handed Starlight its own zh-CN translations under that tag.
+
+## The reason repair runs every minute (3 October 2026, #319)
+
+**0073 left a gap, and the plan to close it depended on release order.** `0073_state_reason_invariant.sql` cleared
+`state_reason` on sends neither `awaiting` nor `withheld`, and `last_error` on cancelled ones, once, in the expand
+step. The version before it keeps serving through the canary, and for good if the canary check fails, so it can
+write a stale pair after 0073 ran. The plan was to ship the same statements again as a migration in the next
+release. That only works if every Node upgrades through that particular release, and a Node that skips it, or whose
+canary for it fails, keeps the rows. Principle 5 calls that a stopgap.
+
+**Now the version that is serving repairs the rows itself.** `repairStaleReasons` in `src/outbound/dispatch.ts`
+runs the same two statements from the scheduled handler every minute, at most 500 sends per statement, and logs
+`outbound.reasons_repaired` with the ids whenever it changes something. Once a version containing it is promoted,
+every stale pair any earlier version wrote is gone within a minute, whatever order the Node upgraded in. Nothing
+else has to ship. `0076_state_reason_repair_index.sql` adds two partial indexes that hold only the rows the repair
+looks for. The fixed writers never produce such a row, so once the repair has caught up both indexes are empty and a
+pass costs two D1 statements and a constant 6 rows read. That was measured in `test/breakers.test.ts` with 500 valid
+sends present: 6 rows read, against 1,006 with the indexes dropped, on the local D1 the tests run against. No receipt governs the cron's per-pass cost
+(`cron-lateness` is about timing, and `doctor-check-cost` covers doctor), so the figure is recorded here and
+asserted in the test, which checks that it does not grow with the table. Once the repair has caught up, any further
+`outbound.reasons_repaired` line means an older version is still serving, or a current writer has regressed.
 
 ## The round-four follow-ups (3 October 2026)
 

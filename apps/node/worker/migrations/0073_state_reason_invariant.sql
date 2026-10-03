@@ -13,10 +13,12 @@
 -- Worker at 0% and checks it. Until promotion the incumbent still serves: the cron backstop and the `OutboxSweeper`
 -- Durable Object run its claim, and its `cancelSend` serves the API, so they can write a stale pair after this has
 -- run. If the canary check fails, traffic never moves and the incumbent keeps writing them until some later deploy
--- promotes. This file is in `d1_migrations` by then and never runs again, so those rows keep the old display bug
--- (a reason under the wrong state), nothing worse. FOLLOW-UP: the next release ships these two statements again,
--- unchanged, as a new expand migration. Its incumbent is this release's claim and cancel, which write no stale
--- pair, so that re-run is the complete repair. Both statements are idempotent, so running them twice is safe.
+-- promotes. This file is in `d1_migrations` by then and never runs again. CLOSED (#319): running these statements
+-- again as a migration in a later release would depend on every Node upgrading through that release, so that was not
+-- done. Instead `repairStaleReasons` in `src/outbound/dispatch.ts` runs the same two statements from the cron every
+-- minute, in a limited batch, indexed by `0076_state_reason_repair_index.sql`. Once a version containing it is
+-- promoted, every stale pair any earlier version wrote is cleared within a minute, whatever order the Node upgraded
+-- in. This file remains the first pass, which clears what the old writers left before any deploy.
 --
 -- A projection repair, not a loss of evidence: the history of a gate is in the trail (`send.rate_limited`, the
 -- seal entry, `send.withheld`), in `approvals`, and in `policy_outcome`, none of which this touches.

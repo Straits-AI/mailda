@@ -913,7 +913,8 @@ not have.
   not render identically. The Worker writes the token only while a send is `awaiting` or `withheld` and clears
   it on every other transition. A row can still carry one under another state if the previous version wrote
   it: before 1 October 2026 (repaired by `0073_state_reason_invariant.sql`), or while that release's canary
-  was still being checked (repaired by the next release's re-run; the 0073 header has the detail). The chip
+  was still being checked (repaired by the scheduled handler's `repairStaleReasons` within a minute of the fixed
+  version being promoted; the 0073 header has the detail). The chip
   renders whatever the row carries, and the fix for a stale token is the row, not a state guard in one channel.
 
 **The reason words live in the catalog, not in `policy.ts` and not in `ledgers.tsx`**, which is the same
