@@ -1,140 +1,133 @@
 ---
 import mark from "../assets/mark.svg?raw";
 import "../styles/site.css";
+import { WORDS, type SiteLocale } from "../landing-words.ts";
 
-interface Props { gaps: { title: string; detail: string }[] }
-const { gaps } = Astro.props;
+interface Props { gaps: { title: string; detail: string }[]; locale: SiteLocale }
+const { gaps, locale } = Astro.props;
+const w = WORDS[locale];
+/** Where this locale's pages live: Starlight's zh-cn locale serves the docs under /zh-cn/docs/, English at the root. */
+const base = locale === "en" ? "" : "/zh-cn";
+/** The README's rows are English on every page; under another language they say so with `lang`. */
+const readmeLang = locale === "en" ? undefined : "en";
 
 /*
  * The landing page as a doctor report (the roll of 18 September). Every `ok` line names a doc that holds it
  * to account; every `warn` line is the README's own gap table, read at build time and unedited. The copy
  * above the report is for the owner; the report is for the builder. Nothing here is a claim the repository
- * does not make.
+ * does not make. The words are `src/landing-words.ts`; what stays here is what is not words: check ids, files, paths.
  */
-const checks: { check: string; says: string; doc: string; href: string }[] = [
-  { check: "install", says: "One command into your own Cloudflare account: it signs you in, deploys, claims the Node in the same terminal, and with that one sign-in sets up receiving, sending and delivery outcomes, so the Node receives when it ends. No dashboard, no API token, no OAuth client. Drilled on a clean account; a second Node in the same account is a name, and updating is one command too.", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
-  { check: "receiving", says: "Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, archive and trash (restorable), search over subjects, senders and bodies.", doc: "application-shell.md", href: "/docs/product/application-shell/" },
-  { check: "mail_security", says: "The receiving server's SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model.", doc: "mail-security.md", href: "/docs/product/mail-security/" },
-  { check: "sending", says: "Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider's own bounces build.", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
-  { check: "butlers", says: "Programs that act on mail: deterministic, refused at publication if they cannot afford to run, paused if they loop, released by a person before anything leaves. The llm.* node types are declared and refused.", doc: "butler-engine.md", href: "/docs/product/butler-engine/" },
-  { check: "your_ai", says: "A contract-generated SDK, an agent Skill and an MCP server, every one derived from the same route registry. Agents hold a pinned ceiling of capabilities and an org.admin can never be minted.", doc: "machine-surfaces.md", href: "/docs/operating/machine-surfaces/" },
-  { check: "governance", says: "An audit trail nothing trims, matters, legal holds two people lift, supervised reads that leave a record, e-discovery exports approved before they run.", doc: "supervised-access.md", href: "/docs/product/supervised-access/" },
-  { check: "custody", says: "Evidence sealed under keys only your Node holds, escrowed to ten recovery codes; a backup you can verify offline; a restore drilled three times, once through to receiving mail.", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
-];
+const checks = [
+  { check: "install", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
+  { check: "receiving", doc: "application-shell.md", href: "/docs/product/application-shell/" },
+  { check: "mail_security", doc: "mail-security.md", href: "/docs/product/mail-security/" },
+  { check: "sending", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
+  { check: "butlers", doc: "butler-engine.md", href: "/docs/product/butler-engine/" },
+  { check: "your_ai", doc: "machine-surfaces.md", href: "/docs/operating/machine-surfaces/" },
+  { check: "governance", doc: "supervised-access.md", href: "/docs/product/supervised-access/" },
+  { check: "custody", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
+] as const;
+const status = `${base}/docs/readme/#status-functional-alpha-not-production-ready`;
 ---
-<html lang="en">
+<html lang={locale}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Mailda, in your Cloudflare account</title>
-  <meta name="description" content="Open-source, customer-owned mail operations: shared inboxes, a queue, policies, Butlers and a governance ledger, deployed into your own Cloudflare account. No Mailda service to depend on." />
+  <title>{w["page.title"]}</title>
+  <meta name="description" content={w["page.description"]} />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <meta property="og:title" content="Mailda" />
-  <meta property="og:description" content="Shared inboxes that know who replied. Runs entirely in your own Cloudflare account." />
+  <meta property="og:title" content={w["page.ogTitle"]} />
+  <meta property="og:description" content={w["page.ogDescription"]} />
 </head>
 <body class="landing">
   <header class="masthead">
-    <a class="lockup" href="/" aria-label="Mailda"><span class="mark" set:html={mark}></span><span class="word">Mailda</span></a>
-    <nav class="masthead-nav" aria-label="Site">
-      <a href="/docs/readme/">Docs</a>
-      <a href="/docs/receipts/">Receipts</a>
+    <a class="lockup" href={`${base}/`} aria-label={w["brand"]}><span class="mark" set:html={mark}></span><span class="word">{w["brand"]}</span>{w["brand.secondary"] !== null && <span class="word-secondary" lang="en">{w["brand.secondary"]}</span>}</a>
+    <nav class="masthead-nav" aria-label={w["nav.label"]}>
+      <a href={`${base}/docs/readme/`}>{w["nav.docs"]}</a>
+      <a href={`${base}/docs/receipts/`}>{w["nav.receipts"]}</a>
       <a href="https://github.com/Straits-AI/mailda">GitHub</a>
     </nav>
   </header>
 
   <main>
     <section class="hero" aria-labelledby="hero-title">
-      <h1 id="hero-title">Shared inboxes that know who replied.</h1>
+      <h1 id="hero-title">{w["hero.title"]}</h1>
       <p class="lede">
-        Mailda turns an email address into governed work. Who is answering, whether anybody has, what a rule
-        held back and why. It runs in <strong>your own Cloudflare account</strong>, so you own the domain,
-        the messages, the keys and the bill. There is no Mailda service to depend on, no licence server, no
-        telemetry. Disconnect us and nothing stops working.
+        {w["lede.before"]}<strong>{w["lede.strong"]}</strong>{w["lede.after"]}
       </p>
       <p class="owner">
-        <span class="label">For the owner</span>
-        Workers Paid is the one thing it needs: <strong>$5 a month</strong>, 3,000 emails included, then $0.35 per thousand.
-        A twenty-person team sending ten thousand a month pays about $7.45. Inbound mail is unlimited.
-        Not for newsletters; not for Outlook. Open source, Apache-2.0.
+        <span class="label">{w["owner.label"]}</span>
+        {w["owner.before"]}<strong>{w["owner.strong"]}</strong>{w["owner.after"]}
       </p>
       <p class="actions">
-        <a class="primary" href="/docs/readme/#installing-it">Install it</a>
-        <a class="quiet" href="/docs/operating/machine-surfaces/">Put it in your AI</a>
+        <a class="primary" href={`${base}/docs/readme/#installing-it`}>{w["action.install"]}</a>
+        <a class="quiet" href={`${base}/docs/operating/machine-surfaces/`}>{w["action.ai"]}</a>
       </p>
     </section>
 
     <section class="report" aria-labelledby="report-title">
       <h2 id="report-title" class="report-head">
         <span class="cmd">mailda doctor</span>
-        <span class="verdict">functional alpha</span>
-        <span class="dim">what is built, what is thin, and the page that holds each claim to account</span>
+        <span class="verdict">{w["report.verdict"]}</span>
+        <span class="dim">{w["report.about"]}</span>
       </h2>
       <ol class="findings">
         {checks.map((one) => (
           <li class="finding">
             <span class="sev ok">ok</span>
             <span class="check">{one.check}</span>
-            <span class="says">{one.says} <a class="doc" href={one.href}>{one.doc}</a></span>
+            <span class="says">{w[`ok.${one.check}`]} <a class="doc" href={`${base}${one.href}`}>{one.doc}</a></span>
           </li>
         ))}
+        {w["gaps.heading"] !== null && <li class="gaps-head"><h3>{w["gaps.heading"]}</h3></li>}
         {gaps.map((gap) => (
-          <li class="finding">
+          <li class="finding" lang={readmeLang}>
             <span class="sev warn">warn</span>
             <span class="check">{gap.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 3).join("_")}</span>
-            <span class="says"><strong>{gap.title}.</strong> {gap.detail} <a class="doc" href="/docs/readme/#status-functional-alpha-not-production-ready">README</a></span>
+            <span class="says"><strong>{gap.title}.</strong> {gap.detail} <a class="doc" href={status}>README</a></span>
           </li>
         ))}
         <li class="finding">
           <span class="sev report">report</span>
           <span class="check">receipts</span>
-          <span class="says">Every limit, cost and timing in the product has a receipt saying how it was measured and when it goes stale. The build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
+          <span class="says">{w["receipts.says"]} <a class="doc" href={`${base}/docs/receipts/`}>docs/receipts/</a></span>
         </li>
       </ol>
       <p class="report-foot dim">
-        The warn rows are the README's own words. A vendor's page would leave them off.
-        <a href="/docs/readme/#status-functional-alpha-not-production-ready">Read the whole status</a> before you rely on any of this.
+        {w["foot.before"]}
+        <a href={status}>{w["foot.link"]}</a>{w["foot.after"]}
       </p>
     </section>
 
     <section class="install" aria-labelledby="install-title">
-      <h2 id="install-title">One command, one afternoon</h2>
+      <h2 id="install-title">{w["install.title"]}</h2>
       <div class="terminal">
         <pre><code id="install-command">curl -fsSL https://mailda.site/install.sh | bash</code></pre>
-        <button type="button" class="copy" data-copy="install-command" aria-label="Copy the install command">copy</button>
+        <button type="button" class="copy" data-copy="install-command" aria-label={w["install.copyLabel"]}>{w["install.copy"]}</button>
       </div>
       <p class="dim">
-        It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, asks
-        which domain it should receive at, and with that same sign-in enables routing, onboards sending and
-        subscribes delivery outcomes, reading each back and refusing if a record is not there. The Node
-        receives when the command ends. No dashboard, no API token, no OAuth client. Open the Node: until
-        it has an address and mail routed to it, it shows the next step and the command that does it,
-        and only then the inbox. A hostname of your own is one more question, attached by the deploy. A
-        credential of the Node's own, one API token pasted on Setup, is optional and only for changing that
-        setup from the browser later. If you would rather arrange the account by hand, the dashboard path
-        is written down too.
-        <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
+        {w["install.about"]}
+        <a href={`${base}/docs/operating/cloudflare-settings/`}>{w["install.settings"]}</a>
       </p>
       <p class="dim">
-        Later, in the same directory, <code>curl -fsSL https://mailda.site/update.sh | bash</code> pulls the
-        release, backs the Node up, says what its schema will do, and redeploys through the canary. No git
-        command is yours to type, including for a Node the deploy button made.
+        {w["update.before"]}<code>curl -fsSL https://mailda.site/update.sh | bash</code>{w["update.after"]}
       </p>
     </section>
 
-    <section class="values" aria-label="What the product is built to be">
+    <section class="values" aria-label={w["values.label"]}>
       <ul>
-        <li><strong>Intelligent.</strong> Your app in your AI, never AI in your app.</li>
-        <li><strong>Reliable.</strong> Every assertion can fail. Every number has a receipt.</li>
-        <li><strong>Flowing.</strong> Mail arrives, gets filed, gets answered, and leaves a record.</li>
-        <li><strong>Helpful.</strong> A refusal names the problem, the reason and the remedy.</li>
+        <li><strong>{w["value.intelligent"]}</strong>{w["value.intelligent.says"]}</li>
+        <li><strong>{w["value.reliable"]}</strong>{w["value.reliable.says"]}</li>
+        <li><strong>{w["value.flowing"]}</strong>{w["value.flowing.says"]}</li>
+        <li><strong>{w["value.helpful"]}</strong>{w["value.helpful.says"]}</li>
       </ul>
     </section>
   </main>
 
   <footer class="foot">
     <span class="mark small" set:html={mark}></span>
-    <span>Mailda · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href="/docs/agents/">how decisions get made</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">security</a></span>
+    <span>{w["brand"]} · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href={`${base}/docs/agents/`}>{w["footer.decisions"]}</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">{w["footer.security"]}</a></span>
   </footer>
 </body>
 </html>
