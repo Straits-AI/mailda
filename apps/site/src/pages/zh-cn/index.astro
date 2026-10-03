@@ -1,0 +1,9 @@
+---
+import readme from "../../../../../README.md?raw";
+import Landing from "../../components/Landing.astro";
+import { readGaps } from "../../gaps.ts";
+
+// The Simplified Chinese landing page. The README's status rows stay the README's English, marked `lang="en"`.
+const gaps = readGaps(readme);
+---
+<Landing gaps={gaps} locale="zh-Hans" />

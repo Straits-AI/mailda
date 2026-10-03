@@ -2,7 +2,8 @@
  * The landing page's words, one table per locale: the Node's rule (docs/i18n.md, ADR 46) applied to the site.
  * English is the source; zh-Hans uses the glossary's words (`apps/node/worker/src/i18n/glossary.ts`) and the
  * register in docs/i18n.md: 你, full-width punctuation, one space between Han and Latin. Identifiers are not words
- * and are not here: check ids, file names, paths, the install command and `mailda doctor` stay in `Landing.astro`.
+ * and are not here: check ids, file names, paths, the install command and `mailda doctor` stay in
+ * `apps/site/src/components/Landing.astro`.
  *
  * `null` means the locale draws no such element: English has no secondary mark in the lockup and no heading
  * over the README's rows, which are already in its own language. zh-Hans has both.
@@ -17,6 +18,7 @@ const en = {
   "nav.label": "Site",
   "nav.docs": "Docs",
   "nav.receipts": "Receipts",
+  "switch.label": "Language",
   "hero.title": "Shared inboxes that know who replied.",
   "lede.before": "Mailda turns an email address into governed work. Who is answering, whether anybody has, what a rule held back and why. It runs in ",
   "lede.strong": "your own Cloudflare account",
@@ -45,6 +47,8 @@ const en = {
   "install.title": "One command, one afternoon",
   "install.copyLabel": "Copy the install command",
   "install.copy": "copy",
+  "install.copied": "copied",
+  "install.selectIt": "select it",
   "install.about": "It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, asks which domain it should receive at, and with that same sign-in enables routing, onboards sending and subscribes delivery outcomes, reading each back and refusing if a record is not there. The Node receives when the command ends. No dashboard, no API token, no OAuth client. Open the Node: until it has an address and mail routed to it, it shows the next step and the command that does it, and only then the inbox. A hostname of your own is one more question, attached by the deploy. A credential of the Node's own, one API token pasted on Setup, is optional and only for changing that setup from the browser later. If you would rather arrange the account by hand, the dashboard path is written down too.",
   "install.settings": "Every setting it needs, in one page.",
   "update.before": "Later, in the same directory, ",
@@ -74,6 +78,7 @@ const zhHans: Words = {
   "nav.label": "站点",
   "nav.docs": "文档",
   "nav.receipts": "测量记录",
+  "switch.label": "语言",
   "hero.title": "共享收件箱，知道谁回复了。",
   "lede.before": "淼达把一个邮件地址变成有人负责、有据可查的工作：谁在回复，有没有人回复过，哪条规则扣下了什么、为什么。它运行在",
   "lede.strong": "你自己的 Cloudflare 账户",
@@ -102,6 +107,8 @@ const zhHans: Words = {
   "install.title": "一条命令，一个下午",
   "install.copyLabel": "复制安装命令",
   "install.copy": "复制",
+  "install.copied": "已复制",
+  "install.selectIt": "请手动选中",
   "install.about": "它帮你登录 Cloudflare，部署到你的账户，在同一个终端里认领节点，询问应在哪个域名收信，并用同一次登录启用路由、为发信接入域名、订阅投递结果，每一项都读回核对，缺少记录就拒绝继续。命令结束时，节点已在接收。不用控制台，不用 API 令牌，不用 OAuth 客户端。打开节点：在它有了地址、邮件路由到它之前，它显示下一步和完成这一步的命令，之后才是收件箱。使用你自己的主机名只需再回答一个问题，由部署来绑定。节点自己的凭据（在配置页粘贴一个 API 令牌）是可选的，只用于以后在浏览器里修改这些配置。如果你更想手动安排账户，控制台里的做法也写下来了。",
   "install.settings": "它需要的每项设置，都在一页里。",
   "update.before": "之后，在同一个目录里运行 ",
@@ -120,6 +127,15 @@ const zhHans: Words = {
 };
 
 export type SiteLocale = "en" | "zh-Hans";
+/**
+ * Each landing page, by locale: its path and the language's own name for itself, the endonyms the Node's switch
+ * shows (`apps/node/worker/src/i18n/locales.ts`). The docs follow the same paths through Starlight's locales
+ * (`apps/site/astro.config.mjs`).
+ */
+export const SITE_LOCALES: ReadonlyArray<{ readonly tag: SiteLocale; readonly path: string; readonly endonym: string }> = [
+  { tag: "en", path: "/", endonym: "English" },
+  { tag: "zh-Hans", path: "/zh-cn/", endonym: "简体中文" },
+];
 export const WORDS: Readonly<Record<SiteLocale, Words>> = { en, "zh-Hans": zhHans };
 
 // `astro build` does not type-check, so the type above alone would let a table missing a key ship with a hole in

@@ -45,6 +45,10 @@ README.md (386 lines, the gap table is the honest inventory), docs/*.md, docs/re
 
 The brand sheet (three PNGs, 28 August 2026): Ink `#0F1720`, Flow Blue `#4C77B8`, Sky `#E6EEF7`, Mist `#F2F4F7`, White; Satoshi for headings (not shipped — Plus Jakarta Sans stands in), Inter for body; the continuous-line M with a blue dot (traced, `apps/node/worker/src/brand.ts`); a subtle continuous-line brand pattern for backgrounds; the four values Intelligent · Reliable · Flowing · Helpful. Tagline on the stationery: "Connected communication. Flowing forward." The product UI in `apps/node/worker/src/ui.ts` is the incumbent expression of this world.
 
+## Languages
+
+English at `/`, and Simplified Chinese at `/zh-cn/` since 3 October 2026 (the owner's approval that day): a Chinese landing page under the mark 淼达, and Starlight's Chinese menus over the docs, whose bodies stay English and say so with Starlight's notice. The Chinese follows the app's glossary and register (`docs/i18n.md`); the README's status rows stay the README's English, marked as such.
+
 ## Accessibility
 
 WCAG AA, as the product holds itself to (axe-clean, contrast tokens receipted). Light and dark.

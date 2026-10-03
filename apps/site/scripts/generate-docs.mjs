@@ -105,10 +105,17 @@ Cloudflare published it.
 ${receipts.map((one) => `| [${one.id}](/docs/receipts/${one.slug}/) | ${one.kind} | ${one.on} |`).join("\n")}
 `);
 
+// Starlight's own Simplified Chinese for its menus, search and navigation, under the tag the site uses. Starlight
+// finds its built-in words from a locale's `lang` by stripping a region subtag, and its pattern (`-[a-zA-Z]{2}`)
+// turns zh-Hans into "zhns", which matches nothing, so zh-Hans would get English menus (stripLangRegion in
+// the createTranslationSystem module of @astrojs/starlight 0.36). Copied from the package at build, never committed.
+mkdirSync(resolve(here, "../src/content/i18n"), { recursive: true });
+writeFileSync(resolve(here, "../src/content/i18n/zh-Hans.json"), readFileSync(resolve(here, "../node_modules/@astrojs/starlight/translations/zh-CN.json"), "utf8"));
+
 // The installer, served at /install.sh so `curl -fsSL https://mailda.site/install.sh | bash` is the repo's
 // own file. Copied at build, never committed here: the root is the one place it is written.
 mkdirSync(resolve(here, "../public"), { recursive: true });
 writeFileSync(resolve(here, "../public/install.sh"), readFileSync(join(repo, "install.sh"), "utf8"));
 // And the updater beside it, for the same reason: the command in the README has to be the script in the repo.
 writeFileSync(resolve(here, "../public/update.sh"), readFileSync(join(repo, "update.sh"), "utf8"));
-console.log(`rendered ${n + 1} pages into src/content/docs/docs, and install.sh and update.sh into public/`);
+console.log(`rendered ${n + 1} pages into src/content/docs/docs, Starlight's zh words into src/content/i18n, and install.sh and update.sh into public/`);

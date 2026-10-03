@@ -1,7 +1,7 @@
 ---
 import mark from "../assets/mark.svg?raw";
 import "../styles/site.css";
-import { WORDS, type SiteLocale } from "../landing-words.ts";
+import { SITE_LOCALES, WORDS, type SiteLocale } from "../landing-words.ts";
 
 interface Props { gaps: { title: string; detail: string }[]; locale: SiteLocale }
 const { gaps, locale } = Astro.props;
@@ -39,6 +39,32 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <meta property="og:title" content={w["page.ogTitle"]} />
   <meta property="og:description" content={w["page.ogDescription"]} />
+  {SITE_LOCALES.map((one) => <link rel="alternate" hreflang={one.tag} href={new URL(one.path, Astro.site).href} />)}
+  <link rel="alternate" hreflang="x-default" href={new URL("/", Astro.site).href} />
+  {locale === "en" && (
+    /*
+     * A first visit from a browser that asks for Simplified Chinese before English goes to /zh-cn/, as the Node
+     * negotiates (`apps/node/worker/src/i18n/format.ts`: a tag that maximizes to zh-Hans; zh-TW, zh-HK and zh-MO are
+     * Hant and do not). Not when the visitor chose English on the switch, not when they came from a page of this
+     * site (so the switch back works where storage is refused), not for a crawler. /zh-cn/ has no such script, so
+     * it cannot loop. Inline because it must run before the page draws; nothing is fetched.
+     */
+    <script is:inline data-first-visit>
+      (function () {
+        var chosen = null;
+        try { chosen = localStorage.getItem("mailda.locale"); } catch (e) { /* storage refused: the browser's languages decide alone */ }
+        if (chosen === "en" || navigator.webdriver || /bot|crawl|spider|slurp/i.test(navigator.userAgent || "")) return;
+        try { if (document.referrer && new URL(document.referrer).origin === location.origin) return; } catch (e) { /* an unreadable referrer is no visit from here */ }
+        var asked = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+        for (var i = 0; i < asked.length; i++) {
+          var tag;
+          try { tag = new Intl.Locale(asked[i]).maximize(); } catch (e) { continue; /* a malformed tag is not a preference */ }
+          if (tag.language === "en") return;
+          if (tag.language === "zh" && tag.script === "Hans") { location.replace("/zh-cn/"); return; }
+        }
+      })();
+    </script>
+  )}
 </head>
 <body class="landing">
   <header class="masthead">
@@ -47,6 +73,11 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
       <a href={`${base}/docs/readme/`}>{w["nav.docs"]}</a>
       <a href={`${base}/docs/receipts/`}>{w["nav.receipts"]}</a>
       <a href="https://github.com/Straits-AI/mailda">GitHub</a>
+    </nav>
+    <nav class="lang-switch" aria-label={w["switch.label"]}>
+      {SITE_LOCALES.map((one) => (
+        <a href={one.path} hreflang={one.tag} lang={one.tag} data-locale={one.tag} aria-current={one.tag === locale ? "page" : undefined}>{one.endonym}</a>
+      ))}
     </nav>
   </header>
 
@@ -104,7 +135,7 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
       <h2 id="install-title">{w["install.title"]}</h2>
       <div class="terminal">
         <pre><code id="install-command">curl -fsSL https://mailda.site/install.sh | bash</code></pre>
-        <button type="button" class="copy" data-copy="install-command" aria-label={w["install.copyLabel"]}>{w["install.copy"]}</button>
+        <button type="button" class="copy" data-copy="install-command" data-copied={w["install.copied"]} data-select={w["install.selectIt"]} aria-label={w["install.copyLabel"]}>{w["install.copy"]}</button>
       </div>
       <p class="dim">
         {w["install.about"]}
@@ -141,9 +172,17 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
   .mark { display: inline-flex; width: 30px; color: var(--text); }
   .mark :global(svg) { width: 100%; height: auto; }
   .mark.small { width: 22px; opacity: .8; }
-  .masthead-nav { display: flex; gap: 1.25rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .masthead { flex-wrap: wrap; }
+  .masthead-nav { margin-left: auto; display: flex; gap: 1.25rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
   .masthead-nav a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); padding-bottom: .15rem; }
   .masthead-nav a:hover { color: var(--text); border-bottom-color: var(--rule-strong); }
+  .word-secondary { font: 500 .78rem/1 var(--body); color: var(--dim); letter-spacing: 0; }
+  .lang-switch { display: flex; gap: .7rem; font: 400 .78rem/1 var(--body); }
+  .lang-switch a { color: var(--dim); text-decoration: none; }
+  .lang-switch a:hover { color: var(--text); }
+  .lang-switch a[aria-current] { color: var(--text); font-weight: 500; }
+  /* Han is not tracked like Latin capitals: the display headings' negative tracking crowds it. */
+  :global(html:lang(zh)) .hero h1, :global(html:lang(zh)) .install h2 { letter-spacing: 0; }
 
   main { max-width: 74rem; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2.5rem) 4rem; }
   .hero { padding: clamp(2.5rem, 7vw, 5rem) 0 2.5rem; max-width: 46rem; }
@@ -172,6 +211,8 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
   .says { font-size: .95rem; }
   .says .doc { font: 400 .74rem/1 var(--mono); color: var(--dim); white-space: nowrap; margin-left: .35rem; }
   .report-foot { font-size: .85rem; margin: 1rem 0 0; }
+  .gaps-head { border-top: 1px solid var(--rule); padding: .9rem 0 .2rem; }
+  .gaps-head h3 { margin: 0; font: 500 .85rem/1.5 var(--body); color: var(--dim); }
   @media (max-width: 40rem) {
     .finding { grid-template-columns: 3.6rem minmax(0, 1fr); }
     .check { grid-column: 2; }
@@ -195,16 +236,23 @@ const status = `${base}/docs/readme/#status-functional-alpha-not-production-read
 </style>
 
 <script>
+  // The switch is plain links; this only remembers the choice, so a reader who chose English is not sent back.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>("a[data-locale]")) {
+    link.addEventListener("click", () => {
+      try { localStorage.setItem("mailda.locale", link.dataset.locale ?? ""); } catch { /* storage refused: the referrer check keeps the choice for this visit */ }
+    });
+  }
   for (const button of document.querySelectorAll<HTMLButtonElement>("button.copy[data-copy]")) {
+    const words = { copy: button.textContent ?? "", copied: button.dataset.copied ?? "", select: button.dataset.select ?? "" };
     button.addEventListener("click", async () => {
       const text = document.getElementById(button.dataset.copy ?? "")?.textContent ?? "";
       try {
         await navigator.clipboard.writeText(text);
-        button.textContent = "copied";
+        button.textContent = words.copied;
         button.setAttribute("data-done", "");
-        setTimeout(() => { button.textContent = "copy"; button.removeAttribute("data-done"); }, 1600);
+        setTimeout(() => { button.textContent = words.copy; button.removeAttribute("data-done"); }, 1600);
       } catch {
-        button.textContent = "select it";
+        button.textContent = words.select;
       }
     });
   }
