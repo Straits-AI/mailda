@@ -4491,3 +4491,13 @@ script itself under `node:vm`.
 Both pages now import the README as `?raw`, which Vite resolves from the source. And Starlight finds its built-in
 words by stripping a region from `lang` with `-[a-zA-Z]{2}`, which turns zh-Hans into `zhns`. Under zh-Hans the docs
 had English menus until the build handed Starlight its own zh-CN translations under that tag.
+
+## The round-four follow-ups (3 October 2026)
+
+The owner accepted layer 3's questions in round four with seven follow-ups, each its own change, and on 3 October
+said "go close them all" (`docs/i18n.md`, Layer 3's questions). Each is a commit of its own.
+
+**The Node says claim secret (D35).** The claim's field and the CLI said claim secret since round four, and the
+Node's two refusals that name it still said "bootstrap secret". They say claim secret now, as does the English
+headline above each, which is the Node's sentence word for word. **For an agent:** the codes `bad_secret` and
+`not_installed` and the response's fields are unchanged; text matched on "bootstrap secret" no longer appears.

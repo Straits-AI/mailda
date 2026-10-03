@@ -170,12 +170,16 @@ describe("the glossary", () => {
     // Put back to proposed, a row is reported on every key it governs, so the empty list above is the check finding
     // nothing, not a check that cannot find anything.
     const back = (id: string) => CONCEPTS.map((concept) => (concept.id === id ? { ...concept, status: "proposed" as const } : concept));
-    // Round four's rows govern keys too: `evidence` its six sentences, `claim-secret` the claim's field since H1.
+    // Round four's rows govern keys too: `evidence` its six sentences, `claim-secret` the claim's field since H1 and the
+    // Node's two refusals that name it since D35's follow-up.
     expect(confirmedBeforeShipping(released(back("evidence")))).toEqual([
       "doctor.check.evidence_bucket_reachable", "doctor.check.evidence_orphans", "doctor.check.evidence_present",
       "doctor.check.evidence_key_generation", "doctor.check.send_evidence_changed", "send.reason.evidence_changed",
     ].map((key) => `zh-Hans ${key}: evidence is proposed, not confirmed`));
-    expect(confirmedBeforeShipping(released(back("claim-secret")))).toEqual(["zh-Hans preauth.claim.secret: claim-secret is proposed, not confirmed"]);
+    expect(confirmedBeforeShipping(released(back("claim-secret")))).toEqual(
+      ["preauth.claim.secret", "preauth.refusal.bad_secret", "preauth.refusal.not_installed"]
+        .map((key) => `zh-Hans ${key}: claim-secret is proposed, not confirmed`),
+    );
     expect(confirmedBeforeShipping(released(back("butler-run.stopped")))).toEqual(["zh-Hans butlers.run.stopped: butler-run.stopped is proposed, not confirmed"]);
     expect(confirmedBeforeShipping(released(back("breaker")))).toEqual([
       "zh-Hans limits.col.breaker: breaker is proposed, not confirmed",

@@ -194,7 +194,7 @@ function panel(title, subtitle, children) {
 }
 
 /**
- * First run. The one-time bootstrap secret is consumed here, so this is also where the owner sets
+ * First run. The one-time claim secret is consumed here, so this is also where the owner sets
  * a password — an install that ends with an account nobody can sign into again is not an install.
  */
 function renderClaim() {

@@ -8,6 +8,9 @@ import { isAdmin } from "../src/access.ts";
 import { verifyAccessToken } from "../src/auth/jwt.ts";
 import { clearKeyCache } from "../src/auth/keys.ts";
 import { drainOutbox } from "../src/outbox.ts";
+import { claimMessage } from "../src/routes/support.ts";
+import { CATALOGS } from "../src/i18n/catalog.ts";
+import { CONCEPTS } from "../src/i18n/glossary.ts";
 
 const SECRET = "bootstrap-secret-from-install";
 const PASSWORD = "a-long-enough-owner-passphrase";
@@ -185,5 +188,26 @@ describe("outbox publisher (§22, #9)", () => {
     ctx.advance(5_000);
     const ok = await drainOutbox(env, ctx, async () => {});
     expect(ok.drained).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The Node's own English for a refused claim (D35's follow-up, `docs/i18n.md`). The claim's field and the CLI say
+ * claim secret, so the two refusals that name the secret say it too. The headline a page before sign-in shows is
+ * this sentence word for word (`refusal()` in `src/client/app.client.js` hides it when the Node's words begin with
+ * it), so the two are held equal here, and the glossary's `claim-secret` row holds the headlines' words.
+ */
+describe("the Node's words for a refused claim", () => {
+  const term = CONCEPTS.find((concept) => concept.id === "claim-secret")!.en;
+  const headline = CATALOGS.en.preauth as Readonly<Record<string, string>>;
+
+  it("name the claim secret by the glossary's word", () => {
+    expect(term).toBe("claim secret");
+    expect([claimMessage("bad_secret"), claimMessage("not_installed")].filter((said) => !said.includes(term))).toEqual([]);
+  });
+
+  it("are the headlines the page shows, word for word", () => {
+    const codes = ["already_claimed", "bad_secret", "not_installed"];
+    expect(codes.filter((code) => claimMessage(code) !== headline[`preauth.refusal.${code}`])).toEqual([]);
   });
 });
