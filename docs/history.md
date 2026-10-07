@@ -4889,3 +4889,15 @@ packages/cli/src/verbs/verify-evidence.mjs
   - N fault(s) across N object(s) checked:
   + N {fault|faults} across N {object|objects} checked:
 ```
+
+## A mistyped password asks again instead of ending the upgrade (7 October 2026)
+
+`mailda upgrade` asked for an administrator's email and password once, then went on to the backup, where
+`sessionCookie` stops at the first 401. That is right for credentials from the environment, which will be wrong
+on every try, and wrong for a person at a terminal, whose likeliest 401 is a typo: the run ended with "could not
+sign in" and had to start over. Credentials typed at a prompt in `mailda upgrade` and `mailda setup` are now tried
+at once (`packages/cli/src/credentials.mjs`). A refusal says so and asks again, offering the email already typed,
+up to three times, which stays inside the Node's lockout of `auth.max_failed_logins_per_15min`. A locked address
+stops at once with the Node's own reason, and running out of tries names `mailda set-password`. A Node that cannot
+be reached keeps the credentials for the step that retries it. Credentials from MAILDA_EMAIL and MAILDA_PASSWORD
+are not prompted for and behave as before. Held by `apps/node/worker/test/node/credential-prompt.test.ts`.
