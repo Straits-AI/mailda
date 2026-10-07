@@ -1573,21 +1573,32 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .policy-editor h2 { margin: 0; }
 .policy-actions { margin: 16px 0 0; }
 
-/* One card per mailbox (7 October 2026): its name, its addresses with where each forwards, then who may do what. */
-.people-mailbox { margin-top: 24px; padding: 16px 18px; background: var(--surface-1); border-radius: var(--r-card); }
+/* One card per mailbox (7 October 2026), folding: its name in the summary, then its addresses as a table, what a copy
+   is once, and who may do what. */
+.people-mailbox { margin-top: 16px; padding: 4px 18px; background: var(--surface-1); border-radius: var(--r-card); }
+.people-mailbox[open] { padding-bottom: 16px; }
+.people-mailbox-summary { display: flex; align-items: baseline; gap: 12px; min-height: 44px; padding: 8px 0; cursor: pointer; list-style: none; }
+.people-mailbox-summary::-webkit-details-marker { display: none; }
+.people-mailbox-summary::before { content: "▸"; color: var(--text-secondary); }
+.people-mailbox[open] > .people-mailbox-summary::before { content: "▾"; }
+.people-mailbox-summary > h2 { margin: 0; }
 .people-mailbox h2, .people-teams h2 { margin: 0 0 8px; }
 .people-rename-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .people-rename-row > input { flex: 0 1 20rem; min-width: 10rem; }
-.people-addresses { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 12px; }
-.people-addresses > li { padding: 8px 0 0; border-top: 1px solid var(--border-soft); font-size: 14px; }
-.people-address { font-weight: 600; color: var(--text-primary); }
-.people-forwards { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; display: grid; gap: 4px; border-left: 2px solid var(--border-soft); }
-.people-forwards > li.notice { margin: 0; padding: 0 0 0 8px; }
-.people-copies { margin: 6px 0 0 14px; }
-.people-copy-about { margin: 2px 0 0 14px; }
+/* An address per row: where it forwards, what needs attention, copies, and its two acts at the end. */
+.people-address-table { margin: 12px 0 4px; }
+.people-address-table th[scope="row"] { padding: 10px; font: 600 14px/1.4 var(--body); text-align: left; white-space: nowrap; vertical-align: baseline; border-bottom: 1px solid var(--border-soft); }
+.people-forwards { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.people-forwards > li { white-space: nowrap; }
+.people-forward-trouble { margin: 0 0 4px; padding: 0 0 0 8px; }
+.people-copies { white-space: nowrap; }
+.people-row-actions { white-space: nowrap; text-align: right; }
+.people-row-actions > .chip-action + .chip-action { margin-left: 8px; }
+.people-edit-row > td { background: var(--surface-2); }
+.people-copy-about { margin: 4px 0 12px; }
 .people-copy-about > summary, .grant-legend > summary { display: inline-flex; min-height: 24px; align-items: center; color: var(--accent-text); cursor: pointer; }
 .people-copy-about > p { margin: 4px 0 0; max-width: 60rem; }
-.people-forward-edit { margin: 8px 0 0; }
+.people-forward-edit { margin: 4px 0; }
 .people-forward-edit > input { max-width: 36rem; }
 #invite-email { max-width: 28rem; }
 /* The permission grid: a person per row, a permission per column, the box centred under its name. */

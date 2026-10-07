@@ -60,16 +60,26 @@ export const people = {
    */
   "people.forward.copy.sealed": "a copy was sealed as {send} ({state})",
   "people.forward.copy.refused": "no copy: {reason}",
-  "people.forward.copy.off": "Copies off.",
+  "people.forward.copy.offShort": "Off",
+  "people.forward.copy.onShort": "On",
   "people.forward.copy.on": "Copies on, turned on by {by} on {when}.",
   "people.forward.copy.turnOn": "Send copies",
   "people.forward.copy.turnOff": "Stop copies",
   "people.forward.copy.turnedOn": "Copies on for {address}.",
   "people.forward.copy.turnedOff": "Copies off for {address}.",
   "people.forward.copy.about":
-    "With copies on, a forward Cloudflare refuses as not verified is followed by a copy from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending and is in the Outbox like any send, sealed under the administrator who turned copies on.",
+    "With copies on, a forward Cloudflare refuses as not verified is followed by a copy from the address the message was sent to: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending and is in the Outbox like any send, sealed under the administrator who turned copies on.",
   /** Setting where an address forwards (ADR 47, amended 7 October 2026): the control, its limits, and what it did. */
   "people.forward.edit": "Change forwards",
+  "people.forward.edit.cancel": "Cancel",
+  "people.forward.notForwarded": "Not forwarded",
+  /** A mailbox's address table (7 October 2026): one row per address. */
+  "people.address.col.address": "Address",
+  "people.address.col.forwards": "Forwards to",
+  "people.address.col.latest": "Latest",
+  "people.address.col.copies": "Copies",
+  "people.address.col.actions": "Actions",
+  "people.mailbox.count": { one: "{n} address", other: "{n} addresses" },
   "people.forward.edit.label": "Forward {address} to",
   "people.forward.edit.hint":
     "Verified destinations of the account, separated by commas, up to {max}. Each message is stored here first, then forwarded to every one. Leave it empty to stop forwarding, which turns copies off.",

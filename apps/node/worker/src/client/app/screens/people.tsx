@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { CONFIG } from "/app/config.js";
 import { t } from "/app/locale.js";
@@ -274,91 +274,81 @@ const FORWARD_STATE = {
 } as const satisfies Record<NonNullable<KeptForward["verified"]> | "unchecked", Key>;
 
 /**
- * An address's forwards (ADR 47): one line per destination, "forwards to X (verified) · last forwarded <when>", or
- * why its latest message was not; then the address's copy setting, once. "verified" is only what a read of the
- * account's list said, never assumed.
+ * What one address's forwards say in its row (ADR 47): each destination and what the last read of the account said
+ * of it, then only what needs attention, each destination whose latest forward was refused, withheld or never
+ * answered, in its own words, with what became of the copy it asked for. A row where every forward went through
+ * says when the latest one did, once, rather than a line per destination (7 October 2026: eight addresses forwarding
+ * to the same two inboxes read as sixteen identical lines).
  */
-function ForwardLines({ rows, mailbox, busy, onCopy, who }: {
-  rows: readonly KeptForward[]; mailbox: string; busy: boolean; onCopy: (copy: boolean) => void; who: (id: string) => string;
-}) {
-  // The address's own setting, the same on every row; `?? null`, so an older Node, which sends no copy field, reads as off.
-  const setting = rows[0]?.copy ?? null;
+function ForwardCells({ rows }: { rows: readonly KeptForward[] }) {
+  if (rows.length === 0) return <><td className="dim">{t("people.forward.notForwarded")}</td><td className="dim">—</td></>;
+  const troubled = rows.filter((one) => one.last !== null && one.last.state !== "handed_over");
+  const handed = rows.map((one) => one.lastHandedOverAt).filter((at): at is string => at !== null).sort().at(-1) ?? null;
   return (
     <>
-      <ul className="people-forwards">
-        {rows.map((one) => {
-          const last = one.last;
-          const latest = last === null ? t("people.forward.none")
-            : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
-              : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
-                : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
-                  : t("people.forward.unknown", { when: dateTime(last.at) });
-          // What became of the copy the latest refusal asked for (ADR 47): the send and its own state, or the Node's reason.
-          const copied = last?.copy ?? null;
+      <td>
+        <ul className="people-forwards">
+          {rows.map((one) => (
+            <li key={one.to}><span className="mono">{one.to}</span> <span className="dim">{t(FORWARD_STATE[one.verified ?? "unchecked"])}</span></li>
+          ))}
+        </ul>
+      </td>
+      <td>
+        {troubled.map((one) => {
+          const last = one.last!;
+          const copied = last.copy;
           return (
-            <li key={one.to} className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : undefined}>
-              {sentence("people.forward.to", { to: <span className="mono">{one.to}</span>, state: t(FORWARD_STATE[one.verified ?? "unchecked"]) })}
-              {" · "}<span className="dim">{latest}</span>
+            <p key={one.to} className="notice bad people-forward-trouble">
+              <span className="mono">{one.to}</span>{": "}
+              {last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
+                : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
+                  : t("people.forward.unknown", { when: dateTime(last.at) })}
               {copied === null ? null : <>{" · "}{copied.state === "sealed"
                 ? sentence("people.forward.copy.sealed", {
                   send: <span className="mono">{copied.sendId ?? ""}</span>,
                   state: copied.sendState === null ? "" : t(`send.state.${copied.sendState as SendState}`),
                 })
                 : sentence("people.forward.copy.refused", { reason: <NodeWords>{copied.error ?? ""}</NodeWords> })}</>}
-            </li>
+            </p>
           );
         })}
-      </ul>
-      <p className="people-copies dim">
-        {setting === null
-          ? t("people.forward.copy.off")
-          : t("people.forward.copy.on", { by: who(setting.by), when: dateTime(setting.at) })}
-        {" "}
-        <button type="button" className="linkish" disabled={busy} onClick={() => onCopy(setting === null)}>
-          {t(setting === null ? "people.forward.copy.turnOn" : "people.forward.copy.turnOff")}
-        </button>
-      </p>
-      {/* The whole statement, every time it is wanted, folded so a list of addresses reads as a list. */}
-      <details className="people-copy-about">
-        <summary>{t("people.forward.copy.what")}</summary>
-        <p className="dim">
-          {t("people.forward.copy.about", {
-            address: rows[0]?.address ?? "", mailbox, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
-          })}
-        </p>
-      </details>
+        {troubled.length === rows.length ? null
+          : <span className="dim">{handed === null ? t("people.forward.none") : t("people.forward.handedOver", { when: dateTime(handed) })}</span>}
+      </td>
     </>
   );
 }
 
 /**
  * Where one address forwards (ADR 47, amended 7 October 2026): the whole list in one box, saved as one, which the
- * Node checks (verified, no loop, at most `forward.max_destinations`) and refuses by name.
+ * Node checks (verified, no loop, at most `forward.max_destinations`) and refuses by name. Opened from its row.
  */
-function ForwardEditor({ address, now, busy, onSave }: {
-  address: string; now: readonly string[]; busy: boolean; onSave: (to: string[]) => void;
+function ForwardEditor({ address, now, busy, onSave, onClose }: {
+  address: string; now: readonly string[]; busy: boolean; onSave: (to: string[]) => void; onClose: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState(now.join(", "));
   const id = `forward-${address}`;
-  if (!open) {
-    return <button type="button" className="linkish" disabled={busy} onClick={() => { setTyped(now.join(", ")); setOpen(true); }}>{t("people.forward.edit")}</button>;
-  }
   return (
     <span className="field-row people-forward-edit">
       <label htmlFor={id}>{t("people.forward.edit.label", { address })}</label>
-      {" "}
       <input id={id} className="mono" value={typed} onChange={(event) => setTyped(event.target.value)} aria-describedby={`${id}-hint`} />
-      {" "}
-      <button type="button" className="quiet" disabled={busy} onClick={() => {
-        onSave(typed.split(",").map((one) => one.trim()).filter((one) => one !== ""));
-        setOpen(false);
-      }}>{t("people.forward.edit.save")}</button>
+      <span className="people-rename-row">
+        <button type="button" className="quiet" disabled={busy} onClick={() => {
+          onSave(typed.split(",").map((one) => one.trim()).filter((one) => one !== ""));
+          onClose();
+        }}>{t("people.forward.edit.save")}</button>
+        <button type="button" className="linkish" onClick={onClose}>{t("people.forward.edit.cancel")}</button>
+      </span>
       <span id={`${id}-hint`} className="hint">{t("people.forward.edit.hint", { max: CONFIG.forwardMaxDestinations })}</span>
     </span>
   );
 }
 
+/**
+ * One mailbox, as a card that folds (7 October 2026, the owner's: "still not nice"): its name, and Rename; its
+ * addresses as a table, one row each, with where each forwards, what needs attention, whether copies are on, and
+ * its two acts; what a copy is, once under the table. The person-by-permission grid follows it (`GrantGrid`).
+ */
 function MailboxHead({ box, onChanged, forwards, who }: {
   box: MailboxQueue; onChanged: () => Promise<void>; forwards: ReadonlyMap<string, readonly KeptForward[]>; who: (id: string) => string;
 }) {
@@ -366,6 +356,7 @@ function MailboxHead({ box, onChanged, forwards, who }: {
   const [problem, setProblem] = useState<Said | null>(null);
   const [said, setSaid] = useState<ReactNode>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const addresses = box.addresses === null ? [] : box.addresses.split(",");
 
   async function rename() {
@@ -416,9 +407,9 @@ function MailboxHead({ box, onChanged, forwards, who }: {
     await onChanged();
   }
 
+  const anyForward = addresses.some((address) => forwards.has(address));
   return (
     <>
-      <h2>{box.name}</h2>
       {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{marked(problem)}</pre>}
       {said === null ? null : <p className="notice" role="status">{said}</p>}
       <p className="field-row">
@@ -433,21 +424,69 @@ function MailboxHead({ box, onChanged, forwards, who }: {
       {addresses.length === 0
         ? <p className="dim">{t("people.mailbox.noAddress")}</p>
         : (
-          <ul className="people-addresses" aria-label={t("people.mailbox.addresses", { name: box.name })}>
-            {addresses.map((address) => (
-              <li key={address}>
-                <span className="mono people-address">{address}</span>
-                {" "}
-                <ForwardEditor address={address} now={(forwards.get(address) ?? []).map((one) => one.to)} busy={busy} onSave={(to) => void forwardTo(address, to)} />
-                {" · "}
-                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
-                {forwards.has(address)
-                  ? <ForwardLines rows={forwards.get(address)!} mailbox={box.name} busy={busy} onCopy={(on) => void copy(address, on)} who={who} />
-                  : null}
-              </li>
-            ))}
-          </ul>
+          <Scroller label={t("people.mailbox.addresses", { name: box.name })}>
+            <table className="people-address-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("people.address.col.address")}</th>
+                  <th scope="col">{t("people.address.col.forwards")}</th>
+                  <th scope="col">{t("people.address.col.latest")}</th>
+                  <th scope="col">{t("people.address.col.copies")}</th>
+                  <th scope="col"><span className="visually-hidden">{t("people.address.col.actions")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {addresses.map((address) => {
+                  const rows = forwards.get(address) ?? [];
+                  // The address's own setting, the same on every row; `?? null`, so an older Node, which sends none, reads as off.
+                  const setting = rows[0]?.copy ?? null;
+                  return (
+                    <Fragment key={address}>
+                      <tr>
+                        <th scope="row" className="mono">{address}</th>
+                        <ForwardCells rows={rows} />
+                        <td>
+                          {rows.length === 0 ? <span className="dim">—</span> : (
+                            <span className="people-copies" title={setting === null ? undefined : t("people.forward.copy.on", { by: who(setting.by), when: dateTime(setting.at) })}>
+                              {t(setting === null ? "people.forward.copy.offShort" : "people.forward.copy.onShort")}
+                              {" "}
+                              <button type="button" className="linkish" disabled={busy} onClick={() => void copy(address, setting === null)}>
+                                {t(setting === null ? "people.forward.copy.turnOn" : "people.forward.copy.turnOff")}
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                        <td className="people-row-actions">
+                          <button type="button" className="chip-action" disabled={busy} onClick={() => setEditing(editing === address ? null : address)}>{t("people.forward.edit")}</button>
+                          <button type="button" className="chip-action" disabled={busy} onClick={() => void remove(address)}>{t("people.mailbox.remove")}</button>
+                        </td>
+                      </tr>
+                      {editing !== address ? null : (
+                        <tr className="people-edit-row">
+                          <td colSpan={5}>
+                            <ForwardEditor address={address} now={rows.map((one) => one.to)} busy={busy}
+                              onSave={(to) => void forwardTo(address, to)} onClose={() => setEditing(null)} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Scroller>
         )}
+      {/* What a copy is, once for the mailbox, folded: every address shares the same rules. */}
+      {!anyForward ? null : (
+        <details className="people-copy-about">
+          <summary>{t("people.forward.copy.what")}</summary>
+          <p className="dim">
+            {t("people.forward.copy.about", {
+              mailbox: box.name, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
+            })}
+          </p>
+        </details>
+      )}
     </>
   );
 }
@@ -1101,13 +1140,20 @@ export function People() {
 
       <Arrivals people={rows} boxes={boxes} onChanged={refresh} />
 
-      <Invite domains={domains} onInvited={refresh} suggest={suggestions} who={who} />
 
-      {boxes.map((box) => (
-        <section key={box.id} className="people-mailbox" aria-label={t("people.mailbox.access", { name: box.name })}>
+      {/*
+        Each mailbox folds (7 October 2026): the first, which is the one the organization made first, is open, and the
+        rest show their name and how many addresses they carry until opened.
+      */}
+      {boxes.map((box, index) => (
+        <details key={box.id} className="people-mailbox" open={index === 0} aria-label={t("people.mailbox.access", { name: box.name })}>
+          <summary className="people-mailbox-summary">
+            <h2>{box.name}</h2>
+            <span className="dim">{t("people.mailbox.count", { n: box.addresses === null ? 0 : box.addresses.split(",").length })}</span>
+          </summary>
           <MailboxHead box={box} onChanged={refresh} forwards={forwards} who={who} />
           <GrantGrid people={rows} objectId={box.id} relations={mailboxRelations} label={t("people.mailbox.who", { name: box.name })} onChanged={refresh} />
-        </section>
+        </details>
       ))}
 
       <section className="people-mailbox" aria-label={t("people.org.label")}>
@@ -1120,6 +1166,7 @@ export function People() {
         <GrantGrid people={rows} objectId={orgId} relations={orgRelations} label={t("people.org.who")} onChanged={refresh} />
       </section>
 
+      <Invite domains={domains} onInvited={refresh} suggest={suggestions} who={who} />
       <NewMailbox onCreated={refresh} />
       <NewAddress boxes={boxes} domains={domains} onAdded={refresh} />
 
