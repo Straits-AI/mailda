@@ -11,6 +11,7 @@ import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestina
 import { routingRulesStep } from "./routing-step.mjs";
 import { plural } from "@mailda/runtime";
 import { askAdministrator } from "../credentials.mjs";
+import { progress } from "../progress.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -32,10 +33,18 @@ const REPO = resolve(workerDir, "../../..");
  * the operator is entitled to have answered on screen before agreeing, and the deploy proper runs: expand,
  * canary, gate, promote. Nothing in the mechanism is new; `mailda deploy` is called, not copied.
  */
+/** What an upgrade does, in order: each prints its banner as it begins (`progress.mjs`). */
+export const UPGRADE_STEPS = [
+  "Get the release", "Choose the Node", "Back up the Node", "Review what changes", "Deploy through the canary",
+  "Receiving, sending and delivery outcomes", "Email Routing rules",
+];
+
 export async function upgrade(argv) {
   process.stdout.write("\n== mailda upgrade\n   Pull the release, back the Node up, list what its schema will do, then deploy through the canary.\n");
   const yes = argv.includes("--yes");
+  const steps = progress(UPGRADE_STEPS);
 
+  steps.step("Get the release");
   // 1. Is there anything to upgrade to. The release channel is the git remote, and nothing else (ADR 43).
   //    A deploy-button clone has no remote and no history; both are given here, once, so no git command is
   //    ever the operator's to type.
@@ -86,6 +95,7 @@ export async function upgrade(argv) {
   }
 
   // 2. Which account, which Node. The name must already be a Node: an upgrade never creates one.
+  steps.step("Choose the Node");
   await signInAndChooseAccount();
   const base = configFor([]).name;
   const existing = existingNodes();
@@ -113,6 +123,7 @@ export async function upgrade(argv) {
   rememberUrl(accountId, name, url);
   process.stdout.write(`   node      ${name}  ${url}\n`);
 
+  steps.step("Back up the Node");
   // 3. The backup, before anything touches the catalog. Administrator credentials, because the inventory it
   //    indexes is administrator-only; they also let the canary gate below see the whole doctor report.
   if (process.env.MAILDA_EMAIL === undefined || process.env.MAILDA_PASSWORD === undefined) {
@@ -122,17 +133,17 @@ export async function upgrade(argv) {
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const out = flag(argv, "backup-out") ?? resolve(REPO, ".mailda", "backups", name, stamp);
-  process.stdout.write(`\n== backing up first\n   into ${out}\n`);
+  process.stdout.write(`   into ${out}\n`);
   await backup(["--url", url, "--out", out, ...nameArgs]);
   process.stdout.write(`   backup    ${out}\n   restore   docs/disaster-recovery.md, if the upgrade goes wrong\n`);
 
+  steps.step("Review what changes");
   // 4. What the schema will do to the data, on screen, before agreeing.
   const listed = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...WRANGLER_ARGS], { quiet: true });
   if (listed.status !== 0) fail(`could not list pending migrations:\n${listed.text}`);
   const migrationsDir = resolve(workerDir, "migrations");
   const names = readdirSync(migrationsDir).filter((one) => one.endsWith(".sql"));
   const phases = pendingByPhase(listed.text, names, contractingAmong(listed.text, migrationsDir));
-  process.stdout.write("\n== what this does to the catalog\n");
   if (phases.expand.length + phases.contract.length === 0) process.stdout.write("   no schema change; the code only\n");
   for (const one of phases.expand) process.stdout.write(`   expand    ${one}  (adds; safe for the running version)\n`);
   for (const one of phases.contract) process.stdout.write(`   contract  ${one}  (drops or narrows; refused unless --contract)\n`);
@@ -149,6 +160,7 @@ export async function upgrade(argv) {
    * report then says `refuse`. The setup's writes still wait for that verdict.
    */
   let session = { cookie: null, state: null, token: null };
+  steps.step("Deploy through the canary");
   const deployed = await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])], {
     beforeReport: async () => { session = await readVerifiedDestinations({ url, accountId }); },
   });
@@ -160,12 +172,14 @@ export async function upgrade(argv) {
     process.stdout.write("\n   the Node reports refuse, so the setup did not run. Fix that first, then re-run the update.\n\n");
     process.exit(2);
   }
+  steps.step("Receiving, sending and delivery outcomes");
   const setUp = await setUpNode({ url, accountId, yes, ...session });
   /*
    * The routing rules, on every upgrade and outside `setUpNode`'s missing-step branch (1 October 2026): a Node set
    * up long ago never saw its zone's rules again, and they change in the dashboard, not here. It asks only when a
    * rule can be offered, and under --yes it prints and changes nothing.
    */
+  steps.step("Email Routing rules");
   await routingRulesStep({
     origin: url, cookie: session.cookie, accountId, token: session.token, yes, ask,
     domain: receivingDomain(session.state?.provisioned, setUp),

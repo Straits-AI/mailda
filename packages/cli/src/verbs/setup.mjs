@@ -3,6 +3,7 @@ import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount 
 import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
 import { askAdministrator } from "../credentials.mjs";
+import { progress } from "../progress.mjs";
 
 /**
  * `mailda setup`: receiving, sending and delivery outcomes for a Node that is already deployed and claimed,
@@ -12,12 +13,18 @@ import { askAdministrator } from "../credentials.mjs";
  * its own, for a Node whose install predates it or whose operator skipped the question. It uses the consent
  * wrangler already has, shows each plan before applying it, and changes nothing else on the Node.
  */
+/** What a setup does, in order: each prints its banner as it begins (`progress.mjs`). */
+export const SETUP_STEPS = ["Choose the account", "Choose the Node", "Receiving, sending and delivery outcomes", "Email Routing rules"];
+
 export async function setup(argv) {
   process.stdout.write("\n== mailda setup\n   Receiving, sending and delivery outcomes for a Node that is already running. No deploy.\n");
   const yes = argv.includes("--yes");
+  const steps = progress(SETUP_STEPS);
 
+  steps.step("Choose the account");
   await signInAndChooseAccount();
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+  steps.step("Choose the Node");
   const existing = existingNodes();
   const suggested = flag(argv, "name") ?? process.env.MAILDA_NODE_NAME ?? existing[0] ?? "mailda";
   const name = yes || flag(argv, "name") !== null
@@ -63,13 +70,15 @@ export async function setup(argv) {
     + `   outcomes    ${said(state.provisioned.deliveryEvents, "")}\n`,
   );
 
-  process.stdout.write("\n== setting up\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
+  steps.step("Receiving, sending and delivery outcomes");
+  process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
   const token = await wranglerToken();
   const setUp = await provisionNode({ origin: url, cookie, accountId, token, yes, ask, provisioned: state.provisioned, signInEmail: process.env.MAILDA_EMAIL });
   // After the three steps, always: which recipients are verified destinations changes with every send, so a
   // setup that found everything in place still reads it.
   await verifiedDestinationsStep({ origin: url, cookie, accountId, token });
   // The rules that keep addresses from reaching this Node, on every run: they change in the dashboard, not here.
+  steps.step("Email Routing rules");
   await routingRulesStep({ origin: url, cookie, accountId, token, yes, ask, domain: receivingDomain(state.provisioned, setUp) });
   printNext(url, setUp);
 }

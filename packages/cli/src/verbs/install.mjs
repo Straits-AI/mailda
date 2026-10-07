@@ -9,6 +9,7 @@ import { wranglerSaid } from "../wrangler-config.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 import { printNext, provisionNode, receivingDomain, signInLine, wranglerToken, zonesOf } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
+import { progress } from "../progress.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -37,9 +38,17 @@ import { routingRulesStep } from "./routing-step.mjs";
  * 2026: live within a minute; kept across the canary path; `wrangler triggers deploy` adds one to an
  * existing Worker). Every step still has its own verb (`mailda claim-secret`, `mailda provider`).
  */
+/** What an install does, in order: each prints its banner as it begins (`progress.mjs`). */
+export const INSTALL_STEPS = [
+  "Choose the account", "Name the Node", "Deploy", "Claim the Node", "Receiving, sending and delivery outcomes",
+  "Email Routing rules", "The Node's Cloudflare token",
+];
+
 export async function install(argv) {
   process.stdout.write("\n== mailda install\n   One Node, in your Cloudflare account. Nothing is changed until the deploy step.\n");
+  const steps = progress(INSTALL_STEPS);
 
+  steps.step("Choose the account");
   await signInAndChooseAccount();
 
   // 3. Which Node. A name, chosen freely, with `mailda` as the default; and whether that name is already a
@@ -48,6 +57,7 @@ export async function install(argv) {
   //    "upgrade or add one" is answered by the name rather than asked as a flag. The name is validated by
   //    the same rule `mailda deploy --name` uses, and the derived config is applied *before* the
   //    first-install probe, which asks wrangler whether *this* Worker exists.
+  steps.step("Name the Node");
   const base = configFor([]).name;
   const existing = existingNodes();
   const suggested = flag(argv, "name") ?? process.env.MAILDA_NODE_NAME ?? base;
@@ -85,11 +95,13 @@ export async function install(argv) {
   }
   const go = argv.includes("--yes") ? "y" : await ask(`\n   ${upgrading ? "upgrade" : "deploy"} now? [y/N]: `);
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed.\n\n"); return; }
+  steps.step("Deploy");
   await deploy(nameArgs);
   const url = hostname !== null ? `https://${hostname}` : installedUrl ?? process.env.MAILDA_URL ?? null;
   if (url !== null) rememberUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name, url);
 
   // 4. The claim secret. Printed once by the script, captured here so it can sit beside the URL.
+  steps.step("Claim the Node");
   process.stdout.write("\n== the claim secret\n");
   const seeded = capture("node", ["--experimental-strip-types", "scripts/seed-claim-secret.mjs", ...nameArgs], { quiet: true });
   const secret = /^\s{2}([A-Za-z0-9_-]{40,})\s*$/m.exec(seeded.text)?.[1] ?? null;
@@ -128,16 +140,15 @@ export async function install(argv) {
   );
 
   // 6. The account work, with the consent wrangler already has: receiving, sending, delivery outcomes.
-  process.stdout.write(
-    "\n== setting up receiving, sending and delivery outcomes\n"
-    + "   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n",
-  );
+  steps.step("Receiving, sending and delivery outcomes");
+  process.stdout.write("   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
   const token = await wranglerToken();
   const setUp = await provisionNode({
     origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
     token, yes, ask, signInEmail: claimed.email,
   });
   // Once the first address exists, so a mailbox does (1 October 2026): the rules that keep other addresses away.
+  steps.step("Email Routing rules");
   if (setUp.address !== null) {
     await routingRulesStep({
       origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "", token, yes, ask,
@@ -146,6 +157,7 @@ export async function install(argv) {
   }
 
   // 7. The Node's own Cloudflare token, optional.
+  steps.step("The Node's Cloudflare token");
   const held = await tokenStep(url, claimed.cookie, yes);
 
   process.stdout.write(
