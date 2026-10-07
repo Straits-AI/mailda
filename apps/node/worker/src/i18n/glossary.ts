@@ -204,8 +204,8 @@ export const CONCEPTS: readonly Concept[] = [
       "preauth.refusal.not_claimed",
     ], avoid: { "zh-Hans": ["注册", "激活"] } }),
   row("claim-secret", "claim secret", "认领码", {
-    // The claim's field says "Claim secret" since round four (H1, D35); the Node's own messages still say bootstrap.
-    sentences: ["preauth.claim.secret"], avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
+    // The claim's field says "Claim secret" since round four (H1, D35), and the Node's two refusals since D35's follow-up.
+    sentences: ["preauth.claim.secret", "preauth.refusal.bad_secret", "preauth.refusal.not_installed"], avoid: { "zh-Hans": ["引导密钥"] }, note: "bootstrap, install and claim secret are one concept (D4)" }),
   row("invitation-secret", "invitation secret", "邀请码", { sentences: ["preauth.join.secret"], avoid: { "zh-Hans": ["邀请密钥"] } }),
   row("grant", "grant", "授权", { avoid: { "zh-Hans": ["许可"] } }),
   row("provider", "provider", "服务商", { avoid: { "zh-Hans": ["供应商"] } }),
@@ -381,8 +381,11 @@ export const CONCEPTS: readonly Concept[] = [
     note: "D3: one verb for a domain or a Butler held until somebody lifts or resumes it; never stopped, never restarted",
   }),
   row("supervised-read", "supervised read", "受监督查阅", {
-    sentences: ["matters.read.empty", "chrome.notice.kind.supervised_read"], avoid: { "zh-Hans": ["监控", "监视"] },
-    note: "a time-boxed grant to read a mailbox one holds nothing on; already the word of `chrome.notice.supervised`",
+    sentences: [
+      "matters.read.empty", "chrome.notice.kind.supervised_read", "chrome.notice.supervised", "chrome.notice.supervised.unscoped",
+    ],
+    avoid: { "zh-Hans": ["监控", "监视"] },
+    note: "a time-boxed grant to read a mailbox one holds nothing on",
   }),
   row("export", "export", "导出", {
     sentences: [

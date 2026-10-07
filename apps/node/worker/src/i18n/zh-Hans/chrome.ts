@@ -52,7 +52,7 @@ export const chrome: Twin<typeof source> = {
   "chrome.notice.unrecorded": "未记录的时刻",
   "chrome.notice.unrecorded_at": "未记录的时刻",
   "chrome.notice.supervised": "{reader} 获得了对 {mailbox} 的受监督查阅授权（范围：{scope}），时间为 {from} 至 {to}。",
-  "chrome.notice.read": "查阅",
+  "chrome.notice.supervised.unscoped": "{reader} 获得了对 {mailbox} 的受监督查阅授权，时间为 {from} 至 {to}。",
   "chrome.notice.queries": { other: "{n} 次查询，列出 {listed}" },
   "chrome.notice.listed": { other: "{n} 封邮件" },
   "chrome.notice.opened": "打开 {n} 封",

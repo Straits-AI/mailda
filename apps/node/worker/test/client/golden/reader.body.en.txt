@@ -2,4 +2,4 @@ unparsed, the Node's words: <p class="notice bad" role="alert">The Node's own wo
 unparsed, no words: <p class="notice bad" role="alert">This message's body could not be read. The original is unchanged.</p>
 refused: <p class="notice bad" role="alert">The body could not be read (500).</p>
 two links, one flagged: <div class="notice bad" role="alert"><p>1 of 2 links in this message is not what it says:</p><ul class="links-flagged"><li><span class="mono">portal</span> goes to a bare address rather than a named site: <span class="mono dim">http://192.0.2.1/</span></li></ul></div><iframe class="message-body" title="Message body" sandbox="" referrerpolicy="no-referrer" srcdoc="<!doctype html><html data-theme=&quot;dark&quot;><link rel=&quot;stylesheet&quot; href=&quot;/app/frame.css&quot;><p>Please find attached.</p>"></iframe>
-no body: <pre class="message-text" lang=""></pre>
+no body: <p class="notice dim" data-body="none">This message has no body.</p>

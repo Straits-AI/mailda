@@ -1010,7 +1010,7 @@ Both are the same principle producing different answers, and both halves of the 
 automatic because *a breaker that waits for a person is not a breaker*. Resume is **one** administrator because
 *an automatic pause nobody can resume is an outage*. Placement needs no administrators at all, so requiring
 two to undo it would make the machine strictly more powerful than the organization, and a Node with one
-administrator could never restart a Butler. It is `org.admin` and not *anybody*, because *one anybody can
+administrator could never resume a Butler. It is `org.admin` and not *anybody*, because *one anybody can
 resume is not a pause*, and because that is the authority publishing a Butler already takes.
 
 The reason is **mandatory here and optional on a domain lift**, which is the inversion worth the paragraph: a
@@ -1059,8 +1059,8 @@ only when the first read found something. Measured before and after in
 ### Surface
 
 ```
-GET  /api/butler-pauses               every Butler this Node has stopped, with the figure behind it
-POST /api/butler-pauses/:id/resume    restart one. One org.admin, alone, with a mandatory reason
+GET  /api/butler-pauses               every Butler this Node has paused, with the figure behind it
+POST /api/butler-pauses/:id/resume    resume one. One org.admin, alone, with a mandatory reason
 ```
 
 There is deliberately **no endpoint that pauses a Butler**. One would contradict the asymmetry above.

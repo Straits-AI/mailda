@@ -8,7 +8,7 @@ import type { Key } from "../../../i18n/catalog.ts";
 import { Nothing, Scroller } from "../chrome.tsx";
 import { count, date, dateTime } from "../format.ts";
 import {
-  GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam, setKeptForwardCopy,
+  GRANTABLE_RELATIONS, addAddress, answeredNotFound, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam, setKeptForwardCopy,
   revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   type KeptForward, useInvitations, useKeptForwards, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
@@ -966,10 +966,13 @@ export function People() {
 
   if (people.isPending) return <>{heading}<Nothing kind="loading" /></>;
   if (people.isError) {
+    // A 404 is the Node's answer to somebody who is not an administrator (§5C); any other failure is a failed read.
     return (
       <>
         {heading}
-        <Nothing kind="empty" detail={t("people.forbidden")} />
+        {answeredNotFound(people.error)
+          ? <Nothing kind="empty" detail={t("people.forbidden")} />
+          : <Nothing kind="failed" detail={marked(people.error)} />}
       </>
     );
   }

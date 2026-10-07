@@ -7,7 +7,7 @@ import { Nothing, Scroller } from "../chrome.tsx";
 import { dateTime } from "../format.ts";
 import { NodeWords, marked } from "../words.tsx";
 import {
-  type ExportManifest, type Refused, type Said, MATTER_TYPES, ReadFailure, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
+  type ExportManifest, type Refused, type Said, MATTER_TYPES, ReadFailure, answeredNotFound, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
   placeHold, readExportManifest, requestExport, runExport, useExports, useHolds, useMailboxes, useMatters,
   useSupervised,
 } from "../api.ts";
@@ -148,8 +148,10 @@ export function Matters() {
           </button>
         </div>
 
-        {matters.isError ? (
-          <Nothing kind="empty" detail={t("matters.refused")} />
+        {/* Anybody may list matters, an administrator all and anybody else their own, so no failure here means
+            "not an administrator": every one is a failed read. */}
+        {matters.isPending ? <Nothing kind="loading" /> : matters.isError ? (
+          <Nothing kind="failed" detail={marked(matters.error)} />
         ) : (matters.data?.matters ?? []).length === 0 ? (
           <Nothing kind="empty" detail={t("matters.empty")} />
         ) : (
@@ -243,8 +245,10 @@ export function Matters() {
           </button>
         </div>
 
-        {holds.isError ? (
-          <Nothing kind="empty" detail={t("matters.holds.refused")} />
+        {holds.isPending ? <Nothing kind="loading" /> : holds.isError ? (
+          answeredNotFound(holds.error)
+            ? <Nothing kind="empty" detail={t("matters.holds.refused")} />
+            : <Nothing kind="failed" detail={marked(holds.error)} />
         ) : (holds.data?.holds ?? []).length === 0 ? (
           <Nothing kind="empty" detail={t("matters.holds.empty")} />
         ) : (

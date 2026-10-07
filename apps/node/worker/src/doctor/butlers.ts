@@ -58,7 +58,7 @@ export function butlerExecutionCheck(): Finding {
       "of 10,000 because it cannot detect its own plan and ADR 25 requires Paid. On Workers Free the pot " +
       "is 1,000 and every such refusal prints that row too — and the engine re-prices the graph at run " +
       "start with its own overhead added, then meters itself and refuses an effect it cannot afford rather " +
-      "than being killed mid-loop. A Butler that re-triggers itself off its own mail is stopped: the run " +
+      "than being killed mid-loop. A Butler that re-triggers itself off its own mail is paused: the run " +
       "record and the manifests it sealed make that chain a join, so a windowed count of self-provoked runs " +
       "latches a pause on the **Butler** — not on a version, so republishing a fixed Butler does not clear " +
       "it — and one administrator resumes it alone with a reason. Built since this list was first written: " +
@@ -73,7 +73,7 @@ export function butlerExecutionCheck(): Finding {
 
 
 /**
- * Is a Butler stopped, has one gone quiet, and can the loop detector see anything at all? (#75)
+ * Is a Butler paused, has one gone quiet, and can the loop detector see anything at all? (#75)
  *
  * ## Three findings, because a paused Butler's observable is **silence**
  *
@@ -136,35 +136,35 @@ export async function checkButlerPauses(env: Env, orgId: string | null): Promise
       discloses: "infrastructure",
       ok: false,
       detail: "Could not read butler_pauses or butler_versions, so this Node cannot say whether any Butler "
-        + "is stopped.",
+        + "is paused.",
       fix: "check the migrations_applied finding first",
     }];
   }
 
   const findings: Finding[] = [];
-  const stopped = report.butlers.filter((butler) => butler.paused !== null);
+  const paused = report.butlers.filter((butler) => butler.paused !== null);
 
   findings.push({
     check: "butler_paused",
-    severity: stopped.length === 0 ? "report" : "degraded",
+    severity: paused.length === 0 ? "report" : "degraded",
     discloses: "data",
-    ok: stopped.length === 0,
-    detail: stopped.length === 0
+    ok: paused.length === 0,
+    detail: paused.length === 0
       ? `${report.butlers.length} published ${plural(report.butlers.length, "Butler", "Butlers")}, none paused.`
-      : stopped.map((butler) =>
+      : paused.map((butler) =>
         `${butler.butlerName} (${butler.butlerId}) paused since ${butler.paused!.placedAt} `
         + `(${butler.paused!.pauseId}, ${butler.paused!.reason}`
         // A stored reason this build does not declare. Named rather than rendered as though it were
-        // understood: a `butler_pauses` row is data, and the row that says a Butler is stopped for a reason
+        // understood: a `butler_pauses` row is data, and the row that says a Butler is paused for a reason
         // nobody can look up is exactly the one an operator must be told about.
         + `${isPauseReason(butler.paused!.reason) ? "" : " — NOT a reason this build declares"}) `
         + `by delivery ${butler.paused!.trippedBy}: "${butler.paused!.detail}"`,
       ).join(" | "),
-    ...(stopped.length === 0 ? {} : {
+    ...(paused.length === 0 ? {} : {
       fix: "these Butlers start no runs, and mail into their mailboxes is arriving unautomated — it is still "
         + "filed, still visible and still answerable by hand, which is why this is degraded rather than "
         + `refuse. One administrator resumes one alone, with a reason: POST /api/butler-pauses/`
-        + `${stopped[0]!.paused!.pauseId}/resume with {"reason":"..."}. **Publishing a new version does not `
+        + `${paused[0]!.paused!.pauseId}/resume with {"reason":"..."}. **Publishing a new version does not `
         + "resume it** — the pause is keyed on the Butler, deliberately, so that fixing a looping Butler and "
         + "deciding it is safe to run again are two separate acts",
     }),

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
-  createPolicy, publishPolicyVersion, savePolicyDraft, useMailboxes, usePolicies,
+  answeredNotFound, createPolicy, publishPolicyVersion, savePolicyDraft, useMailboxes, usePolicies,
   type PolicyConditions, type PolicyVersionRow, type Said,
 } from "../api.ts";
 import { dateTime } from "../format.ts";
@@ -282,11 +282,13 @@ export function Policies() {
   if (policies.isPending) return <>{heading}<Nothing kind="loading" /></>;
   if (policies.isError) {
     // 404 here means "not an administrator", by §5C — and the read deliberately cannot distinguish that from
-    // an organization with no rules, so this says both and asserts neither.
+    // an organization with no rules, so this says both and asserts neither. Any other failure is a failed read.
     return (
       <>
         {heading}
-        <Nothing kind="empty" detail={t("policies.notAdmin")} />
+        {answeredNotFound(policies.error)
+          ? <Nothing kind="empty" detail={t("policies.notAdmin")} />
+          : <Nothing kind="failed" detail={marked(policies.error)} />}
       </>
     );
   }

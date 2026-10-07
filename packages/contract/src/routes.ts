@@ -645,8 +645,8 @@ export const ROUTES = [
   { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunDetailResponse },
   { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunInspectionResponse },
   { method: "POST", path: "/api/butler-runs/:runId/replay", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
-  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerPauseListResponse },
-  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Restart a stopped Butler, with a reason", response: S.butlerPauseResumedResponse },
+  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has paused", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerPauseListResponse },
+  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Resume a paused Butler, with a reason", response: S.butlerPauseResumedResponse },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
   {

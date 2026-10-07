@@ -304,11 +304,11 @@ export const AUDIT_ACTIONS = {
    * Both ride in `auditedBatch` beside the write they record, so neither is `standalone`.
    */
   "butler.paused": {
-    says: "This Node stopped a Butler by its own rule; the reason, the delivery that tripped it and the "
+    says: "This Node paused a Butler by its own rule; the reason, the delivery that tripped it and the "
       + "figure behind it are recorded with it. Republishing the Butler does not clear it.",
   },
   "butler.resumed": {
-    says: "One administrator restarted a paused Butler, alone and with a mandatory reason — the only human "
+    says: "One administrator resumed a paused Butler, alone and with a mandatory reason — the only human "
       + "judgement anywhere in a machine-placed pause.",
   },
 

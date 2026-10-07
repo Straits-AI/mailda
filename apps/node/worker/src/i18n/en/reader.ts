@@ -27,6 +27,11 @@ export const reader = {
   "reader.body.problem.unreadable": "This message's body could not be read ({cause}). The original is unchanged and can still be downloaded.",
   "reader.body.problem.sanitised_empty": "Nothing in this message's HTML survived sanitising. The original is unchanged and can still be downloaded.",
   "reader.body.problem.unrenderable": "This message's HTML could not be rendered safely ({cause}). The original is unchanged and can still be downloaded.",
+  // The same two problems where the plain-text alternative is shown below instead: the Node's sentence for that case.
+  "reader.body.fallback.sanitised_empty": "Nothing in this message's HTML survived sanitising. Its plain-text alternative is shown instead.",
+  "reader.body.fallback.unrenderable": "This message's HTML could not be rendered safely ({cause}). Its plain-text alternative is shown instead.",
+  // A message the parser found neither HTML nor text in (§5C, ADR 37): said, rather than an empty panel.
+  "reader.body.none": "This message has no body.",
   "reader.body.remote": {
     one: "{n} remote resource withheld. Loading them would tell the sender you opened this.",
     other: "{n} remote resources withheld. Loading them would tell the sender you opened this.",

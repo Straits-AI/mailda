@@ -23,7 +23,6 @@ export const matters: Twin<typeof source> = {
   "matters.new.kind": "类型",
   "matters.new.describe": "描述",
   "matters.new.asked": "事项已开立。",
-  "matters.refused": "没有事项，或者你没有 org.admin。",
   "matters.empty": "没有你能查看的事项。管理员能查看所有事项，其他人只能查看自己开立的事项。",
   "matters.col.matter": "事项",
   "matters.col.kind": "类型",

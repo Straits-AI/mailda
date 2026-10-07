@@ -11,8 +11,8 @@ import type { Area } from "../areas.ts";
 const refusals = {
   "preauth.refusal.already_claimed": "This Node has already been claimed. Sign in instead, or restore from backup to start over.",
   "preauth.refusal.bad_secret":
-    "That bootstrap secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.",
-  "preauth.refusal.not_installed": "This Node has no bootstrap secret recorded. Run `mailda deploy` to complete installation.",
+    "That claim secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.",
+  "preauth.refusal.not_installed": "This Node has no claim secret recorded. Run `mailda deploy` to complete installation.",
   "preauth.refusal.weak_password": "That password is too short.",
   "preauth.refusal.not_claimed": "This Node has not been claimed yet.",
   "preauth.refusal.locked_out": "Too many failed sign-in attempts.",

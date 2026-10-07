@@ -4453,7 +4453,7 @@ refused, which is next.
 Email Routing destination, so a kept forward whose destination was removed, or never verified, delivered nothing and
 told nobody. The owner approved the fallback that day, with one condition: "make sure to state properly what is
 happening". An address may opt in to a copy: when the forward is refused as not verified, the stored message is
-filed, judged, and sealed as an ordinary send from the address, as a mailing list sends it, "Alice via <mailbox>" in
+filed, judged, and sealed as an ordinary send from the address, as a mailing list sends it, "Alice via \<mailbox>" in
 the From display name, Alice in Reply-To, her body byte for byte. ADR 36 gains its one exception (a copy carries the
 external sender's name, never staff's, and nothing an author composes can set either header). No person releases each
 copy, so the administrator's opt-in is the authority, read again at every copy and at dispatch, and the trail names
@@ -4513,6 +4513,77 @@ sends present: 6 rows read, against 1,006 with the indexes dropped, on the local
 asserted in the test, which checks that it does not grow with the table. Once the repair has caught up, any further
 `outbound.reasons_repaired` line means an older version is still serving, or a current writer has regressed.
 
+**Two docs are in Simplified Chinese, and a translation cannot fall behind its English silently** (3 October 2026,
+with the owner's approval). `docs/cloudflare-settings.md` and the runbook part of `docs/disaster-recovery.md` are
+translated in `docs/zh-cn/`, in the glossary's words, and mailda.site renders each at its English page's path under
+`/zh-cn/` in place of Starlight's fallback. Each records the SHA-256 of the English it covers, and
+`apps/site/test/translations.test.mjs` fails when that English changes, naming both files and saying to update the
+translation or remove it. For the runbook the hash covers only the translated part, from the top to the heading where
+the drill reports begin, so a new drill report does not fail it. The README's opening part was translated as well and
+dropped before merging: hashed whole, it would have gone red at the README's rate (71 commits in the month before),
+taxing every unrelated pull request, and the `/zh-cn/` landing page already carries its pitch and status in Chinese.
+The same test holds each translation to its English's code blocks byte for byte, its links, inline code, tables and
+headings, to the glossary's `NEVER` list and to the register, and every one of those assertions was seen to fail on a
+mutation before it was kept. `docs/onboarding-journey.md`, proposed with them, was left in English: it is an analysis,
+and its operator steps are the README's. Turbo's cache for the site's tests now keys on the README, `docs/` and the
+glossary, so an English edit alone re-runs the hash check locally rather than only in CI.
+
+**Translating the README found two things wrong in its English.** "One step neither path can do for you" said the
+delivery-events subscription is made only from the Setup screen with the Node's own token, while the install paragraph
+above it said the install subscribes; the install is right (`provisionNode` in `packages/cli/src/verbs/provision.mjs`
+posts `/api/provider/subscription` with wrangler's login, and attaches the queue's consumer when nothing consumes it).
+The paragraph now says the installer does both, and that a button-deployed Node, or one whose setup step was declined,
+gets them from `pnpm mailda setup` or the Setup screen. And `"Alice via <mailbox>"` was raw HTML to a Markdown renderer,
+so the site drew "Alice via"; it is escaped, here and in the README.
+
+## The round-four follow-ups (3 October 2026)
+
+The owner accepted layer 3's questions in round four with seven follow-ups, each its own change, and on 3 October
+said "go close them all" (`docs/i18n.md`, Layer 3's questions). Each is a commit of its own.
+
+**The Node says claim secret (D35).** The claim's field and the CLI said claim secret since round four, and the
+Node's two refusals that name it still said "bootstrap secret". They say claim secret now, as does the English
+headline above each, which is the Node's sentence word for word. **For an agent:** the codes `bad_secret` and
+`not_installed` and the response's fields are unchanged; text matched on "bootstrap secret" no longer appears.
+
+**A command in a sentence before sign-in is in `<code>` (H14).** The claim's secret hint, the recovery codes' next
+step and two claim refusals showed their commands between literal backticks. The page now draws a backticked span
+of a catalog sentence as `<code>`, in every locale, with the catalogs' text unchanged; backticks there already meant
+an identifier the glossary does not translate. The Node's own English beside a headline stays as it was sent.
+
+**The lockout says "1 minute" and "5 minutes" (H8, D36).** The Node's `locked_out` sentence read "Try again in 5
+minute(s).". It now has a real plural. The page's headline above it carries no count and did not change.
+**For an agent:** the code `locked_out`, the 429 and the `retry-after` header (the exact seconds) are unchanged;
+text matched on "minute(s)" no longer appears.
+
+**The notices band says "a supervised read (content)" (H6).** The headline put the Node's scope token where the
+noun goes: "was granted a supervised content of Support". It now names the read and gives the scope beside it, and a
+grant whose scope was not recorded has its own sentence, where English said "a supervised read" by filling the token's
+place with a word and Chinese said （范围：查阅）.
+
+**A body's problem is said when the plain text is shown instead, and an empty body says so (H12).** A text-only body
+with a problem (an HTML part that sanitised to nothing or could not be rendered) showed the plain text with no word
+that the HTML had been set aside, though the Node sent the sentence. A message with neither HTML nor text showed an
+empty panel, the blank §5C and ADR 37 rule out. The first now shows the Node's sentence for that case, in the viewer's
+language, above the text. The second says "This message has no body.".
+
+**"Not an administrator" only when the Node said so (H13).** People, Rules, Butlers and Matters read any failed read
+as "No …, or you do not hold org.admin.", so a Node that could not reach its catalog told an administrator they were
+not one. The Node answers a non-administrator 404 on People, Rules, Butlers and the holds list, and those screens now
+say it on a 404 only and show any other failure as failed, in the Node's words, as Limits has since G5. The matters
+list is never refused to a member (it lists their own), so its sentence is gone and every failure there is failed.
+
+**The API says a Butler is paused and resumed (G6's Butler half).** The screens say a Butler is paused and an
+administrator resumes it (D26); the Node said a machine "stopped" it and an administrator "restarted" it, in the two
+`/api/butler-pauses` summaries (so the SDK's comments), the audit vocabulary, the resume's refusals and doctor. They
+say pause and resume now, and a resume no longer "releases" a pause, a held send's verb. **For an agent:** every code
+and field name is byte-identical (`E_BUTLER_PAUSE_REASON_REQUIRED`, `E_NO_BUTLER_PAUSE`,
+`E_BUTLER_PAUSE_ALREADY_RESUMED`, `E_BUTLER_PAUSED`, `butler_paused`, `butler.paused`, `butler.resumed`, `pauseId`), so
+matching on codes is unaffected; text matched on "Restart a stopped Butler", "Butlers a machine has stopped",
+"This Node stopped a Butler" or "restarted a paused Butler" no longer appears. The audit vocabulary's `says` is the
+code's description of an action and no entry stores it; a stored `butler_pauses.detail`, and the `said` an audit entry
+recorded, are records and are not rewritten (both already said paused).
+
 ## The Node's English counts in words now (3 October 2026)
 
 **For agents that match the Node's English: about 120 sentences changed, and no code, field or event name did.**
@@ -4525,8 +4596,7 @@ gets "person" and every verb wrong. The CLI imports it too, so `@mailda/cli` now
 Every stable code (`E_…`), finding `check`, log `event` and `detail` field is byte-for-byte what it was; only the
 prose around the numbers moved. Agents that match the old phrasing should match the code or the field instead.
 The interface's own catalog (`apps/node/worker/src/i18n/en/`) had no `(s)` left; its counts were already CLDR
-plurals (`docs/i18n.md`, D11 to D25). D36 there, `locked_out`'s "Try again in 5 minute(s).", is fixed by this
-change. Left as they were on purpose: development scripts that print to whoever runs them
+plurals (`docs/i18n.md`, D11 to D25). D36 there, `locked_out`'s "Try again in 5 minute(s).", was already fixed by H8's follow-up. Left as they were on purpose: development scripts that print to whoever runs them
 (`apps/node/worker/scripts/`, `packages/receipts/src/generate.ts`), and recorded output quoted in comments, receipts
 and drill write-ups. Those quote what was printed at the time.
 

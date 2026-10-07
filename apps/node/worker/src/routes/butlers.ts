@@ -127,12 +127,12 @@ export const butlers = {
   },
 
   /**
-   * Every Butler, with the version that is live and whether a machine has stopped it.
+   * Every Butler, with the version that is live and whether a machine has paused it.
    *
    * The pause is joined in rather than left to a second request, because *"this Butler is published"* and
    * *"this Butler is running"* are different facts and a list that showed only the first would be the
    * enablement pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker
-   * stopped. `pausesInForce` is the same function `triggerButlers` consults, so the list and the gate
+   * paused. `pausesInForce` is the same function `triggerButlers` consults, so the list and the gate
    * cannot disagree.
    */
   "GET /api/butlers": async ({ env, who }) => {
@@ -203,8 +203,8 @@ export const butlers = {
   /**
    * The Butler pause (#75, Layer 5 over Layer 4's substrate).
    *
-   * `GET  /api/butler-pauses`             every Butler this Node has stopped, with the figure behind it
-   * `POST /api/butler-pauses/:id/resume`  restart one. **One** administrator, alone, with a reason
+   * `GET  /api/butler-pauses`             every Butler this Node has paused, with the figure behind it
+   * `POST /api/butler-pauses/:id/resume`  resume one. **One** administrator, alone, with a reason
    *
    * ## There is deliberately no endpoint that pauses a Butler
    *

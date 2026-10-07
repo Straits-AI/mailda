@@ -64,7 +64,7 @@ describe("the notices band", () => {
     // words (`matters.type.*`), and the grant's scope as the Node's token, in <code>.
     const local = (at: string) => new Date(at).toLocaleString();
     expect([...band.querySelectorAll(".notice.told")].map((notice) => notice.textContent)).toEqual([
-      `legal@example.test was granted a supervised content of Support, ${local("2026-09-26T09:00:00Z")} to ${local("2026-09-27T09:00:00Z")}. `
+      `legal@example.test was granted a supervised read (content) of Support, ${local("2026-09-26T09:00:00Z")} to ${local("2026-09-27T09:00:00Z")}. `
         + "1 query listing 1 message · 3 opened · 1 raw message read · matter mat_1 (legal hold) · grant sgr_1",
       "somebody was granted a supervised read of a mailbox, at an unrecorded instant to an unrecorded instant. "
         + "4 queries listing 0 messages · 0 opened · 0 raw messages read · matter none cited · grant sgr_2",

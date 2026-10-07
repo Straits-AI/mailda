@@ -180,14 +180,23 @@ export async function armSweeper(env: Env): Promise<void> {
   }
 }
 
+/**
+ * The Node's sentence for a locked-out sign-in, its minutes rounded up and pluralised (H8, D36). The `retry-after`
+ * header carries the exact seconds; this is the sentence an agent or a person reads.
+ */
+export function lockedOutMessage(retryAfterSeconds: number): string {
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return `Too many failed sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
 export function claimMessage(status: string): string {
   switch (status) {
     case "already_claimed":
       return "This Node has already been claimed. Sign in instead, or restore from backup to start over.";
     case "bad_secret":
-      return "That bootstrap secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.";
+      return "That claim secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.";
     case "not_installed":
-      return "This Node has no bootstrap secret recorded. Run `mailda deploy` to complete installation.";
+      return "This Node has no claim secret recorded. Run `mailda deploy` to complete installation.";
     default:
       return "Claim failed.";
   }
