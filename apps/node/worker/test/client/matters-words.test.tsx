@@ -162,7 +162,7 @@ describe("Matters in English", () => {
     node({ ...MATTERS_EMPTY, "/api/holds": 404 });
     const { container } = mount(<Matters />);
     await screen.findByText(/No holds, or you do not hold org\.admin\./);
-    await screen.findByText(/No matters have been opened\./);
+    await screen.findByText(/No matters you can see\./);
     await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.refused-read.en.html");
   });
 
