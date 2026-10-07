@@ -4919,3 +4919,11 @@ the verified destinations that Worker's code names, read once per Worker with wr
 person, never applied by itself. A destination must be verified unless copies are on, in which case one copy per
 message goes to every destination refused as not verified, and none may be on a domain this organisation receives at.
 Doctor's *Kept forwards* is now *Forwards* and counts destinations. ADR 47 is amended in the Blueprint.
+
+## The routing step can go back, and change one answer before applying (7 October 2026)
+
+On a zone with many rules, one wrong answer in `mailda upgrade`'s routing step meant answering N to the whole plan,
+or applying it and putting the wrong address back by hand. Each address's choice now ends with *← back to the
+previous address*, each mailbox choice with *← back to the choices for* that address, and the plan numbers every
+offered address, the ones left as they are too: a number at *Apply?* asks that one again and shows the plan again.
+Nothing changes until the plan is applied, as before. Held by `apps/node/worker/test/node/routing-step.test.ts`.

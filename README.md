@@ -120,6 +120,9 @@ These are the defaults, and how to change each:
 
 - **One y/N, only when a rule can be offered.** On a zone whose rules you keep on purpose, it asks on every
   upgrade; nothing remembers a "no". Answer N, or run with `--yes`.
+- **Every answer can be taken back before anything changes.** Each address's choice ends with *← back to the
+  previous address*, each mailbox choice with *← back to the choices for* that address, and the plan numbers every
+  address: answer a number at *Apply?* to ask that one again.
 - **Each rule defaults to "leave it".** A forward (often someone's personal mail) offers *receive here only*:
   the destination gets nothing more, and replies sent from there are not seen here. A rule to another Worker
   offers *receive here*: that Worker stops receiving the address, and this Node cannot see what it did. A drop

@@ -21,6 +21,10 @@ import { plural } from "@mailda/runtime";
  * command for each rule and changes nothing, as Wrangler applies no destructive routing change without a person.
  */
 
+/** What a choice answers to go back one question; never a choice's own value, all of which are booleans, words or mailboxes. */
+const BACK = "back";
+const BACK_TO_PREVIOUS = "← back to the previous address";
+
 /** The sentence that heads the list, and every claim it makes (critic M9: never "every change can be undone"). */
 const HEADER = [
   "A rule for one address outranks the catch-all, so each address below goes where its own rule says, not to the catch-all "
@@ -219,68 +223,103 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
   const mailboxes = boxes.ok ? boxes.mailboxes : [];
   if (!boxes.ok) { out("the mailboxes could not be listed, so only a new one is offered:"); refused(boxes.text); }
 
-  // Each rule: leave it (the default) or the Node's one change; then, when the Node leaves it open, which mailbox.
-  const chosen = [];
-  for (const rule of plan.offered) {
+  /*
+   * One address's questions: leave it (the default) or the Node's change; then, when the Node leaves it open, which
+   * mailbox. Answers what to do with it, null to leave it, or BACK. Going back is offered everywhere a choice is
+   * (7 October 2026, the owner's: "when the list is long it is troublesome to undo"): from an address's choice to the
+   * address before it, and from its mailbox to its own choice again. Nothing is changed until the plan is applied.
+   */
+  const askRule = async (rule, canGoBack) => {
+    for (;;) {
+      process.stdout.write("\n");
+      out(`${rule.to}   ${whereTo(rule)}`);
+      for (const line of wrapAt(`${rule.takeOver.label}: ${rule.takeOver.says}.`, 90)) out(`  ${line}`);
+      // A forward rule's third choice (ADR 47): keep the forward, in the Node's words.
+      const keep = rule.takeOver.keep ?? null;
+      if (keep !== null) for (const line of wrapAt(`${keep.label}: ${keep.says}.`, 90)) out(`  ${line}`);
+      // The fourth (ADR 47 amended): keep, and copy when the forward is refused as not verified, in the Node's words.
+      const copying = keep?.copy ?? null;
+      if (copying !== null) for (const line of wrapAt(`${copying.label}: ${copying.says}.`, 90)) out(`  ${line}`);
+      // A Worker rule's forward and its copy (ADR 47, amended 7 October 2026), with what the Worker's code names.
+      const forwardTo = rule.takeOver.forwardTo ?? null;
+      if (forwardTo !== null) {
+        for (const line of wrapAt(`${forwardTo.label}: ${forwardTo.says}. ${foundSaid(forwardTo, rule.destinations[0])}.`, 90)) out(`  ${line}`);
+        for (const line of wrapAt(`${forwardTo.copy.label}: ${forwardTo.copy.says}.`, 90)) out(`  ${line}`);
+      }
+      const take = await choose(`   ${rule.to}`, [
+        { label: "leave it", value: false },
+        // "stop" only to a Node that offers the choice: an older one lists no `keep` and refuses the field.
+        { label: rule.takeOver.label, value: keep !== null ? "stop" : true },
+        ...(keep === null ? [] : [{ label: keep.label, value: "keep" }]),
+        ...(copying === null ? [] : [{ label: copying.label, value: "keep-copy" }]),
+        ...(forwardTo === null ? [] : [{ label: forwardTo.label, value: "to" }, { label: forwardTo.copy.label, value: "to-copy" }]),
+        ...(canGoBack ? [{ label: BACK_TO_PREVIOUS, value: BACK }] : []),
+      ]);
+      if (take === BACK) return BACK;
+      if (!take) return null;
+      const forward = take === "keep" || take === "keep-copy" ? "keep" : take === "stop" ? "stop" : null;
+      const copy = take === "keep-copy" || take === "to-copy";
+      // The addresses, starting from the verified ones the Worker's code names: Enter takes them as offered.
+      let to = null;
+      if (take === "to" || take === "to-copy") {
+        const offer = suggested(forwardTo);
+        const typed = (await ask(`   forward ${rule.to} to (comma-separated)${offer.length === 0 ? "" : ` [${offer.join(", ")}]`}: `)).trim();
+        to = (typed === "" ? offer : typed.split(",")).map((one) => one.trim().toLowerCase()).filter((one) => one !== "");
+        if (to.length === 0) { out(`  left as it is: no address was given to forward ${rule.to} to`); return null; }
+      }
+      const options = mailboxChoices(rule, mailboxes);
+      if (rule.takeOver.filesInto === null && options.length === 0) {
+        out(`  left as it is: no mailbox could be listed, and ${rule.to} is longer than a mailbox name may be`);
+        return null;
+      }
+      const mailbox = rule.takeOver.filesInto !== null
+        ? rule.takeOver.filesInto
+        : !rule.takeOver.asksMailbox && mailboxes.length === 1
+          ? mailboxes[0]
+          : await choose(`   which mailbox receives ${rule.to}?`, [...options, { label: `← back to the choices for ${rule.to}`, value: BACK }]);
+      if (mailbox === BACK) continue;
+      return { rule, mailbox, forward, copy, to };
+    }
+  };
+
+  const answers = plan.offered.map(() => null);
+  for (let at = 0; at < plan.offered.length;) {
+    const answer = await askRule(plan.offered[at], at > 0);
+    if (answer === BACK) { at -= 1; continue; }
+    answers[at] = answer;
+    at += 1;
+  }
+
+  /*
+   * The plan, every offered address numbered, the ones left as they are too: a number re-asks that one address and
+   * shows the plan again, so one wrong answer in a long list costs one question, not the whole run.
+   */
+  for (;;) {
+    if (answers.every((one) => one === null)) { process.stdout.write("\n"); out("left as they are."); return; }
     process.stdout.write("\n");
-    out(`${rule.to}   ${whereTo(rule)}`);
-    for (const line of wrapAt(`${rule.takeOver.label}: ${rule.takeOver.says}.`, 90)) out(`  ${line}`);
-    // A forward rule's third choice (ADR 47): keep the forward, in the Node's words.
-    const keep = rule.takeOver.keep ?? null;
-    if (keep !== null) for (const line of wrapAt(`${keep.label}: ${keep.says}.`, 90)) out(`  ${line}`);
-    // The fourth (ADR 47 amended): keep, and copy when the forward is refused as not verified, in the Node's words.
-    const copying = keep?.copy ?? null;
-    if (copying !== null) for (const line of wrapAt(`${copying.label}: ${copying.says}.`, 90)) out(`  ${line}`);
-    // A Worker rule's forward and its copy (ADR 47, amended 7 October 2026), with what the Worker's code names.
-    const forwardTo = rule.takeOver.forwardTo ?? null;
-    if (forwardTo !== null) {
-      for (const line of wrapAt(`${forwardTo.label}: ${forwardTo.says}. ${foundSaid(forwardTo, rule.destinations[0])}.`, 90)) out(`  ${line}`);
-      for (const line of wrapAt(`${forwardTo.copy.label}: ${forwardTo.copy.says}.`, 90)) out(`  ${line}`);
-    }
-    const take = await choose(`   ${rule.to}`, [
-      { label: "leave it", value: false },
-      // "stop" only to a Node that offers the choice: an older one lists no `keep` and refuses the field.
-      { label: rule.takeOver.label, value: keep !== null ? "stop" : true },
-      ...(keep === null ? [] : [{ label: keep.label, value: "keep" }]),
-      ...(copying === null ? [] : [{ label: copying.label, value: "keep-copy" }]),
-      ...(forwardTo === null ? [] : [{ label: forwardTo.label, value: "to" }, { label: forwardTo.copy.label, value: "to-copy" }]),
-    ]);
-    if (!take) continue;
-    const forward = take === "keep" || take === "keep-copy" ? "keep" : take === "stop" ? "stop" : null;
-    const copy = take === "keep-copy" || take === "to-copy";
-    // The addresses, starting from the verified ones the Worker's code names: Enter takes them as offered.
-    let to = null;
-    if (take === "to" || take === "to-copy") {
-      const offer = suggested(forwardTo);
-      const typed = (await ask(`   forward ${rule.to} to (comma-separated)${offer.length === 0 ? "" : ` [${offer.join(", ")}]`}: `)).trim();
-      to = (typed === "" ? offer : typed.split(",")).map((one) => one.trim().toLowerCase()).filter((one) => one !== "");
-      if (to.length === 0) { out(`  left as it is: no address was given to forward ${rule.to} to`); continue; }
-    }
-    const options = mailboxChoices(rule, mailboxes);
-    if (rule.takeOver.filesInto === null && options.length === 0) {
-      out(`  left as it is: no mailbox could be listed, and ${rule.to} is longer than a mailbox name may be`);
+    out("Plan");
+    answers.forEach((answer, i) => {
+      const rule = plan.offered[i];
+      if (answer === null) { out(`  ${i + 1}. ${rule.to}   ${whereTo(rule)}  (left as it is)`); return; }
+      const { mailbox, forward, copy, to } = answer;
+      out(`  ${i + 1}. ${rule.to}   ${whereTo(rule)}  ->  this Node, into ${mailbox.id === null ? `a new mailbox named ${mailbox.name}` : `mailbox ${mailbox.name}`}`
+        + `${forward === "keep" ? `, and keeps forwarding to ${rule.destinations[0]}` : ""}${to === null ? "" : `, and forwards to ${to.join(", ")}`}`
+        + `${copy ? ", with copies" : ""}`);
+      const offer = to !== null ? rule.takeOver.forwardTo : forward === "keep" ? rule.takeOver.keep : rule.takeOver;
+      for (const line of wrapAt(`${copy ? offer.copy.says : offer.says}.`, 86)) out(`       ${line}`);
+    });
+    const apply = (await ask(`   Apply? [y/N, or 1-${answers.length} to change that one] `)).trim();
+    if (/^\d+$/.test(apply)) {
+      const n = Number(apply);
+      if (n < 1 || n > answers.length) { out(`there is no ${apply} in the plan; it numbers 1 to ${answers.length}`); continue; }
+      const answer = await askRule(plan.offered[n - 1], false);
+      answers[n - 1] = answer;
       continue;
     }
-    const mailbox = rule.takeOver.filesInto !== null
-      ? rule.takeOver.filesInto
-      : !rule.takeOver.asksMailbox && mailboxes.length === 1
-        ? mailboxes[0]
-        : await choose(`   which mailbox receives ${rule.to}?`, options);
-    chosen.push({ rule, mailbox, forward, copy, to });
+    if (!/^y(es)?$/i.test(apply)) { out("nothing was changed."); return; }
+    break;
   }
-  if (chosen.length === 0) { process.stdout.write("\n"); out("left as they are."); return; }
-
-  process.stdout.write("\n");
-  out("Plan");
-  for (const { rule, mailbox, forward, copy, to } of chosen) {
-    out(`  ${rule.to}   ${whereTo(rule)}  ->  this Node, into ${mailbox.id === null ? `a new mailbox named ${mailbox.name}` : `mailbox ${mailbox.name}`}`
-      + `${forward === "keep" ? `, and keeps forwarding to ${rule.destinations[0]}` : ""}${to === null ? "" : `, and forwards to ${to.join(", ")}`}`
-      + `${copy ? ", with copies" : ""}`);
-    const offer = to !== null ? rule.takeOver.forwardTo : forward === "keep" ? rule.takeOver.keep : rule.takeOver;
-    for (const line of wrapAt(`${copy ? offer.copy.says : offer.says}.`, 88)) out(`    ${line}`);
-  }
-  const apply = await ask("   Apply? [y/N] ");
-  if (!/^y(es)?$/i.test(apply.trim())) { out("nothing was changed."); return; }
+  const chosen = answers.filter((one) => one !== null);
 
   // Take-overs whose rule read back with the name that records where it went: the only ones `--without-node` restores.
   let recorded = 0;

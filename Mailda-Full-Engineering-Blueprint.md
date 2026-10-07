@@ -550,6 +550,7 @@ The former "or is marked receive-only" escape is withdrawn: ADR 25 requires Work
 4. The plan is shown and confirmed; each take-over is the audited repoint of §10, which also writes the previous action into the rule's name, so a put-back works from that name when the Node is gone. The step says which names read back as written; the catch-all's take-over writes none, so it is put back through the Node before the Node is deleted. A take-over the Node could not confirm is said to be possibly applied, never "not taken over".
 5. The Setup screen's existing-rules table offers the same choice with the same words. Nothing is deleted.
 6. Amended 3 October 2026 (ADR 47): a forward rule offers three choices, leave it, "receive here only" and "receive here and keep forwarding to X", and a take-over must name one of the last two (`--forward keep|stop`). Keep is refused when the account lists X unverified or not at all, unless the take-over also turns copies on (`--copy`, the Setup screen's box under keep), which then follow each refused forward.
+7. Amended 7 October 2026: every question can be taken back before anything changes. Each address's choice offers "← back to the previous address" and each mailbox choice "← back to the choices for" its address; the plan numbers every offered address, the ones left as they are too, and answering a number at "Apply?" asks that address again and shows the plan again, so one wrong answer in a long list costs one question.
 
 ### Provider connection or migration
 
