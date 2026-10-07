@@ -1573,6 +1573,13 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .policy-editor h2 { margin: 0; }
 .policy-actions { margin: 16px 0 0; }
 
+/* Doctor (design audit, 7 October 2026): what needs attention first, and a passing check's detail folded after its
+   first sentence. */
+.doctor-findings .doctor-attention > td, .doctor-findings .doctor-attention > th { background: var(--surface-1); }
+.doctor-detail > summary { cursor: pointer; color: var(--text-primary); }
+.doctor-detail > summary::marker { color: var(--text-secondary); }
+.doctor-detail[open] > summary { margin-bottom: 4px; }
+
 /* One card per mailbox (7 October 2026), folding: its name in the summary, then its addresses as a table, what a copy
    is once, and who may do what. */
 .people-mailbox { margin-top: 16px; padding: 4px 18px; background: var(--surface-1); border-radius: var(--r-card); }
@@ -1786,6 +1793,16 @@ dialog.drawer { animation: drawer-in var(--t-pane) ease-out; }
 /* Below 768px, one pane at a time: the list, or the reader with a back button. */
 @media (max-width: 767.98px) {
   .app-main { --pad-top: 20px; --pad-x: 16px; }
+  /* A table whose rows are records rather than figures (Doctor's findings, a mailbox's addresses) stacks each row
+     as a block on a phone, its cells one under another: squeezed into columns, Doctor's detail stood one word to
+     a line (design audit, 7 October 2026). The header row is for the eye only, so it goes; each cell says what it
+     is by what it holds. */
+  .stack-narrow thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .stack-narrow, .stack-narrow tbody, .stack-narrow tr, .stack-narrow tr > :is(td, th) { display: block; width: auto; }
+  /* Beats .ledger table's 52rem, which is what lets a ledger's columns scroll sideways: stacked, nothing needs to. */
+  .ledger table.stack-narrow { min-width: 0; }
+  .stack-narrow tr { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+  .stack-narrow tr > :is(td, th), .stack-narrow tr > th[scope="row"] { padding: 2px 0; border-bottom: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
   .mail-panes { grid-template-columns: minmax(0, 1fr); }
   .mail-panes[data-view="list"] .reader-column { display: none; }
   .mail-panes[data-view="reader"] .list-pane { display: none; }

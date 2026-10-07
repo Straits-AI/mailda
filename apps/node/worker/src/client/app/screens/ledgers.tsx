@@ -999,6 +999,22 @@ function EvidenceVerify() {
 }
 
 /**
+ * A passing check's detail, its first sentence shown and the rest folded (design audit, 7 October 2026): ok checks
+ * explained themselves in paragraphs up to thirty lines long, so the one warning sat below the fold. A detail of one
+ * sentence, or a short one, is shown whole. The words are the Node's, marked, open or folded.
+ */
+function FoldedDetail({ detail }: { detail: string }) {
+  const end = detail.indexOf(". ");
+  if (end < 0 || detail.length <= 160) return <NodeWords>{detail}</NodeWords>;
+  return (
+    <details className="doctor-detail">
+      <summary><NodeWords>{detail.slice(0, end + 1)}</NodeWords></summary>
+      <NodeWords>{detail.slice(end + 2)}</NodeWords>
+    </details>
+  );
+}
+
+/**
  * A finding's check: this interface's title for it (`doctor.check.*`) above its name, or, for a name a newer Node
  * emits that this interface does not know, the name alone. The name stays because the Node's own `fix` text cites
  * checks by it ("check the migrations_applied finding first").
@@ -1029,7 +1045,7 @@ export function Doctor() {
       <p className="notice dim mono">
         {t(report.claimed ? "ledgers.doctor.claimed" : "ledgers.doctor.unclaimed", { at: clock(report.at) })}
       </p>
-      <table>
+      <table className="doctor-findings stack-narrow">
         <thead>
           <tr>
             <th scope="col">{t("ledgers.doctor.col.check")}</th>
@@ -1038,8 +1054,9 @@ export function Doctor() {
           </tr>
         </thead>
         <tbody>
-          {report.findings.map((finding) => (
-            <tr key={finding.check}>
+          {/* What needs attention first, in the Node's order; the checks that passed after it (design audit, 7 October 2026). */}
+          {[...report.findings.filter((one) => !one.ok), ...report.findings.filter((one) => one.ok)].map((finding) => (
+            <tr key={finding.check} className={finding.ok ? undefined : "doctor-attention"}>
               <CheckName check={finding.check} />
               <td>
                 <span className={`state ${finding.ok ? "delivery-accepted" : `severity-${finding.severity}`}`}>
@@ -1047,7 +1064,7 @@ export function Doctor() {
                 </span>
               </td>
               <td>
-                <NodeWords>{finding.detail}</NodeWords>
+                {finding.ok ? <FoldedDetail detail={finding.detail} /> : <NodeWords>{finding.detail}</NodeWords>}
                 {finding.fix === undefined ? null : (
                   <>
                     {" "}

@@ -425,7 +425,7 @@ function MailboxHead({ box, onChanged, forwards, who }: {
         ? <p className="dim">{t("people.mailbox.noAddress")}</p>
         : (
           <Scroller label={t("people.mailbox.addresses", { name: box.name })}>
-            <table className="people-address-table">
+            <table className="people-address-table stack-narrow">
               <thead>
                 <tr>
                   <th scope="col">{t("people.address.col.address")}</th>
