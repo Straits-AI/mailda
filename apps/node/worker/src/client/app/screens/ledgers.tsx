@@ -13,7 +13,7 @@ import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
   type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, type Refused, repairSearch,
   requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
-  useSends, useTransport, verifyAudit, verifyEvidence,
+  usePeople, useSends, useTransport, verifyAudit, verifyEvidence,
 } from "../api.ts";
 
 /**
@@ -392,14 +392,29 @@ export function Outbox() {
  * columns invites a reader to take the first without the second. `node` and `installer` have no identifier by
  * construction — `audit.ts` says so on `actorKind` — so the kind is the whole label.
  */
-function actorLabel(entry: AuditRow): string {
+function actorLabel(entry: AuditRow, named: (id: string) => string): string {
   if (entry.actor_user_id === null) return entry.actor_kind;
-  if (entry.delegator_user_id === null) return entry.actor_user_id;
-  return t("ledgers.audit.actorFor", { actor: entry.actor_user_id, delegator: entry.delegator_user_id });
+  if (entry.delegator_user_id === null) return named(entry.actor_user_id);
+  return t("ledgers.audit.actorFor", { actor: named(entry.actor_user_id), delegator: named(entry.delegator_user_id) });
+}
+
+/**
+ * An identifier as a reader knows it (design audit, 7 October 2026): a person's address when the directory has
+ * them, the identifier itself otherwise (an agent, a team, somebody who left). The identifier is what the trail
+ * records, so the cell keeps it as its title.
+ */
+function Named({ id, named }: { id: string | null; named: (id: string) => string }) {
+  if (id === null) return <>—</>;
+  const said = named(id);
+  return said === id ? <>{id}</> : <span title={id}>{said}</span>;
 }
 
 export function Audit() {
   const audit = useAudit();
+  // The directory is an administrator's read, as the trail is; for anybody else it answers nothing and ids stay ids.
+  const people = usePeople();
+  const emails = new Map((people.data?.people ?? []).map((person) => [person.id, person.email]));
+  const named = (id: string) => emails.get(id) ?? id;
   const [verdict, setVerdict] = useState<{ said: ReactNode; refused: boolean } | null>(null);
 
   if (audit.isPending || audit.isError) {
@@ -459,13 +474,13 @@ export function Audit() {
                 <td className="num mono dim">{entry.seq}</td>
                 {/* The audit key, an identifier in every locale (docs/i18n.md, Register). */}
                 <td className="mono"><code>{entry.action}</code></td>
-                <td className="mono dim">{actorLabel(entry)}</td>
+                <td className="mono dim" title={entry.actor_user_id ?? undefined}>{actorLabel(entry, named)}</td>
                 <td>
                   <span className={`state state-audit-${entry.outcome}`}>
                     {oneOf(AUDIT_OUTCOMES, entry.outcome) ? t(`ledgers.audit.outcome.${entry.outcome}`) : <code>{entry.outcome}</code>}
                   </span>
                 </td>
-                <td className="mono dim">{entry.subject ?? "—"}</td>
+                <td className="mono dim"><Named id={entry.subject} named={named} /></td>
                 <td className="num mono dim">{stamp(entry.at)}</td>
               </tr>
             ))}
