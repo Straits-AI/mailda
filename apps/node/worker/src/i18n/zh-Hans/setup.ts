@@ -30,6 +30,7 @@ export const setup: Twin<typeof source> = {
   "setup.connection.forgetting": "正在移除…",
   "setup.connection.forget": "移除此令牌",
   "setup.connection.forgetNote": "在这里移除它不会在 Cloudflare 中删除它；那需要你在令牌页面上自己完成。",
+  "setup.connection.permissionsShow": "令牌需要的 {n} 项权限及原因",
   "setup.connection.create":
     "在 Cloudflare 中创建一个 API 令牌，只授予下列权限，并限定在此账户，然后粘贴到下方。本节点会用它的凭据密钥封装保存这个令牌，之后不会再显示它。",
   "setup.connection.permissions": "令牌需要的权限",

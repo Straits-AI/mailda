@@ -59,8 +59,11 @@ describe("a mailbox's addresses on People", () => {
   it("lists every address the mailbox carries, with a remove beside each", async () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
-    expect(Array.from(list.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
-      "support@example.test Change forwards · Remove", "help@example.test Change forwards · Remove",
+    // One row per address, its two acts at the end (design audit, 7 October 2026).
+    expect(Array.from(list.querySelectorAll("tbody tr")).map((row) => [
+      row.querySelector("th")!.textContent, [...row.querySelectorAll("button.chip-action")].map((one) => one.textContent),
+    ])).toEqual([
+      ["support@example.test", ["Change forwards", "Remove"]], ["help@example.test", ["Change forwards", "Remove"]],
     ]);
   });
 
@@ -110,7 +113,7 @@ describe("a mailbox's addresses on People", () => {
     expect(await status()).toBe("support@example.test forwards to a@gmail.test, b@gmail.test.");
   });
 
-  it("draws one line per destination, and the copy setting once", async () => {
+  it("draws each destination in its address's row, says only the one that needs attention, and the copy setting once", async () => {
     const row = (to: string, last: unknown) => ({
       address: "support@example.test", mailboxId: "mbx_test", to, verified: "verified", checkedAt: null, last, lastHandedOverAt: null, copy: null,
     });
@@ -118,11 +121,14 @@ describe("a mailbox's addresses on People", () => {
       row("a@gmail.test", { state: "handed_over", at: "2026-10-07T00:00:00.000Z", error: null, copy: null }),
       row("b@gmail.test", { state: "refused", at: "2026-10-07T00:00:00.000Z", error: "destination address not verified", copy: null }),
     ] });
-    const item = (await screen.findByText("support@example.test")).closest("li")!;
-    await waitFor(() => expect(item.textContent).toContain("forwards to a@gmail.test (verified)"));
-    expect(item.textContent).toContain("forwards to b@gmail.test (verified)");
-    expect(item.textContent).toContain("destination address not verified");
-    expect(item.textContent!.match(/Copies off\./g)).toHaveLength(1);
+    await screen.findByText("a@gmail.test");
+    const item = screen.getByText("support@example.test", { selector: "th" }).closest("tr")!;
+    expect(item.textContent).toContain("a@gmail.test verified");
+    expect(item.textContent).toContain("b@gmail.test verified");
+    // Only the destination that needs attention is said, in Cloudflare's words; the other is not repeated.
+    expect(item.textContent).toMatch(/b@gmail\.test: not forwarded at .*destination address not verified/);
+    expect(item.textContent).not.toMatch(/a@gmail\.test: /);
+    expect(item.textContent!.match(/Send copies/g)).toHaveLength(1);
   });
 
   // 7 October 2026, the owner's: "it is hard to read". A person per row, a permission per column, said once.

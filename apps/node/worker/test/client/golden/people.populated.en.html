@@ -19,73 +19,12 @@
 <button class="quiet" type="button">Grant mailbox.content.read and send.propose on Support</button>
 </p>
 </div>
-<section class="people-teams" aria-label="Invite somebody">
-<h2>Invite somebody</h2>
-<p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
-<p class="field-row">
-<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
-<datalist id="invite-suggestions">
-<option value="hello@example.org">
-</option>
-<option value="support@example.test">
-</option>
-</datalist>
-</p>
-<p class="field-row">
-<label for="invite-mailbox">
-<input id="invite-mailbox" type="checkbox"> Also give them a mailbox at</label> <span class="address-field">
-<input id="invite-mailbox-address" class="mono" disabled="" aria-label="Their mailbox's address" placeholder="hello" value="">
-<span class="address-pick">
-<span class="mono address-domain" aria-hidden="true">@</span>
-<select aria-label="Their mailbox's address: domain" disabled="">
-<option value="example.test">example.test</option>
-<option value="example.org">example.org</option>
-</select>
-</span>
-</span>
-</p>
-<p>
-<button class="quiet" type="button" disabled="">Mint an invitation</button>
-</p>
-<div class="scroller" tabindex="0" role="region" aria-label="Invited, not yet arrived">
-<table>
-<caption class="dim">Invited, and not yet arrived.</caption>
-<thead>
-<tr>
-<th scope="col">Address</th>
-<th scope="col">Invited by</th>
-<th scope="col">Expires</th>
-<th scope="col">State</th>
-<th scope="col">Withdraw</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="mono">cleo@example.test</td>
-<td class="mono dim">ana@example.test</td>
-<td class="mono">[clock]</td>
-<td>waiting</td>
-<td>
-<button type="button" class="linkish">Withdraw</button>
-</td>
-</tr>
-<tr>
-<td class="mono">dan@example.org</td>
-<td class="mono dim">ana@example.test</td>
-<td class="mono">[clock]</td>
-<td>
-<span class="dim">expired — mint another</span>
-</td>
-<td>
-<button type="button" class="linkish">Withdraw</button>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-</section>
-<section class="people-mailbox" aria-label="Access to Support">
+<section aria-label="Access to Support">
+<details class="people-mailbox" open="">
+<summary class="people-mailbox-summary">
 <h2>Support</h2>
+<span class="dim">2 addresses</span>
+</summary>
 <p class="field-row">
 <label for="rename-mbx_support">Name</label>
 <span class="people-rename-row">
@@ -93,14 +32,47 @@
 <button class="quiet" type="button" disabled="">Rename</button>
 </span>
 </p>
-<ul class="people-addresses" aria-label="Addresses of Support">
-<li>
-<span class="mono people-address">support@example.test</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
-</li>
-<li>
-<span class="mono people-address">bob@example.test</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
-</li>
-</ul>
+<div class="scroller" tabindex="0" role="region" aria-label="Addresses of Support">
+<table class="people-address-table stack-narrow">
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Forwards to</th>
+<th scope="col">Latest</th>
+<th scope="col">Copies</th>
+<th scope="col">
+<span class="visually-hidden">Actions</span>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">support@example.test</th>
+<td class="dim">Not forwarded</td>
+<td class="dim">—</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="people-row-actions">
+<button type="button" class="chip-action">Change forwards</button>
+<button type="button" class="chip-action">Remove</button>
+</td>
+</tr>
+<tr>
+<th scope="row" class="mono">bob@example.test</th>
+<td class="dim">Not forwarded</td>
+<td class="dim">—</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="people-row-actions">
+<button type="button" class="chip-action">Change forwards</button>
+<button type="button" class="chip-action">Remove</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
 <div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Support">
 <table class="grant-grid">
 <thead>
@@ -195,9 +167,14 @@
 </div>
 </dl>
 </details>
+</details>
 </section>
-<section class="people-mailbox" aria-label="Access to Sales">
+<section aria-label="Access to Sales">
+<details class="people-mailbox">
+<summary class="people-mailbox-summary">
 <h2>Sales</h2>
+<span class="dim">1 address</span>
+</summary>
 <p class="field-row">
 <label for="rename-mbx_sales">Name</label>
 <span class="people-rename-row">
@@ -205,11 +182,35 @@
 <button class="quiet" type="button" disabled="">Rename</button>
 </span>
 </p>
-<ul class="people-addresses" aria-label="Addresses of Sales">
-<li>
-<span class="mono people-address">hello@example.org</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
-</li>
-</ul>
+<div class="scroller" tabindex="0" role="region" aria-label="Addresses of Sales">
+<table class="people-address-table stack-narrow">
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Forwards to</th>
+<th scope="col">Latest</th>
+<th scope="col">Copies</th>
+<th scope="col">
+<span class="visually-hidden">Actions</span>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">hello@example.org</th>
+<td class="dim">Not forwarded</td>
+<td class="dim">—</td>
+<td>
+<span class="dim">—</span>
+</td>
+<td class="people-row-actions">
+<button type="button" class="chip-action">Change forwards</button>
+<button type="button" class="chip-action">Remove</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
 <div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Sales">
 <table class="grant-grid">
 <thead>
@@ -304,9 +305,14 @@
 </div>
 </dl>
 </details>
+</details>
 </section>
-<section class="people-mailbox" aria-label="Access to Invoices">
+<section aria-label="Access to Invoices">
+<details class="people-mailbox">
+<summary class="people-mailbox-summary">
 <h2>Invoices</h2>
+<span class="dim">0 addresses</span>
+</summary>
 <p class="field-row">
 <label for="rename-mbx_invoices">Name</label>
 <span class="people-rename-row">
@@ -409,6 +415,7 @@
 </div>
 </dl>
 </details>
+</details>
 </section>
 <section class="people-mailbox" aria-label="Administering the organization">
 <h2>The organization</h2>
@@ -446,6 +453,71 @@
 </div>
 </dl>
 </details>
+</section>
+<section class="people-teams" aria-label="Invite somebody">
+<h2>Invite somebody</h2>
+<p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
+<p class="field-row">
+<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
+<datalist id="invite-suggestions">
+<option value="hello@example.org">
+</option>
+<option value="support@example.test">
+</option>
+</datalist>
+</p>
+<p class="field-row">
+<label for="invite-mailbox">
+<input id="invite-mailbox" type="checkbox"> Also give them a mailbox at</label> <span class="address-field">
+<input id="invite-mailbox-address" class="mono" disabled="" aria-label="Their mailbox's address" placeholder="hello" value="">
+<span class="address-pick">
+<span class="mono address-domain" aria-hidden="true">@</span>
+<select aria-label="Their mailbox's address: domain" disabled="">
+<option value="example.test">example.test</option>
+<option value="example.org">example.org</option>
+</select>
+</span>
+</span>
+</p>
+<p>
+<button class="quiet" type="button" disabled="">Mint an invitation</button>
+</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Invited, not yet arrived">
+<table>
+<caption class="dim">Invited, and not yet arrived.</caption>
+<thead>
+<tr>
+<th scope="col">Address</th>
+<th scope="col">Invited by</th>
+<th scope="col">Expires</th>
+<th scope="col">State</th>
+<th scope="col">Withdraw</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="mono">cleo@example.test</td>
+<td class="mono dim">ana@example.test</td>
+<td class="mono">[clock]</td>
+<td>waiting</td>
+<td>
+<button type="button" class="linkish">Withdraw</button>
+</td>
+</tr>
+<tr>
+<td class="mono">dan@example.org</td>
+<td class="mono dim">ana@example.test</td>
+<td class="mono">[clock]</td>
+<td>
+<span class="dim">expired — mint another</span>
+</td>
+<td>
+<button type="button" class="linkish">Withdraw</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
 </section>
 <section class="people-teams" aria-label="A new mailbox">
 <h2>Mailboxes</h2>

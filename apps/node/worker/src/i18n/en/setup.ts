@@ -37,6 +37,7 @@ export const setup = {
   "setup.connection.forgetting": "Forgetting…",
   "setup.connection.forget": "Forget this token",
   "setup.connection.forgetNote": "Forgetting it here does not delete it in Cloudflare; that is yours to do on the token page.",
+  "setup.connection.permissionsShow": "The {n} permissions the token needs, and why",
   "setup.connection.create":
     "Create one API token in Cloudflare with exactly these permissions, restricted to this account, and paste it below. This Node holds it wrapped under its credential key and never shows it again.",
   "setup.connection.permissions": "Permissions the token needs",

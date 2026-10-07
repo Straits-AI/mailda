@@ -1413,6 +1413,20 @@ names who sent it by address. A read in flight anywhere (`Nothing kind="loading"
 dot beside it, still under reduced motion, and is announced (`aria-live`) without taking the status role, which is
 an act's answer.
 
+**One page, compact** (8 October 2026, the owner's choice after a design audit of every screen, with real data:
+one mailbox of eleven addresses, eight forwarding to the same two inboxes). Each mailbox is a card that folds, the
+first open, its summary saying how many addresses it carries. Its addresses are a table, one row each: the address,
+where it forwards (each destination with what the last read said of it), *Latest* (when the latest forward was
+handed over, or only the destinations whose latest forward needs attention, in Cloudflare's words with what became
+of their copy), *Copies* (on or off, with who turned them on as the cell's title, and the act that changes it), and
+*Change forwards* and *Remove* as buttons. *What a copy is* is said once, under the table. *Invite somebody*
+follows the organization's grid. Below 768px the table stacks each row as a block (`.stack-narrow`, which Doctor's
+findings use too). The same audit changed four other screens: Doctor lists the checks that need attention first and
+folds a passing check's detail after its first sentence; the Queue folds its mailbox settings under *Mailbox
+settings*, keeping the overdue and held counts on that line; Setup folds the token's permission table under a line
+that counts them; and the Audit trail names a person the directory knows by address, the identifier kept as the
+cell's title.
+
 Two endpoints were added because the reads did not exist:
 
 - `GET /api/people`: the directory with each person's tuples. `GET /api/access` answers for **one** subject

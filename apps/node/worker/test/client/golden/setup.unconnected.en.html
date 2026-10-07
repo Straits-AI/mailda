@@ -38,6 +38,8 @@
 <h2>Optional: connect this Node to Cloudflare from this screen</h2>
 <p>The install set receiving, sending and delivery outcomes up with the consent wrangler already had, so this Node works without a credential of its own. Connecting it is only for changing that from here: another receiving domain, a sending domain, taking over a routing rule.</p>
 <p>Create one API token in Cloudflare with exactly these permissions, restricted to this account, and paste it below. This Node holds it wrapped under its credential key and never shows it again.</p>
+<details class="setup-permissions">
+<summary>The 2 permissions the token needs, and why</summary>
 <div class="scroller" tabindex="0" role="region" aria-label="Permissions the token needs">
 <table>
 <thead>
@@ -63,6 +65,7 @@
 </table>
 </div>
 <p class="dim">The permission names come from Cloudflare's token form and are not measured against it.</p>
+</details>
 <p>
 <a class="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">Open the token page</a>
 </p>

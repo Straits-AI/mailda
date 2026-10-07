@@ -545,6 +545,8 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
   border: 0;
   border-bottom: 1px solid var(--border-soft);
 }
+/* The band's one link at least 24px tall (WCAG 2.5.8): as running text it measured 78 x 17 (design audit, 7 October 2026). */
+.setup-unfinished a { display: inline-flex; align-items: center; min-height: 24px; }
 .notices { display: grid; gap: 6px; max-height: min(30vh, 240px); overflow-y: auto; }
 /* Inset: the band spans the column edge to edge and .app-main clips, so an outside ring was cut off. */
 .notices:focus-visible { outline-offset: -2px; }
@@ -1573,21 +1575,52 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .policy-editor h2 { margin: 0; }
 .policy-actions { margin: 16px 0 0; }
 
-/* One card per mailbox (7 October 2026): its name, its addresses with where each forwards, then who may do what. */
-.people-mailbox { margin-top: 24px; padding: 16px 18px; background: var(--surface-1); border-radius: var(--r-card); }
+/* The Queue's mailbox settings, folded under one line that keeps the overdue and held counts (design audit, 7 October 2026). */
+.queue-settings { margin: 0 0 12px; }
+.queue-settings > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 32px; color: var(--text-secondary); cursor: pointer; }
+.queue-settings[open] > summary { margin-bottom: 8px; }
+.queue-settings > summary { list-style: none; }
+.queue-settings > summary::-webkit-details-marker { display: none; }
+.queue-settings > summary::before { content: "▸"; }
+.queue-settings[open] > summary::before { content: "▾"; }
+
+/* Setup's token permissions, folded under a line that counts them (design audit, 7 October 2026). */
+.setup-permissions { margin: 0 0 12px; }
+.setup-permissions > summary { display: inline-flex; min-height: 24px; align-items: center; color: var(--accent-text); cursor: pointer; }
+
+/* Doctor (design audit, 7 October 2026): what needs attention first, and a passing check's detail folded after its
+   first sentence. */
+.doctor-findings .doctor-attention > td, .doctor-findings .doctor-attention > th { background: var(--surface-1); }
+.doctor-detail > summary { cursor: pointer; color: var(--text-primary); }
+.doctor-detail > summary::marker { color: var(--text-secondary); }
+.doctor-detail[open] > summary { margin-bottom: 4px; }
+
+/* One card per mailbox (7 October 2026), folding: its name in the summary, then its addresses as a table, what a copy
+   is once, and who may do what. */
+.people-mailbox { margin-top: 16px; padding: 4px 18px; background: var(--surface-1); border-radius: var(--r-card); }
+.people-mailbox[open] { padding-bottom: 16px; }
+.people-mailbox-summary { display: flex; align-items: baseline; gap: 12px; min-height: 44px; padding: 8px 0; cursor: pointer; list-style: none; }
+.people-mailbox-summary::-webkit-details-marker { display: none; }
+.people-mailbox-summary::before { content: "▸"; color: var(--text-secondary); }
+.people-mailbox[open] > .people-mailbox-summary::before { content: "▾"; }
+.people-mailbox-summary > h2 { margin: 0; }
 .people-mailbox h2, .people-teams h2 { margin: 0 0 8px; }
 .people-rename-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .people-rename-row > input { flex: 0 1 20rem; min-width: 10rem; }
-.people-addresses { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 12px; }
-.people-addresses > li { padding: 8px 0 0; border-top: 1px solid var(--border-soft); font-size: 14px; }
-.people-address { font-weight: 600; color: var(--text-primary); }
-.people-forwards { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; display: grid; gap: 4px; border-left: 2px solid var(--border-soft); }
-.people-forwards > li.notice { margin: 0; padding: 0 0 0 8px; }
-.people-copies { margin: 6px 0 0 14px; }
-.people-copy-about { margin: 2px 0 0 14px; }
+/* An address per row: where it forwards, what needs attention, copies, and its two acts at the end. */
+.people-address-table { margin: 12px 0 4px; }
+.people-address-table th[scope="row"] { padding: 10px; font: 600 14px/1.4 var(--body); text-align: left; white-space: nowrap; vertical-align: baseline; border-bottom: 1px solid var(--border-soft); }
+.people-forwards { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.people-forwards > li { white-space: nowrap; }
+.people-forward-trouble { margin: 0 0 4px; padding: 0 0 0 8px; }
+.people-copies { white-space: nowrap; }
+.people-row-actions { white-space: nowrap; text-align: right; }
+.people-row-actions > .chip-action + .chip-action { margin-left: 8px; }
+.people-edit-row > td { background: var(--surface-2); }
+.people-copy-about { margin: 4px 0 12px; }
 .people-copy-about > summary, .grant-legend > summary { display: inline-flex; min-height: 24px; align-items: center; color: var(--accent-text); cursor: pointer; }
 .people-copy-about > p { margin: 4px 0 0; max-width: 60rem; }
-.people-forward-edit { margin: 8px 0 0; }
+.people-forward-edit { margin: 4px 0; }
 .people-forward-edit > input { max-width: 36rem; }
 #invite-email { max-width: 28rem; }
 /* The permission grid: a person per row, a permission per column, the box centred under its name. */
@@ -1775,6 +1808,16 @@ dialog.drawer { animation: drawer-in var(--t-pane) ease-out; }
 /* Below 768px, one pane at a time: the list, or the reader with a back button. */
 @media (max-width: 767.98px) {
   .app-main { --pad-top: 20px; --pad-x: 16px; }
+  /* A table whose rows are records rather than figures (Doctor's findings, a mailbox's addresses) stacks each row
+     as a block on a phone, its cells one under another: squeezed into columns, Doctor's detail stood one word to
+     a line (design audit, 7 October 2026). The header row is for the eye only, so it goes; each cell says what it
+     is by what it holds. */
+  .stack-narrow thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .stack-narrow, .stack-narrow tbody, .stack-narrow tr, .stack-narrow tr > :is(td, th) { display: block; width: auto; }
+  /* Beats .ledger table's 52rem, which is what lets a ledger's columns scroll sideways: stacked, nothing needs to. */
+  .ledger table.stack-narrow { min-width: 0; }
+  .stack-narrow tr { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+  .stack-narrow tr > :is(td, th), .stack-narrow tr > th[scope="row"] { padding: 2px 0; border-bottom: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
   .mail-panes { grid-template-columns: minmax(0, 1fr); }
   .mail-panes[data-view="list"] .reader-column { display: none; }
   .mail-panes[data-view="reader"] .list-pane { display: none; }

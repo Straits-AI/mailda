@@ -455,7 +455,7 @@ export const CONCEPTS: readonly Concept[] = [
   }),
   row("token", "token", "令牌", {
     sentences: [
-      "setup.connection.forget", "setup.connection.forgetNote", "setup.connection.create", "setup.connection.permissions",
+      "setup.connection.forget", "setup.connection.forgetNote", "setup.connection.create", "setup.connection.permissions", "setup.connection.permissionsShow",
       "setup.connection.tokenPage", "setup.connection.token", "setup.verified.about", "setup.verified.failed",
       "ledgers.transport.none", "ledgers.transport.token", "onboarding.record.token", "onboarding.routed.unread",
       "onboarding.delivery.unread", "agents.mint.renewal", "ui.firstRun.terminal", "ui.firstRun.browser.link",

@@ -135,6 +135,12 @@ function Connection({ binding, permissions, note, refresh }: {
       ) : (
         <>
           <p>{t("setup.connection.create")}</p>
+          {/*
+            The permissions fold (design audit, 7 October 2026): eight rows of rationale sat open between the progress
+            steps and Receiving, for a section that is optional. The count stays on the line.
+          */}
+          <details className="setup-permissions">
+          <summary>{t("setup.connection.permissionsShow", { n: permissions.length })}</summary>
           <Scroller label={t("setup.connection.permissions")}>
             <table>
               <thead>
@@ -156,6 +162,7 @@ function Connection({ binding, permissions, note, refresh }: {
             </table>
           </Scroller>
           <p className="dim">{nodeSaid(note)}</p>
+          </details>
           <p>
             <a className="linkish" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">{t("setup.connection.tokenPage")}</a>
           </p>

@@ -151,12 +151,14 @@ describe("the Queue in English, unchanged by the catalog", () => {
     await mounted();
     expect(screen.getByRole("option", { name: "Support (1 unclaimed)" })).toBeDefined();
     expect(screen.getByRole("option", { name: "Sales (12 unclaimed)" })).toBeDefined();
-    expect(document.querySelector(".queue-target")!.textContent).toBe("First response promised within 30 minutes. Minutes2 overdue");
+    expect(document.querySelector(".queue-target")!.textContent).toBe("First response promised within 30 minutes. Minutes");
+    // The overdue count stays on the line the settings fold under (design audit, 7 October 2026).
+    expect(document.querySelector(".queue-settings > summary")!.textContent).toBe("Mailbox settings2 overdue7 held");
     expect(screen.getByRole("spinbutton", { name: "First response target in minutes; empty promises nothing" })).toBeDefined();
     expect(document.querySelector(".queue-switches")!.textContent).toBe(
       "Hold back a delivery its sender's domain disowns (DMARC fail, p=reject or p=quarantine)."
       + "Hold back a delivery carrying an executable, a script, or a program under a document's name."
-      + "Largest attachment, in KBAllowed attachment types7 held",
+      + "Largest attachment, in KBAllowed attachment types",
     );
     expect(screen.getByRole("checkbox", { name: "Hold back deliveries whose sender's domain disowns them" })).toBeDefined();
     expect(screen.getByRole("checkbox", { name: "Hold back deliveries carrying a dangerous attachment" })).toBeDefined();
@@ -181,7 +183,7 @@ describe("the Queue in English, unchanged by the catalog", () => {
 describe("the Queue's counts in English, one and many (D11)", () => {
   it("says one minute and one message in the singular", async () => {
     await mounted((path) => (path === "/api/conversations/merge" ? Response.json({ merged: true, messagesMoved: 1 }) : undefined), 1);
-    expect(document.querySelector(".queue-target")!.textContent).toBe("First response promised within 1 minute. Minutes2 overdue");
+    expect(document.querySelector(".queue-target")!.textContent).toBe("First response promised within 1 minute. Minutes");
     const boxes = screen.getAllByRole("checkbox", { name: /^Pick / });
     await act(async () => { boxes[0]!.click(); boxes[1]!.click(); });
     await act(async () => { screen.getByRole("button", { name: "Merge them" }).click(); });

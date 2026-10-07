@@ -408,6 +408,21 @@ export function Queue() {
       {heading}
 
       {/*
+        The mailbox's settings fold under one line (design audit, 7 October 2026): they sat above the queue and pushed
+        the work below the fold, and they change rarely. What the queue needs at a glance, how many cases are overdue
+        and how many deliveries are held, stays on that line.
+      */}
+      <details className="queue-settings">
+        <summary>
+          <span>{t("queue.settings")}</span>
+          {current !== undefined && current.breached > 0 ? (
+            <span className="state clock-breached queue-breached">{t("queue.overdue", { n: current.breached })}</span>
+          ) : null}
+          {current !== undefined && current.quarantined > 0 ? (
+            <span className="state clock-due">{t("queue.held.count", { n: current.quarantined })}</span>
+          ) : null}
+        </summary>
+      {/*
         The target. Rendered here rather than on a settings screen because it is the number every clock in
         this table derives from, and a promise nobody can see the source of is one nobody trusts. Refused
         for non-administrators by the Node, whose message says so.
@@ -442,9 +457,6 @@ export function Queue() {
             }}
           />
         </label>
-        {current !== undefined && current.breached > 0 ? (
-          <span className="state clock-breached queue-breached">{t("queue.overdue", { n: current.breached })}</span>
-        ) : null}
       </p>
 
       {/*
@@ -504,10 +516,8 @@ export function Queue() {
             }}
           />
         </label>
-        {current !== undefined && current.quarantined > 0 ? (
-          <span className="state clock-due">{t("queue.held.count", { n: current.quarantined })}</span>
-        ) : null}
       </div>
+      </details>
 
       {current !== undefined && current.quarantined > 0 ? (
         quarantine.isError ? (

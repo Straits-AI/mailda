@@ -233,6 +233,53 @@ function answerDoctor(claimed: boolean, available: Record<string, unknown>) {
   });
 }
 
+// The design audit of 7 October 2026: what needs attention first, a passing check's paragraph folded, people named.
+describe("the Doctor and the Audit trail, read at a glance", () => {
+  const LONG = "The binding answered. It was read through the account's own token, which this Node holds wrapped under its "
+    + "credential key, and nothing here spent it: the read is local, and a report that reached the network would spend "
+    + "the account's authority every time anything asked.";
+
+  it("lists what needs attention before what passed, and folds a passing check's long detail after its first sentence", async () => {
+    answerWith((call) => {
+      if (call.path === "/api/doctor") {
+        return Response.json({ verdict: "degraded", claimed: true, at: AT, findings: [
+          { check: "d1_reachable", severity: "refuse", ok: true, detail: LONG },
+          { check: "queue_backlog", severity: "degraded", ok: false, detail: `${LONG} So it is behind.` },
+          { check: "outbox_draining", severity: "report", ok: true, detail: "Short and whole." },
+        ] });
+      }
+      if (call.path === "/api/transport") return Response.json({ transport: { adapter: "cloudflare-rest", capability: CAN, available: { binding: true, rest: null } } });
+      return undefined;
+    });
+    const { container } = mount(<Doctor />);
+    await screen.findByText("Short and whole.");
+    const rows = [...container.querySelectorAll("tbody tr")];
+    expect(rows.map((row) => row.querySelector(".mono")!.textContent)).toEqual(["queue_backlog", "d1_reachable", "outbox_draining"]);
+    // The one that needs attention says all of it, open; the long one that passed says its first sentence, the rest folded.
+    expect(rows[0]!.querySelector("details")).toBeNull();
+    const folded = rows[1]!.querySelector("details.doctor-detail")!;
+    expect(folded.querySelector("summary")!.textContent).toBe("The binding answered.");
+    expect(folded.textContent).toContain("which this Node holds wrapped under its credential key");
+    expect(rows[2]!.querySelector("details")).toBeNull();
+  });
+
+  it("names a person the directory knows by address, keeping the identifier as the title, and leaves the rest as identifiers", async () => {
+    answerWith((call) => {
+      if (call.path === "/api/audit") {
+        return Response.json({ entries: AUDIT.map((entry, i) => (i === 0 ? { ...entry, subject: "usr_ana" } : entry)), truncated: false });
+      }
+      if (call.path === "/api/people") return Response.json({ people: [{ id: "usr_ana", email: "ana@example.test", created_at: AT, relations: [] }] });
+      return undefined;
+    });
+    const { container } = mount(<Audit />);
+    await waitFor(() => expect(container.querySelector("tbody tr td:nth-child(3)")!.textContent).toBe("ana@example.test"));
+    const [first, second] = [...container.querySelectorAll("tbody tr")];
+    expect(first!.querySelector("td:nth-child(3)")!.getAttribute("title")).toBe("usr_ana");
+    expect(first!.querySelector("td:nth-child(5) span")!.outerHTML).toBe('<span title="usr_ana">ana@example.test</span>');
+    expect(second!.querySelector("td:nth-child(3)")!.textContent).toBe("agt_bot for ana@example.test");
+  });
+});
+
 describe("the Doctor in English", () => {
   it("renders a claimed report with every state and a fix, and REST credentials, as before", async () => {
     answerDoctor(true, { binding: false, rest: { accountId: "acc_123" } });
@@ -393,14 +440,15 @@ describe("the ledgers in zh-Hans", () => {
     expect(screen.getByText("Supply credentials below.").closest("[lang]")?.getAttribute("lang")).toBe("en");
     expect(screen.getByText("Supply credentials below.").closest(".dim")!.textContent).toBe("修复：Supply credentials below.");
     expect(container.querySelector(".ledger-head .state")!.textContent).toBe("未通过");
-    expect([...container.querySelectorAll("tbody .state")].map((one) => one.textContent)).toEqual(["ok", "未通过", "降级", "提示"]
+    // What needs attention first, in the Node's order, then what passed (design audit, 7 October 2026).
+    expect([...container.querySelectorAll("tbody .state")].map((one) => one.textContent)).toEqual(["未通过", "降级", "提示", "ok"]
       .map((word) => (word === "ok" ? CATALOGS["zh-Hans"].app["health.status.ok"] : word)));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("诊断");
     // A check this interface knows has a Chinese title over its name; a name it does not know is shown alone. The
     // name is the Node's token either way, marked, since the Node's fix text cites checks by it.
     const checks = [...container.querySelectorAll("tbody tr")].map((row) => row.firstElementChild!.outerHTML);
-    expect(checks[1]).toBe('<td>发信通道<span class="mono dim block"><span lang="en">transport_adapters</span></span></td>');
-    expect(checks[0]).toBe('<td class="mono"><span lang="en">d1_reachable</span></td>');
+    expect(checks).toContain('<td>发信通道<span class="mono dim block"><span lang="en">transport_adapters</span></span></td>');
+    expect(checks).toContain('<td class="mono"><span lang="en">d1_reachable</span></td>');
   });
 
   it("joins a batch's two sentences as Chinese joins them, and marks each fault's words as the Node's", async () => {
