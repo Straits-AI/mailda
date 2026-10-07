@@ -283,7 +283,9 @@ const FORWARD_STATE = {
 function ForwardCells({ rows }: { rows: readonly KeptForward[] }) {
   if (rows.length === 0) return <><td className="dim">{t("people.forward.notForwarded")}</td><td className="dim">—</td></>;
   const troubled = rows.filter((one) => one.last !== null && one.last.state !== "handed_over");
-  const handed = rows.map((one) => one.lastHandedOverAt).filter((at): at is string => at !== null).sort().at(-1) ?? null;
+  // The latest hand-over across the destinations: the read's own, or the latest attempt when that was one.
+  const handed = rows.flatMap((one) => [one.lastHandedOverAt, one.last?.state === "handed_over" ? one.last.at : null])
+    .filter((at): at is string => at !== null).sort().at(-1) ?? null;
   return (
     <>
       <td>
@@ -296,7 +298,8 @@ function ForwardCells({ rows }: { rows: readonly KeptForward[] }) {
       <td>
         {troubled.map((one) => {
           const last = one.last!;
-          const copied = last.copy;
+          // `?? null`: an older Node sends no copy field.
+          const copied = last.copy ?? null;
           return (
             <p key={one.to} className="notice bad people-forward-trouble">
               <span className="mono">{one.to}</span>{": "}
@@ -1146,7 +1149,9 @@ export function People() {
         rest show their name and how many addresses they carry until opened.
       */}
       {boxes.map((box, index) => (
-        <details key={box.id} className="people-mailbox" open={index === 0} aria-label={t("people.mailbox.access", { name: box.name })}>
+        // A section names the card for a screen reader's landmarks; the details inside it folds (it may carry no role).
+        <section key={box.id} aria-label={t("people.mailbox.access", { name: box.name })}>
+        <details className="people-mailbox" open={index === 0}>
           <summary className="people-mailbox-summary">
             <h2>{box.name}</h2>
             <span className="dim">{t("people.mailbox.count", { n: box.addresses === null ? 0 : box.addresses.split(",").length })}</span>
@@ -1154,6 +1159,7 @@ export function People() {
           <MailboxHead box={box} onChanged={refresh} forwards={forwards} who={who} />
           <GrantGrid people={rows} objectId={box.id} relations={mailboxRelations} label={t("people.mailbox.who", { name: box.name })} onChanged={refresh} />
         </details>
+        </section>
       ))}
 
       <section className="people-mailbox" aria-label={t("people.org.label")}>
