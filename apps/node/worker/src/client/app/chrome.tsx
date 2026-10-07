@@ -714,7 +714,15 @@ export function Nothing(
     action?: { to: AppRoute; label: string };
   },
 ) {
-  if (kind === "loading") return <p className="notice dim">{t("chrome.nothing.loading")}</p>;
+  /*
+   * The words say what is happening; the dot only says the page is not stuck (7 October 2026, the owner's: "instead
+   * of a proper loading spinner?"). `role="status"` so a screen reader hears it, and the dot is hidden from it and
+   * still under reduced motion (`.loading-dot` in `src/shell-css.ts`). `aria-live`, not `role="status"`: the status
+   * role is the screen's own answer to an act, and a read in flight is not one.
+   */
+  if (kind === "loading") {
+    return <p className="notice dim loading" aria-live="polite"><span className="loading-dot" aria-hidden="true" />{t("chrome.nothing.loading")}</p>;
+  }
   if (kind === "failed") {
     return (
       <p className="notice bad" role="alert">

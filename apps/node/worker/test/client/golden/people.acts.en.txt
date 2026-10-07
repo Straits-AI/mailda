@@ -1,7 +1,7 @@
 bob@example.test has an account and holds nothing directly on the mailbox at that address. Give them the mailbox bob@example.test?mailbox.content.read — Read the messages.send.propose — Write and send from this mailbox, and claim its cases.Grant mailbox.content.read and send.propose on Support
-renamed to Help desk
-hello@example.org: removed, and its routing rule deleted
 The mailbox eve@example.test was made, at eve@example.test: routing rule written. eve@example.test holds nothing on it until they arrive and you grant it; you may read and send from it, as its creator.
 Give this to eve@example.test. It works once, until [clock].s3cret-onceShown once — only its hash is stored, so nothing can recover it. Mint another if it is lost, which invalidates this one.
+renamed to Help desk
+hello@example.org: removed, and its routing rule deleted
 Billing exists. Add an address to it below.
 billing@example.test: routing rule written

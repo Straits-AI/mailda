@@ -239,7 +239,7 @@ describe("somebody arriving to a mailbox waiting for them", () => {
         { ...BOB, id: "usr_ann", email: "ann@whymelabs.com" },
       ],
     });
-    await screen.findAllByText("ann@whymelabs.com", { selector: "td" });
+    await screen.findAllByText("ann@whymelabs.com", { selector: "td, th" });
     expect(screen.queryByText(PROMPT)).toBeNull();
     // Nobody to ask about, so the audit trail is not read.
     expect(calls.filter((call) => call.path.startsWith("/api/audit"))).toEqual([]);

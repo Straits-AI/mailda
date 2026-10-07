@@ -3,26 +3,13 @@
 <p class="dim mono">0</p>
 </header>
 <p class="dim">Everybody with an account on this Node.</p>
-<section class="people-mailbox" aria-label="Administering the organization">
-<h2>The organization</h2>
-<div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
-<table>
-<thead>
-<tr>
-<th scope="col">Person</th>
-<th scope="col">May</th>
-</tr>
-</thead>
-<tbody>
-</tbody>
-</table>
-</div>
-</section>
 <section class="people-teams" aria-label="Invite somebody">
 <h2>Invite somebody</h2>
 <p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
 <p class="field-row">
-<label for="invite-email">Address</label> <input id="invite-email" class="mono" value="">
+<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
+<datalist id="invite-suggestions">
+</datalist>
 </p>
 <p class="field-row">
 <label for="invite-mailbox">
@@ -34,6 +21,31 @@
 <p>
 <button class="quiet" type="button" disabled="">Mint an invitation</button>
 </p>
+</section>
+<section class="people-mailbox" aria-label="Administering the organization">
+<h2>The organization</h2>
+<div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
+<table class="grant-grid">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col" title="Administer the organization: rules, Butlers, access, holds.">Administrator</th>
+</tr>
+</thead>
+<tbody>
+</tbody>
+</table>
+</div>
+<details class="grant-legend">
+<summary>What each permission means</summary>
+<dl>
+<div>
+<dt>Administrator <span class="mono dim">org.admin</span>
+</dt>
+<dd>Administer the organization: rules, Butlers, access, holds.</dd>
+</div>
+</dl>
+</details>
 </section>
 <section class="people-teams" aria-label="A new mailbox">
 <h2>Mailboxes</h2>

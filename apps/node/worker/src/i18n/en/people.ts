@@ -76,6 +76,20 @@ export const people = {
   "people.forward.edit.save": "Save forwards",
   "people.forward.edit.saved": "{address} forwards to {to}.",
   "people.forward.edit.stopped": "{address} no longer forwards, and its copies are off.",
+  /**
+   * The permission grid (7 October 2026): each permission's column, the label of each box, and the legend that says
+   * once what each lets somebody do (`api.grant.*`). The relation's own id is shown beside its name in the legend.
+   */
+  "people.relation.mailbox.metadata.read": "See the list",
+  "people.relation.mailbox.content.read": "Read",
+  "people.relation.send.propose": "Send",
+  "people.relation.approval.decide": "Decide approvals",
+  "people.relation.message.export": "Export a message",
+  "people.relation.ediscovery.export": "Bulk export",
+  "people.relation.org.admin": "Administrator",
+  "people.grant.box": "{permission}, for {person}",
+  "people.grant.legend": "What each permission means",
+  "people.forward.copy.what": "What a copy is",
   "people.mailbox.addresses": "Addresses of {name}",
   "people.mailbox.remove": "Remove",
   "people.mailbox.access": "Access to {name}",
