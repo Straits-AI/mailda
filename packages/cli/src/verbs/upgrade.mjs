@@ -3,10 +3,10 @@ import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
 import { WRANGLER_ARGS, api, capture, choose, configFor, fail, flag, readSecret, run, sessionCookie, useConfig, workerDir, wrapAt } from "../support.mjs";
-import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
+import { RELEASE_URL, asksHostname, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
-import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
+import { ask, existingNodes, hostnameQuestion, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
 import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
 import { plural } from "@mailda/runtime";
@@ -107,17 +107,29 @@ export async function upgrade(argv) {
     : existing.length === 0
       ? ((await ask(`\n   Node to upgrade [${suggested}]: `)).trim() || suggested)
       : await choose("\n== Node to upgrade", existing, { initial: Math.max(0, existing.indexOf(suggested)) });
-  // A hostname given here goes into the derived config; the deploy attaches it after promotion.
-  const hostname = (flag(argv, "hostname") ?? process.env.MAILDA_HOSTNAME ?? "").trim().toLowerCase() || null;
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+  const remembered = rememberedUrl(accountId, name);
+  /*
+   * A hostname of the operator's own (8 October 2026): asked while the Node is still on its workers.dev address, the
+   * same question `mailda install` asks. It goes into the derived config, and the deploy attaches it after promotion.
+   */
+  const given = flag(argv, "hostname") ?? process.env.MAILDA_HOSTNAME ?? null;
+  const hostname = asksHostname({ given, yes, remembered })
+    ? await hostnameQuestion(argv)
+    : (given ?? "").trim().toLowerCase() || null;
+  if (hostname !== null && given === null) {
+    for (const line of wrapAt(`${hostname} is attached to the Node after the deploy. Sign in again there: a session and a `
+      + "passkey belong to the address they were made on. The workers.dev address keeps working.", 90)) {
+      process.stdout.write(`   ${line}\n`);
+    }
+  }
   const nameArgs = [...(name === base ? [] : ["--name", name]), ...(hostname === null ? [] : ["--hostname", hostname])];
   useConfig(configFor(nameArgs));
   if (firstInstall()) {
     fail(`\`${name}\` is not a Node in this account, and an upgrade never creates one.\n\n  fix      mailda install, which does`);
   }
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
-  const remembered = rememberedUrl(accountId, name);
-  const given = flag(argv, "url") ?? process.env.MAILDA_URL ?? remembered ?? "";
-  const url = (given !== "" || yes ? given : (await ask("   its URL (https://<your-node>): ")).trim()).replace(/\/$/, "");
+  const givenUrl = flag(argv, "url") ?? process.env.MAILDA_URL ?? remembered ?? "";
+  const url = (givenUrl !== "" || yes ? givenUrl : (await ask("   its URL (https://<your-node>): ")).trim()).replace(/\/$/, "");
   if (!/^https:\/\/\S+$/.test(url)) fail(`"${url}" is not a URL; the backup and the canary both need the Node's own hostname.`);
   process.env.MAILDA_URL = url;
   rememberUrl(accountId, name, url);

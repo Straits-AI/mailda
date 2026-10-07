@@ -24,3 +24,6 @@ export function onlyPackageJson(conflicted: string): boolean;
 
 /** Upstream's package.json text with the clone's own name kept. */
 export function resolvePackageJson(ours: string, theirs: string): string;
+
+/** Whether an upgrade asks for a hostname of the operator's own: only while the Node is known by its workers.dev address. Pure. */
+export function asksHostname(input: { given: string | null; yes: boolean; remembered: string | null }): boolean;

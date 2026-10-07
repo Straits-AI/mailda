@@ -185,7 +185,9 @@ curl -fsSL https://mailda.site/update.sh | bash
 
 It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It fetches the release remote,
 fast-forwards when the clone is behind and says so, reinstalls, asks which Node
-if the account has several, and then, before the schema is touched, takes a `mailda backup` into a
+if the account has several and, while the Node still answers only at its workers.dev address, whether to give it a
+hostname of your own (the install's question: a zone, then a label such as `mail`, so `mail.example.com`; Enter keeps
+workers.dev, and `--hostname` answers it ahead), and then, before the schema is touched, takes a `mailda backup` into a
 git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
 refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as

@@ -4960,3 +4960,14 @@ lists its steps first, numbered, and prints a banner as each begins, `━━ Ste
 sit under; the headers a banner now says (`== backing up first`, `== what this does to the catalog`, `== setting up`)
 are gone. Every banner a command asks for is checked against its declared steps by
 `apps/node/worker/test/node/cli-progress.test.ts`, which reads the commands with the TypeScript parser.
+
+## An upgrade asks for a hostname of your own (8 October 2026)
+
+`mailda install` asked whether the Node should answer at a hostname of the operator's own (a custom domain on the
+Worker, `mail.example.com`), but an upgrade never did, so a Node installed on its workers.dev address could only
+move with `--hostname`, which nothing mentioned. `mailda upgrade` now asks the same question in its Choose the Node
+step, while the Node is still remembered by its workers.dev address (`asksHostname` in
+`packages/cli/src/upgrade-parse.mjs`); once it has a name of its own the question stops, and later deploys keep the
+domain, since they upload versions and leave the Worker's triggers alone. Choosing one says what changes: sign in
+again at the new address (a session and a passkey belong to the address they were made on), and the workers.dev
+address keeps working.

@@ -49,3 +49,23 @@ describe("joining a deploy-button clone to the release history", () => {
     expect(merged.engines).toEqual({ node: ">=22" });
   });
 });
+
+describe("whether an upgrade asks for a hostname of the operator's own (8 October 2026)", () => {
+  it("asks while the Node is known by its workers.dev address, or not remembered, and never once it has a name of its own", async () => {
+    const { asksHostname } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
+    const on = (remembered: string | null) => asksHostname({ given: null, yes: false, remembered });
+    expect(on("https://mailda-whymelabs.someone.workers.dev")).toBe(true);
+    expect(on("https://mailda-whymelabs.someone.workers.dev/")).toBe(true);
+    expect(on(null)).toBe(true);
+    expect(on("https://mail.whymelabs.com")).toBe(false);
+  });
+
+  it("never asks under --yes, or when the hostname was given", async () => {
+    const { asksHostname } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
+    const remembered = "https://mailda.someone.workers.dev";
+    expect(asksHostname({ given: null, yes: true, remembered })).toBe(false);
+    expect(asksHostname({ given: "mail.whymelabs.com", yes: false, remembered })).toBe(false);
+    // Given empty (`--hostname ""`) is an answer too: none.
+    expect(asksHostname({ given: "", yes: false, remembered })).toBe(false);
+  });
+});
