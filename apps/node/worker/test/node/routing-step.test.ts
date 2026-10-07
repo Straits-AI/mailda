@@ -210,9 +210,9 @@ describe("the question", () => {
     await step({ ask: tty.ask, choose: tty.choose });
     expect(tty.offered).toEqual([
       { prompt: `   me@${DOMAIN}`, labels: ["leave it", "receive here only"] },
-      { prompt: `   which mailbox receives me@${DOMAIN}?`, labels: [`a new mailbox named me@${DOMAIN}`, "Shared"] },
-      { prompt: `   sales@${DOMAIN}`, labels: ["leave it", "receive here"] },
-      { prompt: `   junk@${DOMAIN}`, labels: ["leave it", "receive here"] },
+      { prompt: `   which mailbox receives me@${DOMAIN}?`, labels: [`a new mailbox named me@${DOMAIN}`, "Shared", `← back to the choices for me@${DOMAIN}`] },
+      { prompt: `   sales@${DOMAIN}`, labels: ["leave it", "receive here", "← back to the previous address"] },
+      { prompt: `   junk@${DOMAIN}`, labels: ["leave it", "receive here", "← back to the previous address"] },
     ]);
     expect(posts()).toEqual([
       ["/api/mailboxes", { name: `me@${DOMAIN}` }],
@@ -226,11 +226,56 @@ describe("the question", () => {
     expect(text.replace(/\s+/g, " ")).toContain(`--put-back <rule id> --domain ${DOMAIN} --without-node`);
   });
 
+  // The owner's, 7 October 2026: "when the list is long it is troublesome to undo".
+  const back = (options: Array<{ label: string; value: unknown }>) => options.find((one) => one.label.startsWith("← back"))!.value;
+
+  it("goes back from an address to the one before it, whose new answer replaces the old", async () => {
+    node();
+    // me@: take, Shared; sales@: back; me@ again: leave; sales@: take; junk@: leave.
+    const tty = terminal(["y", "y"], [take, (options) => options[1]!.value, back, leave, take, leave]);
+    await step({ ask: tty.ask, choose: tty.choose });
+    expect(tty.offered.map((one) => one.prompt.trim())).toEqual([
+      `me@${DOMAIN}`, `which mailbox receives me@${DOMAIN}?`, `sales@${DOMAIN}`, `me@${DOMAIN}`, `sales@${DOMAIN}`, `junk@${DOMAIN}`,
+    ]);
+    // The first address has nobody before it to go back to.
+    expect(tty.offered[0]!.labels).not.toContain("← back to the previous address");
+    expect(posts()).toEqual([["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_sales", digest: digest(7), mailboxId: "mbx_shared" }]]);
+  });
+
+  it("goes back from a mailbox to that address's own choices", async () => {
+    node();
+    const tty = terminal(["y", "y"], [take, back, take, (options) => options[1]!.value, leave, leave]);
+    await step({ ask: tty.ask, choose: tty.choose });
+    expect(tty.offered.map((one) => one.prompt.trim()).slice(0, 4)).toEqual([
+      `me@${DOMAIN}`, `which mailbox receives me@${DOMAIN}?`, `me@${DOMAIN}`, `which mailbox receives me@${DOMAIN}?`,
+    ]);
+    expect(posts()).toEqual([["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_me", digest: digest(4), mailboxId: "mbx_shared" }]]);
+  });
+
+  it("numbers every address in the plan, and a number re-asks that one alone before anything is applied", async () => {
+    node();
+    // me@ left, sales@ taken, junk@ left; then the plan: 9 is not in it, 3 re-asks junk@ (take), and y applies both.
+    const steps = terminal(["y", "9", "3", "y"], [leave, take, leave, take]);
+    await step({ ask: steps.ask, choose: steps.choose });
+    const text = printed();
+    expect(text).toContain(`1. me@${DOMAIN}   forward to <personal-1>  (left as it is)`);
+    expect(text).toContain(`2. sales@${DOMAIN}   worker info-worker  ->  this Node, into mailbox Shared`);
+    expect(text).toContain(`3. junk@${DOMAIN}   drop  (left as it is)`);
+    expect(text).toContain("there is no 9 in the plan; it numbers 1 to 3");
+    expect(steps.asked.filter((one) => one.startsWith("   Apply?"))).toEqual(Array(3).fill("   Apply? [y/N, or 1-3 to change that one] "));
+    // junk@ re-asked alone, with no way back, since it was asked from the plan.
+    expect(steps.offered.at(-1)).toEqual({ prompt: `   junk@${DOMAIN}`, labels: ["leave it", "receive here"] });
+    expect(posts()).toEqual([
+      ["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_sales", digest: digest(7), mailboxId: "mbx_shared" }],
+      ["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_junk", digest: digest(6), mailboxId: "mbx_shared" }],
+    ]);
+  });
+
   it("asks which mailbox for a Worker rule only when there is more than one, and offers the existing ones first", async () => {
     node({ mailboxes: [{ id: "mbx_a", name: "A" }, { id: "mbx_b", name: "B" }] });
     const tty = terminal(["y", "y"], [leave, (options) => options[1]!.value, (options) => options[1]!.value, leave]);
     await step({ ask: tty.ask, choose: tty.choose });
-    expect(tty.offered[2]).toEqual({ prompt: `   which mailbox receives sales@${DOMAIN}?`, labels: ["A", "B", `a new mailbox named sales@${DOMAIN}`] });
+    expect(tty.offered[2]).toEqual({ prompt: `   which mailbox receives sales@${DOMAIN}?`, labels: ["A", "B", `a new mailbox named sales@${DOMAIN}`, `← back to the choices for sales@${DOMAIN}`] });
     expect(posts()).toEqual([["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_sales", digest: digest(7), mailboxId: "mbx_b" }]]);
   });
 
@@ -305,7 +350,7 @@ describe("the question", () => {
     // Enter at the addresses takes the verified one the code names; the waiting one is shown, never filled in.
     const tty = terminal(["y", "", "y"], [leave, (options) => options[2]!.value, leave]);
     await step({ ask: tty.ask, choose: tty.choose });
-    expect(tty.offered[1]).toEqual({ prompt: `   sales@${DOMAIN}`, labels: ["leave it", "receive here", forwardTo.label, forwardTo.copy.label] });
+    expect(tty.offered[1]).toEqual({ prompt: `   sales@${DOMAIN}`, labels: ["leave it", "receive here", forwardTo.label, forwardTo.copy.label, "← back to the previous address"] });
     expect(printed().replace(/\s+/g, " ")).toContain("found in info-worker's code: <personal-1> (verified), <personal-2> (waiting for verification)");
     expect(tty.asked).toContain(`   forward sales@${DOMAIN} to (comma-separated) [<personal-1>]: `);
     expect(posts()).toEqual([["/api/provider/routing-rules/take-over", {
@@ -386,7 +431,7 @@ describe("the mailbox named after the address", () => {
     node({ mailboxes: [{ id: "mbx_shared", name: "Shared" }, { id: "mbx_me", name: `ME@${DOMAIN}` }] });
     const tty = terminal(["y", "y"], [take, first, leave, leave]);
     await step({ ask: tty.ask, choose: tty.choose });
-    expect(tty.offered[1]).toEqual({ prompt: `   which mailbox receives me@${DOMAIN}?`, labels: [`ME@${DOMAIN}`, "Shared"] });
+    expect(tty.offered[1]).toEqual({ prompt: `   which mailbox receives me@${DOMAIN}?`, labels: [`ME@${DOMAIN}`, "Shared", `← back to the choices for me@${DOMAIN}`] });
     expect(posts()).toEqual([["/api/provider/routing-rules/take-over", { domain: DOMAIN, ruleId: "r_me", digest: digest(4), mailboxId: "mbx_me" }]]);
   });
 
@@ -395,7 +440,7 @@ describe("the mailbox named after the address", () => {
     node({ rules: [rule("r_long", long, "forward", ["<personal-1>"], { takeOver: offered("s", { label: "receive here only", asksMailbox: true }) })] });
     const tty = terminal(["y", "y"], [take, first]);
     await step({ ask: tty.ask, choose: tty.choose });
-    expect(tty.offered[1]!.labels).toEqual(["Shared"]);
+    expect(tty.offered[1]!.labels).toEqual(["Shared", expect.stringMatching(/^← back to the choices for /)]);
   });
 });
 
