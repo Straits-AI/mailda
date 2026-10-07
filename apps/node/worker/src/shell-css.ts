@@ -1582,6 +1582,10 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .queue-settings > summary::before { content: "▸"; }
 .queue-settings[open] > summary::before { content: "▾"; }
 
+/* Setup's token permissions, folded under a line that counts them (design audit, 7 October 2026). */
+.setup-permissions { margin: 0 0 12px; }
+.setup-permissions > summary { display: inline-flex; min-height: 24px; align-items: center; color: var(--accent-text); cursor: pointer; }
+
 /* Doctor (design audit, 7 October 2026): what needs attention first, and a passing check's detail folded after its
    first sentence. */
 .doctor-findings .doctor-attention > td, .doctor-findings .doctor-attention > th { background: var(--surface-1); }
