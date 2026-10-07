@@ -3,25 +3,6 @@
 <p class="dim mono">0</p>
 </header>
 <p class="dim">Everybody with an account on this Node.</p>
-<section class="people-teams" aria-label="Invite somebody">
-<h2>Invite somebody</h2>
-<p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
-<p class="field-row">
-<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
-<datalist id="invite-suggestions">
-</datalist>
-</p>
-<p class="field-row">
-<label for="invite-mailbox">
-<input id="invite-mailbox" type="checkbox"> Also give them a mailbox at</label> <span class="address-field">
-<input id="invite-mailbox-address" class="mono" disabled="" aria-label="Their mailbox's address" aria-describedby="invite-mailbox-address-domain" placeholder="hello" value="">
-<span id="invite-mailbox-address-domain" class="mono address-domain">@example.test</span>
-</span>
-</p>
-<p>
-<button class="quiet" type="button" disabled="">Mint an invitation</button>
-</p>
-</section>
 <section class="people-mailbox" aria-label="Administering the organization">
 <h2>The organization</h2>
 <div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
@@ -46,6 +27,25 @@
 </div>
 </dl>
 </details>
+</section>
+<section class="people-teams" aria-label="Invite somebody">
+<h2>Invite somebody</h2>
+<p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
+<p class="field-row">
+<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
+<datalist id="invite-suggestions">
+</datalist>
+</p>
+<p class="field-row">
+<label for="invite-mailbox">
+<input id="invite-mailbox" type="checkbox"> Also give them a mailbox at</label> <span class="address-field">
+<input id="invite-mailbox-address" class="mono" disabled="" aria-label="Their mailbox's address" aria-describedby="invite-mailbox-address-domain" placeholder="hello" value="">
+<span id="invite-mailbox-address-domain" class="mono address-domain">@example.test</span>
+</span>
+</p>
+<p>
+<button class="quiet" type="button" disabled="">Mint an invitation</button>
+</p>
 </section>
 <section class="people-teams" aria-label="A new mailbox">
 <h2>Mailboxes</h2>

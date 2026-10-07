@@ -4,7 +4,7 @@
 <span class="state verdict-degraded">degraded</span>
 </header>
 <p class="notice dim mono">claimed · read [clock]</p>
-<table>
+<table class="doctor-findings stack-narrow">
 <thead>
 <tr>
 <th scope="col">Check</th>
@@ -13,7 +13,7 @@
 </tr>
 </thead>
 <tbody>
-<tr>
+<tr class="doctor-attention">
 <td>Recovery escrow<span class="mono dim block">recovery_escrow</span>
 </td>
 <td>
@@ -40,24 +40,7 @@
 </p>
 </td>
 </tr>
-<tr>
-<td>Evidence present<span class="mono dim block">evidence_present</span>
-</td>
-<td>
-<span class="state delivery-accepted">ok</span>
-</td>
-<td>evidence_present detail<p>
-<span class="inline-actions">
-<button type="button" class="quiet">Verify a batch</button>
-<button type="button" class="linkish">Continue from where it stopped</button>
-</span>
-</p>
-<p class="notice mono" role="status">50 objects checked in receipts, 1024 bytes read: 2 faults. More remains.<span style="display: block;">missing receipts.blob_key rcpt_7: no object</span>
-<span style="display: block;">altered receipts.blob_key rcpt_9: hash differs</span>
-</p>
-</td>
-</tr>
-<tr>
+<tr class="doctor-attention">
 <td>Orphaned evidence<span class="mono dim block">evidence_orphans</span>
 </td>
 <td>
@@ -69,7 +52,7 @@
 </p> <button type="button" class="linkish dim">Never mind</button>
 </td>
 </tr>
-<tr>
+<tr class="doctor-attention">
 <td>Restores that collided with a live key<span class="mono dim block">recovery_key_conflicts</span>
 </td>
 <td>
@@ -92,7 +75,7 @@
 </p>
 </td>
 </tr>
-<tr>
+<tr class="doctor-attention">
 <td>Bodies the search index failed on<span class="mono dim block">body_index_failed</span>
 </td>
 <td>
@@ -136,6 +119,23 @@
 <p class="dim">Tick the ones worth retrying — fix the cause first.</p>
 <p>
 <button type="button" class="quiet">Requeue 1 message</button>
+</p>
+</td>
+</tr>
+<tr>
+<td>Evidence present<span class="mono dim block">evidence_present</span>
+</td>
+<td>
+<span class="state delivery-accepted">ok</span>
+</td>
+<td>evidence_present detail<p>
+<span class="inline-actions">
+<button type="button" class="quiet">Verify a batch</button>
+<button type="button" class="linkish">Continue from where it stopped</button>
+</span>
+</p>
+<p class="notice mono" role="status">50 objects checked in receipts, 1024 bytes read: 2 faults. More remains.<span style="display: block;">missing receipts.blob_key rcpt_7: no object</span>
+<span style="display: block;">altered receipts.blob_key rcpt_9: hash differs</span>
 </p>
 </td>
 </tr>

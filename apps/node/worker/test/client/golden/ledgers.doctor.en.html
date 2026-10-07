@@ -4,7 +4,7 @@
 <span class="state verdict-refuse">refuse</span>
 </header>
 <p class="notice dim mono">claimed · read [clock]</p>
-<table>
+<table class="doctor-findings stack-narrow">
 <thead>
 <tr>
 <th scope="col">Check</th>
@@ -13,14 +13,7 @@
 </tr>
 </thead>
 <tbody>
-<tr>
-<td class="mono">d1_reachable</td>
-<td>
-<span class="state delivery-accepted">ok</span>
-</td>
-<td>D1 answered.</td>
-</tr>
-<tr>
+<tr class="doctor-attention">
 <td>Sending transports<span class="mono dim block">transport_adapters</span>
 </td>
 <td>
@@ -29,19 +22,26 @@
 <td>No adapter can send. <span class="dim">Fix: Supply credentials below.</span>
 </td>
 </tr>
-<tr>
+<tr class="doctor-attention">
 <td class="mono">queue_backlog</td>
 <td>
 <span class="state severity-degraded">degraded</span>
 </td>
 <td>12 messages waiting.</td>
 </tr>
-<tr>
+<tr class="doctor-attention">
 <td class="mono">domain_verified</td>
 <td>
 <span class="state severity-report">report</span>
 </td>
 <td>Nothing is verified yet.</td>
+</tr>
+<tr>
+<td class="mono">d1_reachable</td>
+<td>
+<span class="state delivery-accepted">ok</span>
+</td>
+<td>D1 answered.</td>
 </tr>
 </tbody>
 </table>
