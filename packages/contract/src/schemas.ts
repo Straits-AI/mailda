@@ -419,8 +419,9 @@ export const providerDestinationAddResponse = z.object({
 }).strict();
 
 /**
- * The addresses on this Node that keep a forward (ADR 47), each with the latest read of its destination and its
- * latest attempt. Read from D1 alone: no Cloudflare call.
+ * Every destination each address on this Node forwards to (ADR 47), one row per address and destination (amended 7
+ * October 2026: an address may forward to several, so an address may have several rows), each with the latest read
+ * of the destination and its latest attempt. Read from D1 alone: no Cloudflare call.
  */
 const keptForwardAttemptState = z.enum(["outcome_unknown", "handed_over", "refused", "withheld"]);
 export const keptForwardsResponse = z.object({
@@ -464,13 +465,30 @@ export const keptForwardCopyRequest = z.object({
 export const keptForwardCopyResponse = z.object({
   copy: z.object({
     address: z.string(),
-    to: z.string(),
+    /** Every destination the address forwards to (ADR 47, amended 7 October 2026). */
+    to: z.array(z.string()),
     /** Null when copies are off. */
     by: z.string().nullable(),
     at: isoDate.nullable(),
   }).strict(),
 }).strict();
 export type KeptForwardRow = z.infer<typeof keptForwardsResponse>["forwards"][number];
+
+/**
+ * Setting every destination an address forwards to (`POST /api/forwards`, ADR 47 amended 7 October 2026). `to`
+ * replaces the list; empty stops forwarding.
+ */
+export const forwardsSetRequest = z.object({
+  address: z.string().min(3).max(254),
+  to: z.array(z.string().min(3).max(254)),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+export const forwardsSetResponse = z.object({
+  forwards: z.object({
+    address: z.string(),
+    /** The destinations it forwards to now, lowercased and sorted. */
+    to: z.array(z.string()),
+  }).strict(),
+}).strict();
 /** The `destinations` object, for the consumers that print it (the client and the CLI's declaration). */
 export type ProviderVerifiedDestinations = z.infer<typeof providerVerifiedDestinationsResponse>["destinations"];
 
@@ -839,6 +857,18 @@ export const providerRoutingRulesResponse = z.object({
            */
           copy: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict(),
         }).strict().nullable(),
+        /**
+         * A Worker rule's other choice (ADR 47, amended 7 October 2026): receive here and forward to addresses chosen by
+         * whoever takes it over (`forwardTo`), in the Node's words, with the copy beside it. `found` is what the Worker's
+         * code names that the account lists as a destination, offered to start from and never applied by itself; null
+         * with `foundError` when the code or the list could not be read. Null on any other rule.
+         */
+        forwardTo: z.object({
+          label: z.string().min(1), says: z.string().min(1),
+          found: z.array(z.object({ to: z.string(), verified: z.enum(["verified", "waiting", "absent"]).nullable() }).strict()).nullable(),
+          foundError: z.string().nullable(),
+          copy: z.object({ label: z.string().min(1), says: z.string().min(1) }).strict(),
+        }).strict().nullable(),
       }).strict().nullable(),
     }).strict()),
     error: z.string().nullable(),
@@ -870,6 +900,11 @@ export const providerRoutingRuleOutcomeResponse = z.object({
      * (ADR 47); null when nothing is forwarded, and on a put-back, which clears it.
      */
     keptForward: z.string().nullable(),
+    /**
+     * Every destination the address forwards to after the take-over (ADR 47, amended 7 October 2026): the kept one, the
+     * ones chosen with `forwardTo`, or none. Null on a put-back.
+     */
+    forwards: z.array(z.string()).nullable(),
     /** Whether that take-over also turned copies on (ADR 47, amended 3 October 2026); null on a put-back. */
     copy: z.boolean().nullable(),
   }).strict(),
@@ -896,6 +931,13 @@ export const providerRoutingRuleTakeOverRequest = z.object({
    * authority each copy is sealed under. Refused with anything else (`E_COPY_NEEDS_KEEP`).
    */
   copy: z.boolean().optional(),
+  /**
+   * A Worker rule only (ADR 47, amended 7 October 2026): receive here and forward each message to these addresses, in
+   * place of the Worker, up to forward.max_destinations. Each must be a verified destination of the account unless
+   * `copy` is true, and none on a domain this organisation receives at. Refused on any other rule
+   * (`E_ROUTING_FORWARD_TO_NOT_A_WORKER`). Empty or absent: receive here only.
+   */
+  forwardTo: z.array(z.string().min(3).max(254)).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 export const providerRoutingRulePutBackRequest = z.object({

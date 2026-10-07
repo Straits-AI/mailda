@@ -50,7 +50,7 @@ export const people = {
   "people.forward.state.absent": "not a destination of the account",
   "people.forward.state.unchecked": "not checked",
   "people.forward.handedOver": "last forwarded {when}",
-  "people.forward.none": "nothing has arrived since it was kept",
+  "people.forward.none": "nothing has arrived since it was added",
   "people.forward.refused": "not forwarded at {when}: {reason}",
   "people.forward.withheld": "not forwarded at {when}: it came back from a forward of this Node's own",
   "people.forward.unknown": "no recorded answer for the forward at {when}: the destination may or may not have it",
@@ -67,7 +67,15 @@ export const people = {
   "people.forward.copy.turnedOn": "Copies on for {address}.",
   "people.forward.copy.turnedOff": "Copies off for {address}.",
   "people.forward.copy.about":
-    "With copies on, a forward Cloudflare refuses as not verified is followed by a copy from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending and is in the Outbox like any send, sealed under the administrator who turned copies on.",
+    "With copies on, a forward Cloudflare refuses as not verified is followed by a copy from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending and is in the Outbox like any send, sealed under the administrator who turned copies on.",
+  /** Setting where an address forwards (ADR 47, amended 7 October 2026): the control, its limits, and what it did. */
+  "people.forward.edit": "Change forwards",
+  "people.forward.edit.label": "Forward {address} to",
+  "people.forward.edit.hint":
+    "Verified destinations of the account, separated by commas, up to {max}. Each message is stored here first, then forwarded to every one. Leave it empty to stop forwarding, which turns copies off.",
+  "people.forward.edit.save": "Save forwards",
+  "people.forward.edit.saved": "{address} forwards to {to}.",
+  "people.forward.edit.stopped": "{address} no longer forwards, and its copies are off.",
   "people.mailbox.addresses": "Addresses of {name}",
   "people.mailbox.remove": "Remove",
   "people.mailbox.access": "Access to {name}",

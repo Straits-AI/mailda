@@ -82,6 +82,26 @@ export async function cloudflareGet<T>(
 }
 
 /**
+ * One authenticated read whose answer is not Cloudflare's JSON envelope but the thing itself: a Worker script's source
+ * (`/workers/scripts/{name}/content/v2`), read so a take-over can say where that Worker sent mail (ADR 47, amended 7
+ * October 2026). A refusal still comes back as the envelope, so its words are Cloudflare's, as `cloudflareGet` says them.
+ */
+export async function cloudflareGetText(
+  env: Env, ctx: Ctx, orgId: string, path: string,
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const token = await accessTokenFor(env, ctx, orgId);
+  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    headers: { authorization: `Bearer ${token}` },
+  }).catch(() => null);
+  if (response === null) return { ok: false, error: "the Cloudflare API could not be reached" };
+  const text = await response.text().catch(() => "");
+  if (response.ok) return { ok: true, text };
+  const body = (() => { try { return JSON.parse(text) as { errors?: Array<{ message?: string; code?: number }> }; } catch { return {}; } })();
+  const said = (body.errors ?? []).map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+  return { ok: false, error: said === "" ? `http_${response.status}` : said };
+}
+
+/**
  * One authenticated **read** of Cloudflare's API that happens to be a `POST`.
  *
  * `cloudflareGet` is `GET`-only and says why: a helper that could write would be reached for by the layer

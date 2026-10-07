@@ -119,6 +119,24 @@ const SITES: Site[] = [
       + "why no legal-hold guard applies. `address.removed` records the act, with what became of the rule.",
   },
   {
+    file: "src/kept-forward.ts",
+    target: "forward_destinations",
+    content: false,
+    why: "A destination an address no longer forwards to, removed when an administrator sets the address's list "
+      + "(`POST /api/forwards`, ADR 47 amended 7 October 2026). One row naming where future mail is sent on; no "
+      + "message, no attribution, no decision. What was forwarded stays in `forward_attempts`, which nothing "
+      + "deletes, and `forward.destinations_set` records the act with counts.",
+  },
+  {
+    file: "src/provider/routing-rules.ts",
+    target: "forward_destinations",
+    content: false,
+    why: "An address's forward destinations, replaced by a take-over that sets its list or cleared when its rule no "
+      + "longer routes here (a put-back, or a take-over that did not hold), since then no mail reaches this Node to "
+      + "forward. Rows naming where future mail goes; the attempts already made stay in `forward_attempts`. The "
+      + "take-over and put-back entries record the acts.",
+  },
+  {
     file: "src/invitations.ts",
     target: "invitations",
     content: false,

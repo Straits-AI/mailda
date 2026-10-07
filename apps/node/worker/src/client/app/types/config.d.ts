@@ -30,6 +30,8 @@ export interface MaildaConfig {
   readonly maxAttachments: number;
   /** The most a copy (ADR 47) may be: `email.outbound.max_bytes`, Cloudflare's outbound ceiling, which the seal refuses past. */
   readonly outboundMaxBytes: number;
+  /** How many destinations an address may forward to: `forward.max_destinations`, which the Node refuses past. */
+  readonly forwardMaxDestinations: number;
 }
 
 export const CONFIG: MaildaConfig;

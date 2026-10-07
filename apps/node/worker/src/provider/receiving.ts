@@ -679,8 +679,11 @@ export async function removeAddress(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string, address: string,
 ): Promise<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRemoval }> {
   const normalized = address.trim().toLowerCase();
-  const row = await env.CATALOG.prepare("SELECT id, mailbox_id, kept_forward_to FROM addresses WHERE org_id = ? AND address = ?")
-    .bind(orgId, normalized).first<{ id: string; mailbox_id: string; kept_forward_to: string | null }>();
+  const row = await env.CATALOG.prepare(
+    `SELECT a.id, a.mailbox_id, (SELECT json_group_array(f.destination) FROM forward_destinations f
+                                  WHERE f.org_id = a.org_id AND f.address = a.address) AS forwards
+       FROM addresses a WHERE a.org_id = ? AND a.address = ?`,
+  ).bind(orgId, normalized).first<{ id: string; mailbox_id: string; forwards: string }>();
   if (row === null) {
     throw notFound("E_NO_SUCH_ADDRESS", {
       what: `${JSON.stringify(address)} is not an address on this Node`,
@@ -690,15 +693,17 @@ export async function removeAddress(
   }
   const domain = normalized.slice(normalized.indexOf("@") + 1);
   /*
-   * A kept forward (ADR 47) is the customer's forward rule carried by this Node: removing the address would bounce
-   * the mail the rule still routes here and end the forward with it. The rule goes back first, which clears it.
+   * An address that forwards (ADR 47) is somebody's mail reaching their own inbox through this Node: removing it
+   * would bounce that mail and end the forwards with it, and a taken-over forward rule's would not be restored. The
+   * forwards go first, or the rule goes back, which clears them.
    */
-  if (row.kept_forward_to !== null) {
+  const forwards = JSON.parse(row.forwards) as string[];
+  if (forwards.length > 0) {
     throw conflict("E_ADDRESS_KEEPS_A_FORWARD", {
-      what: `${normalized} keeps forwarding to ${row.kept_forward_to} through a rule this Node took over`,
-      why: "removing the address would make the rule's mail bounce here and stop the forward without restoring the rule",
-      fix: `put the rule back first, which restores the forward in Cloudflare and clears it here: \`mailda provider --routing-rules ${domain}\` `
-        + "lists it with its put-back command, and the Setup screen offers it",
+      what: `${normalized} forwards to ${forwards.join(", ")}`,
+      why: "removing the address would make its mail bounce here and stop the forwards, without restoring a rule this Node took over",
+      fix: `stop its forwards on People (\`mailda provider --set-forwards ${normalized}\` with no --to), or put its rule back, which `
+        + `clears them: \`mailda provider --routing-rules ${domain}\` lists it with its put-back command, and the Setup screen offers it`,
     });
   }
   const received = async () => (await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM ingress_receipts WHERE org_id = ? AND envelope_to = ?")

@@ -16,8 +16,16 @@ const { People } = await import("../../src/client/app/screens/people.tsx");
 
 const BOX = { id: "mbx_test", name: "Support", unclaimed: 0, claimed: 0, mine: 0, first_response_minutes: null, quarantine_dmarc_fail: 0, quarantine_dangerous_attachments: 0, quarantined: 0, breached: 0, addresses: "support@example.test,help@example.test" as string | null };
 
-function mount(opts: { removal?: { state: string; detail: string }; box?: typeof BOX; teams?: Array<{ id: string; name: string; createdAt: string; memberCount: number }> } = {}) {
+function mount(opts: {
+  removal?: { state: string; detail: string }; box?: typeof BOX; teams?: Array<{ id: string; name: string; createdAt: string; memberCount: number }>;
+  forwards?: unknown[];
+} = {}) {
   answerWith((call) => {
+    if (call.path === "/api/forwards" && call.method === "GET") return Response.json({ forwards: opts.forwards ?? [] });
+    if (call.path === "/api/forwards" && call.method === "POST") {
+      const body = call.body as { address: string; to: string[] };
+      return Response.json({ forwards: { address: body.address, to: body.to.map((one) => one.toLowerCase()) } });
+    }
     if (call.path === "/api/provider") {
       return Response.json({ provider: { state: "no_token" }, permissions: [], note: "", provisioned: { receiving: null, sending: null, deliveryEvents: null } });
     }
@@ -48,7 +56,7 @@ describe("a mailbox's addresses on People", () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
     expect(Array.from(list.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
-      "support@example.test Remove", "help@example.test Remove",
+      "support@example.test Remove Change forwards", "help@example.test Remove Change forwards",
     ]);
   });
 
@@ -60,7 +68,7 @@ describe("a mailbox's addresses on People", () => {
   it("sends DELETE with the address and says the catch-all needed nothing", async () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
-    fireEvent.click(list.querySelectorAll("button")[1]!);
+    fireEvent.click(Array.from(list.querySelectorAll("button")).filter((one) => one.textContent === "Remove")[1]!);
     await waitFor(() => {
       const sent = calls.find((call) => call.method === "DELETE" && call.path === "/api/addresses");
       expect(sent, "the removal was never sent").toBeDefined();
@@ -80,6 +88,37 @@ describe("a mailbox's addresses on People", () => {
     mount({ removal: { state: "not_removed", detail } });
     fireEvent.click((await screen.findByLabelText("Addresses of Support")).querySelector("button")!);
     expect(await status()).toBe(`support@example.test: ${detail}`);
+  });
+
+  it("sets where an address forwards through one box, the list as typed, and says what it did (ADR 47 amended)", async () => {
+    mount();
+    const list = await screen.findByLabelText("Addresses of Support");
+    fireEvent.click(Array.from(list.querySelectorAll("button")).filter((one) => one.textContent === "Change forwards")[0]!);
+    const field = (await screen.findByLabelText("Forward support@example.test to")) as HTMLInputElement;
+    expect(screen.getByText(/separated by commas, up to \d+\. Each message is stored here first/)).toBeDefined();
+    fireEvent.change(field, { target: { value: " A@gmail.test, b@gmail.test ," } });
+    fireEvent.click(screen.getByRole("button", { name: "Save forwards" }));
+    await waitFor(() => {
+      const sent = calls.find((call) => call.method === "POST" && call.path === "/api/forwards");
+      expect(sent, "the forwards were never sent").toBeDefined();
+      expect(sent!.body).toEqual({ address: "support@example.test", to: ["A@gmail.test", "b@gmail.test"] });
+    });
+    expect(await status()).toBe("support@example.test forwards to a@gmail.test, b@gmail.test.");
+  });
+
+  it("draws one line per destination, and the copy setting once", async () => {
+    const row = (to: string, last: unknown) => ({
+      address: "support@example.test", mailboxId: "mbx_test", to, verified: "verified", checkedAt: null, last, lastHandedOverAt: null, copy: null,
+    });
+    mount({ forwards: [
+      row("a@gmail.test", { state: "handed_over", at: "2026-10-07T00:00:00.000Z", error: null, copy: null }),
+      row("b@gmail.test", { state: "refused", at: "2026-10-07T00:00:00.000Z", error: "destination address not verified", copy: null }),
+    ] });
+    const item = (await screen.findByText("support@example.test")).closest("li")!;
+    await waitFor(() => expect(item.textContent).toContain("forwards to a@gmail.test (verified)"));
+    expect(item.textContent).toContain("forwards to b@gmail.test (verified)");
+    expect(item.textContent).toContain("destination address not verified");
+    expect(item.textContent!.match(/Copies off\./g)).toHaveLength(1);
   });
 
   it("renames the mailbox through PATCH, and offers no rename for the name it already has", async () => {

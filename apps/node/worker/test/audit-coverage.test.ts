@@ -209,7 +209,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   // Was exempt as "set at claim time and never since"; `POST /api/addresses` adds one and says how it is routed.
   // `kept_forward.copy_set` (ADR 47 amended): an administrator turning copies on or off, the authority each copy is
   // sealed under, written on the address row.
-  addresses: { actions: ["address.added", "address.removed", "kept_forward.copy_set"] },
+  addresses: { actions: ["address.added", "address.removed", "kept_forward.copy_set", "forward.destinations_set"] },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   /*
@@ -266,6 +266,16 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   kept_forward_attempts: {
     exempt: "an inbound delivery's own record of its kept forward, written with the receipt and settled by the email "
       + "handler; no person acts here, and keeping the forward is audited as provider.routing_rule_taken_over",
+  },
+  /*
+   * Migration 0077 (ADR 47 amended 7 October 2026): where each address forwards, and each forward's attempt. The
+   * destinations are set by a person, audited as `forward.destinations_set` (People, the CLI) or on the take-over's
+   * entry; the attempts are `kept_forward_attempts`' successor and exempt for its reason.
+   */
+  forward_destinations: { actions: ["forward.destinations_set", "provider.routing_rule_taken_over"] },
+  forward_attempts: {
+    exempt: "an inbound delivery's own record of each of its forwards, written with the receipt and settled by the email "
+      + "handler; no person acts here, and choosing the destinations is audited as forward.destinations_set",
   },
   /*
    * Migration 0070's two tables: which of this Node's recipients were verified Email Routing destinations of

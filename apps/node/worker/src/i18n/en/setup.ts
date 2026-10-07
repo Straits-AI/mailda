@@ -190,7 +190,7 @@ export const setup = {
 
   "setup.destination.title": "Register a destination address",
   "setup.destination.about":
-    "A kept forward goes only to a verified destination. Registering one makes Cloudflare mail it a link; until someone at that address clicks it, it is waiting for verification and nothing can be forwarded to it. This Node deletes no destination.",
+    "A forward goes only to a verified destination. Registering one makes Cloudflare mail it a link; until someone at that address clicks it, it is waiting for verification and nothing can be forwarded to it. This Node deletes no destination.",
   "setup.destination.email": "Address",
   "setup.destination.add": "Register",
   "setup.destination.waiting": "{email} is waiting for verification until someone at that address clicks the link Cloudflare mailed them.",
@@ -202,6 +202,14 @@ export const setup = {
   /** Copies with a kept forward (ADR 47, amended 3 October 2026): the box, what a copy is, and what the take-over did. */
   "setup.rules.copy": "Also send a copy when Cloudflare refuses the forward as not verified",
   "setup.rules.copyAbout":
-    "A copy is sent from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending, is in the Outbox like any send, and is sealed under you, so you need send.propose on the mailbox.",
+    "A copy is sent from {address}: the recipient sees it from \"<sender> via {mailbox}\", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to {size}. A message with an attachment this Node judges dangerous, a quarantined one, or one that failed DMARC is not copied. Each copy counts towards today's sending, is in the Outbox like any send, and is sealed under you, so you need send.propose on the mailbox.",
   "setup.rules.copyOn": "When the forward is refused as not verified, a copy is sent from {address}.",
+  /**
+   * A Worker rule's forward (ADR 47, amended 7 October 2026): the box the addresses go in, what filled it from the
+   * Worker's code (offered, never applied by itself), and what the take-over left.
+   */
+  "setup.rules.forwardTo": "Forward to (separated by commas)",
+  "setup.rules.foundIn": "Filled in from the addresses {worker}'s code names that the account lists as verified destinations. Check them before you confirm.",
+  "setup.rules.foundNothing": "{worker}'s code names no verified destination of the account, so type the addresses.",
+  "setup.rules.forwardsTo": "It forwards to {to}, after each message is stored here.",
 } as const satisfies Area<"setup">;

@@ -158,7 +158,7 @@ export const setup: Twin<typeof source> = {
 
   "setup.destination.title": "登记目标地址",
   "setup.destination.about":
-    "保留的转发只会发往已验证的目标地址。登记一个地址后，Cloudflare 会向它发送一封带链接的邮件；在该地址的收件人点击链接之前，它一直等待验证，任何邮件都不能转发给它。本节点不会删除任何目标地址。",
+    "转发只会发往已验证的目标地址。登记一个地址后，Cloudflare 会向它发送一封带链接的邮件；在该地址的收件人点击链接之前，它一直等待验证，任何邮件都不能转发给它。本节点不会删除任何目标地址。",
   "setup.destination.email": "地址",
   "setup.destination.add": "登记",
   "setup.destination.waiting": "{email} 正在等待验证，直到该地址的收件人点击 Cloudflare 发给他们的链接。",
@@ -168,6 +168,10 @@ export const setup: Twin<typeof source> = {
   "setup.rules.keptForward": "每封邮件在这里存储之后，它会继续转发到 {to}。",
   "setup.rules.copy": "Cloudflare 以未验证为由拒绝转发时，同时发送一份副本",
   "setup.rules.copyAbout":
-    "副本由 {address} 发出：收件人看到的发件人是“<发件人> via {mailbox}”，回复会发给原发件人。最大 {size}。带有本节点判定为危险的附件的邮件、已隔离的邮件或 DMARC 未通过的邮件不会发送副本。每份副本计入今天的发送量，像其他发送一样出现在发件箱中，并以你的名义定稿，因此你需要在该邮箱上拥有 send.propose。",
+    "副本由 {address} 发出：收件人看到的发件人是“<发件人> via {mailbox}”，回复会发给原发件人。一封邮件的副本只发一份，发给所有被拒绝的目标地址，并在 To 中列出它们全部。最大 {size}。带有本节点判定为危险的附件的邮件、已隔离的邮件或 DMARC 未通过的邮件不会发送副本。每份副本计入今天的发送量，像其他发送一样出现在发件箱中，并以你的名义定稿，因此你需要在该邮箱上拥有 send.propose。",
   "setup.rules.copyOn": "转发以未验证为由被拒绝时，会由 {address} 发出一份副本。",
+  "setup.rules.forwardTo": "转发到（用逗号分隔）",
+  "setup.rules.foundIn": "已按 {worker} 的代码中写明、且是该账户已验证目标地址的地址填写。确认之前请先核对。",
+  "setup.rules.foundNothing": "{worker} 的代码中没有写明该账户已验证的目标地址，请输入地址。",
+  "setup.rules.forwardsTo": "每封邮件在这里存储之后，会转发到 {to}。",
 };

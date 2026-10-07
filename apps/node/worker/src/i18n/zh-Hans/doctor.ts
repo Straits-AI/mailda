@@ -24,7 +24,7 @@ export const doctor: Twin<typeof source> = {
   "doctor.check.evidence_present": "证据是否齐全",
   "doctor.check.inbound_authentication": "入站认证",
   "doctor.check.inbound_routing": "入站路由",
-  "doctor.check.kept_forwards": "保留的转发",
+  "doctor.check.kept_forwards": "转发",
   "doctor.check.key_vault": "密钥库",
   "doctor.check.legal_hold_lift_pending": "等待批准的法律保全解除",
   "doctor.check.legal_hold_mailbox_missing": "邮箱已不存在的法律保全",

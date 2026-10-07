@@ -359,22 +359,27 @@ describe("who read, with what, and never which addresses", () => {
   });
 });
 
-describe("the account's list, and the kept forwards it re-checks (ADR 47)", () => {
+describe("the account's list, and the forward destinations it re-checks (ADR 47)", () => {
   beforeEach(async () => {
     await testEnv.CATALOG.batch([
       testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
-      ...[["addr_vd_1", "one@here.test", "Kept@Gmail.test"], ["addr_vd_2", "two@here.test", "wait@gmail.test"],
-        ["addr_vd_3", "three@here.test", "gone@gmail.test"], ["addr_vd_4", "four@here.test", null]].map(([id, address, to]) =>
-        testEnv.CATALOG.prepare(
-          "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to) VALUES (?,?,?,?,?,?)",
-        ).bind(id, ORG, address, "mbx_vd", NOW, to)),
+      testEnv.CATALOG.prepare("DELETE FROM forward_destinations WHERE org_id = ?").bind(ORG),
+      ...[["addr_vd_1", "one@here.test", "kept@gmail.test"], ["addr_vd_2", "two@here.test", "wait@gmail.test"],
+        ["addr_vd_3", "three@here.test", "gone@gmail.test"], ["addr_vd_4", "four@here.test", null]].flatMap(([id, address, to]) => [
+        testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)")
+          .bind(id, ORG, address, "mbx_vd", NOW),
+        ...(to === null ? [] : [testEnv.CATALOG.prepare("INSERT INTO forward_destinations (org_id, address, destination) VALUES (?,?,?)")
+          .bind(ORG, address, to)]),
+      ]),
     ]);
   });
+  // Every address, with its destination's state when it forwards: an address that does not forward stays without one.
   const forwards = async () => (await testEnv.CATALOG.prepare(
-    "SELECT address, kept_forward_verified AS verified, kept_forward_checked_at AS at FROM addresses WHERE org_id = ? ORDER BY address",
+    `SELECT a.address, f.verified, f.checked_at AS at FROM addresses a
+       LEFT JOIN forward_destinations f ON f.org_id = a.org_id AND f.address = a.address WHERE a.org_id = ? ORDER BY a.address`,
   ).bind(ORG).all<{ address: string; verified: string | null; at: string | null }>()).results;
 
-  it("records each kept forward's destination as verified, waiting or absent, folded, and touches no other address", async () => {
+  it("records each forward destination as verified, waiting or absent, folded, and touches no other address", async () => {
     await holdToken(testEnv, ACCOUNT, SEPTEMBER_28);
     cloudflare([{ email: "kept@gmail.TEST", verified: VERIFIED_AT }, { email: "wait@gmail.test", verified: null }]);
     await read();

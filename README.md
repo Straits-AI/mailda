@@ -126,12 +126,16 @@ These are the defaults, and how to change each:
   offers *receive here*: mail Cloudflare was discarding is kept from now on. A forward also offers *receive
   here and keep forwarding to X* (ADR 47): the Node stores each message, then forwards it to X, the rule's own
   verified destination. The copy leaves before the Node scans it, a failed forward is shown on People and not
-  told to the sender, and Cloudflare reports no delivery for X. `mailda provider --forwards` lists them;
+  told to the sender, and Cloudflare reports no delivery for X. A rule to another Worker also offers *receive here and
+  forward to addresses you choose*, filled in from the verified destinations that Worker's code names (read with
+  wrangler's login; you confirm or change them), up to `forward.max_destinations`. Any address can forward to several
+  verified destinations later: People's *Change forwards*, or `mailda provider --set-forwards <address> --to a,b`
+  (no `--to` stops it). `mailda provider --forwards` lists every destination with its latest attempt;
   `mailda provider --destinations [--addresses]` and `--add-destination <email>` list and register the account's
   destination addresses (a new one waits for verification until someone there clicks Cloudflare's link).
-- **Copies are off.** An address that keeps a forward may opt in to a copy (`mailda provider --copy <address> on`,
-  People, or `--copy` with `--forward keep`): when Cloudflare refuses the forward as not verified, the message is
-  sent on from the address itself through Email Sending. The recipient sees it from "Alice via \<mailbox>", replies go
+- **Copies are off.** An address that forwards may opt in to a copy (`mailda provider --copy <address> on`,
+  People, or `--copy` with `--forward keep` or `--forward-to`): when Cloudflare refuses a forward as not verified, the
+  message is sent on from the address itself through Email Sending, one copy to every destination refused that way. The recipient sees it from "Alice via \<mailbox>", replies go
   to Alice, the body is hers as written; up to 5 MiB (`email.outbound.max_bytes`); a message with a dangerous
   attachment, a quarantined one or one that failed DMARC is not copied; each copy counts towards today's sending and
   is in the Outbox like any send, sealed under the administrator who turned copies on.

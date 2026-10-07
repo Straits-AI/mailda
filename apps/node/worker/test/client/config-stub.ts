@@ -28,4 +28,5 @@ export const CONFIG = {
   attachmentBudgetBytes: ATTACHMENT_BUDGET,
   maxAttachments: MAX_ATTACHMENTS,
   outboundMaxBytes: MAX_OUTBOUND_BYTES,
+  forwardMaxDestinations: BUDGETS["forward.max_destinations"],
 } as const;

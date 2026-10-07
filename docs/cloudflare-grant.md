@@ -45,7 +45,7 @@ Cloudflare's token form names them; the Setup screen prints the same list with w
 | Queues Edit | the `email.sending` subscription that makes a send's outcome reach this Node |
 | the Email Sending group | onboarding a domain for sending; the form's exact name is not published |
 | Registrar Domains Read | only for buying a domain from the Node; leave it off otherwise |
-| Email Routing Addresses Edit (optional) | which of the addresses this Node has sent to are verified destinations (no delivery outcome was reported for one in the case measured); whether a kept forward's destination is verified; and registering a destination (ADR 47). Edit because registering is a write; it includes the read |
+| Email Routing Addresses Edit (optional) | which of the addresses this Node has sent to are verified destinations (no delivery outcome was reported for one in the case measured); whether each forward destination is verified; and registering a destination (ADR 47). Edit because registering is a write; it includes the read |
 
 Restrict the token to the account the Node runs in, and give it a TTL if one is wanted; a token Cloudflare
 no longer accepts is reported at the act that tried it, in Cloudflare's own words (`10000 Authentication
@@ -716,3 +716,21 @@ on the attempt (`copy_state`), for a message over `email.outbound.max_bytes`, on
 with an attachment this Node judges dangerous or could not read, one whose body is 8-bit and not UTF-8, and a
 destination on any domain this organisation receives at (`E_COPY_WOULD_LOOP` at the opt-in). People shows the copy's
 send and its state; doctor's `kept_forwards` counts the refused. The opt-in route is withheld from machines.
+
+**Several destinations, and ones the rule did not have** (ADR 47, amended 7 October 2026). Where an address forwards
+is now a list (`forward_destinations`, migration 0077), and every attempt is per receipt and destination
+(`forward_attempts`, which took over from `kept_forward_attempts`). `POST /api/forwards {address, to}`
+(`mailda provider --set-forwards <address> --to a,b`, People's *Change forwards*) replaces an address's list; each
+destination added is checked against the account's list as keep is, refused when listed unverified or absent unless
+copies are on (`E_FORWARD_DESTINATION_NOT_VERIFIED`), refused on a domain this organisation receives at
+(`E_FORWARD_WOULD_LOOP`), and the list is at most `forward.max_destinations` (`E_BUDGET_EXCEEDED`, receipt
+`docs/receipts/forward-fan-out.md`). A Worker rule's take-over takes the same list as `forwardTo` (`--forward-to`),
+refused on any other rule (`E_ROUTING_FORWARD_TO_NOT_A_WORKER`). `email()` forwards to every destination together
+and settles each on its own; one copy per receipt goes to every destination refused as not verified.
+
+**Reading a Worker's code to offer its addresses.** The routing-rules listing reads the source of each Worker a rule
+sends to (`GET /accounts/{account}/workers/scripts/{name}/content/v2`, once per Worker), keeps only the addresses in
+it that the account lists as destinations, and offers them, with their state, as the start of that rule's forward.
+The source is never stored, logged or run. It needs Workers Scripts Read, which wrangler's login carries, so
+`mailda setup` and `mailda upgrade` fill the addresses in; the Node's own token is not asked for it, and without it
+the listing says why in Cloudflare's words (`foundError`) and the addresses are typed instead.

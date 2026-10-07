@@ -3,7 +3,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 import { signInAndChooseAccount } from "./install.mjs";
 import { catchAllLine, destinationSaid, keptForwardLines, outcomeRoutesHere, ownRulesLines, verifiedDestinationLines, wranglerToken } from "./provision.mjs";
-import { needsMailbox, putBackWithoutNode } from "./routing-step.mjs";
+import { foundSaid, needsMailbox, putBackWithoutNode } from "./routing-step.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -197,18 +197,31 @@ export async function provider(argv) {
     const state = argv[argv.indexOf("--copy") + 2];
     if (state !== "on" && state !== "off") fail(`--copy ${copying} needs on or off after it, as \`mailda provider --copy ${copying} on\``);
     const { copy } = await call("POST", "/api/forwards/copy", { address: copying, copy: state === "on" });
-    process.stdout.write(`\n   ${copy.address}  forwards to ${copy.to}\n     ${copy.by === null
+    process.stdout.write(`\n   ${copy.address}  forwards to ${[copy.to].flat().join(", ")}\n     ${copy.by === null
       ? "copies off: a refused forward is shown on People and nothing else is sent"
-      : `copies on, by ${copy.by}: when the forward is refused as not verified, the message is sent from ${copy.address}, `
+      : `copies on, by ${copy.by}: when a forward is refused as not verified, the message is sent from ${copy.address}, `
         + `the recipient sees it from "<sender> via <mailbox>" and replies go to the sender; up to ${BUDGETS["email.outbound.max_bytes"]} bytes `
         + "(email.outbound.max_bytes); a message with "
         + "an attachment this Node judges dangerous is not copied; each copy counts towards today's sending"}\n\n`);
     return;
   }
+  /*
+   * Where an address forwards (ADR 47, amended 7 October 2026): `--set-forwards <address> --to a@x,b@y` replaces its
+   * list, and no `--to` stops forwarding. The Node refuses an unverified destination, a loop and too many, by name.
+   */
+  const setting = flag(argv, "set-forwards");
+  if (setting !== null) {
+    const to = (flag(argv, "to") ?? "").split(",").map((one) => one.trim()).filter((one) => one !== "");
+    const { forwards } = await call("POST", "/api/forwards", { address: setting, to });
+    process.stdout.write(`\n   ${forwards.address}\n     ${forwards.to.length === 0
+      ? "forwards to nothing: each message is stored here only, and copies are off"
+      : `forwards to ${forwards.to.join(", ")}, after each message is stored here`}\n\n`);
+    return;
+  }
   if (argv.includes("--forwards")) {
     const { forwards } = await call("GET", "/api/forwards");
     process.stdout.write("\n");
-    if (forwards.length === 0) process.stdout.write("   no address keeps a forward\n");
+    if (forwards.length === 0) process.stdout.write("   no address forwards\n");
     for (const one of forwards) for (const line of keptForwardLines(one)) process.stdout.write(`   ${line}\n`);
     process.stdout.write("\n");
     return;
@@ -242,6 +255,10 @@ export async function provider(argv) {
             // What it changes, in the words the setup step and the Setup screen show (1 October 2026).
             + (rule.takeOver == null ? "" : wrapAt(`${rule.takeOver.label}: ${rule.takeOver.says}`, 60)
               .map((line) => `                          ${line}\n`).join(""))
+            // A Worker rule's other choice, with what its code names (ADR 47, amended 7 October 2026).
+            + ((rule.takeOver?.forwardTo ?? null) === null ? "" : wrapAt(`or --forward-to <addresses>, ${rule.takeOver.forwardTo.label}: `
+              + `${rule.takeOver.forwardTo.says}. ${foundSaid(rule.takeOver.forwardTo, rule.destinations[0])}`, 60)
+              .map((line) => `                          ${line}\n`).join(""))
           : rule.offer === "put_back"
             ? `               put back:  mailda provider --put-back ${rule.id} --domain ${routing.domain}\n`
             : rule.refusal == null ? "" // a Node from before 30 September 2026 lists no offer
@@ -274,6 +291,8 @@ export async function provider(argv) {
         ...(flag(argv, "forward") === null ? {} : { forward: flag(argv, "forward") }),
         // Copies with the kept forward (ADR 47): the Node refuses it without --forward keep, by name.
         ...(argv.includes("--copy") ? { copy: true } : {}),
+        // A Worker rule's addresses (ADR 47, amended 7 October 2026); the Node refuses them on any other rule, by name.
+        ...(flag(argv, "forward-to") === null ? {} : { forwardTo: flag(argv, "forward-to").split(",").map((one) => one.trim()).filter((one) => one !== "") }),
       })
       : await call("POST", "/api/provider/routing-rules/put-back", { domain, ruleId: putBack });
     const said = (one) => `${one.action}${one.destinations.length === 0 ? "" : ` -> ${one.destinations.join(", ")}`}`;
@@ -281,7 +300,9 @@ export async function provider(argv) {
       `\n   ${outcome.to}\n     was       ${said(outcome.before)}\n     now       ${said(outcome.after)}\n`
       // Where the address now files: the mailbox of a row already there when none was chosen (30 September 2026).
       + (outcome.mailbox == null ? "" : `     files     into ${outcome.mailbox.name} (${outcome.mailbox.id})\n`)
-      + (outcome.keptForward == null ? "" : `     forwards  to ${outcome.keptForward}, after each message is stored here\n`)
+      // Every destination it forwards to now; an older Node sends only the kept one.
+      + ((outcome.forwards ?? (outcome.keptForward == null ? [] : [outcome.keptForward])).length === 0 ? ""
+        : `     forwards  to ${(outcome.forwards ?? [outcome.keptForward]).join(", ")}, after each message is stored here\n`)
       + (outcome.copy !== true ? "" : `     copies    on: a forward refused as not verified is followed by the message sent from ${outcome.to}\n`)
       + (takeOver !== null
         ? `\n   put it back: mailda provider --put-back ${outcome.ruleId} --domain ${domain}\n\n`

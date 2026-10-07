@@ -145,6 +145,19 @@ export const provider = {
     return Response.json({ forwards: await keptForwards(env, who.orgId) });
   },
 
+  "POST /api/forwards": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // The destinations' states are read through the grant, or the operator's credential when the CLI sends one.
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { setForwards } = await import("../kept-forward.ts");
+    return Response.json({
+      forwards: await setForwards(env, operatorCtx(request, clock), who.orgId, who.userId, String(body.address ?? ""),
+        Array.isArray(body.to) ? body.to.map(String) : []),
+    });
+  },
+
   "POST /api/forwards/copy": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -315,6 +328,7 @@ export const provider = {
         typeof body.mailboxId === "string" ? body.mailboxId : null,
         body.forward === "keep" || body.forward === "stop" ? body.forward : null,
         body.copy === true,
+        Array.isArray(body.forwardTo) ? body.forwardTo.map(String) : null,
       ),
     });
   },

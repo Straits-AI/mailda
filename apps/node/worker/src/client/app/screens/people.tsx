@@ -8,7 +8,7 @@ import type { Key } from "../../../i18n/catalog.ts";
 import { Nothing, Scroller } from "../chrome.tsx";
 import { count, date, dateTime } from "../format.ts";
 import {
-  GRANTABLE_RELATIONS, addAddress, answeredNotFound, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam, setKeptForwardCopy,
+  GRANTABLE_RELATIONS, addAddress, answeredNotFound, createMailbox, createTeam, grant, invite, removeAddress, renameMailbox, renameTeam, setForwards, setKeptForwardCopy,
   revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   type KeptForward, useInvitations, useKeptForwards, useMailboxes, useMe, usePasskeys, usePeople, useProvider, useTeamMembers, useTeams, useWithdrawals,
@@ -274,34 +274,42 @@ const FORWARD_STATE = {
 } as const satisfies Record<NonNullable<KeptForward["verified"]> | "unchecked", Key>;
 
 /**
- * A kept forward under its address (ADR 47): "forwards to X (verified) · last forwarded <when>", or why the latest
- * message was not. "verified" is only what a read of the account's list said, never assumed from the take-over.
+ * An address's forwards (ADR 47): one line per destination, "forwards to X (verified) · last forwarded <when>", or
+ * why its latest message was not; then the address's copy setting, once. "verified" is only what a read of the
+ * account's list said, never assumed.
  */
-function KeptForwardLine({ one, mailbox, busy, onCopy, who }: {
-  one: KeptForward; mailbox: string; busy: boolean; onCopy: (copy: boolean) => void; who: (id: string) => string;
+function ForwardLines({ rows, mailbox, busy, onCopy, who }: {
+  rows: readonly KeptForward[]; mailbox: string; busy: boolean; onCopy: (copy: boolean) => void; who: (id: string) => string;
 }) {
-  const last = one.last;
-  const latest = last === null ? t("people.forward.none")
-    : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
-      : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
-        : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
-          : t("people.forward.unknown", { when: dateTime(last.at) });
-  // What became of the copy the latest refusal asked for (ADR 47): the send and its own state, or the Node's reason.
-  // `?? null`, so an older Node, which sends neither copy field, reads as no copy and copies off.
-  const copied = last?.copy ?? null;
-  const setting = one.copy ?? null;
+  // The address's own setting, the same on every row; `?? null`, so an older Node, which sends no copy field, reads as off.
+  const setting = rows[0]?.copy ?? null;
   return (
     <>
-      <span className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : "dim"}>
-        {" "}{sentence("people.forward.to", { to: <span className="mono">{one.to}</span>, state: t(FORWARD_STATE[one.verified ?? "unchecked"]) })}
-        {" · "}{latest}
-        {copied === null ? null : <>{" · "}{copied.state === "sealed"
-          ? sentence("people.forward.copy.sealed", {
-            send: <span className="mono">{copied.sendId ?? ""}</span>,
-            state: copied.sendState === null ? "" : t(`send.state.${copied.sendState as SendState}`),
-          })
-          : sentence("people.forward.copy.refused", { reason: <NodeWords>{copied.error ?? ""}</NodeWords> })}</>}
-      </span>
+      {rows.map((one) => {
+        const last = one.last;
+        const latest = last === null ? t("people.forward.none")
+          : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
+            : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
+              : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
+                : t("people.forward.unknown", { when: dateTime(last.at) });
+        // What became of the copy the latest refusal asked for (ADR 47): the send and its own state, or the Node's reason.
+        const copied = last?.copy ?? null;
+        return (
+          <span key={one.to}>
+            <br />
+            <span className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : "dim"}>
+              {sentence("people.forward.to", { to: <span className="mono">{one.to}</span>, state: t(FORWARD_STATE[one.verified ?? "unchecked"]) })}
+              {" · "}{latest}
+              {copied === null ? null : <>{" · "}{copied.state === "sealed"
+                ? sentence("people.forward.copy.sealed", {
+                  send: <span className="mono">{copied.sendId ?? ""}</span>,
+                  state: copied.sendState === null ? "" : t(`send.state.${copied.sendState as SendState}`),
+                })
+                : sentence("people.forward.copy.refused", { reason: <NodeWords>{copied.error ?? ""}</NodeWords> })}</>}
+            </span>
+          </span>
+        );
+      })}
       <br />
       <span className="dim">
         {setting === null
@@ -315,15 +323,45 @@ function KeptForwardLine({ one, mailbox, busy, onCopy, who }: {
       <br />
       <span className="dim">
         {t("people.forward.copy.about", {
-          address: one.address, mailbox, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
+          address: rows[0]?.address ?? "", mailbox, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
         })}
       </span>
     </>
   );
 }
 
+/**
+ * Where one address forwards (ADR 47, amended 7 October 2026): the whole list in one box, saved as one, which the
+ * Node checks (verified, no loop, at most `forward.max_destinations`) and refuses by name.
+ */
+function ForwardEditor({ address, now, busy, onSave }: {
+  address: string; now: readonly string[]; busy: boolean; onSave: (to: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState(now.join(", "));
+  const id = `forward-${address}`;
+  if (!open) {
+    return <>{" "}<button type="button" className="linkish" disabled={busy} onClick={() => { setTyped(now.join(", ")); setOpen(true); }}>{t("people.forward.edit")}</button></>;
+  }
+  return (
+    <span className="field-row">
+      <br />
+      <label htmlFor={id}>{t("people.forward.edit.label", { address })}</label>
+      {" "}
+      <input id={id} className="mono" value={typed} onChange={(event) => setTyped(event.target.value)} aria-describedby={`${id}-hint`} />
+      {" "}
+      <button type="button" className="quiet" disabled={busy} onClick={() => {
+        onSave(typed.split(",").map((one) => one.trim()).filter((one) => one !== ""));
+        setOpen(false);
+      }}>{t("people.forward.edit.save")}</button>
+      <br />
+      <span id={`${id}-hint`} className="dim">{t("people.forward.edit.hint", { max: CONFIG.forwardMaxDestinations })}</span>
+    </span>
+  );
+}
+
 function MailboxHead({ box, onChanged, forwards, who }: {
-  box: MailboxQueue; onChanged: () => Promise<void>; forwards: ReadonlyMap<string, KeptForward>; who: (id: string) => string;
+  box: MailboxQueue; onChanged: () => Promise<void>; forwards: ReadonlyMap<string, readonly KeptForward[]>; who: (id: string) => string;
 }) {
   const [name, setName] = useState(box.name);
   const [problem, setProblem] = useState<Said | null>(null);
@@ -367,6 +405,18 @@ function MailboxHead({ box, onChanged, forwards, who }: {
     await onChanged();
   }
 
+  async function forwardTo(address: string, to: string[]) {
+    setBusy(true);
+    setProblem(null);
+    setSaid(null);
+    const outcome = await setForwards(address, to);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome); return; }
+    const now = outcome.value.forwards.to;
+    setSaid(now.length === 0 ? t("people.forward.edit.stopped", { address }) : t("people.forward.edit.saved", { address, to: now.join(", ") }));
+    await onChanged();
+  }
+
   return (
     <>
       <h2>{box.name}</h2>
@@ -390,8 +440,9 @@ function MailboxHead({ box, onChanged, forwards, who }: {
                 <span className="mono">{address}</span>
                 {" "}
                 <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
+                <ForwardEditor address={address} now={(forwards.get(address) ?? []).map((one) => one.to)} busy={busy} onSave={(to) => void forwardTo(address, to)} />
                 {forwards.has(address)
-                  ? <KeptForwardLine one={forwards.get(address)!} mailbox={box.name} busy={busy} onCopy={(on) => void copy(address, on)} who={who} />
+                  ? <ForwardLines rows={forwards.get(address)!} mailbox={box.name} busy={busy} onCopy={(on) => void copy(address, on)} who={who} />
                   : null}
               </li>
             ))}
@@ -983,7 +1034,9 @@ export function People() {
   const mailboxRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "mailbox");
   const orgRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "organization");
   const orgId = me.data?.organizationId ?? "";
-  const forwards = new Map((kept.data?.forwards ?? []).map((one) => [one.address, one]));
+  // One row per address and destination; grouped by address, in the Node's order.
+  const forwards = new Map<string, KeptForward[]>();
+  for (const one of kept.data?.forwards ?? []) forwards.set(one.address, [...(forwards.get(one.address) ?? []), one]);
   // Who turned copies on, by their address when People lists them; their id otherwise.
   const emails = new Map(people.data.people.map((person) => [person.id, person.email]));
   const who = (id: string) => emails.get(id) ?? id;

@@ -131,6 +131,16 @@ const OWNER_ROUND_SIX = {
   record: "round six: the owner accepted copy as 副本, and via kept English in the From line, in the working session on 3 October 2026, without a review page",
 } as const;
 const ROUND_SIX: ReadonlySet<string> = new Set(["kept-forward.copy"]);
+/**
+ * Round seven, with no review page: forward (转发), for the destinations an administrator chooses (ADR 47, amended 7
+ * October 2026), asked of the owner in the working session on 7 October 2026 with its English and accepted there
+ * ("Accept 转发").
+ */
+const OWNER_ROUND_SEVEN = {
+  confirmedBy: "u_6CUB4j9n0eDCMz1ERT424A",
+  record: "round seven: the owner accepted forward as 转发, in the working session on 7 October 2026, without a review page",
+} as const;
+const ROUND_SEVEN: ReadonlySet<string> = new Set(["forward"]);
 /** The rows `OWNER_REVIEW` confirmed, by id. A row added later is not in it, and so starts proposed. */
 export const CONFIRMED: ReadonlySet<string> = new Set([
   "brand", "node", "butler", "mailbox", "address", "case", "matter", "rules", "approval", "receipt.ingress", "escrow",
@@ -547,7 +557,6 @@ export const CONCEPTS: readonly Concept[] = [
   }),
   // Kept forwards (ADR 47, 3 October 2026), accepted in round five (`OWNER_ROUND_FIVE`).
   row("kept-forward", "kept forward", "保留的转发", {
-    sentences: ["doctor.check.kept_forwards"],
     note: "a forward a taken-over rule had, which this Node keeps calling `message.forward()` for. Not a copy and never 同步",
   }),
   row("destination.waiting", "waiting for verification", "等待验证", {
@@ -558,6 +567,11 @@ export const CONCEPTS: readonly Concept[] = [
   row("destination.register", "register", "登记", {
     sentences: ["setup.destination.title", "setup.destination.add"],
     note: "adding an address to the account's destination list, which makes Cloudflare mail it a verification link",
+  }),
+  // Forwards to destinations an administrator chooses (7 October 2026), accepted in round seven (`OWNER_ROUND_SEVEN`).
+  row("forward", "forward", "转发", {
+    sentences: ["doctor.check.kept_forwards", "setup.destination.about", "people.forward.edit", "people.forward.edit.label", "setup.rules.forwardTo"],
+    note: "a destination an address's mail is sent on to with `message.forward()` after it is stored: the kept one a taken-over forward rule had, or one an administrator chose. Never 同步",
   }),
   // The copy (PR #326, 3 October 2026), accepted in round six (`OWNER_ROUND_SIX`).
   row("kept-forward.copy", "copy", "副本", {
@@ -572,7 +586,8 @@ export const CONCEPTS: readonly Concept[] = [
   : ROUND_THREE.has(concept.id) ? { ...concept, status: OWNER_ROUND_THREE }
   : ROUND_FOUR.has(concept.id) ? { ...concept, status: OWNER_ROUND_FOUR }
   : ROUND_FIVE.has(concept.id) ? { ...concept, status: OWNER_ROUND_FIVE }
-  : ROUND_SIX.has(concept.id) ? { ...concept, status: OWNER_ROUND_SIX } : concept));
+  : ROUND_SIX.has(concept.id) ? { ...concept, status: OWNER_ROUND_SIX }
+  : ROUND_SEVEN.has(concept.id) ? { ...concept, status: OWNER_ROUND_SEVEN } : concept));
 
 /**
  * Phrases wrong in **every** position of a locale, whatever the key (critic M4). A phrase that is wrong only

@@ -1127,8 +1127,11 @@ export async function sealManifest(
     ).bind(manifestId, orgId, composition.copy.receiptId, composition.copy.messageId, composition.copy.fromName,
       composition.copy.replyTo, composition.copy.replyToName, composition.copy.inReplyTo, composition.copy.marker,
       composition.authorUserId, composition.copy.optedInAt),
+    // Every destination this copy goes to: those refused and owed one. A destination refused by name before the seal
+    // (a loop) already has its copy state, and keeps it.
     env.CATALOG.prepare(
-      "UPDATE kept_forward_attempts SET copy_state = 'sealed', copy_error = NULL, copy_at = ? WHERE receipt_id = ? AND org_id = ?",
+      `UPDATE forward_attempts SET copy_state = 'sealed', copy_error = NULL, copy_at = ?
+        WHERE receipt_id = ? AND org_id = ? AND state = 'refused' AND copy_state IS NULL`,
     ).bind(at, composition.copy.receiptId, orgId),
   ];
 

@@ -944,6 +944,14 @@ export const AUDIT_ACTIONS = {
     says: "An administrator turned copies on or off for an address that keeps a forward; on, each forward Cloudflare "
       + "refuses as not verified is followed by a copy sealed under them.",
   },
+  /**
+   * The destinations an address forwards to, set (ADR 47, amended 7 October 2026). The entry names the address and
+   * counts the destinations, never naming one: the trail is permanent and each is usually somebody's own inbox.
+   */
+  "forward.destinations_set": {
+    says: "An administrator set the destinations an address forwards to; this Node forwards each message received "
+      + "there to every one of them after storing it. The entry counts them and never names them.",
+  },
   "provider.destination_added": {
     says: "An administrator asked Cloudflare to register a destination address, which Cloudflare then mails a "
       + "verification link; the entry names Cloudflare's id for it and never the address.",
