@@ -19,348 +19,17 @@
 <button class="quiet" type="button">Grant mailbox.content.read and send.propose on Support</button>
 </p>
 </div>
-<section class="people-mailbox" aria-label="Access to Support">
-<h2>Support</h2>
-<p class="field-row">
-<label for="rename-mbx_support">Name</label> <input id="rename-mbx_support" value="Support"> <button class="quiet" type="button" disabled="">Rename</button>
-</p>
-<ul class="grant-list" aria-label="Addresses of Support">
-<li>
-<span class="mono">support@example.test</span> <button type="button" class="linkish">Remove</button> <button type="button" class="linkish">Change forwards</button>
-</li>
-<li>
-<span class="mono">bob@example.test</span> <button type="button" class="linkish">Remove</button> <button type="button" class="linkish">Change forwards</button>
-</li>
-</ul>
-<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Support">
-<table>
-<thead>
-<tr>
-<th scope="col">Person</th>
-<th scope="col">May</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="mono">ana@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_ana-mbx_support-mailbox-metadata-read">
-<input id="grant-usr_ana-mbx_support-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_support-mailbox-content-read">
-<input id="grant-usr_ana-mbx_support-mailbox-content-read" type="checkbox" checked=""> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_support-send-propose">
-<input id="grant-usr_ana-mbx_support-send-propose" type="checkbox" checked=""> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_support-approval-decide">
-<input id="grant-usr_ana-mbx_support-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_support-message-export">
-<input id="grant-usr_ana-mbx_support-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_support-ediscovery-export">
-<input id="grant-usr_ana-mbx_support-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_support</p>
-</td>
-</tr>
-<tr>
-<td class="mono">bob@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_bob-mbx_support-mailbox-metadata-read">
-<input id="grant-usr_bob-mbx_support-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_support-mailbox-content-read">
-<input id="grant-usr_bob-mbx_support-mailbox-content-read" type="checkbox"> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_support-send-propose">
-<input id="grant-usr_bob-mbx_support-send-propose" type="checkbox"> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_support-approval-decide">
-<input id="grant-usr_bob-mbx_support-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_support-message-export">
-<input id="grant-usr_bob-mbx_support-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_support-ediscovery-export">
-<input id="grant-usr_bob-mbx_support-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_support</p>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-</section>
-<section class="people-mailbox" aria-label="Access to Sales">
-<h2>Sales</h2>
-<p class="field-row">
-<label for="rename-mbx_sales">Name</label> <input id="rename-mbx_sales" value="Sales"> <button class="quiet" type="button" disabled="">Rename</button>
-</p>
-<ul class="grant-list" aria-label="Addresses of Sales">
-<li>
-<span class="mono">hello@example.org</span> <button type="button" class="linkish">Remove</button> <button type="button" class="linkish">Change forwards</button>
-</li>
-</ul>
-<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Sales">
-<table>
-<thead>
-<tr>
-<th scope="col">Person</th>
-<th scope="col">May</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="mono">ana@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_ana-mbx_sales-mailbox-metadata-read">
-<input id="grant-usr_ana-mbx_sales-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_sales-mailbox-content-read">
-<input id="grant-usr_ana-mbx_sales-mailbox-content-read" type="checkbox"> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_sales-send-propose">
-<input id="grant-usr_ana-mbx_sales-send-propose" type="checkbox"> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_sales-approval-decide">
-<input id="grant-usr_ana-mbx_sales-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_sales-message-export">
-<input id="grant-usr_ana-mbx_sales-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_sales-ediscovery-export">
-<input id="grant-usr_ana-mbx_sales-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_sales</p>
-</td>
-</tr>
-<tr>
-<td class="mono">bob@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_bob-mbx_sales-mailbox-metadata-read">
-<input id="grant-usr_bob-mbx_sales-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_sales-mailbox-content-read">
-<input id="grant-usr_bob-mbx_sales-mailbox-content-read" type="checkbox"> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_sales-send-propose">
-<input id="grant-usr_bob-mbx_sales-send-propose" type="checkbox"> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_sales-approval-decide">
-<input id="grant-usr_bob-mbx_sales-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_sales-message-export">
-<input id="grant-usr_bob-mbx_sales-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_sales-ediscovery-export">
-<input id="grant-usr_bob-mbx_sales-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_sales</p>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-</section>
-<section class="people-mailbox" aria-label="Access to Invoices">
-<h2>Invoices</h2>
-<p class="field-row">
-<label for="rename-mbx_invoices">Name</label> <input id="rename-mbx_invoices" value="Invoices"> <button class="quiet" type="button" disabled="">Rename</button>
-</p>
-<p class="dim">No address yet: nothing is routed here, and a send from it is refused until one is.</p>
-<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Invoices">
-<table>
-<thead>
-<tr>
-<th scope="col">Person</th>
-<th scope="col">May</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="mono">ana@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_ana-mbx_invoices-mailbox-metadata-read">
-<input id="grant-usr_ana-mbx_invoices-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_invoices-mailbox-content-read">
-<input id="grant-usr_ana-mbx_invoices-mailbox-content-read" type="checkbox"> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_invoices-send-propose">
-<input id="grant-usr_ana-mbx_invoices-send-propose" type="checkbox"> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_invoices-approval-decide">
-<input id="grant-usr_ana-mbx_invoices-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_invoices-message-export">
-<input id="grant-usr_ana-mbx_invoices-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_ana-mbx_invoices-ediscovery-export">
-<input id="grant-usr_ana-mbx_invoices-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_invoices</p>
-</td>
-</tr>
-<tr>
-<td class="mono">bob@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_bob-mbx_invoices-mailbox-metadata-read">
-<input id="grant-usr_bob-mbx_invoices-mailbox-metadata-read" type="checkbox"> <span class="mono">mailbox.metadata.read</span> — <span class="dim">See that mail exists — senders, subjects, when. Not the message itself.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_invoices-mailbox-content-read">
-<input id="grant-usr_bob-mbx_invoices-mailbox-content-read" type="checkbox"> <span class="mono">mailbox.content.read</span> — <span class="dim">Read the messages.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_invoices-send-propose">
-<input id="grant-usr_bob-mbx_invoices-send-propose" type="checkbox"> <span class="mono">send.propose</span> — <span class="dim">Write and send from this mailbox, and claim its cases.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_invoices-approval-decide">
-<input id="grant-usr_bob-mbx_invoices-approval-decide" type="checkbox"> <span class="mono">approval.decide</span> — <span class="dim">Decide approvals for its mail. Never their own.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_invoices-message-export">
-<input id="grant-usr_bob-mbx_invoices-message-export" type="checkbox"> <span class="mono">message.export</span> — <span class="dim">Take a copy of a message out of the Node.</span>
-</label>
-</li>
-<li>
-<label for="grant-usr_bob-mbx_invoices-ediscovery-export">
-<input id="grant-usr_bob-mbx_invoices-ediscovery-export" type="checkbox"> <span class="mono">ediscovery.export</span> — <span class="dim">Run a bulk export against a matter.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">mbx_invoices</p>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-</section>
-<section class="people-mailbox" aria-label="Administering the organization">
-<h2>The organization</h2>
-<div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
-<table>
-<thead>
-<tr>
-<th scope="col">Person</th>
-<th scope="col">May</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="mono">ana@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_ana-org_x-org-admin">
-<input id="grant-usr_ana-org_x-org-admin" type="checkbox" checked=""> <span class="mono">org.admin</span> — <span class="dim">Administer the organization: rules, Butlers, access, holds.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">org_x</p>
-</td>
-</tr>
-<tr>
-<td class="mono">bob@example.test</td>
-<td>
-<ul class="grant-list">
-<li>
-<label for="grant-usr_bob-org_x-org-admin">
-<input id="grant-usr_bob-org_x-org-admin" type="checkbox"> <span class="mono">org.admin</span> — <span class="dim">Administer the organization: rules, Butlers, access, holds.</span>
-</label>
-</li>
-</ul>
-<p class="dim mono grant-object">org_x</p>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-</section>
 <section class="people-teams" aria-label="Invite somebody">
 <h2>Invite somebody</h2>
 <p class="dim">They choose their own password, so you never see it. Hand them the secret however you already trust — nothing is emailed. They arrive holding nothing until you grant access below.</p>
 <p class="field-row">
-<label for="invite-email">Address</label> <input id="invite-email" class="mono" value="">
+<label for="invite-email">Address</label> <input id="invite-email" class="mono" list="invite-suggestions" value="">
+<datalist id="invite-suggestions">
+<option value="hello@example.org">
+</option>
+<option value="support@example.test">
+</option>
+</datalist>
 </p>
 <p class="field-row">
 <label for="invite-mailbox">
@@ -393,7 +62,7 @@
 <tbody>
 <tr>
 <td class="mono">cleo@example.test</td>
-<td class="mono dim">usr_ana</td>
+<td class="mono dim">ana@example.test</td>
 <td class="mono">[clock]</td>
 <td>waiting</td>
 <td>
@@ -402,7 +71,7 @@
 </tr>
 <tr>
 <td class="mono">dan@example.org</td>
-<td class="mono dim">usr_ana</td>
+<td class="mono dim">ana@example.test</td>
 <td class="mono">[clock]</td>
 <td>
 <span class="dim">expired — mint another</span>
@@ -414,6 +83,369 @@
 </tbody>
 </table>
 </div>
+</section>
+<section class="people-mailbox" aria-label="Access to Support">
+<h2>Support</h2>
+<p class="field-row">
+<label for="rename-mbx_support">Name</label>
+<span class="people-rename-row">
+<input id="rename-mbx_support" value="Support">
+<button class="quiet" type="button" disabled="">Rename</button>
+</span>
+</p>
+<ul class="people-addresses" aria-label="Addresses of Support">
+<li>
+<span class="mono people-address">support@example.test</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
+</li>
+<li>
+<span class="mono people-address">bob@example.test</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
+</li>
+</ul>
+<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Support">
+<table class="grant-grid">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col" title="See that mail exists — senders, subjects, when. Not the message itself.">See the list</th>
+<th scope="col" title="Read the messages.">Read</th>
+<th scope="col" title="Write and send from this mailbox, and claim its cases.">Send</th>
+<th scope="col" title="Decide approvals for its mail. Never their own.">Decide approvals</th>
+<th scope="col" title="Take a copy of a message out of the Node.">Export a message</th>
+<th scope="col" title="Run a bulk export against a matter.">Bulk export</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">ana@example.test</th>
+<td>
+<input id="grant-usr_ana-mbx_support-mailbox-metadata-read" aria-label="See the list, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_support-mailbox-content-read" aria-label="Read, for ana@example.test" type="checkbox" checked="">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_support-send-propose" aria-label="Send, for ana@example.test" type="checkbox" checked="">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_support-approval-decide" aria-label="Decide approvals, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_support-message-export" aria-label="Export a message, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_support-ediscovery-export" aria-label="Bulk export, for ana@example.test" type="checkbox">
+</td>
+</tr>
+<tr>
+<th scope="row" class="mono">bob@example.test</th>
+<td>
+<input id="grant-usr_bob-mbx_support-mailbox-metadata-read" aria-label="See the list, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_support-mailbox-content-read" aria-label="Read, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_support-send-propose" aria-label="Send, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_support-approval-decide" aria-label="Decide approvals, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_support-message-export" aria-label="Export a message, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_support-ediscovery-export" aria-label="Bulk export, for bob@example.test" type="checkbox">
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<details class="grant-legend">
+<summary>What each permission means</summary>
+<dl>
+<div>
+<dt>See the list <span class="mono dim">mailbox.metadata.read</span>
+</dt>
+<dd>See that mail exists — senders, subjects, when. Not the message itself.</dd>
+</div>
+<div>
+<dt>Read <span class="mono dim">mailbox.content.read</span>
+</dt>
+<dd>Read the messages.</dd>
+</div>
+<div>
+<dt>Send <span class="mono dim">send.propose</span>
+</dt>
+<dd>Write and send from this mailbox, and claim its cases.</dd>
+</div>
+<div>
+<dt>Decide approvals <span class="mono dim">approval.decide</span>
+</dt>
+<dd>Decide approvals for its mail. Never their own.</dd>
+</div>
+<div>
+<dt>Export a message <span class="mono dim">message.export</span>
+</dt>
+<dd>Take a copy of a message out of the Node.</dd>
+</div>
+<div>
+<dt>Bulk export <span class="mono dim">ediscovery.export</span>
+</dt>
+<dd>Run a bulk export against a matter.</dd>
+</div>
+</dl>
+</details>
+</section>
+<section class="people-mailbox" aria-label="Access to Sales">
+<h2>Sales</h2>
+<p class="field-row">
+<label for="rename-mbx_sales">Name</label>
+<span class="people-rename-row">
+<input id="rename-mbx_sales" value="Sales">
+<button class="quiet" type="button" disabled="">Rename</button>
+</span>
+</p>
+<ul class="people-addresses" aria-label="Addresses of Sales">
+<li>
+<span class="mono people-address">hello@example.org</span> <button type="button" class="linkish">Change forwards</button> · <button type="button" class="linkish">Remove</button>
+</li>
+</ul>
+<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Sales">
+<table class="grant-grid">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col" title="See that mail exists — senders, subjects, when. Not the message itself.">See the list</th>
+<th scope="col" title="Read the messages.">Read</th>
+<th scope="col" title="Write and send from this mailbox, and claim its cases.">Send</th>
+<th scope="col" title="Decide approvals for its mail. Never their own.">Decide approvals</th>
+<th scope="col" title="Take a copy of a message out of the Node.">Export a message</th>
+<th scope="col" title="Run a bulk export against a matter.">Bulk export</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">ana@example.test</th>
+<td>
+<input id="grant-usr_ana-mbx_sales-mailbox-metadata-read" aria-label="See the list, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_sales-mailbox-content-read" aria-label="Read, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_sales-send-propose" aria-label="Send, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_sales-approval-decide" aria-label="Decide approvals, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_sales-message-export" aria-label="Export a message, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_sales-ediscovery-export" aria-label="Bulk export, for ana@example.test" type="checkbox">
+</td>
+</tr>
+<tr>
+<th scope="row" class="mono">bob@example.test</th>
+<td>
+<input id="grant-usr_bob-mbx_sales-mailbox-metadata-read" aria-label="See the list, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_sales-mailbox-content-read" aria-label="Read, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_sales-send-propose" aria-label="Send, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_sales-approval-decide" aria-label="Decide approvals, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_sales-message-export" aria-label="Export a message, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_sales-ediscovery-export" aria-label="Bulk export, for bob@example.test" type="checkbox">
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<details class="grant-legend">
+<summary>What each permission means</summary>
+<dl>
+<div>
+<dt>See the list <span class="mono dim">mailbox.metadata.read</span>
+</dt>
+<dd>See that mail exists — senders, subjects, when. Not the message itself.</dd>
+</div>
+<div>
+<dt>Read <span class="mono dim">mailbox.content.read</span>
+</dt>
+<dd>Read the messages.</dd>
+</div>
+<div>
+<dt>Send <span class="mono dim">send.propose</span>
+</dt>
+<dd>Write and send from this mailbox, and claim its cases.</dd>
+</div>
+<div>
+<dt>Decide approvals <span class="mono dim">approval.decide</span>
+</dt>
+<dd>Decide approvals for its mail. Never their own.</dd>
+</div>
+<div>
+<dt>Export a message <span class="mono dim">message.export</span>
+</dt>
+<dd>Take a copy of a message out of the Node.</dd>
+</div>
+<div>
+<dt>Bulk export <span class="mono dim">ediscovery.export</span>
+</dt>
+<dd>Run a bulk export against a matter.</dd>
+</div>
+</dl>
+</details>
+</section>
+<section class="people-mailbox" aria-label="Access to Invoices">
+<h2>Invoices</h2>
+<p class="field-row">
+<label for="rename-mbx_invoices">Name</label>
+<span class="people-rename-row">
+<input id="rename-mbx_invoices" value="Invoices">
+<button class="quiet" type="button" disabled="">Rename</button>
+</span>
+</p>
+<p class="dim">No address yet: nothing is routed here, and a send from it is refused until one is.</p>
+<div class="scroller" tabindex="0" role="region" aria-label="Who may do what in Invoices">
+<table class="grant-grid">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col" title="See that mail exists — senders, subjects, when. Not the message itself.">See the list</th>
+<th scope="col" title="Read the messages.">Read</th>
+<th scope="col" title="Write and send from this mailbox, and claim its cases.">Send</th>
+<th scope="col" title="Decide approvals for its mail. Never their own.">Decide approvals</th>
+<th scope="col" title="Take a copy of a message out of the Node.">Export a message</th>
+<th scope="col" title="Run a bulk export against a matter.">Bulk export</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">ana@example.test</th>
+<td>
+<input id="grant-usr_ana-mbx_invoices-mailbox-metadata-read" aria-label="See the list, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_invoices-mailbox-content-read" aria-label="Read, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_invoices-send-propose" aria-label="Send, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_invoices-approval-decide" aria-label="Decide approvals, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_invoices-message-export" aria-label="Export a message, for ana@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_ana-mbx_invoices-ediscovery-export" aria-label="Bulk export, for ana@example.test" type="checkbox">
+</td>
+</tr>
+<tr>
+<th scope="row" class="mono">bob@example.test</th>
+<td>
+<input id="grant-usr_bob-mbx_invoices-mailbox-metadata-read" aria-label="See the list, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_invoices-mailbox-content-read" aria-label="Read, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_invoices-send-propose" aria-label="Send, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_invoices-approval-decide" aria-label="Decide approvals, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_invoices-message-export" aria-label="Export a message, for bob@example.test" type="checkbox">
+</td>
+<td>
+<input id="grant-usr_bob-mbx_invoices-ediscovery-export" aria-label="Bulk export, for bob@example.test" type="checkbox">
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<details class="grant-legend">
+<summary>What each permission means</summary>
+<dl>
+<div>
+<dt>See the list <span class="mono dim">mailbox.metadata.read</span>
+</dt>
+<dd>See that mail exists — senders, subjects, when. Not the message itself.</dd>
+</div>
+<div>
+<dt>Read <span class="mono dim">mailbox.content.read</span>
+</dt>
+<dd>Read the messages.</dd>
+</div>
+<div>
+<dt>Send <span class="mono dim">send.propose</span>
+</dt>
+<dd>Write and send from this mailbox, and claim its cases.</dd>
+</div>
+<div>
+<dt>Decide approvals <span class="mono dim">approval.decide</span>
+</dt>
+<dd>Decide approvals for its mail. Never their own.</dd>
+</div>
+<div>
+<dt>Export a message <span class="mono dim">message.export</span>
+</dt>
+<dd>Take a copy of a message out of the Node.</dd>
+</div>
+<div>
+<dt>Bulk export <span class="mono dim">ediscovery.export</span>
+</dt>
+<dd>Run a bulk export against a matter.</dd>
+</div>
+</dl>
+</details>
+</section>
+<section class="people-mailbox" aria-label="Administering the organization">
+<h2>The organization</h2>
+<div class="scroller" tabindex="0" role="region" aria-label="Who administers the organization">
+<table class="grant-grid">
+<thead>
+<tr>
+<th scope="col">Person</th>
+<th scope="col" title="Administer the organization: rules, Butlers, access, holds.">Administrator</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="mono">ana@example.test</th>
+<td>
+<input id="grant-usr_ana-org_x-org-admin" aria-label="Administrator, for ana@example.test" type="checkbox" checked="">
+</td>
+</tr>
+<tr>
+<th scope="row" class="mono">bob@example.test</th>
+<td>
+<input id="grant-usr_bob-org_x-org-admin" aria-label="Administrator, for bob@example.test" type="checkbox">
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<details class="grant-legend">
+<summary>What each permission means</summary>
+<dl>
+<div>
+<dt>Administrator <span class="mono dim">org.admin</span>
+</dt>
+<dd>Administer the organization: rules, Butlers, access, holds.</dd>
+</div>
+</dl>
+</details>
 </section>
 <section class="people-teams" aria-label="A new mailbox">
 <h2>Mailboxes</h2>

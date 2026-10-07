@@ -205,13 +205,13 @@ describe("an address that keeps a forward (ADR 47)", () => {
 
   it("says where it forwards, what the last read said, and when it last forwarded", async () => {
     mount({ state: "catch_all", detail: "" }, [BOX], null, [forward({ state: "handed_over", at: "2026-10-03T01:00:00.000Z", error: null })]);
-    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    const line = (await screen.findByText(/forwards to/)).closest(".people-addresses > li")!;
     expect(line.textContent).toMatch(/forwards to me@gmail\.test \(verified\) · last forwarded /);
   });
 
   it("says a refused forward was not forwarded, in Cloudflare's words, and a never-read destination as not checked", async () => {
     mount({ state: "catch_all", detail: "" }, [BOX], null, [forward({ state: "refused", at: "2026-10-03T01:00:00.000Z", error: "destination address not verified" }, null)]);
-    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    const line = (await screen.findByText(/forwards to/)).closest(".people-addresses > li")!;
     expect(line.textContent).toContain("forwards to me@gmail.test (not checked)");
     expect(line.textContent).toMatch(/not forwarded at .*: destination address not verified/);
   });
@@ -227,7 +227,7 @@ describe("copies, under an address that keeps a forward (ADR 47, amended 3 Octob
 
   it("says copies are off, offers to send them, and states what a copy is, with the limit", async () => {
     mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(null)]);
-    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    const line = (await screen.findByText(/forwards to/)).closest(".people-addresses > li")!;
     expect(line.textContent).toContain("Copies off.");
     expect(line.textContent).toContain("Send copies");
     expect(line.textContent).toContain('a copy from support@example.test: the recipient sees it from "<sender> via Support", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to 5.0 MB.');
@@ -239,7 +239,7 @@ describe("copies, under an address that keeps a forward (ADR 47, amended 3 Octob
       refusedWith({ state: "sealed", at: "2026-10-03T01:00:01.000Z", error: null, sendId: "snd_COPY", sendState: "handed_over" }),
       { by: "usr_nobody", at: "2026-10-02T00:00:00.000Z" },
     )]);
-    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    const line = (await screen.findByText(/forwards to/)).closest(".people-addresses > li")!;
     expect(line.textContent).toContain("a copy was sealed as snd_COPY (handed over)");
     expect(line.textContent).toMatch(/Copies on, turned on by usr_nobody on /);
     expect(line.textContent).toContain("Stop copies");
@@ -256,7 +256,7 @@ describe("copies, under an address that keeps a forward (ADR 47, amended 3 Octob
     mount({ state: "catch_all", detail: "" }, [BOX], null, [forward(refusedWith({
       state: "refused", at: "2026-10-03T01:00:01.000Z", error: "the message failed DMARC for its sender's domain", sendId: null, sendState: null,
     }))]);
-    const line = (await screen.findByText(/forwards to/)).closest("li")!;
+    const line = (await screen.findByText(/forwards to/)).closest(".people-addresses > li")!;
     expect(line.textContent).toContain("no copy: the message failed DMARC for its sender's domain");
   });
 });

@@ -468,6 +468,12 @@ form > .hint { margin: -.6rem 0 0; }
   color: var(--text-secondary);
 }
 .notice.bad { border-left-color: var(--danger); color: var(--text-primary); }
+/* A read in flight: the words, and a dot that pulses beside them so a slow read (doctor's thirty checks) does not
+   look stuck. Still for anybody who asked for reduced motion: the words alone say it. */
+.notice.loading { display: flex; align-items: center; gap: 8px; }
+.loading-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--accent); animation: loading-pulse 1.2s ease-in-out infinite; }
+@keyframes loading-pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .loading-dot { animation: none; opacity: .6; } }
 .errors:empty { display: none; }
 
 /* The ten recovery codes (#134). Spaced and numbered, because they are read off a screen and typed
@@ -1567,8 +1573,34 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .policy-editor h2 { margin: 0; }
 .policy-actions { margin: 16px 0 0; }
 
-.people-mailbox { margin-top: 28px; }
+/* One card per mailbox (7 October 2026): its name, its addresses with where each forwards, then who may do what. */
+.people-mailbox { margin-top: 24px; padding: 16px 18px; background: var(--surface-1); border-radius: var(--r-card); }
 .people-mailbox h2, .people-teams h2 { margin: 0 0 8px; }
+.people-rename-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.people-rename-row > input { flex: 0 1 20rem; min-width: 10rem; }
+.people-addresses { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 12px; }
+.people-addresses > li { padding: 8px 0 0; border-top: 1px solid var(--border-soft); font-size: 14px; }
+.people-address { font-weight: 600; color: var(--text-primary); }
+.people-forwards { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; display: grid; gap: 4px; border-left: 2px solid var(--border-soft); }
+.people-forwards > li.notice { margin: 0; padding: 0 0 0 8px; }
+.people-copies { margin: 6px 0 0 14px; }
+.people-copy-about { margin: 2px 0 0 14px; }
+.people-copy-about > summary, .grant-legend > summary { display: inline-flex; min-height: 24px; align-items: center; color: var(--accent-text); cursor: pointer; }
+.people-copy-about > p { margin: 4px 0 0; max-width: 60rem; }
+.people-forward-edit { margin: 8px 0 0; }
+.people-forward-edit > input { max-width: 36rem; }
+#invite-email { max-width: 28rem; }
+/* The permission grid: a person per row, a permission per column, the box centred under its name. */
+.grant-grid { width: auto; }
+.grant-grid th[scope="row"] { padding: 10px 24px 10px 10px; font: 500 14px/1.4 var(--body); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border-soft); }
+.grant-grid thead th:not(:first-child), .grant-grid td { min-width: 5.5rem; }
+.grant-grid thead th:not(:first-child) { text-align: center; }
+.grant-grid td { text-align: center; }
+.grant-grid td > input { width: 16px; height: 16px; margin: 4px; }
+.grant-legend { margin: 8px 0 0; }
+.grant-legend dl { display: grid; gap: 6px; margin: 8px 0 0; }
+.grant-legend dt { font-weight: 500; }
+.grant-legend dd { margin: 0 0 0 12px; color: var(--text-secondary); }
 .people-teams { margin-top: 32px; border-top: 1px solid var(--border-soft); padding-top: 16px; }
 .grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .grant-list label { display: flex; gap: 8px; align-items: baseline; font-size: 14px; cursor: pointer; }

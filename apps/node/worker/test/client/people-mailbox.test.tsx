@@ -19,6 +19,7 @@ const BOX = { id: "mbx_test", name: "Support", unclaimed: 0, claimed: 0, mine: 0
 function mount(opts: {
   removal?: { state: string; detail: string }; box?: typeof BOX; teams?: Array<{ id: string; name: string; createdAt: string; memberCount: number }>;
   forwards?: unknown[];
+  people?: unknown[];
 } = {}) {
   answerWith((call) => {
     if (call.path === "/api/forwards" && call.method === "GET") return Response.json({ forwards: opts.forwards ?? [] });
@@ -35,7 +36,8 @@ function mount(opts: {
     if (call.path.startsWith("/api/mailboxes/") && call.method === "PATCH") return Response.json({ mailboxId: "mbx_test", name: "Renamed" });
     if (call.path.startsWith("/api/mailboxes")) return Response.json({ mailboxes: [opts.box ?? BOX] });
     if (call.path === "/api/me") return Response.json({ signedIn: true, principalId: "usr_me", principalKind: "user", userId: "usr_me", delegatorUserId: null, organizationId: "org_x", email: "me@example.test" });
-    if (call.path.startsWith("/api/people")) return Response.json({ people: [] });
+    if (call.path.startsWith("/api/people")) return Response.json({ people: opts.people ?? [] });
+    if (call.path === "/api/access" && call.method === "POST") return Response.json({ granted: true });
     if (call.path.startsWith("/api/invitations")) return Response.json({ invitations: [] });
     if (call.path.endsWith("/rename") && call.method === "POST") return Response.json({ team: { id: "team_1", name: "Legal", createdAt: "2026-09-26T00:00:00.000Z" } });
     if (call.path.endsWith("/members")) return Response.json({ members: [] });
@@ -47,6 +49,8 @@ function mount(opts: {
   render(<QueryClientProvider client={client}><People /></QueryClientProvider>);
 }
 
+/** The Remove button of the address at `index`, by its words: each address also carries Change forwards. */
+const removeOf = (list: HTMLElement, index: number) => Array.from(list.querySelectorAll("button")).filter((one) => one.textContent === "Remove")[index]!;
 const status = async () => (await screen.findByRole("status")).textContent ?? "";
 
 describe("a mailbox's addresses on People", () => {
@@ -56,7 +60,7 @@ describe("a mailbox's addresses on People", () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
     expect(Array.from(list.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
-      "support@example.test Remove Change forwards", "help@example.test Remove Change forwards",
+      "support@example.test Change forwards · Remove", "help@example.test Change forwards · Remove",
     ]);
   });
 
@@ -68,7 +72,7 @@ describe("a mailbox's addresses on People", () => {
   it("sends DELETE with the address and says the catch-all needed nothing", async () => {
     mount();
     const list = await screen.findByLabelText("Addresses of Support");
-    fireEvent.click(Array.from(list.querySelectorAll("button")).filter((one) => one.textContent === "Remove")[1]!);
+    fireEvent.click(removeOf(list, 1));
     await waitFor(() => {
       const sent = calls.find((call) => call.method === "DELETE" && call.path === "/api/addresses");
       expect(sent, "the removal was never sent").toBeDefined();
@@ -79,14 +83,14 @@ describe("a mailbox's addresses on People", () => {
 
   it("says the rule went with it, and renders not_removed's detail whole", async () => {
     mount({ removal: { state: "rule_removed", detail: "" } });
-    fireEvent.click((await screen.findByLabelText("Addresses of Support")).querySelector("button")!);
+    fireEvent.click(removeOf(await screen.findByLabelText("Addresses of Support"), 0));
     expect(await status()).toBe("support@example.test: removed, and its routing rule deleted");
   });
 
   it("renders not_removed's detail whole, because it names where the rule still is", async () => {
     const detail = "the rule for support@example.test is forward to x@gmail.test, not this Node, so it was left alone. delete the rule in the Cloudflare dashboard";
     mount({ removal: { state: "not_removed", detail } });
-    fireEvent.click((await screen.findByLabelText("Addresses of Support")).querySelector("button")!);
+    fireEvent.click(removeOf(await screen.findByLabelText("Addresses of Support"), 0));
     expect(await status()).toBe(`support@example.test: ${detail}`);
   });
 
@@ -119,6 +123,43 @@ describe("a mailbox's addresses on People", () => {
     expect(item.textContent).toContain("forwards to b@gmail.test (verified)");
     expect(item.textContent).toContain("destination address not verified");
     expect(item.textContent!.match(/Copies off\./g)).toHaveLength(1);
+  });
+
+  // 7 October 2026, the owner's: "it is hard to read". A person per row, a permission per column, said once.
+  const ANA = { id: "usr_ana", email: "ana@example.test", created_at: "2026-10-01T00:00:00.000Z",
+    relations: [{ relation: "mailbox.content.read", objectType: "mailbox", objectId: "mbx_test" }] };
+
+  it("draws who may do what as a grid, each box named by its permission and person, and grants by the box", async () => {
+    mount({ people: [ANA] });
+    const read = (await screen.findByRole("checkbox", { name: "Read, for ana@example.test" })) as HTMLInputElement;
+    expect(read.checked).toBe(true);
+    const send = screen.getByRole("checkbox", { name: "Send, for ana@example.test" }) as HTMLInputElement;
+    expect(send.checked).toBe(false);
+    const grid = screen.getByRole("region", { name: "Who may do what in Support" }).querySelector("table")!;
+    expect([...grid.querySelectorAll("thead th")].map((one) => one.textContent))
+      .toEqual(["Person", "See the list", "Read", "Send", "Decide approvals", "Export a message", "Bulk export"]);
+    fireEvent.click(send);
+    await waitFor(() => {
+      const sent = calls.find((call) => call.method === "POST" && call.path === "/api/access");
+      expect(sent, "the grant was never sent").toBeDefined();
+      expect(sent!.body).toEqual({ subjectId: "usr_ana", relation: "send.propose", objectId: "mbx_test" });
+    });
+  });
+
+  it("says what each permission lets somebody do once, under the grid, with the Node's name for it", async () => {
+    mount({ people: [ANA] });
+    await screen.findByRole("checkbox", { name: "Read, for ana@example.test" });
+    const legend = screen.getAllByText("What each permission means")[0]!.closest("details")!;
+    expect(legend.textContent).toContain("See the list mailbox.metadata.readSee that mail exists");
+    expect(legend.textContent).toContain("Send send.proposeWrite and send from this mailbox");
+  });
+
+  it("offers the Node's addresses nobody signs in with yet as the invite's address, and allows any other", async () => {
+    mount({ people: [{ ...ANA, email: "help@example.test" }] });
+    const field = (await screen.findByLabelText("Address", { selector: "#invite-email" })) as HTMLInputElement;
+    await waitFor(() => expect([...document.querySelectorAll("#invite-suggestions option")].map((one) => one.getAttribute("value")))
+      .toEqual(["support@example.test"]));
+    expect(field.getAttribute("list")).toBe("invite-suggestions");
   });
 
   it("renames the mailbox through PATCH, and offers no rename for the name it already has", async () => {

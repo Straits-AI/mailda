@@ -225,6 +225,8 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "grant---", reason: "a checkbox id's fixed parts (`grant-<person>-<object>-<relation>`), never shown" },
     { text: "team--", reason: "a checkbox id's fixed parts (`team-<team>-<person>`), never shown" },
     { text: "forward-", reason: "a document id's fixed part (`forward-<address>`) for the Change forwards box, never shown" },
+    { text: "invite-suggestions", reason: "a datalist's document id, named by the invite field's list attribute, never shown" },
+    { text: "row", reason: "a header cell's scope attribute in the permission grid, never shown" },
     {
       text: "passkey",
       reason: "the label a passkey is stored under when none is typed: data written into the Node, so never a t() string (docs/i18n.md, critic L10)",

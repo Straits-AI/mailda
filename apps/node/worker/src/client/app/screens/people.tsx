@@ -285,33 +285,31 @@ function ForwardLines({ rows, mailbox, busy, onCopy, who }: {
   const setting = rows[0]?.copy ?? null;
   return (
     <>
-      {rows.map((one) => {
-        const last = one.last;
-        const latest = last === null ? t("people.forward.none")
-          : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
-            : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
-              : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
-                : t("people.forward.unknown", { when: dateTime(last.at) });
-        // What became of the copy the latest refusal asked for (ADR 47): the send and its own state, or the Node's reason.
-        const copied = last?.copy ?? null;
-        return (
-          <span key={one.to}>
-            <br />
-            <span className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : "dim"}>
+      <ul className="people-forwards">
+        {rows.map((one) => {
+          const last = one.last;
+          const latest = last === null ? t("people.forward.none")
+            : last.state === "handed_over" ? t("people.forward.handedOver", { when: dateTime(last.at) })
+              : last.state === "refused" ? sentence("people.forward.refused", { when: dateTime(last.at), reason: <NodeWords>{last.error ?? ""}</NodeWords> })
+                : last.state === "withheld" ? t("people.forward.withheld", { when: dateTime(last.at) })
+                  : t("people.forward.unknown", { when: dateTime(last.at) });
+          // What became of the copy the latest refusal asked for (ADR 47): the send and its own state, or the Node's reason.
+          const copied = last?.copy ?? null;
+          return (
+            <li key={one.to} className={last?.state === "refused" || last?.state === "outcome_unknown" ? "notice bad" : undefined}>
               {sentence("people.forward.to", { to: <span className="mono">{one.to}</span>, state: t(FORWARD_STATE[one.verified ?? "unchecked"]) })}
-              {" · "}{latest}
+              {" · "}<span className="dim">{latest}</span>
               {copied === null ? null : <>{" · "}{copied.state === "sealed"
                 ? sentence("people.forward.copy.sealed", {
                   send: <span className="mono">{copied.sendId ?? ""}</span>,
                   state: copied.sendState === null ? "" : t(`send.state.${copied.sendState as SendState}`),
                 })
                 : sentence("people.forward.copy.refused", { reason: <NodeWords>{copied.error ?? ""}</NodeWords> })}</>}
-            </span>
-          </span>
-        );
-      })}
-      <br />
-      <span className="dim">
+            </li>
+          );
+        })}
+      </ul>
+      <p className="people-copies dim">
         {setting === null
           ? t("people.forward.copy.off")
           : t("people.forward.copy.on", { by: who(setting.by), when: dateTime(setting.at) })}
@@ -319,13 +317,16 @@ function ForwardLines({ rows, mailbox, busy, onCopy, who }: {
         <button type="button" className="linkish" disabled={busy} onClick={() => onCopy(setting === null)}>
           {t(setting === null ? "people.forward.copy.turnOn" : "people.forward.copy.turnOff")}
         </button>
-      </span>
-      <br />
-      <span className="dim">
-        {t("people.forward.copy.about", {
-          address: rows[0]?.address ?? "", mailbox, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
-        })}
-      </span>
+      </p>
+      {/* The whole statement, every time it is wanted, folded so a list of addresses reads as a list. */}
+      <details className="people-copy-about">
+        <summary>{t("people.forward.copy.what")}</summary>
+        <p className="dim">
+          {t("people.forward.copy.about", {
+            address: rows[0]?.address ?? "", mailbox, size: t("composer.size.mb", { size: (Math.floor(CONFIG.outboundMaxBytes / 104_857.6) / 10).toFixed(1) }),
+          })}
+        </p>
+      </details>
     </>
   );
 }
@@ -341,11 +342,10 @@ function ForwardEditor({ address, now, busy, onSave }: {
   const [typed, setTyped] = useState(now.join(", "));
   const id = `forward-${address}`;
   if (!open) {
-    return <>{" "}<button type="button" className="linkish" disabled={busy} onClick={() => { setTyped(now.join(", ")); setOpen(true); }}>{t("people.forward.edit")}</button></>;
+    return <button type="button" className="linkish" disabled={busy} onClick={() => { setTyped(now.join(", ")); setOpen(true); }}>{t("people.forward.edit")}</button>;
   }
   return (
-    <span className="field-row">
-      <br />
+    <span className="field-row people-forward-edit">
       <label htmlFor={id}>{t("people.forward.edit.label", { address })}</label>
       {" "}
       <input id={id} className="mono" value={typed} onChange={(event) => setTyped(event.target.value)} aria-describedby={`${id}-hint`} />
@@ -354,8 +354,7 @@ function ForwardEditor({ address, now, busy, onSave }: {
         onSave(typed.split(",").map((one) => one.trim()).filter((one) => one !== ""));
         setOpen(false);
       }}>{t("people.forward.edit.save")}</button>
-      <br />
-      <span id={`${id}-hint`} className="dim">{t("people.forward.edit.hint", { max: CONFIG.forwardMaxDestinations })}</span>
+      <span id={`${id}-hint`} className="hint">{t("people.forward.edit.hint", { max: CONFIG.forwardMaxDestinations })}</span>
     </span>
   );
 }
@@ -424,23 +423,24 @@ function MailboxHead({ box, onChanged, forwards, who }: {
       {said === null ? null : <p className="notice" role="status">{said}</p>}
       <p className="field-row">
         <label htmlFor={`rename-${box.id}`}>{t("people.mailboxes.name")}</label>
-        {" "}
-        <input id={`rename-${box.id}`} value={name} onChange={(event) => setName(event.target.value)} />
-        {" "}
-        <button className="quiet" type="button" onClick={() => void rename()} disabled={busy || name.trim() === "" || name.trim() === box.name}>
-          {t("people.mailbox.rename")}
-        </button>
+        <span className="people-rename-row">
+          <input id={`rename-${box.id}`} value={name} onChange={(event) => setName(event.target.value)} />
+          <button className="quiet" type="button" onClick={() => void rename()} disabled={busy || name.trim() === "" || name.trim() === box.name}>
+            {t("people.mailbox.rename")}
+          </button>
+        </span>
       </p>
       {addresses.length === 0
         ? <p className="dim">{t("people.mailbox.noAddress")}</p>
         : (
-          <ul className="grant-list" aria-label={t("people.mailbox.addresses", { name: box.name })}>
+          <ul className="people-addresses" aria-label={t("people.mailbox.addresses", { name: box.name })}>
             {addresses.map((address) => (
               <li key={address}>
-                <span className="mono">{address}</span>
+                <span className="mono people-address">{address}</span>
                 {" "}
-                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
                 <ForwardEditor address={address} now={(forwards.get(address) ?? []).map((one) => one.to)} busy={busy} onSave={(to) => void forwardTo(address, to)} />
+                {" · "}
+                <button type="button" className="linkish" onClick={() => void remove(address)} disabled={busy}>{t("people.mailbox.remove")}</button>
                 {forwards.has(address)
                   ? <ForwardLines rows={forwards.get(address)!} mailbox={box.name} busy={busy} onCopy={(on) => void copy(address, on)} who={who} />
                   : null}
@@ -471,7 +471,9 @@ async function mailboxBeside(email: string, address: string): Promise<Beside> {
   };
 }
 
-function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Promise<void> }) {
+function Invite({ domains, onInvited, suggest, who }: {
+  domains: string[]; onInvited: () => Promise<void>; suggest: readonly string[]; who: (id: string) => string;
+}) {
   const invitations = useInvitations();
   const [email, setEmail] = useState("");
   const [also, setAlso] = useState(false);
@@ -526,9 +528,14 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
         <input
           id="invite-email"
           className="mono"
+          list="invite-suggestions"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
+        {/* Offered, never required: a person may sign in with an address that is not this Node's, a Gmail say. */}
+        <datalist id="invite-suggestions">
+          {suggest.map((address) => <option key={address} value={address} />)}
+        </datalist>
       </p>
       <p className="field-row">
         <label htmlFor="invite-mailbox">
@@ -588,7 +595,7 @@ function Invite({ domains, onInvited }: { domains: string[]; onInvited: () => Pr
               {invitations.data.invitations.map((row) => (
                 <tr key={row.id}>
                   <td className="mono">{row.email}</td>
-                  <td className="mono dim">{row.invitedBy}</td>
+                  <td className="mono dim">{who(row.invitedBy)}</td>
                   <td className="mono">{dateTime(row.expiresAt)}</td>
                   {/* An expired invitation is kept and shown as expired, so an administrator can see what
                       went stale rather than wondering whether they ever sent it. */}
@@ -691,21 +698,40 @@ function Arrivals({ people, boxes, onChanged }: {
 }
 
 /** One person's access to one object, as a set of toggles that say what they do. */
-function Grants({
-  person, objectId, objectLabel, relations, onChanged,
+/** Each permission's short name, the column it heads; what it lets somebody do is `what`, in the legend below the grid. */
+const RELATION_LABEL = {
+  "mailbox.metadata.read": "people.relation.mailbox.metadata.read",
+  "mailbox.content.read": "people.relation.mailbox.content.read",
+  "send.propose": "people.relation.send.propose",
+  "approval.decide": "people.relation.approval.decide",
+  "message.export": "people.relation.message.export",
+  "ediscovery.export": "people.relation.ediscovery.export",
+  "org.admin": "people.relation.org.admin",
+} as const satisfies Record<(typeof GRANTABLE_RELATIONS)[number]["relation"], Key>;
+
+/**
+ * Who holds what on one object, as a grid: a row per person, a column per permission, a box per cell (7 October
+ * 2026, the owner's: "it is hard to read"). It used to be six checkbox lines per person, each with its whole
+ * description and the object's id under it, for every mailbox. The descriptions are said once, in the legend under
+ * the grid, and each column's header carries its own as a title too.
+ *
+ * Each box is the Node's answer (`relationsFor`), never assumed, and is held only while its own change is in flight.
+ * A refusal is said above the grid, in the Node's words.
+ */
+function GrantGrid({
+  people, objectId, relations, label, onChanged,
 }: {
-  person: PersonRow;
+  people: PersonRow[];
   objectId: string;
-  objectLabel: string;
   relations: ReadonlyArray<(typeof GRANTABLE_RELATIONS)[number]>;
+  label: string;
   onChanged: () => Promise<void>;
 }) {
   const [problem, setProblem] = useState<Said | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const held = relationsFor(person, objectId);
 
-  async function toggle(relation: string, on: boolean) {
-    setBusy(relation);
+  async function toggle(person: PersonRow, relation: string, on: boolean) {
+    setBusy(`${person.id} ${relation}`);
     setProblem(null);
     const outcome = on
       ? await grant(person.id, relation, objectId)
@@ -716,40 +742,63 @@ function Grants({
   }
 
   return (
-    <td>
+    <>
       {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
-      <ul className="grant-list">
-        {relations.map((entry) => {
-          /*
-           * The relation's dots are stripped out of the **id**, not out of the label.
-           *
-           * `send.propose` in an id makes `#grant-…-send.propose` parse as an id plus a class, so every
-           * CSS-based lookup silently matches nothing — `getElementById` is fine, which is exactly what
-           * makes it a trap: the association works, and anything that reaches for the element by selector
-           * quietly does not. Found by a harness that could not click the box.
-           */
-          const id = `grant-${person.id}-${objectId}-${entry.relation}`.replace(/[^\w-]/g, "-");
-          return (
-            <li key={entry.relation}>
-              <label htmlFor={id}>
-                <input
-                  id={id}
-                  type="checkbox"
-                  checked={held.has(entry.relation)}
-                  disabled={busy === entry.relation}
-                  onChange={(event) => void toggle(entry.relation, event.target.checked)}
-                />
-                {" "}
-                <span className="mono"><NodeWords>{entry.relation}</NodeWords></span>
-                {" — "}
-                <span className="dim">{entry.what}</span>
-              </label>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="dim mono grant-object">{objectLabel}</p>
-    </td>
+      <Scroller label={label}>
+        <table className="grant-grid">
+          <thead>
+            <tr>
+              <th scope="col">{t("people.col.person")}</th>
+              {relations.map((entry) => <th key={entry.relation} scope="col" title={entry.what}>{t(RELATION_LABEL[entry.relation])}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {people.map((person) => {
+              const held = relationsFor(person, objectId);
+              return (
+                <tr key={person.id}>
+                  <th scope="row" className="mono">{person.email}</th>
+                  {relations.map((entry) => {
+                    /*
+                     * The relation's dots are stripped out of the **id**, not out of the label.
+                     *
+                     * `send.propose` in an id makes `#grant-…-send.propose` parse as an id plus a class, so every
+                     * CSS-based lookup silently matches nothing — `getElementById` is fine, which is exactly what
+                     * makes it a trap: the association works, and anything that reaches for the element by selector
+                     * quietly does not. Found by a harness that could not click the box.
+                     */
+                    const id = `grant-${person.id}-${objectId}-${entry.relation}`.replace(/[^\w-]/g, "-");
+                    return (
+                      <td key={entry.relation}>
+                        <input
+                          id={id}
+                          type="checkbox"
+                          aria-label={t("people.grant.box", { permission: t(RELATION_LABEL[entry.relation]), person: person.email })}
+                          checked={held.has(entry.relation)}
+                          disabled={busy === `${person.id} ${entry.relation}`}
+                          onChange={(event) => void toggle(person, entry.relation, event.target.checked)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Scroller>
+      <details className="grant-legend">
+        <summary>{t("people.grant.legend")}</summary>
+        <dl>
+          {relations.map((entry) => (
+            <div key={entry.relation}>
+              <dt>{t(RELATION_LABEL[entry.relation])} <span className="mono dim"><NodeWords>{entry.relation}</NodeWords></span></dt>
+              <dd>{entry.what}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+    </>
   );
 }
 
@@ -1040,6 +1089,10 @@ export function People() {
   // Who turned copies on, by their address when People lists them; their id otherwise.
   const emails = new Map(people.data.people.map((person) => [person.id, person.email]));
   const who = (id: string) => emails.get(id) ?? id;
+  // The Node's own addresses nobody signs in with yet: who an invitation is most often for, offered as the field is typed.
+  const signedIn = new Set(rows.map((person) => person.email.toLowerCase()));
+  const suggestions = boxes.flatMap((box) => box.addresses === null ? [] : box.addresses.split(","))
+    .filter((address) => !signedIn.has(address.toLowerCase())).sort();
 
   return (
     <>
@@ -1048,64 +1101,25 @@ export function People() {
 
       <Arrivals people={rows} boxes={boxes} onChanged={refresh} />
 
+      <Invite domains={domains} onInvited={refresh} suggest={suggestions} who={who} />
+
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={t("people.mailbox.access", { name: box.name })}>
           <MailboxHead box={box} onChanged={refresh} forwards={forwards} who={who} />
-          <Scroller label={t("people.mailbox.who", { name: box.name })}>
-            <table>
-              <thead>
-                <tr><th scope="col">{t("people.col.person")}</th><th scope="col">{t("people.col.may")}</th></tr>
-              </thead>
-              <tbody>
-                {rows.map((person) => (
-                  <tr key={person.id}>
-                    <td className="mono">{person.email}</td>
-                    <Grants
-                      person={person}
-                      objectId={box.id}
-                      objectLabel={box.id}
-                      relations={mailboxRelations}
-                      onChanged={refresh}
-                    />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Scroller>
+          <GrantGrid people={rows} objectId={box.id} relations={mailboxRelations} label={t("people.mailbox.who", { name: box.name })} onChanged={refresh} />
         </section>
       ))}
 
       <section className="people-mailbox" aria-label={t("people.org.label")}>
         <h2>{t("people.org.heading")}</h2>
-        <Scroller label={t("people.org.who")}>
-          <table>
-            <thead>
-              <tr><th scope="col">{t("people.col.person")}</th><th scope="col">{t("people.col.may")}</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((person) => (
-                <tr key={person.id}>
-                  <td className="mono">{person.email}</td>
-                  {/*
-                    `org.admin` is scoped to the organization, so the object is the org's own id — taken from
-                    `/api/me`, which is the Node's answer to "which organization am I in", rather than
-                    inferred from whichever tuple happened to be in the list.
-                  */}
-                  <Grants
-                    person={person}
-                    objectId={orgId}
-                    objectLabel={orgId}
-                    relations={orgRelations}
-                    onChanged={refresh}
-                  />
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Scroller>
+        {/*
+          `org.admin` is scoped to the organization, so the object is the org's own id — taken from `/api/me`, which
+          is the Node's answer to "which organization am I in", rather than inferred from whichever tuple happened to
+          be in the list.
+        */}
+        <GrantGrid people={rows} objectId={orgId} relations={orgRelations} label={t("people.org.who")} onChanged={refresh} />
       </section>
 
-      <Invite domains={domains} onInvited={refresh} />
       <NewMailbox onCreated={refresh} />
       <NewAddress boxes={boxes} domains={domains} onAdded={refresh} />
 

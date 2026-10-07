@@ -4927,3 +4927,12 @@ or applying it and putting the wrong address back by hand. Each address's choice
 previous address*, each mailbox choice with *← back to the choices for* that address, and the plan numbers every
 offered address, the ones left as they are too: a number at *Apply?* asks that one again and shows the plan again.
 Nothing changes until the plan is applied, as before. Held by `apps/node/worker/test/node/routing-step.test.ts`.
+
+## People reads as a grid, and a read in flight shows it is moving (7 October 2026)
+
+People listed six checkbox lines with their whole descriptions for every person in every mailbox, with the mailbox's
+id under each, and every address that forwarded carried the full copy statement; the owner found it hard to read.
+Each mailbox is now a card (its addresses, each with its forwards one per line and the copy statement folded, then a
+person-by-permission grid with one box per cell), the permissions are explained once per grid, *Invite somebody*
+comes first and offers the Node's addresses nobody signs in with yet, and an invitation names its sender by address.
+*Reading…* now has a pulsing dot beside it (still under reduced motion) and is announced to a screen reader.

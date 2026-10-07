@@ -514,8 +514,8 @@ describe("People, Agents and Approvals in Chinese", () => {
   it("marks a relation and a capability as the Node's tokens, says a live agent as a live Butler is, and dates its expiry (G8, G7, G4)", async () => {
     const people = peopleNode();
     await screen.findAllByText("mailbox.content.read");
-    // A relation's token, in every mailbox's grants and the organization's (a team's list names people instead).
-    const relations = [...people.container.querySelectorAll(".grant-list label > .mono")]
+    // A relation's token, in every grid's legend, mailboxes' and the organization's (a team's list names people instead).
+    const relations = [...people.container.querySelectorAll(".grant-legend dt > .mono")]
       .filter((one) => /^[a-z]+(\.[a-z]+)+$/.test(one.textContent!));
     expect(relations.length).toBeGreaterThan(3);
     expect(relations.map((one) => one.firstElementChild?.getAttribute("lang"))).toEqual(relations.map(() => "en"));

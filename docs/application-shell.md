@@ -1400,6 +1400,19 @@ the consequence of granting it; "See that mail exists — senders, subjects, whe
 the same fact in the form the decision needs, and the difference between that and `mailbox.content.read` is
 the one an administrator is most likely to get wrong.
 
+**As a grid, said once** (7 October 2026, the owner's: "it is hard to read"). Each mailbox, and the organization,
+was a table of people with six checkbox lines in every row, each with its whole description and the mailbox's id
+under it. Now each is a card: the mailbox's name, its addresses (each with *Change forwards* and *Remove*, its
+forward destinations one per line, the copy setting, and *What a copy is* folded until opened), then a grid with a
+person per row and a permission per column, one box per cell, named for a screen reader as "Read, for
+ana@example.com". The columns carry short names (`people.relation.*`: *See the list*, *Read*, *Send*, *Decide
+approvals*, *Export a message*, *Bulk export*, *Administrator*), and *What each permission means* under each grid
+gives each with the relation's own id and the sentence above. *Invite somebody* comes first, its address field
+offering this Node's addresses nobody signs in with yet (any other address can still be typed), and an invitation
+names who sent it by address. A read in flight anywhere (`Nothing kind="loading"`) says *Reading…* with a pulsing
+dot beside it, still under reduced motion, and is announced (`aria-live`) without taking the status role, which is
+an act's answer.
+
 Two endpoints were added because the reads did not exist:
 
 - `GET /api/people`: the directory with each person's tuples. `GET /api/access` answers for **one** subject

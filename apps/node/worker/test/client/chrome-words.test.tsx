@@ -197,5 +197,9 @@ describe("the shared states", () => {
       "Showing the newest one. Older ones exist and are not listed.",
       "mailda upgradeCopy command",
     ]);
+    // A read in flight is announced, its dot hidden from a screen reader; neither is the status role an act's answer takes.
+    const loading = screen.getByTestId("states").children[0]!;
+    expect([loading.getAttribute("aria-live"), loading.getAttribute("role")]).toEqual(["polite", null]);
+    expect(loading.querySelector(".loading-dot")?.getAttribute("aria-hidden")).toBe("true");
   });
 });
