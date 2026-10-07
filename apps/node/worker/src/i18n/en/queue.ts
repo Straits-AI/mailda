@@ -15,6 +15,8 @@ import type { Area } from "../areas.ts";
  * whose units inflect can say so. English does not inflect `m`, `h` or `d`, so both branches are the same.
  */
 export const queue = {
+  /** The fold the mailbox's settings sit under (design audit, 7 October 2026). */
+  "queue.settings": "Mailbox settings",
   "queue.handTo.open": "Hand to…",
   "queue.handTo.placeholder": "colleague@…",
   "queue.handTo.label": "Colleague's sign-in address",

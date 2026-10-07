@@ -1573,6 +1573,15 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .policy-editor h2 { margin: 0; }
 .policy-actions { margin: 16px 0 0; }
 
+/* The Queue's mailbox settings, folded under one line that keeps the overdue and held counts (design audit, 7 October 2026). */
+.queue-settings { margin: 0 0 12px; }
+.queue-settings > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 32px; color: var(--text-secondary); cursor: pointer; }
+.queue-settings[open] > summary { margin-bottom: 8px; }
+.queue-settings > summary { list-style: none; }
+.queue-settings > summary::-webkit-details-marker { display: none; }
+.queue-settings > summary::before { content: "▸"; }
+.queue-settings[open] > summary::before { content: "▾"; }
+
 /* Doctor (design audit, 7 October 2026): what needs attention first, and a passing check's detail folded after its
    first sentence. */
 .doctor-findings .doctor-attention > td, .doctor-findings .doctor-attention > th { background: var(--surface-1); }

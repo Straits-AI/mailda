@@ -7,6 +7,7 @@ import type { Twin } from "../catalog.ts";
  * (`quarantine`) and let in with 放行.
  */
 export const queue: Twin<typeof source> = {
+  "queue.settings": "邮箱设置",
   "queue.handTo.open": "转交给…",
   "queue.handTo.placeholder": "同事@…",
   "queue.handTo.label": "同事的登录邮件地址",
