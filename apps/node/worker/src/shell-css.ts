@@ -545,6 +545,8 @@ body.shell main#app { max-width: none; margin: 0; padding: 0; }
   border: 0;
   border-bottom: 1px solid var(--border-soft);
 }
+/* The band's one link at least 24px tall (WCAG 2.5.8): as running text it measured 78 x 17 (design audit, 7 October 2026). */
+.setup-unfinished a { display: inline-flex; align-items: center; min-height: 24px; }
 .notices { display: grid; gap: 6px; max-height: min(30vh, 240px); overflow-y: auto; }
 /* Inset: the band spans the column edge to edge and .app-main clips, so an outside ring was cut off. */
 .notices:focus-visible { outline-offset: -2px; }
