@@ -353,10 +353,15 @@ describe("every schema-bearing route answers what the contract says it does", ()
       // Copies (ADR 47 amended): an address keeping a forward, its copies turned off, which needs nothing but the
       // administrator. The row is made here because nothing on this fixture keeps one; its mailbox need not exist.
       await testEnv.CATALOG.prepare(
-        "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to) VALUES ('addr_kept', ?, 'kept@contract.test', 'mbx_kept', ?, 'me@gmail.test')",
+        "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES ('addr_kept', ?, 'kept@contract.test', 'mbx_kept', ?)",
       ).bind(ORG, new Date().toISOString()).run();
+      // Where it forwards (ADR 47, amended 7 October 2026): set to a destination the account lists verified, then read.
+      expect(await answers("POST", "/api/forwards", { cookie: held, headers: operator, body: { address: "kept@contract.test", to: ["Friend@example.test"] } }))
+        .toEqual({ forwards: { address: "kept@contract.test", to: ["friend@example.test"] } });
       expect(await answers("POST", "/api/forwards/copy", { cookie: held, body: { address: "kept@contract.test", copy: false } }))
-        .toEqual({ copy: { address: "kept@contract.test", to: "me@gmail.test", by: null, at: null } });
+        .toEqual({ copy: { address: "kept@contract.test", to: ["friend@example.test"], by: null, at: null } });
+      expect(await answers("POST", "/api/forwards", { cookie: held, body: { address: "kept@contract.test", to: [] } }))
+        .toEqual({ forwards: { address: "kept@contract.test", to: [] } });
       await testEnv.CATALOG.prepare("DELETE FROM addresses WHERE id = 'addr_kept'").run();
     } finally {
       vi.stubGlobal("fetch", listingFetch);
@@ -2578,8 +2583,11 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      *
      * The 144th is `POST /api/forwards/copy` (ADR 47 amended, 3 October 2026): copies on or off for an address that
      * keeps a forward, answering who turned them on and when.
+     *
+     * The 145th is `POST /api/forwards` (ADR 47 amended, 7 October 2026): every destination an address forwards to,
+     * set as one list, answering the list as stored.
      */
-    expect(coverage.total).toBe(144);
+    expect(coverage.total).toBe(145);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

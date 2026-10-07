@@ -153,6 +153,12 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
     scope: "Email Routing Addresses: Edit",
     reference: "Email Routing Addresses Write | Email Routing Addresses Read",
   },
+  /*
+   * A Worker's source (ADR 47, amended 7 October 2026), read by the routing-rules listing so a Worker rule's forward
+   * can start from the addresses that Worker's code names. No scope: the token is not asked for Workers Scripts Read,
+   * and without it the listing says so in Cloudflare's words; wrangler's login, which `mailda setup` sends, has it.
+   */
+  "/accounts/{}/workers/scripts/{}/content/v2": { scope: null, reference: "Workers Scripts Read" },
   "/zones": { scope: "Zone: Read", reference: "Zone Zone Read" },
   /*
    * Read to get the verdict; `POST /enable` is what turns a zone into a mail zone. The `PATCH` this Node

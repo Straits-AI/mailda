@@ -110,6 +110,33 @@ describe("the CLI's kept forwards and destination addresses (ADR 47)", () => {
     expect(said).toContain("not forwarded at 2026-10-03T01:00:00.000Z: destination address not verified");
   });
 
+  it("sets where an address forwards, sending each address once, and says when it stops (ADR 47 amended)", async () => {
+    const sent: unknown[] = [];
+    const out = node({ "/api/forwards": { forwards: { address: "sales@example.com", to: ["a@gmail.test", "b@gmail.test"] } } });
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => { if (init?.body !== undefined) sent.push(JSON.parse(String(init.body))); return stubbed(url, init); });
+    await provider(["--set-forwards", "sales@example.com", "--to", "a@gmail.test, b@gmail.test,", "--url", "https://node.test"]);
+    expect(sent.at(-1)).toEqual({ address: "sales@example.com", to: ["a@gmail.test", "b@gmail.test"] });
+    expect(out.join("")).toContain("forwards to a@gmail.test, b@gmail.test, after each message is stored here");
+    const stopped = node({ "/api/forwards": { forwards: { address: "sales@example.com", to: [] } } });
+    await provider(["--set-forwards", "sales@example.com", "--url", "https://node.test"]);
+    expect(stopped.join("")).toContain("forwards to nothing: each message is stored here only, and copies are off");
+  });
+
+  it("sends --forward-to with a Worker rule's take-over, and prints every destination it forwards to", async () => {
+    const sent: unknown[] = [];
+    const out = node({ "/api/provider/routing-rules/take-over": { outcome: {
+      ruleId: "r5", to: "sales@example.com", before: { action: "worker", destinations: ["info-worker"] },
+      after: { action: "worker", destinations: ["mailda"] }, mailbox: { id: "mbx_1", name: "Sales" }, keptForward: null,
+      forwards: ["a@gmail.test", "b@gmail.test"],
+    } } });
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => { if (init?.body !== undefined) sent.push(JSON.parse(String(init.body))); return stubbed(url, init); });
+    await provider(["--take-over", "r5", "--domain", "example.com", "--confirm", "e".repeat(64), "--forward-to", "a@gmail.test,b@gmail.test", "--url", "https://node.test"]);
+    expect(sent.at(-1)).toEqual({ domain: "example.com", ruleId: "r5", digest: "e".repeat(64), forwardTo: ["a@gmail.test", "b@gmail.test"] });
+    expect(out.join("")).toContain("     forwards  to a@gmail.test, b@gmail.test, after each message is stored here\n");
+  });
+
   it("registers a destination and says what ends the wait", async () => {
     const out = node({ "/api/provider/destination-addresses": { destination: { email: "new@gmail.test", state: "waiting", added: true } } });
     await provider(["--add-destination", "new@gmail.test", "--url", "https://node.test"]);

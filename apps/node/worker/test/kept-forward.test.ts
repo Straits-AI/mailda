@@ -9,9 +9,9 @@ import { acceptInbound } from "../src/ingress.ts";
 import { forwardedBy } from "../src/kept-forward.ts";
 
 /**
- * A kept forward at the email handler (ADR 47, `docs/receipts/email-worker-forward.md`): the message is stored first,
- * then forwarded to the destination the address row keeps, and every call leaves one settled row. The refusals the
- * stub throws are the drill's own words.
+ * A forward at the email handler (ADR 47, `docs/receipts/email-worker-forward.md`): the message is stored first, then
+ * forwarded to each destination the address has, and every call leaves one settled row. The refusals the stub throws
+ * are the drill's own words.
  */
 
 const testEnv = env as unknown as Env;
@@ -19,26 +19,28 @@ const ORG = "org_keptfwd";
 const MAILBOX = "mbx_keptfwd";
 const ADDRESS = "hello@keptfwd.example";
 const DEST = "someone@gmail.test";
+const SECOND = "another@gmail.test";
 const CLAIM = "clm_01KEPTFORWARDMARKER000000";
 
 beforeEach(async () => {
-  for (const table of ["outbox", "log_entries", "ingress_receipts", "addresses", "mailboxes", "node_claim", "kept_forward_attempts"]) {
+  for (const table of ["outbox", "log_entries", "ingress_receipts", "addresses", "mailboxes", "node_claim", "forward_destinations", "forward_attempts"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const at = new Date().toISOString();
   await testEnv.CATALOG.batch([
     testEnv.CATALOG.prepare("INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,'x',?,?)").bind(CLAIM, at, ORG),
     testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)").bind(MAILBOX, ORG, "Hello", at),
-    testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to) VALUES (?,?,?,?,?,?)")
-      .bind("addr_keptfwd", ORG, ADDRESS, MAILBOX, at, DEST),
+    testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)")
+      .bind("addr_keptfwd", ORG, ADDRESS, MAILBOX, at),
+    testEnv.CATALOG.prepare("INSERT INTO forward_destinations (org_id, address, destination) VALUES (?,?,?)").bind(ORG, ADDRESS, DEST),
   ]);
 });
 
 interface Call { to: string; headers: Record<string, string>; storedFirst: boolean }
 
-/** One delivery through the handler; `forward` is what Cloudflare's forward() does. */
+/** One delivery through the handler; `forward` is what Cloudflare's forward() does, given the destination. */
 async function deliver(options: {
-  messageId?: string; headers?: Record<string, string>; forward?: () => Promise<unknown>; to?: string;
+  messageId?: string; headers?: Record<string, string>; forward?: (to: string) => Promise<unknown>; to?: string;
 } = {}) {
   const calls: Call[] = [];
   let rejected: string | null = null;
@@ -53,7 +55,7 @@ async function deliver(options: {
       const stored = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM ingress_receipts WHERE envelope_to = ?")
         .bind(ADDRESS).first<{ n: number }>();
       calls.push({ to, headers: Object.fromEntries(headers?.entries() ?? []), storedFirst: (stored?.n ?? 0) > 0 });
-      return await (options.forward ?? (async () => undefined))();
+      return await (options.forward ?? (async () => undefined))(to);
     },
   } as unknown as ForwardableEmailMessage;
   const execution = createExecutionContext();
@@ -63,11 +65,18 @@ async function deliver(options: {
 }
 
 const attempts = async () => (await testEnv.CATALOG.prepare(
-  "SELECT a.state, a.error, a.destination, a.settled_at, r.id AS receipt FROM kept_forward_attempts a "
-  + "LEFT JOIN ingress_receipts r ON r.id = a.receipt_id ORDER BY a.attempted_at",
+  "SELECT a.state, a.error, a.destination, a.settled_at, r.id AS receipt FROM forward_attempts a "
+  + "LEFT JOIN ingress_receipts r ON r.id = a.receipt_id ORDER BY a.attempted_at, a.destination",
 ).all<{ state: string; error: string | null; destination: string; settled_at: string | null; receipt: string | null }>()).results;
 
-describe("a kept forward at the email handler", () => {
+const forwardTo = async (...to: string[]) => {
+  await testEnv.CATALOG.prepare("DELETE FROM forward_destinations").run();
+  for (const one of to) {
+    await testEnv.CATALOG.prepare("INSERT INTO forward_destinations (org_id, address, destination) VALUES (?,?,?)").bind(ORG, ADDRESS, one).run();
+  }
+};
+
+describe("a forward at the email handler", () => {
   it("stores the message, then forwards it to the address's own destination with this Node's marker, and records it handed over", async () => {
     const { calls, rejected } = await deliver();
     expect(rejected).toBeNull();
@@ -103,7 +112,7 @@ describe("a kept forward at the email handler", () => {
   });
 
   it("forwards nothing, and writes no attempt, for an address that keeps no forward", async () => {
-    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = NULL").run();
+    await forwardTo();
     const { calls } = await deliver();
     expect(calls).toEqual([]);
     expect(await attempts()).toEqual([]);
@@ -122,6 +131,27 @@ describe("a kept forward at the email handler", () => {
     expect(rows[0]!.receipt).not.toBeNull();
   });
 
+  it("forwards to every destination, and settles each on its own: one refused, the other handed over", async () => {
+    await forwardTo(DEST, SECOND);
+    const { calls, rejected } = await deliver({
+      forward: async (to) => { if (to === SECOND) throw new Error("destination address not verified"); },
+    });
+    expect(rejected).toBeNull();
+    expect(calls.map((one) => one.to).sort()).toEqual([SECOND, DEST]);
+    expect(calls.every((one) => one.storedFirst && one.headers["x-mailda-forwarded-by"] === CLAIM)).toBe(true);
+    expect(await attempts()).toMatchObject([
+      { destination: SECOND, state: "refused", error: "destination address not verified" },
+      { destination: DEST, state: "handed_over", error: null },
+    ]);
+  });
+
+  it("withholds every destination's forward of a message carrying its own marker", async () => {
+    await forwardTo(DEST, SECOND);
+    const { calls } = await deliver({ headers: { "x-mailda-forwarded-by": CLAIM } });
+    expect(calls).toEqual([]);
+    expect((await attempts()).map((one) => one.state)).toEqual(["withheld", "withheld"]);
+  });
+
   it("reads another Node's marker as not this Node's", () => {
     expect(forwardedBy(`clm_OTHER, ${CLAIM}`, CLAIM)).toBe(true);
     expect(forwardedBy("clm_OTHER", CLAIM)).toBe(false);
@@ -134,7 +164,7 @@ describe("doctor's kept_forwards finding", () => {
   const now = Date.parse("2026-10-03T10:00:00.000Z");
   const clock = { ...createSystemCtx(), now: () => now };
   const attempt = (receipt: string, state: string, msAgo: number) => testEnv.CATALOG.prepare(
-    "INSERT INTO kept_forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at) VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at) VALUES (?,?,?,?,?,?,?)",
   ).bind(receipt, ORG, ADDRESS, DEST, state, state === "refused" ? "destination address not verified" : null, new Date(now - msAgo).toISOString()).run();
 
   it("reports, and passes, when every attempt has an answer", async () => {
@@ -148,7 +178,7 @@ describe("doctor's kept_forwards finding", () => {
     await attempt("rcpt_a", "outcome_unknown", 60_000);
     const [finding] = await checkKeptForwards(testEnv, clock, ORG);
     expect(finding).toMatchObject({ ok: false, severity: "degraded" });
-    expect(finding!.detail).toContain("1 kept forward attempt has no recorded answer");
+    expect(finding!.detail).toContain("1 forward attempt has no recorded answer");
   });
 
   it("degrades for an address whose latest forward was refused, and not for one refused before a later hand-over", async () => {
@@ -158,9 +188,20 @@ describe("doctor's kept_forwards finding", () => {
     expect((await checkKeptForwards(testEnv, clock, ORG))[0]).toMatchObject({ ok: true });
   });
 
-  it("says no address keeps a forward when none does", async () => {
-    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = NULL").run();
-    expect((await checkKeptForwards(testEnv, clock, ORG))[0]!.detail).toBe("No address keeps a forward.");
+  it("degrades for one destination getting nothing while the address's other is handed over", async () => {
+    await forwardTo(DEST, SECOND);
+    await attempt("rcpt_a", "handed_over", 60_000);
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at) VALUES (?,?,?,?,?,?,?)",
+    ).bind("rcpt_a", ORG, ADDRESS, SECOND, "refused", "destination address not verified", new Date(now - 60_000).toISOString()).run();
+    const [finding] = await checkKeptForwards(testEnv, clock, ORG);
+    expect(finding).toMatchObject({ ok: false, severity: "degraded" });
+    expect(finding!.detail).toContain("1 forward destination whose latest forward was refused");
+  });
+
+  it("says no address forwards when none does", async () => {
+    await forwardTo();
+    expect((await checkKeptForwards(testEnv, clock, ORG))[0]!.detail).toBe("No address forwards.");
   });
 });
 
@@ -172,5 +213,15 @@ describe("GET /api/forwards' rows", () => {
     const [row] = await keptForwards(testEnv, ORG);
     expect(row).toMatchObject({ address: ADDRESS, to: DEST, verified: null, last: { state: "refused", error: "destination address not verified" } });
     expect(row!.lastHandedOverAt).not.toBeNull();
+  });
+
+  it("answers one row per destination, each with its own latest attempt", async () => {
+    const { keptForwards } = await import("../src/kept-forward.ts");
+    await forwardTo(DEST, SECOND);
+    await deliver({ forward: async (to) => { if (to === SECOND) throw new Error("destination address not verified"); } });
+    expect(await keptForwards(testEnv, ORG)).toMatchObject([
+      { address: ADDRESS, to: SECOND, last: { state: "refused" }, lastHandedOverAt: null },
+      { address: ADDRESS, to: DEST, last: { state: "handed_over" } },
+    ]);
   });
 });

@@ -701,33 +701,35 @@ export async function checkBreakers(
 }
 
 /**
- * Kept forwards (ADR 47): addresses this Node stores and then forwards to the destination of the rule it took over.
+ * Forwards (ADR 47): addresses this Node stores and then forwards to each of their destinations, the one a taken-over
+ * forward rule had and any an administrator chose (amended 7 October 2026).
  * A forward that fails is not told to the sender (measured, `docs/receipts/email-worker-forward.md`), so this is
  * where a failure surfaces besides People: one query, counts only.
  *
  * Two kinds of evidence fail it. An attempt with **no recorded answer**: written before `forward()` was called and
  * never settled, older than the slowest forward measured (8,799 ms, an observation, not a tripwire: a younger
- * one may simply be in flight). And an address whose **latest attempt was refused**, which means its destination
- * is getting nothing now. Both are `degraded`: the mail is stored, so nothing is lost here, but somebody expecting
+ * one may simply be in flight). And a destination whose **latest attempt was refused**, which means it is getting
+ * nothing now. Both are `degraded`: the mail is stored, so nothing is lost here, but somebody expecting
  * it in their own inbox is not getting it, and nobody else will say so.
  */
 export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
   if (orgId === null) return [];
   const settledBy = new Date(ctx.now() - BUDGETS["forward.slowest_call_ms_observed"]).toISOString();
   const counted = await env.CATALOG.prepare(
-    `SELECT (SELECT COUNT(*) FROM addresses WHERE org_id = ?1 AND kept_forward_to IS NOT NULL) AS kept,
-            (SELECT COUNT(*) FROM kept_forward_attempts WHERE org_id = ?1 AND state = 'outcome_unknown' AND attempted_at < ?2) AS unanswered,
-            (SELECT COUNT(*) FROM addresses a WHERE a.org_id = ?1 AND a.kept_forward_to IS NOT NULL
+    `SELECT (SELECT COUNT(DISTINCT address) FROM forward_destinations WHERE org_id = ?1) AS kept,
+            (SELECT COUNT(*) FROM forward_attempts WHERE org_id = ?1 AND state = 'outcome_unknown' AND attempted_at < ?2) AS unanswered,
+            (SELECT COUNT(*) FROM forward_destinations f WHERE f.org_id = ?1
                AND (SELECT x.state || '/' || COALESCE(x.copy_state, '') || '/' || COALESCE(sm.state, '')
-                      FROM kept_forward_attempts x
-                      LEFT JOIN send_copies c ON c.receipt_id = x.receipt_id
+                      FROM forward_attempts x
+                      LEFT JOIN send_copies c ON c.receipt_id = x.receipt_id AND x.copy_state = 'sealed'
                       LEFT JOIN send_manifests sm ON sm.id = c.manifest_id
-                     WHERE x.org_id = a.org_id AND x.address = a.address
+                     WHERE x.org_id = f.org_id AND x.address = f.address AND x.destination = f.destination
                      ORDER BY x.attempted_at DESC, x.receipt_id DESC LIMIT 1)
                    IN ('refused//', 'refused/refused/', 'refused/sealed/withheld', 'refused/sealed/cancelled',
                        'refused/sealed/refused', 'refused/sealed/suppressed')) AS refused,
-            (SELECT COUNT(*) FROM addresses a WHERE a.org_id = ?1 AND a.kept_forward_to IS NOT NULL
-               AND (SELECT x.copy_state FROM kept_forward_attempts x WHERE x.org_id = a.org_id AND x.address = a.address
+            (SELECT COUNT(*) FROM forward_destinations f WHERE f.org_id = ?1
+               AND (SELECT x.copy_state FROM forward_attempts x
+                     WHERE x.org_id = f.org_id AND x.address = f.address AND x.destination = f.destination
                      ORDER BY x.attempted_at DESC, x.receipt_id DESC LIMIT 1) = 'refused') AS copies_refused`,
   ).bind(orgId, settledBy).first<{ kept: number; unanswered: number; refused: number; copies_refused: number }>();
   const kept = Number(counted?.kept ?? 0);
@@ -743,8 +745,8 @@ export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null
     return [{
       check: "kept_forwards", severity: "report", discloses: "data", ok: true, receipt,
       detail: kept === 0
-        ? "No address keeps a forward."
-        : `${kept} ${plural(kept, "address keeps", "addresses keep")} a forward, and every attempt older than the slowest forward measured has an answer: `
+        ? "No address forwards."
+        : `${kept} ${plural(kept, "address forwards", "addresses forward")}, and every attempt older than the slowest forward measured has an answer: `
           + "handed over (Cloudflare reports no delivery for a verified destination, so this is the most known), withheld as a loop, "
           + "or refused and followed by a copy whose send is in the Outbox.",
     }];
@@ -752,15 +754,16 @@ export async function checkKeptForwards(env: Env, ctx: Ctx, orgId: string | null
   return [{
     check: "kept_forwards", severity: "degraded", discloses: "data", ok: false, receipt,
     detail: [
-      unanswered === 0 ? "" : `${unanswered} kept forward ${plural(unanswered, "attempt has", "attempts have")} no recorded answer: forward() was called and never `
+      unanswered === 0 ? "" : `${unanswered} forward ${plural(unanswered, "attempt has", "attempts have")} no recorded answer: forward() was called and never `
         + "settled, so the destination may or may not have the message.",
-      refused === 0 ? "" : `${refused} ${plural(refused, "address", "addresses")} whose latest forward was refused by Cloudflare, with no copy that is still `
-        + "going (none sealed, or its send withheld, cancelled, refused or suppressed, which the Outbox shows): their "
-        + "destination is getting nothing now, and the senders were not told.",
+      refused === 0 ? "" : `${refused} forward ${plural(refused, "destination", "destinations")} whose latest forward was refused by Cloudflare, with no copy that is still `
+        + "going (none sealed, or its send withheld, cancelled, refused or suppressed, which the Outbox shows): "
+        + `${plural(refused, "it is", "they are")} getting nothing now, and the senders were not told.`,
       copiesRefused === 0 ? "" : `${copiesRefused} of them asked for a copy that was refused: People names each reason (too large, `
         + "a dangerous attachment, quarantined, DMARC, the opt-in withdrawn).",
     ].filter((one) => one !== "").join(" "),
-    fix: "People shows each address's forward with Cloudflare's words; a destination that is not verified is re-checked with "
-      + "`mailda provider --destinations` and verified by whoever reads it, or the rule is put back (`mailda provider --put-back`)",
+    fix: "People shows each destination an address forwards to with Cloudflare's words; a destination that is not verified is "
+      + "re-checked with `mailda provider --destinations` and verified by whoever reads it, or removed on People "
+      + "(`mailda provider --set-forwards <address> --to a,b`), or the rule is put back (`mailda provider --put-back`)",
   }];
 }

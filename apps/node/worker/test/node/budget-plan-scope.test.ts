@@ -388,6 +388,13 @@ const FIGURES: Record<string, Classification> = {
     "forward.reject_text_reaches_sender", "routing.forward_rule_to_unverified_creatable",
   ),
 
+  // docs/receipts/forward-fan-out.md
+  ...mailda(
+    "Mailda's own cap on how many destinations one address forwards to, sized from a drill of forward() called for one "
+      + "message to many destinations at once; the plan changes neither the call nor how many this Node makes",
+    "forward.max_destinations",
+  ),
+
   // docs/receipts/email-authentication-results.md
   ...bothPlans(
     "what the receiving MX writes on every inbound message; a behaviour of Email Routing, which no plan varies",

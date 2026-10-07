@@ -1191,7 +1191,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * The addresses that keep forwarding to the destination of the rule this Node took over (ADR 47): where each forwards, what the latest read of the account's destinations said of it, and its latest attempt. No Cloudflare call
+   * Every destination each address forwards to (ADR 47): one row per address and destination, with what the latest read of the account's destinations said of it and its latest attempt. No Cloudflare call
    *
    * `GET /api/forwards`
    */
@@ -1200,7 +1200,16 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Turn copies on or off for an address that keeps a forward (ADR 47). On, a forward Cloudflare refuses as not verified is followed by a copy: the stored message sealed as a send from the address, the sender's name in the From display name and their address in Reply-To, up to email.outbound.max_bytes, never with an attachment this Node judges dangerous, counted against today's sending and the rate breakers, under the administrator who turned it on, who must hold send.propose on the address's mailbox and stay an administrator
+   * Set every destination an address forwards to (ADR 47, amended 7 October 2026): the list replaces the one there, and an empty list stops forwarding and turns copies off. After storing each message the Node forwards it to every destination with message.forward(), up to forward.max_destinations. Each added destination must be a verified destination of the account unless copies are on, and none may be on a domain this organisation receives at
+   *
+   * `POST /api/forwards`
+   */
+  async postForwards(body: z.infer<typeof S.forwardsSetRequest>): Promise<z.infer<typeof S.forwardsSetResponse>> {
+    return await this.json("POST", "/api/forwards", {}, body) as z.infer<typeof S.forwardsSetResponse>;
+  }
+
+  /**
+   * Turn copies on or off for an address that forwards (ADR 47). On, a forward Cloudflare refuses as not verified is followed by a copy, one per message to every destination refused that way: the stored message sealed as a send from the address, the sender's name in the From display name and their address in Reply-To, up to email.outbound.max_bytes, never with an attachment this Node judges dangerous, counted against today's sending and the rate breakers, under the administrator who turned it on, who must hold send.propose on the address's mailbox and stay an administrator
    *
    * `POST /api/forwards/copy`
    */

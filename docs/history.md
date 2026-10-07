@@ -4901,3 +4901,21 @@ up to three times, which stays inside the Node's lockout of `auth.max_failed_log
 stops at once with the Node's own reason, and running out of tries names `mailda set-password`. A Node that cannot
 be reached keeps the credentials for the step that retries it. Credentials from MAILDA_EMAIL and MAILDA_PASSWORD
 are not prompted for and behave as before. Held by `apps/node/worker/test/node/credential-prompt.test.ts`.
+
+## An address forwards to several destinations, and a Worker rule can become forwards (7 October 2026)
+
+The setup step offered a rule that sent an address to another Worker one change, *receive here*, which ended
+whatever that Worker did. On whymelabs.com that Worker's whole code was a loop calling `message.forward()` for two
+inboxes, for eight addresses, so taking them over meant those two people stopped getting their mail. And a kept
+forward held one destination, on the address row.
+
+Where an address forwards is now a list (`forward_destinations`, migration 0077), and every forward of every message
+is its own row (`forward_attempts`, per receipt and destination). `email()` calls `forward()` for every destination
+together and settles each on its own, so one refusal leaves the others handed over, at most
+`forward.max_destinations` per address (`docs/receipts/forward-fan-out.md`). Any address can be given a list on People
+(*Change forwards*) or with `mailda provider --set-forwards <address> --to a,b`; a Worker rule's take-over has a third
+choice, *receive here and forward to addresses you choose* (`forwardTo`, `--forward-to`), which the listing offers with
+the verified destinations that Worker's code names, read once per Worker with wrangler's login and confirmed by the
+person, never applied by itself. A destination must be verified unless copies are on, in which case one copy per
+message goes to every destination refused as not verified, and none may be on a domain this organisation receives at.
+Doctor's *Kept forwards* is now *Forwards* and counts destinations. ADR 47 is amended in the Blueprint.

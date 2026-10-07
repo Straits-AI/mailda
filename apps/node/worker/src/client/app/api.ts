@@ -2303,15 +2303,19 @@ export interface RoutingRuleOutcome {
   keptForward?: string | null;
   /** Whether that take-over turned copies on (ADR 47, amended 3 October 2026); absent from an older Node. */
   copy?: boolean | null;
+  /** Every destination the address forwards to after it (ADR 47, amended 7 October 2026); absent from an older Node. */
+  forwards?: string[] | null;
 }
 
 export const routingRulesOn = (domain: string) =>
   proposalFor<{ routing: RoutingRules }>(GET("/api/provider/routing-rules"), domain);
 
-export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string, forward?: "keep" | "stop", copy = false) =>
+export const takeOverRule = (
+  domain: string, ruleId: string, digest: string, mailboxId?: string, forward?: "keep" | "stop", copy = false, forwardTo?: string[],
+) =>
   act<{ outcome: RoutingRuleOutcome }>(at("POST", "/api/provider/routing-rules/take-over"), "POST", {
     domain, ruleId, digest, ...(mailboxId === undefined ? {} : { mailboxId }), ...(forward === undefined ? {} : { forward }),
-    ...(copy ? { copy: true } : {}),
+    ...(copy ? { copy: true } : {}), ...(forwardTo === undefined ? {} : { forwardTo }),
   });
 
 export const putBackRule = (domain: string, ruleId: string) =>
@@ -2368,11 +2372,15 @@ export const addDestination = (email: string) =>
 
 export type KeptForward = KeptForwardRow;
 
-/** Turns copies on or off for an address that keeps a forward (ADR 47, amended 3 October 2026). */
+/** Turns copies on or off for an address that forwards (ADR 47, amended 3 October 2026). */
 export const setKeptForwardCopy = (address: string, copy: boolean) =>
-  act<{ copy: { address: string; to: string; by: string | null; at: string | null } }>(at("POST", "/api/forwards/copy"), "POST", { address, copy });
+  act<{ copy: { address: string; to: string[]; by: string | null; at: string | null } }>(at("POST", "/api/forwards/copy"), "POST", { address, copy });
 
-/** The addresses keeping a forward, each with its latest attempt (ADR 47). Administrators only; no Cloudflare call. */
+/** Sets every destination an address forwards to; empty stops forwarding (ADR 47, amended 7 October 2026). */
+export const setForwards = (address: string, to: string[]) =>
+  act<{ forwards: { address: string; to: string[] } }>(at("POST", "/api/forwards"), "POST", { address, to });
+
+/** Every destination each address forwards to, each with its latest attempt (ADR 47). Administrators only; no Cloudflare call. */
 export function useKeptForwards(enabled: boolean): UseQueryResult<{ forwards: KeptForward[] }, Error> {
   return useQuery({
     queryKey: ["forwards"],

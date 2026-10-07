@@ -770,15 +770,24 @@ export const ROUTES = [
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/forwards",
-    summary: "The addresses that keep forwarding to the destination of the rule this Node took over (ADR 47): where each "
-      + "forwards, what the latest read of the account's destinations said of it, and its latest attempt. No Cloudflare call",
+    summary: "Every destination each address forwards to (ADR 47): one row per address and destination, with what the latest "
+      + "read of the account's destinations said of it and its latest attempt. No Cloudflare call",
     response: S.keptForwardsResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/forwards",
+    summary: "Set every destination an address forwards to (ADR 47, amended 7 October 2026): the list replaces the one there, "
+      + "and an empty list stops forwarding and turns copies off. After storing each message the Node forwards it to every "
+      + "destination with message.forward(), up to forward.max_destinations. Each added destination must be a verified "
+      + "destination of the account unless copies are on, and none may be on a domain this organisation receives at",
+    request: S.forwardsSetRequest, response: S.forwardsSetResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/forwards/copy",
-    summary: "Turn copies on or off for an address that keeps a forward (ADR 47). On, a forward Cloudflare refuses as not "
-      + "verified is followed by a copy: the stored message sealed as a send from the address, the sender's name in the "
+    summary: "Turn copies on or off for an address that forwards (ADR 47). On, a forward Cloudflare refuses as not "
+      + "verified is followed by a copy, one per message to every destination refused that way: the stored message sealed as a send from the address, the sender's name in the "
       + "From display name and their address in Reply-To, up to email.outbound.max_bytes, never with an attachment this "
       + "Node judges dangerous, counted against today's sending and the rate breakers, under the administrator who turned "
       + "it on, who must hold send.propose on the address's mailbox and stay an administrator",

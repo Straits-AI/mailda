@@ -118,7 +118,7 @@ export async function recordVerifiedDestinations(
     );
     return { ...await stateOf(env, orgId), listed: null, addresses: null };
   }
-  // Every listed address with its state, for the kept forwards and the counts; the addresses leave only in the answer.
+  // Every listed address with its state, for the forward destinations and the counts; the addresses leave only in the answer.
   const all: Listed[] = listed.result.flatMap((one) => {
     const parsed = listedOf(one);
     return parsed === null ? [] : [parsed];
@@ -177,13 +177,13 @@ export async function recordVerifiedDestinations(
       ).bind(orgId, at, verified),
       readRow(env, { accountId, authority, readAt: at, at, error: null }),
       /*
-       * Each kept forward's destination as this read found it (ADR 47): the re-check People's "verified" comes from.
+       * Each forward destination as this read found it (ADR 47): the re-check People's "verified" comes from.
        * Absent from the list is `absent`, a state of its own: forward() to it throws, as to a waiting one.
        */
       env.CATALOG.prepare(
-        `UPDATE addresses SET kept_forward_checked_at = ?2,
-           kept_forward_verified = COALESCE((SELECT j.value FROM json_each(?3) j WHERE j.key = lower(addresses.kept_forward_to)), 'absent')
-         WHERE org_id = ?1 AND kept_forward_to IS NOT NULL`,
+        `UPDATE forward_destinations SET checked_at = ?2,
+           verified = COALESCE((SELECT j.value FROM json_each(?3) j WHERE j.key = forward_destinations.destination), 'absent')
+         WHERE org_id = ?1`,
       ).bind(orgId, at, states),
     ],
   );

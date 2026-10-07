@@ -310,6 +310,7 @@ describe("the policy is honest, because the document it governs contains no inli
     expect(source).toContain(`"maxAttachments":${MAX_ATTACHMENTS}`);
     // And the copy's limit (ADR 47), which People and Setup state where copies are turned on.
     expect(source).toContain(`"outboundMaxBytes":${BUDGETS["email.outbound.max_bytes"]}`);
+    expect(source).toContain(`"forwardMaxDestinations":${BUDGETS["forward.max_destinations"]}`);
     expect(source, "the cookie name the client watches for expiry").toContain(`"${EXPIRY_COOKIE}"`);
   });
 

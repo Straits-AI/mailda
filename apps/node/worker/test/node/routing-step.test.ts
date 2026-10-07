@@ -21,7 +21,7 @@ const rule = (id: string, to: string, action: string, destinations: string[], ov
   id, name: "", enabled: true, to, action, destinations, catchAll: false, ours: false, digest: digest(id.length),
   offer: "take_over", refusal: null, takeOver: null, ...over,
 });
-const offered = (says: string, over: Partial<Offer> = {}): Offer => ({ label: "receive here", says, filesInto: null, asksMailbox: false, keep: null, ...over });
+const offered = (says: string, over: Partial<Offer> = {}): Offer => ({ label: "receive here", says, filesInto: null, asksMailbox: false, keep: null, forwardTo: null, ...over });
 
 /** A zone shaped like whymelabs.com, with placeholder personal destinations. */
 const RULES: Rule[] = [
@@ -67,7 +67,7 @@ function node({
       const box = body.mailboxId === "mbx_new" ? { id: "mbx_new", name: "new" } : { id: body.mailboxId, name: "Shared" };
       return Response.json({ outcome: {
         ruleId: body.ruleId, to: "?", before: { action: "x", destinations: [] }, after: { action: "worker", destinations: ["mailda"] }, mailbox: box,
-        nameRecorded: !nameless.has(body.ruleId),
+        nameRecorded: !nameless.has(body.ruleId), forwards: body.forwardTo ?? null,
       } });
     }
     return new Response("no route", { status: 404 });
@@ -291,6 +291,52 @@ describe("the question", () => {
     await step({ yes: true });
     expect(printed()).toContain(`${copy.label}:`);
     expect(printed()).toContain(`--take-over r_me --domain ${DOMAIN} --confirm ${digest(4)} --forward keep --copy --url ${ORIGIN}`);
+  });
+
+  it("offers a Worker rule a forward to addresses, starting from the verified ones its code names, and sends them (ADR 47 amended)", async () => {
+    const forwardTo = {
+      label: "receive here and forward to addresses you choose", says: "info-worker stops receiving mail for sales@",
+      found: [{ to: "<personal-1>", verified: "verified" as const }, { to: "<personal-2>", verified: "waiting" as const }], foundError: null,
+      copy: { label: "receive here, forward to addresses you choose, and send a copy", says: "a copy is sent from sales@" },
+    };
+    const rules = RULES.map((one) => one.id === "r_sales"
+      ? { ...one, takeOver: offered("info-worker stops receiving mail for sales@", { filesInto: { id: "mbx_sales", name: "Sales" }, forwardTo }) } : one);
+    node({ rules });
+    // Enter at the addresses takes the verified one the code names; the waiting one is shown, never filled in.
+    const tty = terminal(["y", "", "y"], [leave, (options) => options[2]!.value, leave]);
+    await step({ ask: tty.ask, choose: tty.choose });
+    expect(tty.offered[1]).toEqual({ prompt: `   sales@${DOMAIN}`, labels: ["leave it", "receive here", forwardTo.label, forwardTo.copy.label] });
+    expect(printed().replace(/\s+/g, " ")).toContain("found in info-worker's code: <personal-1> (verified), <personal-2> (waiting for verification)");
+    expect(tty.asked).toContain(`   forward sales@${DOMAIN} to (comma-separated) [<personal-1>]: `);
+    expect(posts()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: DOMAIN, ruleId: "r_sales", digest: digest(7), mailboxId: "mbx_sales", forwardTo: ["<personal-1>"],
+    }]]);
+    expect(printed()).toContain("and forwards to <personal-1>");
+    out = [];
+    await step({ yes: true });
+    expect(printed()).toContain(`${forwardTo.label}:`);
+    expect(printed()).toContain(`--take-over r_sales --domain ${DOMAIN} --confirm ${digest(7)} --forward-to <personal-1> --url ${ORIGIN}`);
+  });
+
+  it("sends the addresses typed, and copies with them, and leaves the rule when none is given", async () => {
+    const forwardTo = {
+      label: "forward to", says: "s", found: null, foundError: "info-worker's code could not be read (it needs Workers Scripts Read): 10000 Authentication error",
+      copy: { label: "forward to, with copies", says: "c" },
+    };
+    const rules = RULES.map((one) => one.id === "r_sales"
+      ? { ...one, takeOver: offered("s", { filesInto: { id: "mbx_sales", name: "Sales" }, forwardTo }) } : one);
+    node({ rules });
+    const typed = terminal(["y", " A@x.test, b@x.test ", "y"], [leave, (options) => options[3]!.value, leave]);
+    await step({ ask: typed.ask, choose: typed.choose });
+    expect(printed().replace(/\s+/g, " ")).toContain("info-worker's code was not read: info-worker's code could not be read");
+    expect(posts()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: DOMAIN, ruleId: "r_sales", digest: digest(7), mailboxId: "mbx_sales", copy: true, forwardTo: ["a@x.test", "b@x.test"],
+    }]]);
+    calls = [];
+    const none = terminal(["y", ""], [leave, (options) => options[2]!.value, leave]);
+    await step({ ask: none.ask, choose: none.choose });
+    expect(posts()).toEqual([]);
+    expect(printed()).toContain(`left as it is: no address was given to forward sales@${DOMAIN} to`);
   });
 
   it("changes nothing when the plan is not confirmed", async () => {

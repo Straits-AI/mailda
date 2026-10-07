@@ -26,12 +26,12 @@ export interface IngressResult {
   status: "accepted" | "already_accepted" | "unknown_recipient";
   receiptId?: string;
   /**
-   * The destination this delivery is to be forwarded to now (ADR 47): set only on `accepted`, when the address keeps
-   * a forward and the message does not carry this Node's own loop marker, after the attempt row was committed with
-   * the receipt. The caller makes the call and settles the row (`forwardKept`).
+   * The destinations this delivery is to be forwarded to now (ADR 47): set only on `accepted`, when the address
+   * forwards and the message does not carry this Node's own loop marker, after one attempt row per destination was
+   * committed with the receipt. The caller makes the calls and settles the rows (`forwardKept`).
    */
-  forward?: string;
-  /** Whether the address opted in to a copy when that forward is refused as not verified (ADR 47); set with `forward`. */
+  forward?: string[];
+  /** Whether the address opted in to a copy when a forward is refused as not verified (ADR 47); set with `forward`. */
   copy?: boolean;
 }
 
@@ -56,11 +56,15 @@ export async function acceptInbound(
 ): Promise<IngressResult> {
   // §13: resolve the recipient before touching content. An address this Node does not
   // serve is rejected without reading, storing or paying for the message.
+  // The address's forward destinations ride on the same read (ADR 47), as a JSON array: one query per message either way.
   const address = await env.CATALOG.prepare(
-    "SELECT mailbox_id, kept_forward_to, copy_by FROM addresses WHERE org_id = ? AND address = ? LIMIT 1",
+    `SELECT a.mailbox_id, a.copy_by,
+            (SELECT json_group_array(f.destination) FROM forward_destinations f
+              WHERE f.org_id = a.org_id AND f.address = a.address) AS forwards
+       FROM addresses a WHERE a.org_id = ? AND a.address = ? LIMIT 1`,
   )
     .bind(orgId, message.envelopeTo.toLowerCase())
-    .first<{ mailbox_id: string; kept_forward_to: string | null; copy_by: string | null }>();
+    .first<{ mailbox_id: string; copy_by: string | null; forwards: string }>();
 
   if (address === null) {
     return { status: "unknown_recipient" };
@@ -98,21 +102,21 @@ export async function acceptInbound(
   const stored = await putEvidence(env, blobKey, message.raw);
 
   /*
-   * A kept forward's attempt row (ADR 47), in the same batch so a stored message at such an address always has
-   * one, and only when the receipt row above was inserted: `INSERT OR IGNORE` loses a race silently, and a plain
-   * insert here would then record an attempt for a receipt that does not exist.
+   * A forward's attempt rows (ADR 47), one per destination, in the same batch so a stored message at such an address
+   * always has them, and only when the receipt row above was inserted: `INSERT OR IGNORE` loses a race silently, and
+   * a plain insert here would then record attempts for a receipt that does not exist.
    */
-  const keeps = address.kept_forward_to;
-  const loop = keeps !== null && message.forwardedByThisNode === true;
-  const attempt = keeps === null ? [] : [
+  const forwards = JSON.parse(address.forwards) as string[];
+  const loop = forwards.length > 0 && message.forwardedByThisNode === true;
+  const attempt = forwards.length === 0 ? [] : [
     env.CATALOG.prepare(
-      `INSERT INTO kept_forward_attempts (receipt_id, org_id, address, destination, state, error, attempted_at, settled_at)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM ingress_receipts WHERE id = ?1)`,
+      `INSERT INTO forward_attempts (receipt_id, destination, org_id, address, state, error, attempted_at, settled_at)
+       SELECT ?1, j.value, ?2, ?3, ?4, ?5, ?6, ?7 FROM json_each(?8) j WHERE EXISTS (SELECT 1 FROM ingress_receipts WHERE id = ?1)`,
     ).bind(
-      receiptId, orgId, message.envelopeTo.toLowerCase(), keeps,
+      receiptId, orgId, message.envelopeTo.toLowerCase(),
       loop ? "withheld" : "outcome_unknown",
       loop ? "the message carries this Node's own X-Mailda-Forwarded-By or X-Mailda-Copy-Of marker: it left this Node and came back, so forwarding it again would loop" : null,
-      at, loop ? at : null,
+      at, loop ? at : null, address.forwards,
     ),
   ];
 
@@ -166,7 +170,7 @@ export async function acceptInbound(
     return { status: "already_accepted", receiptId: winner?.id };
   }
 
-  return { status: "accepted", receiptId, ...(keeps === null || loop ? {} : { forward: keeps, copy: address.copy_by !== null }) };
+  return { status: "accepted", receiptId, ...(forwards.length === 0 || loop ? {} : { forward: forwards, copy: address.copy_by !== null }) };
 }
 
 /**

@@ -20,13 +20,19 @@ export function whereTo(rule: ListedRule): string;
 /** Whether taking `rule` over by hand needs `--mailbox`; `mailboxes` null when they could not be listed. Pure. */
 export function needsMailbox(rule: ListedRule, mailboxes: Array<{ id: string; name: string }> | null): boolean;
 
+/** What a Worker rule's code names as forward destinations, or why it was not read, in one sentence. Pure. */
+export function foundSaid(forwardTo: NonNullable<ListedRule["takeOver"]>["forwardTo"] | undefined, worker: string | undefined): string;
+
+/** The verified addresses a Worker rule's code names, which a forward is offered to start from. Pure. */
+export function suggested(forwardTo: NonNullable<ListedRule["takeOver"]>["forwardTo"] | undefined): string[];
+
 /**
  * `mailda provider --take-over …` for one rule, as printed under `--yes`, with `--mailbox` wherever the Node would
  * refuse without it; `mailboxes` null when they could not be listed. Pure.
  */
 export function takeOverCommand(
   rule: ListedRule, domain: string, origin: string, mailboxes?: Array<{ id: string; name: string }> | null,
-  forward?: "keep" | "stop" | null, copy?: boolean,
+  forward?: "keep" | "stop" | null, copy?: boolean, forwardTo?: string[] | null,
 ): string;
 
 /** The commands for one rule under `--yes`: a forward rule's choices (copies too, when listed), each with the Node's label. Pure. */

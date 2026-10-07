@@ -54,7 +54,7 @@ async function tuple(subject: string, relation: string, objectType: string, obje
 }
 
 beforeEach(async () => {
-  for (const table of ["outbox", "log_entries", "ingress_receipts", "addresses", "mailboxes", "node_claim", "kept_forward_attempts",
+  for (const table of ["outbox", "log_entries", "ingress_receipts", "addresses", "mailboxes", "node_claim", "forward_destinations", "forward_attempts",
     "messages", "send_manifests", "send_recipients", "send_copies", "relationship_tuples", "audit_entries", "mailbox_items", "cases"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
@@ -63,15 +63,16 @@ beforeEach(async () => {
     testEnv.CATALOG.prepare("INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,'x',?,?)").bind(CLAIM, at, ORG),
     testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)").bind(MAILBOX, ORG, "Whyme Labs", at),
     testEnv.CATALOG.prepare(
-      "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, kept_forward_to, copy_by, copy_at) VALUES (?,?,?,?,?,?,?,?)",
-    ).bind("addr_keptcopy", ORG, ADDRESS, MAILBOX, at, DEST, ADMIN, at),
+      "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at, copy_by, copy_at) VALUES (?,?,?,?,?,?,?)",
+    ).bind("addr_keptcopy", ORG, ADDRESS, MAILBOX, at, ADMIN, at),
+    testEnv.CATALOG.prepare("INSERT INTO forward_destinations (org_id, address, destination) VALUES (?,?,?)").bind(ORG, ADDRESS, DEST),
   ]);
   await tuple(ADMIN, "org.admin", "organization", ORG);
   await tuple(ADMIN, "send.propose", "mailbox", MAILBOX);
 });
 
 /** One delivery through the email handler, forward() answering as `forward` says, then the outbox's copy events. */
-async function deliver(options: { raw?: string; headers?: Record<string, string>; forward?: () => Promise<unknown> } = {}) {
+async function deliver(options: { raw?: string; headers?: Record<string, string>; forward?: (to: string) => Promise<unknown> } = {}) {
   const raw = options.raw ?? ORIGINAL;
   const message = {
     from: "alice@sender.example",
@@ -104,7 +105,7 @@ async function drainCopies(): Promise<number> {
 }
 
 const attempt = async () => await testEnv.CATALOG.prepare(
-  "SELECT state, error, copy_state, copy_error FROM kept_forward_attempts LIMIT 1",
+  "SELECT state, error, copy_state, copy_error FROM forward_attempts LIMIT 1",
 ).first<{ state: string; error: string | null; copy_state: string | null; copy_error: string | null }>();
 
 const copies = async () => (await testEnv.CATALOG.prepare(
@@ -195,6 +196,53 @@ describe("a copy when the kept forward is refused as not verified", () => {
     await deliver({ headers: { "x-mailda-copy-of": CLAIM } });
     expect(await drainCopies()).toBe(0);
     expect(await attempt()).toMatchObject({ state: "withheld", copy_state: null });
+  });
+});
+
+describe("a copy for an address that forwards to several destinations (ADR 47, amended 7 October 2026)", () => {
+  const SECOND = "another@gmail.test";
+  const rows = async () => (await testEnv.CATALOG.prepare(
+    "SELECT destination, state, copy_state, copy_error FROM forward_attempts ORDER BY destination",
+  ).all<{ destination: string; state: string; copy_state: string | null; copy_error: string | null }>()).results;
+  beforeEach(async () => {
+    await testEnv.CATALOG.prepare("INSERT INTO forward_destinations (org_id, address, destination) VALUES (?,?,?)").bind(ORG, ADDRESS, SECOND).run();
+  });
+
+  it("seals one copy to every destination refused as not verified, and marks each", async () => {
+    await deliver();
+    expect(await drainCopies()).toBe(1);
+    const [copy, more] = await copies();
+    expect(more).toBeUndefined();
+    expect(JSON.parse(copy!.envelope_to).sort()).toEqual([SECOND, DEST]);
+    expect(await rows()).toMatchObject([
+      { destination: SECOND, state: "refused", copy_state: "sealed" },
+      { destination: DEST, state: "refused", copy_state: "sealed" },
+    ]);
+  });
+
+  it("copies only to the destination refused, never to one handed over", async () => {
+    await deliver({ forward: async (to) => { if (to === SECOND) throw new Error(NOT_VERIFIED); } });
+    await drainCopies();
+    const [copy] = await copies();
+    expect(JSON.parse(copy!.envelope_to)).toEqual([SECOND]);
+    expect(await rows()).toMatchObject([
+      { destination: SECOND, state: "refused", copy_state: "sealed" },
+      { destination: DEST, state: "handed_over", copy_state: null },
+    ]);
+  });
+
+  it("refuses the copy to a destination on a domain this organisation receives at, and seals the others'", async () => {
+    await testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES ('addr_other', ?, 'x@other.test', ?, ?)")
+      .bind(ORG, MAILBOX, new Date().toISOString()).run();
+    await testEnv.CATALOG.prepare("UPDATE forward_destinations SET destination = 'boss@other.test' WHERE destination = ?").bind(SECOND).run();
+    await deliver();
+    await drainCopies();
+    const [copy] = await copies();
+    expect(JSON.parse(copy!.envelope_to)).toEqual([DEST]);
+    const [loop, sealed] = await rows();
+    expect(loop).toMatchObject({ destination: "boss@other.test", copy_state: "refused" });
+    expect(loop!.copy_error).toContain("where this organisation receives mail");
+    expect(sealed).toMatchObject({ destination: DEST, copy_state: "sealed" });
   });
 });
 
@@ -365,7 +413,7 @@ describe("turning copies on and off", () => {
   it("records who and when, audited without the destination, and clears both when turned off", async () => {
     await off();
     const on = await setKeptForwardCopy(testEnv, ctx, ORG, ADMIN, "Hello@KeptCopy.example", true);
-    expect(on).toMatchObject({ address: ADDRESS, to: DEST, by: ADMIN });
+    expect(on).toMatchObject({ address: ADDRESS, to: [DEST], by: ADMIN });
     const entry = await testEnv.CATALOG.prepare("SELECT actor_user_id, subject, detail FROM audit_entries WHERE action = 'kept_forward.copy_set'")
       .first<{ actor_user_id: string; subject: string; detail: string }>();
     expect(entry).toMatchObject({ actor_user_id: ADMIN, subject: ADDRESS });
@@ -376,7 +424,7 @@ describe("turning copies on and off", () => {
   });
 
   it("refuses an address that keeps no forward", async () => {
-    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = NULL").run();
+    await testEnv.CATALOG.prepare("DELETE FROM forward_destinations").run();
     await expect(setKeptForwardCopy(testEnv, ctx, ORG, ADMIN, ADDRESS, true)).rejects.toThrow("E_ADDRESS_KEEPS_NO_FORWARD");
   });
 
@@ -390,9 +438,9 @@ describe("turning copies on and off", () => {
 
   it("refuses a destination on a domain this organisation receives at, including the address's own", async () => {
     await off();
-    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = 'me@keptcopy.example'").run();
+    await testEnv.CATALOG.prepare("UPDATE forward_destinations SET destination = 'me@keptcopy.example'").run();
     await expect(setKeptForwardCopy(testEnv, ctx, ORG, ADMIN, ADDRESS, true)).rejects.toThrow("E_COPY_WOULD_LOOP");
-    await testEnv.CATALOG.prepare("UPDATE addresses SET kept_forward_to = ?").bind(DEST).run();
+    await testEnv.CATALOG.prepare("UPDATE forward_destinations SET destination = ?").bind(DEST).run();
     await testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES ('addr_g', ?, 'x@gmail.test', ?, ?)")
       .bind(ORG, MAILBOX, new Date().toISOString()).run();
     await expect(setKeptForwardCopy(testEnv, ctx, ORG, ADMIN, ADDRESS, true)).rejects.toThrow("E_COPY_WOULD_LOOP");

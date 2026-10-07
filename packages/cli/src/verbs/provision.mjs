@@ -108,7 +108,7 @@ export function destinationSaid(destination) {
 export function keptForwardLines(one) {
   const verified = one.verified === null ? "not checked" : one.verified === "waiting" ? "waiting for verification"
     : one.verified === "absent" ? "not a destination of the account" : "verified";
-  const last = one.last === null ? "nothing has arrived since it was kept"
+  const last = one.last === null ? "nothing has arrived since it was added"
     : one.last.state === "handed_over" ? `last forwarded ${one.last.at}`
       : one.last.state === "refused" ? `not forwarded at ${one.last.at}: ${one.last.error}`
         : one.last.state === "withheld" ? `withheld at ${one.last.at}: ${one.last.error}`
@@ -123,7 +123,7 @@ export function keptForwardLines(one) {
     `${one.address}  forwards to ${one.to} (${verified}${one.checkedAt === null ? "" : `, read ${one.checkedAt}`})`,
     ...wrapAt(last, 88).map((line) => `  ${line}`),
     ...(copied === null ? [] : wrapAt(copied, 88).map((line) => `  ${line}`)),
-    `  ${(one.copy ?? null) === null ? "copies off" : `copies on, by ${one.copy.by} at ${one.copy.at}: when the forward is refused as not verified, the message is sent from ${one.address}`}`,
+    `  ${(one.copy ?? null) === null ? "copies off" : `copies on, by ${one.copy.by} at ${one.copy.at}: when a forward is refused as not verified, the message is sent from ${one.address}`}`,
   ];
 }
 

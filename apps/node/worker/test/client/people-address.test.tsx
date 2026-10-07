@@ -230,7 +230,7 @@ describe("copies, under an address that keeps a forward (ADR 47, amended 3 Octob
     const line = (await screen.findByText(/forwards to/)).closest("li")!;
     expect(line.textContent).toContain("Copies off.");
     expect(line.textContent).toContain("Send copies");
-    expect(line.textContent).toContain('a copy from support@example.test: the recipient sees it from "<sender> via Support", and replies go to the sender. Up to 5.0 MB.');
+    expect(line.textContent).toContain('a copy from support@example.test: the recipient sees it from "<sender> via Support", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to 5.0 MB.');
     expect(line.textContent).toContain("Each copy counts towards today's sending");
   });
 

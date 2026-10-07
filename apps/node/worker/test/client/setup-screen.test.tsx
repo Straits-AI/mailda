@@ -714,7 +714,7 @@ describe("the rules already on a zone", () => {
     const box = screen.getByLabelText(/Also send a copy/) as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(screen.getByText(/^A copy is sent from hello@example.com/).textContent)
-      .toContain('the recipient sees it from "<sender> via Me", and replies go to the sender. Up to 5.0 MB.');
+      .toContain('the recipient sees it from "<sender> via Me", and replies go to the sender. One copy goes to every destination refused for a message, and names them all in its To. Up to 5.0 MB.');
     fireEvent.click(box);
     fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
     expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
@@ -733,6 +733,51 @@ describe("the rules already on a zone", () => {
     fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
     await screen.findByText(/hello@example.com: was forward/);
     expect(posted()).toEqual([["/api/provider/routing-rules/take-over", { domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forward: "stop" }]]);
+  });
+
+  // ADR 47 amended (7 October 2026): a Worker rule's forward to addresses chosen here, started from its code.
+  const FORWARD_TO = {
+    label: "receive here and forward to addresses you choose", says: "info-worker stops receiving mail for sales@example.com",
+    found: [{ to: "a@gmail.test", verified: "verified" }, { to: "w@gmail.test", verified: "waiting" }], foundError: null,
+    copy: { label: "and copies", says: "a copy is sent" },
+  };
+  const toWorker = (forwardTo: typeof FORWARD_TO | (Omit<typeof FORWARD_TO, "found" | "foundError"> & { found: null; foundError: string })) => rule({
+    action: "worker", destinations: ["info-worker"],
+    takeOver: { label: "receive here", says: "info-worker stops receiving mail", filesInto: { id: "mbx_s", name: "Sales" }, asksMailbox: false, keep: null, forwardTo },
+  });
+
+  it("offers a Worker rule its forward, filled with the verified addresses its code names, and sends the list as edited", async () => {
+    mount({ rules: listing([toWorker(FORWARD_TO)]), takenOver: { outcome: { ...TAKEN.outcome, forwards: ["a@gmail.test", "b@gmail.test"] } } });
+    await list();
+    fireEvent.click(await screen.findByText(FORWARD_TO.label));
+    expect(screen.getByText(`${FORWARD_TO.says}.`)).toBeTruthy();
+    expect(screen.getByText(/Filled in from the addresses info-worker's code names/)).toBeTruthy();
+    const field = screen.getByLabelText("Forward to (separated by commas)") as HTMLInputElement;
+    // The waiting one is shown on the listing, never filled in.
+    expect(field.value).toBe("a@gmail.test");
+    fireEvent.change(field, { target: { value: "a@gmail.test, b@gmail.test" } });
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    expect((await screen.findByText(/hello@example.com: was forward/)).textContent)
+      .toContain("It forwards to a@gmail.test, b@gmail.test, after each message is stored here.");
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: "example.com", ruleId: "r1", digest: "e".repeat(64), forwardTo: ["a@gmail.test", "b@gmail.test"],
+    }]]);
+  });
+
+  it("says why the Worker's code was not read, and confirms nothing until an address is typed", async () => {
+    const unread = { ...FORWARD_TO, found: null, foundError: "info-worker's code could not be read (it needs Workers Scripts Read): 10000 Authentication error" };
+    mount({ rules: listing([toWorker(unread)]), takenOver: TAKEN });
+    await list();
+    fireEvent.click(await screen.findByText(FORWARD_TO.label));
+    expect(screen.getByText(/it needs Workers Scripts Read/)).toBeTruthy();
+    expect((screen.getByText("Yes, point hello@example.com here") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Forward to (separated by commas)"), { target: { value: "c@gmail.test" } });
+    fireEvent.click(screen.getByLabelText(/Also send a copy/));
+    fireEvent.click(screen.getByText("Yes, point hello@example.com here"));
+    await screen.findByText(/hello@example.com: was forward/);
+    expect(posted()).toEqual([["/api/provider/routing-rules/take-over", {
+      domain: "example.com", ruleId: "r1", digest: "e".repeat(64), copy: true, forwardTo: ["c@gmail.test"],
+    }]]);
   });
 
   // Review, 1 October 2026: what the screen said, and offered, around a mailbox it made for a take-over refused after.

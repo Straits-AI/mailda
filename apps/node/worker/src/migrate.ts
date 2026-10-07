@@ -74,6 +74,7 @@ import m0073 from "../migrations/0073_state_reason_invariant.sql";
 import m0074 from "../migrations/0074_kept_forwards.sql";
 import m0075 from "../migrations/0075_kept_forward_copies.sql";
 import m0076 from "../migrations/0076_state_reason_repair_index.sql";
+import m0077 from "../migrations/0077_forward_destinations.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -205,6 +206,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0074_kept_forwards.sql", sql: m0074 },
   { name: "0075_kept_forward_copies.sql", sql: m0075 },
   { name: "0076_state_reason_repair_index.sql", sql: m0076 },
+  { name: "0077_forward_destinations.sql", sql: m0077 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

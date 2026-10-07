@@ -34,6 +34,8 @@ beforeEach(async () => {
     testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
     testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
+    testEnv.CATALOG.prepare("DELETE FROM forward_destinations WHERE org_id = ?").bind(ORG),
+    testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM mailboxes WHERE org_id = ?").bind(ORG),
   ]);
   await testEnv.CATALOG.prepare(
@@ -72,6 +74,8 @@ function serving(
     readBack = "answer" as "answer" | "lost",
     // The account's destination addresses (ADR 47), as Cloudflare lists them; null answers a refusal.
     destinations = [{ email: "somebody@gmail.test", verified: "2025-01-01T00:00:00Z" }] as Array<{ email: string; verified: string | null }> | null,
+    // Each Worker's source, as `/workers/scripts/{name}/content/v2` answers it; a Worker not named here is refused.
+    scripts = {} as Record<string, string>,
   } = {},
 ) {
   const rules = initial.map((one) => ({ ...one }));
@@ -86,6 +90,8 @@ function serving(
     });
     if (path.startsWith("/zones?name=example.test")) return ok([{ id: "zone_1", name: "example.test" }]);
     if (path.includes("/email/routing/addresses")) return destinations === null ? refused(10000, "Authentication error") : ok(destinations);
+    const script = /^\/accounts\/acc_rules\/workers\/scripts\/([^/]+)\/content\/v2$/.exec(path);
+    if (script !== null) return Object.hasOwn(scripts, script[1]!) ? new Response(scripts[script[1]!]) : refused(10000, "Authentication error");
     if (path.startsWith("/zones?name=")) return ok([]);
     if (path === "/zones/zone_1/email/routing") return settings === null ? refused(10000, "Authentication error") : ok(settings);
     const one = /\/email\/routing\/rules\/([^?]+)$/.exec(path);
@@ -427,11 +433,15 @@ describe("what the listing offers, per kind of rule", () => {
         // The fourth (ADR 47 amended): keep with copies, stating what a copy is and its limit, by the budget's name.
         copy: {
           label: "receive here, keep forwarding to somebody@gmail.test, and send a copy when that forward is refused as not verified",
-          says: expect.stringContaining(`a copy is sent from hello@example.test: the recipient sees it from "<sender> via <mailbox>", and replies go to the sender. Up to ${BUDGETS["email.outbound.max_bytes"]} bytes (email.outbound.max_bytes)`),
+          says: expect.stringContaining(`Up to ${BUDGETS["email.outbound.max_bytes"]} bytes (email.outbound.max_bytes)`),
         },
       },
+      // A forward rule keeps its own destination; forwarding to addresses chosen is a Worker rule's choice.
+      forwardTo: null,
     });
+    expect(by.rule_hello!.takeOver!.keep!.copy.says).toContain('a copy is sent from hello@example.test: the recipient sees it from "<sender> via <mailbox>", and replies go to the sender');
     expect(by.rule_sales!.takeOver!.keep).toBeNull();
+    expect(by.rule_junk!.takeOver!.forwardTo).toBeNull();
     expect(by.rule_junk!.takeOver!.keep).toBeNull();
     expect(by.rule_sales!.takeOver).toMatchObject({
       label: "receive here", filesInto: null, asksMailbox: false,
@@ -539,7 +549,8 @@ describe("the take-over is recorded in the rule's own name (critic H1, 1 October
 
 describe("a forward rule's third choice: receive here and keep forwarding (ADR 47)", () => {
   const kept = async () => await testEnv.CATALOG.prepare(
-    "SELECT kept_forward_to AS too, kept_forward_verified AS verified FROM addresses WHERE org_id = ? AND address = ?",
+    `SELECT f.destination AS too, f.verified FROM addresses a
+       LEFT JOIN forward_destinations f ON f.org_id = a.org_id AND f.address = a.address WHERE a.org_id = ? AND a.address = ?`,
   ).bind(ORG, "hello@example.test").first<{ too: string | null; verified: string | null }>();
 
   it("refuses a forward rule taken over with no choice made, and writes nothing", async () => {
@@ -618,7 +629,7 @@ describe("a forward rule's third choice: receive here and keep forwarding (ADR 4
     await takeOver("rule_hello", MAILBOX, "keep");
     rules[0]!.actions = FORWARD.actions;
     await expect(putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello"))
-      .rejects.toThrow(/E_ROUTING_RULE_NOT_OURS_NOW[\s\S]*stopped keeping its forward of hello@example.test/);
+      .rejects.toThrow(/E_ROUTING_RULE_NOT_OURS_NOW[\s\S]*stopped forwarding hello@example.test/);
     expect(await kept()).toEqual({ too: null, verified: null });
   });
 
@@ -626,13 +637,14 @@ describe("a forward rule's third choice: receive here and keep forwarding (ADR 4
     serving([FORWARD]);
     await takeOver("rule_hello", MAILBOX, "keep");
     await expect(removeAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "hello@example.test"))
-      .rejects.toThrow(/E_ADDRESS_KEEPS_A_FORWARD[\s\S]*put the rule back first/);
+      .rejects.toThrow(/E_ADDRESS_KEEPS_A_FORWARD[\s\S]*put its rule back/);
   });
 });
 
 describe("a kept forward with copies turned on at the take-over (ADR 47, amended 3 October 2026)", () => {
   const copyOf = async () => await testEnv.CATALOG.prepare(
-    "SELECT kept_forward_to AS too, copy_by AS by, copy_at AS at FROM addresses WHERE org_id = ? AND address = ?",
+    `SELECT f.destination AS too, a.copy_by AS by, a.copy_at AS at FROM addresses a
+       LEFT JOIN forward_destinations f ON f.org_id = a.org_id AND f.address = a.address WHERE a.org_id = ? AND a.address = ?`,
   ).bind(ORG, "hello@example.test").first<{ too: string | null; by: string | null; at: string | null }>();
   const takeOverCopying = async (forward: "keep" | "stop") => {
     const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
@@ -671,5 +683,157 @@ describe("a kept forward with copies turned on at the take-over (ADR 47, amended
     await takeOverCopying("keep");
     await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_hello");
     expect(await copyOf()).toMatchObject({ too: null, by: null, at: null });
+  });
+});
+
+/**
+ * A Worker rule's forward to addresses chosen at the take-over (ADR 47, amended 7 October 2026): offered from what the
+ * Worker's code names, never applied by itself, and checked as People's setter checks them.
+ */
+describe("a Worker rule's choice: receive here and forward to addresses you choose", () => {
+  const WORKER = { ...FORWARD, id: "rule_sales", name: "sales", matchers: [{ type: "literal", field: "to", value: "sales@example.test" }],
+    actions: [{ type: "worker", value: ["info-worker"] }] };
+  const CODE = 'const recipients = ["Somebody@gmail.test", "other@gmail.test", "unlisted@gmail.test"]; // sales@example.test';
+  const LISTED = [
+    { email: "somebody@gmail.test", verified: "2025-01-01T00:00:00Z" },
+    { email: "other@gmail.test", verified: null },
+  ];
+  const forwards = async () => (await testEnv.CATALOG.prepare(
+    "SELECT destination, verified FROM forward_destinations WHERE org_id = ? AND address = ? ORDER BY destination",
+  ).bind(ORG, "sales@example.test").all<{ destination: string; verified: string | null }>()).results;
+  const takeOverTo = async (to: string[], copy = false) => {
+    const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules.find((r) => r.id === "rule_sales")!;
+    return await takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_sales", listed.digest, MAILBOX, null, copy, to);
+  };
+
+  it("offers the addresses the Worker's code names that the account lists, each with its state, and no other", async () => {
+    serving([WORKER], { destinations: LISTED, scripts: { "info-worker": CODE } });
+    const [rule] = (await routingRulesFor(testEnv, atTime(AT), ORG, "example.test")).rules;
+    expect(rule!.takeOver!.forwardTo).toMatchObject({
+      found: [{ to: "other@gmail.test", verified: "waiting" }, { to: "somebody@gmail.test", verified: "verified" }], foundError: null,
+    });
+    expect(rule!.takeOver!.forwardTo!.says).toContain(`up to ${BUDGETS["forward.max_destinations"]}`);
+  });
+
+  it("says why when the Worker's code cannot be read, naming the permission", async () => {
+    serving([WORKER], { destinations: LISTED });
+    const [rule] = (await routingRulesFor(testEnv, atTime(AT), ORG, "example.test")).rules;
+    expect(rule!.takeOver!.forwardTo).toMatchObject({ found: null });
+    expect(rule!.takeOver!.forwardTo!.foundError).toMatch(/info-worker's code could not be read \(it needs Workers Scripts Read\): 10000 Authentication error/);
+  });
+
+  it("offers it on a Worker rule only", async () => {
+    serving([FORWARD], { scripts: { "info-worker": CODE } });
+    expect((await routingRulesFor(testEnv, atTime(AT), ORG, "example.test")).rules[0]!.takeOver!.forwardTo).toBeNull();
+  });
+
+  it("forwards to the addresses chosen, folded, and the trail counts them without naming one", async () => {
+    serving([WORKER], { destinations: LISTED });
+    const outcome = await takeOverTo(["Somebody@Gmail.test", "somebody@gmail.test"]);
+    expect(outcome).toMatchObject({ keptForward: null, forwards: ["somebody@gmail.test"], after: { action: "worker" } });
+    expect(await forwards()).toEqual([{ destination: "somebody@gmail.test", verified: "verified" }]);
+    const [entry] = await entries("provider.routing_rule_taken_over");
+    expect(entry!.detail).toMatchObject({ forward: null, forwardTo: 1 });
+    expect(JSON.stringify(entry!.detail)).not.toContain("somebody@gmail.test");
+  });
+
+  it("refuses addresses on a rule that is not a Worker's, and writes nothing", async () => {
+    const { puts } = serving([FORWARD]);
+    const listed = (await routingRulesFor(testEnv, atTime(AT + 3000), ORG, "example.test")).rules[0]!;
+    await expect(takeOverRule(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", "rule_hello", listed.digest, MAILBOX, "keep", false,
+      ["somebody@gmail.test"])).rejects.toThrow(/E_ROUTING_FORWARD_TO_NOT_A_WORKER/);
+    expect(puts).toEqual([]);
+  });
+
+  it("refuses one the account lists unverified, unless copies are on", async () => {
+    const { puts } = serving([WORKER], { destinations: LISTED });
+    await expect(takeOverTo(["somebody@gmail.test", "other@gmail.test"])).rejects.toThrow(/E_FORWARD_DESTINATION_NOT_VERIFIED[\s\S]*other@gmail.test is registered but not yet verified/);
+    expect(puts).toEqual([]);
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at) VALUES ('rt_to', ?, ?, 'send.propose', 'mailbox', ?, ?)",
+    ).bind(ORG, ADMIN, MAILBOX, new Date(AT).toISOString()).run();
+    expect(await takeOverTo(["somebody@gmail.test", "other@gmail.test"], true)).toMatchObject({ copy: true });
+    expect(await forwards()).toEqual([
+      { destination: "other@gmail.test", verified: "waiting" }, { destination: "somebody@gmail.test", verified: "verified" },
+    ]);
+  });
+
+  it("refuses an address on a domain this organisation receives at", async () => {
+    serving([WORKER], { destinations: LISTED });
+    await expect(takeOverTo(["boss@example.test"])).rejects.toThrow(/E_FORWARD_WOULD_LOOP[\s\S]*boss@example.test is on example.test/);
+  });
+
+  it("refuses more than forward.max_destinations, naming the budget, the limit and the ask", async () => {
+    serving([WORKER], { destinations: LISTED });
+    const many = Array.from({ length: BUDGETS["forward.max_destinations"] + 1 }, (_, i) => `n${i}@gmail.test`);
+    await expect(takeOverTo(many)).rejects.toThrow(
+      `forward.max_destinations=${BUDGETS["forward.max_destinations"]}, this asked for ${BUDGETS["forward.max_destinations"] + 1}`,
+    );
+  });
+
+  it("stops forwarding when the rule is put back", async () => {
+    serving([WORKER], { destinations: LISTED });
+    await takeOverTo(["somebody@gmail.test"]);
+    await putBackRule(testEnv, atTime(AT + 5000), ORG, ADMIN, "example.test", "rule_sales");
+    expect(await forwards()).toEqual([]);
+  });
+});
+
+describe("setting where an address forwards (POST /api/forwards)", () => {
+  const ADDRESS = "hello@example.test";
+  beforeEach(async () => {
+    await testEnv.CATALOG.prepare("INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES ('addr_set', ?, ?, ?, ?)")
+      .bind(ORG, ADDRESS, MAILBOX, new Date(AT).toISOString()).run();
+  });
+  const set = async (to: string[]) => {
+    const { setForwards } = await import("../src/kept-forward.ts");
+    return await setForwards(testEnv, atTime(AT), ORG, ADMIN, ADDRESS, to);
+  };
+  const now = async () => (await testEnv.CATALOG.prepare(
+    "SELECT destination, verified FROM forward_destinations WHERE org_id = ? AND address = ? ORDER BY destination",
+  ).bind(ORG, ADDRESS).all<{ destination: string; verified: string | null }>()).results;
+
+  it("replaces the list, folded and each once, with what the account's list says of each added one", async () => {
+    serving([], { destinations: [{ email: "a@gmail.test", verified: "2025-01-01T00:00:00Z" }, { email: "b@gmail.test", verified: "2025-01-01T00:00:00Z" }] });
+    expect(await set(["B@gmail.test", "a@gmail.test", "b@gmail.test"])).toEqual({ address: ADDRESS, to: ["a@gmail.test", "b@gmail.test"] });
+    expect(await set(["b@gmail.test"])).toEqual({ address: ADDRESS, to: ["b@gmail.test"] });
+    expect(await now()).toEqual([{ destination: "b@gmail.test", verified: "verified" }]);
+    const trail = await entries("forward.destinations_set");
+    expect(trail.map((one) => one.detail)).toMatchObject([{ count: 2, added: 2, removed: 0 }, { count: 1, added: 0, removed: 1 }]);
+    expect(JSON.stringify(trail)).not.toContain("gmail.test");
+  });
+
+  it("stops forwarding with an empty list, and turns copies off with it", async () => {
+    serving([], { destinations: [{ email: "a@gmail.test", verified: "2025-01-01T00:00:00Z" }] });
+    await set(["a@gmail.test"]);
+    await testEnv.CATALOG.prepare("UPDATE addresses SET copy_by = ?, copy_at = ? WHERE address = ?").bind(ADMIN, new Date(AT).toISOString(), ADDRESS).run();
+    expect(await set([])).toEqual({ address: ADDRESS, to: [] });
+    expect(await now()).toEqual([]);
+    expect(await testEnv.CATALOG.prepare("SELECT copy_by FROM addresses WHERE address = ?").bind(ADDRESS).first()).toEqual({ copy_by: null });
+  });
+
+  it("keeps a destination as not checked when the account's list cannot be read", async () => {
+    serving([], { destinations: null });
+    await set(["a@gmail.test"]);
+    expect(await now()).toEqual([{ destination: "a@gmail.test", verified: null }]);
+  });
+
+  it("refuses one listed unverified or not at all, an address this Node does not have, and too many", async () => {
+    serving([], { destinations: [{ email: "a@gmail.test", verified: null }] });
+    await expect(set(["a@gmail.test"])).rejects.toThrow(/E_FORWARD_DESTINATION_NOT_VERIFIED[\s\S]*turn copies on for hello@example.test/);
+    await expect(set(["z@gmail.test"])).rejects.toThrow(/E_FORWARD_DESTINATION_NOT_VERIFIED[\s\S]*not a destination address of this account/);
+    await expect(set(["not an address"])).rejects.toThrow(/E_FORWARD_DESTINATION_INVALID/);
+    const { setForwards } = await import("../src/kept-forward.ts");
+    await expect(setForwards(testEnv, atTime(AT), ORG, ADMIN, "nobody@example.test", [])).rejects.toThrow(/E_NO_SUCH_ADDRESS/);
+    await expect(set(Array.from({ length: BUDGETS["forward.max_destinations"] + 1 }, (_, i) => `n${i}@gmail.test`)))
+      .rejects.toThrow(/E_BUDGET_EXCEEDED[\s\S]*forward.max_destinations/);
+    expect(await now()).toEqual([]);
+  });
+
+  it("keeps a destination already there without checking it again", async () => {
+    serving([], { destinations: [{ email: "a@gmail.test", verified: "2025-01-01T00:00:00Z" }] });
+    await set(["a@gmail.test"]);
+    serving([], { destinations: [] });
+    expect(await set(["a@gmail.test"])).toEqual({ address: ADDRESS, to: ["a@gmail.test"] });
   });
 });

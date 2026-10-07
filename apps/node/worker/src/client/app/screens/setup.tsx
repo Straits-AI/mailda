@@ -466,8 +466,11 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
   const [listing, setListing] = useState<RoutingRules | null>(null);
   const [mailboxId, setMailboxId] = useState("");
   const [arming, setArming] = useState<string | null>(null);
-  // A forward rule's choice (ADR 47): which of its two buttons armed the confirm. Undefined on any other rule.
-  const [forward, setForward] = useState<"keep" | "stop" | undefined>(undefined);
+  // A forward rule's choice (ADR 47): which of its two buttons armed the confirm; "to" is a Worker rule's forward to
+  // addresses chosen here (amended 7 October 2026). Undefined otherwise.
+  const [forward, setForward] = useState<"keep" | "stop" | "to" | undefined>(undefined);
+  // With "to": the addresses, comma-separated, filled in from the verified ones the Worker's code names.
+  const [forwardTo, setForwardTo] = useState("");
   // With keep: also send a copy when the forward is refused as not verified (ADR 47, amended 3 October 2026). Off
   // until ticked, every time the confirm is armed.
   const [copy, setCopy] = useState(false);
@@ -486,10 +489,11 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     setListing(answer.value.routing);
   }
 
-  function arm(rule: RoutingRule, choice?: "keep" | "stop") {
+  function arm(rule: RoutingRule, choice?: "keep" | "stop" | "to") {
     setArming(rule.id);
     setForward(choice);
     setCopy(false);
+    setForwardTo((rule.takeOver?.forwardTo?.found ?? []).filter((one) => one.verified === "verified").map((one) => one.to).join(", "));
     // The mailbox already named after the address first, then (a forward) a new one, else the only one, else none yet.
     const { named, fresh } = namedAfter(rule, boxes);
     setMailboxId(named?.id ?? (rule.takeOver?.asksMailbox ? (fresh ? NEW_MAILBOX : "") : boxes.length === 1 ? boxes[0]!.id : ""));
@@ -511,8 +515,9 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
     }
     const answer = rule.offer === "put_back"
       ? await putBackRule(listing.domain, rule.id)
-      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined, forward,
-        forward === "keep" && copy);
+      : await takeOverRule(listing.domain, rule.id, rule.digest, rule.takeOver?.filesInto === null ? into : undefined,
+        forward === "to" ? undefined : forward, (forward === "keep" || forward === "to") && copy,
+        forward === "to" ? forwardTo.split(",").map((one) => one.trim()).filter((one) => one !== "") : undefined);
     setBusy(false);
     setArming(null);
     if (!answer.ok) {
@@ -529,6 +534,8 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
         {done.mailbox === null ? null : <>{t("join.sentence")}{t("setup.rules.filedInto", { name: done.mailbox.name })}</>}
         {done.nameRecorded === false ? <>{t("join.sentence")}{t("setup.rules.nameNotRecorded")}</> : null}
         {(done.keptForward ?? null) === null ? null : <>{t("join.sentence")}{t("setup.rules.keptForward", { to: done.keptForward ?? "" })}</>}
+        {(done.keptForward ?? null) !== null || (done.forwards ?? []).length === 0 ? null
+          : <>{t("join.sentence")}{t("setup.rules.forwardsTo", { to: (done.forwards ?? []).join(", ") })}</>}
         {done.copy === true ? <>{t("join.sentence")}{t("setup.rules.copyOn", { address: done.to })}</> : null}
       </>,
     );
@@ -579,14 +586,27 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                       <span className="dim">{rule.refusal === null ? null : nodeSaid(`${rule.refusal.what}: ${rule.refusal.fix}`)}</span>
                     ) : arming === rule.id ? (
                       <>
-                        {rule.takeOver === null ? null : <p><NodeWords>{forward === "keep" ? rule.takeOver.keep?.says : rule.takeOver.says}.</NodeWords></p>}
+                        {rule.takeOver === null ? null : <p><NodeWords>{forward === "keep" ? rule.takeOver.keep?.says
+                          : forward === "to" ? rule.takeOver.forwardTo?.says : rule.takeOver.says}.</NodeWords></p>}
+                        {forward !== "to" || (rule.takeOver?.forwardTo ?? null) === null ? null : (
+                          <>
+                            <p className="dim">{rule.takeOver!.forwardTo!.found === null
+                              ? nodeSaid(rule.takeOver!.forwardTo!.foundError ?? "")
+                              : t(rule.takeOver!.forwardTo!.found.some((one) => one.verified === "verified") ? "setup.rules.foundIn" : "setup.rules.foundNothing",
+                                { worker: rule.destinations[0] ?? "" })}</p>
+                            <label className="field-row" htmlFor={`setup-forward-to-${rule.id}`}>
+                              <span>{t("setup.rules.forwardTo")}</span>
+                              <input id={`setup-forward-to-${rule.id}`} className="mono" value={forwardTo} onChange={(event) => setForwardTo(event.target.value)} />
+                            </label>
+                          </>
+                        )}
                         {rule.takeOver === null ? null : rule.takeOver.filesInto !== null || (!rule.takeOver.asksMailbox && boxes.length === 1) ? (
                           // No choice to make, so the mailbox is named before the confirm, as `mailda setup`'s plan names it.
                           <p>{t("setup.rules.filesInto", { name: rule.takeOver.filesInto?.name ?? boxes[0]!.name })}</p>
                         ) : (
                           <MailboxChoice rule={rule} boxes={boxes} value={mailboxId} onChange={setMailboxId} />
                         )}
-                        {forward !== "keep" ? null : (
+                        {forward !== "keep" && forward !== "to" ? null : (
                           <>
                             <label className="field-row" htmlFor={`setup-copy-${rule.id}`}>
                               <input id={`setup-copy-${rule.id}`} type="checkbox" checked={copy} onChange={(event) => setCopy(event.target.checked)} />
@@ -599,7 +619,7 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                             })}</p>
                           </>
                         )}
-                        <button type="button" className="primary" disabled={busy} onClick={() => void act(rule)}>
+                        <button type="button" className="primary" disabled={busy || (forward === "to" && forwardTo.trim() === "")} onClick={() => void act(rule)}>
                           {busy ? t("setup.working") : rule.offer === "put_back" ? t("setup.rules.putBack.confirm") : t("setup.rules.takeOver.confirm", { address: rule.to })}
                         </button>
                       </>
@@ -612,6 +632,12 @@ function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: st
                         {rule.offer === "take_over" && (rule.takeOver?.keep ?? null) !== null ? (
                           <>{" "}<button type="button" className="quiet" disabled={busy} onClick={() => arm(rule, "keep")}>
                             <NodeWords>{rule.takeOver!.keep!.label}</NodeWords>
+                          </button></>
+                        ) : null}
+                        {/* A Worker rule's other choice, in the Node's words (ADR 47, amended 7 October 2026). */}
+                        {rule.offer === "take_over" && (rule.takeOver?.forwardTo ?? null) !== null ? (
+                          <>{" "}<button type="button" className="quiet" disabled={busy} onClick={() => arm(rule, "to")}>
+                            <NodeWords>{rule.takeOver!.forwardTo!.label}</NodeWords>
                           </button></>
                         ) : null}
                       </>

@@ -464,6 +464,11 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/forwards/copy",
     /*
+     * Setting where an address forwards (ADR 47, amended 7 October 2026) hands somebody's mail to whoever reads each
+     * destination, every message from then on. A person's act, like the copy beside it.
+     */
+    "POST /api/forwards",
+    /*
      * The proposal read, `operator` for the same reason as the two above — it spends the grant — and for one
      * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
      * the digest is the only thing standing between a `POST` and a change to the customer's DNS.

@@ -35,6 +35,8 @@ export const EXPECTED_TABLES = [
   "kept_forward_attempts",
   // Migration 0075 (ADR 47 amended): one row per copy sealed when a kept forward was refused.
   "send_copies",
+  // Migration 0077 (ADR 47 amended): each address's forward destinations, and each forward's attempt.
+  "forward_destinations", "forward_attempts",
   // Migration 0061: words people put on messages. 0062: which messages each person has opened.
   "message_labels", "message_reads", "message_places",
   // Migration 0012 (durable drafts).

@@ -102,6 +102,8 @@ function configModule(): string {
     // The most a copy (ADR 47) may be, which People and Setup state where copies are turned on: the same figure the
     // seal refuses past, `email.outbound.max_bytes`.
     outboundMaxBytes: MAX_OUTBOUND_BYTES,
+    // How many destinations an address may forward to (ADR 47, amended 7 October 2026), stated where they are set.
+    forwardMaxDestinations: BUDGETS["forward.max_destinations"],
   };
   // `<` escaped as \\u003c: valid JSON, valid JavaScript, and inert if this string is ever interpolated
   // into markup by something that does not know it was not meant to be. Nothing in here is
