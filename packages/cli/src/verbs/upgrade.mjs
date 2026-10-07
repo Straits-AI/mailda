@@ -10,6 +10,7 @@ import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount 
 import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
 import { plural } from "@mailda/runtime";
+import { askAdministrator } from "../credentials.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -117,8 +118,7 @@ export async function upgrade(argv) {
   if (process.env.MAILDA_EMAIL === undefined || process.env.MAILDA_PASSWORD === undefined) {
     if (yes) fail("--yes needs MAILDA_EMAIL and MAILDA_PASSWORD, for the backup and the canary gate.");
     process.stdout.write("\n== an administrator, for the backup\n");
-    process.env.MAILDA_EMAIL = (await ask("   email: ")).trim();
-    process.env.MAILDA_PASSWORD = await readSecret("   password (not echoed): ");
+    await askAdministrator(url, { ask, readSecret, fail });
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const out = flag(argv, "backup-out") ?? resolve(REPO, ".mailda", "backups", name, stamp);

@@ -2,6 +2,7 @@ import { api, choose, fail, flag, readSecret, sessionCookie } from "../support.m
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
 import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
+import { askAdministrator } from "../credentials.mjs";
 
 /**
  * `mailda setup`: receiving, sending and delivery outcomes for a Node that is already deployed and claimed,
@@ -33,8 +34,7 @@ export async function setup(argv) {
   if (process.env.MAILDA_EMAIL === undefined || process.env.MAILDA_PASSWORD === undefined) {
     if (yes) fail("--yes needs MAILDA_EMAIL and MAILDA_PASSWORD: the setup routes are administrator-only.");
     process.stdout.write("\n== an administrator of the Node\n");
-    process.env.MAILDA_EMAIL = (await ask("   email: ")).trim();
-    process.env.MAILDA_PASSWORD = await readSecret("   password (not echoed): ");
+    await askAdministrator(url, { ask, readSecret, fail });
   }
   const cookie = await sessionCookie(url);
   if (cookie === null) fail(`could not sign in to ${url} as ${process.env.MAILDA_EMAIL}.`);
