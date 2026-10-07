@@ -367,7 +367,7 @@ describe("one person in two real teams still cannot satisfy a count of 2 (#61, r
     expect((await decidersOf(testEnv, ORG, MAILBOX)).size).toBe(2);
 
     await expect(requireApproval("two duty managers", [stageOf(2, duty.id)]))
-      .rejects.toThrow(/stage 1 needs 2 distinct approver\(s\) holding approval\.decide on mailbox/);
+      .rejects.toThrow(/stage 1 needs 2 distinct approvers holding approval\.decide on mailbox/);
     // The shortfall names the team, so an administrator is told to grow the team rather than to grant more.
     await expect(requireApproval("two duty managers again", [stageOf(2, duty.id)]))
       .rejects.toThrow(/in team Duty managers/);
@@ -415,7 +415,7 @@ describe("publication verifies the team, which is what a teams row makes possibl
     await expect(requireApproval("empty legal", [stageOf(1, legal.id)]))
       .rejects.toThrow(/E_APPROVAL_UNSATISFIABLE/);
     await expect(requireApproval("empty legal again", [stageOf(1, legal.id)]))
-      .rejects.toThrow(/stage 1 needs 1 distinct approver\(s\).*in team Legal/);
+      .rejects.toThrow(/stage 1 needs 1 distinct approver .*in team Legal/);
   });
 
   it("refuses two live rules asking one ordinal for two different teams", async () => {

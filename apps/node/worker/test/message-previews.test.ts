@@ -403,7 +403,7 @@ describe("doctor reports the backlog", () => {
     const pending = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId: MAILBOX, address: ADDRESS });
     const waiting = await find(createSystemCtx());
     expect(waiting.ok).toBe(true);
-    expect(waiting.detail).toContain("1 message(s) have no row preview");
+    expect(waiting.detail).toContain("1 message has no row preview");
     expect(waiting.detail).toContain(`projects up to ${PREVIEW_BACKFILL_LIMIT} on each scheduled pass`);
 
     await testEnv.CATALOG.prepare("UPDATE messages SET preview_state = 'failed' WHERE id = ?").bind(pending.messageId).run();

@@ -41,7 +41,7 @@ describe("verifiedDestinationLines", () => {
   it("gives the count, the read and the account", () => {
     const lines = verifiedDestinationLines(read());
     expect(said(lines)).toBe(
-      "verified destinations 1 of 2 address(es) this Node has handed mail to (read 2026-09-28T05:00:00.000Z, "
+      "verified destinations 1 of 2 addresses this Node has handed mail to (read 2026-09-28T05:00:00.000Z, "
         + "account acc); no outcome is reported for verified destinations, in the one case measured "
         + "(docs/receipts/email-sending-events.md)",
     );
@@ -72,7 +72,7 @@ describe("verifiedDestinationsStep", () => {
       method: "POST", path: "/api/provider/verified-destinations",
       headers: { cookie: "session=c", "x-cloudflare-token": "tok", "x-cloudflare-account": "acc" },
     });
-    expect(out.join("")).toContain("   verified destinations  1 of 2 address(es)");
+    expect(out.join("")).toContain("   verified destinations  1 of 2 addresses");
   });
 
   it("prints a refusal whole and resolves, so the run goes on", async () => {

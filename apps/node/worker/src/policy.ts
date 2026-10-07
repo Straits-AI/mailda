@@ -10,6 +10,7 @@ import {
 import { decidersByMailbox, rostersOf } from "./deciders.ts";
 import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 import { readTeam } from "./teams.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * The policy object: six conditions, four totally-ordered outcomes, and a draft/publish lifecycle (#60,
@@ -176,7 +177,7 @@ function normaliseStages(outcome: Outcome, stages: Stages | undefined): Stage[] 
   if (stages === undefined || stages.length === 0) return [];
   if (outcome !== "require_approval") {
     throw unprocessable("E_STAGES_WITHOUT_APPROVAL", {
-      what: `a ${outcome} policy was given ${stages.length} approval stage(s)`,
+      what: `a ${outcome} policy was given ${stages.length} ${plural(stages.length, "approval stage", "approval stages")}`,
       why: "stages are only read when a policy requires approval, so on any other outcome they would be a "
         + "rule that silently never fires — the failure #60's five conditions exist to prevent",
       fix: "set the outcome to require_approval, or leave the stages out",
@@ -868,10 +869,10 @@ async function assertApprovable(
         + "parks it — and a policy that reads as governance and fires never is worse than one that does not "
         + "exist (#60)",
       fix: shortfall.team === null
-        ? `grant approval.decide on mailbox ${mailboxId} to ${shortfall.short} more person(s), or lower the `
+        ? `grant approval.decide on mailbox ${mailboxId} to ${shortfall.short} more ${plural(shortfall.short, "person", "people")}, or lower the `
           + "stage counts. Note that the author of a send is never eligible to approve it, so an approval "
           + "needs one more holder than the counts alone suggest whenever the author is also an approver"
-        : `${shortfall.short} more member(s) of team ${shortfall.team.name ?? shortfall.team.id} have to hold `
+        : `${shortfall.short} more ${plural(shortfall.short, "member", "members")} of team ${shortfall.team.name ?? shortfall.team.id} ${plural(shortfall.short, "has", "have")} to hold `
           + `approval.decide on mailbox ${mailboxId} — add them to the team `
           + `(POST /api/teams/${shortfall.team.id}/members), grant the relation, or drop the team from the `
           + "stage. Note that the author of a send is never eligible to approve it, so an approval needs one "

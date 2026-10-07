@@ -4,6 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { exportsPrefix } from "./exports.ts";
 import { anyActiveHold } from "./holds.ts";
 import { sentPrefix } from "./outbound/manifest.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * Evidence reconciliation (§13, §24).
@@ -719,7 +720,7 @@ function reconcileHoldLine(report: ReconcileReport): string {
     + (report.exportObjects.read === "complete" ? report.exportObjects.stranded.length : 0)
     + (report.sentObjects.read === "complete" ? report.sentObjects.stranded.length : 0);
   if (report.collection.suppressed) {
-    return `  HELD      ${held} collectable object(s) not collected: a legal hold is active in this `
+    return `  HELD      ${held} ${plural(held, "collectable object", "collectable objects")} not collected: a legal hold is active in this `
       + `organization, and an object with no referent is unattributable by definition, so nothing can prove `
       + `one is not responsive. They are reported above and left in place`;
   }
@@ -743,7 +744,7 @@ function draftBodyLine(report: ReconcileReport): string {
     return `  UNREAD    ${scan.prefix} could not be read, so nothing under it was counted or collected`
       + (scan.because === null ? `` : `: ${scan.because}`);
   }
-  return `  drafts    ${scan.stranded.length} body object(s) with no drafts row, `
+  return `  drafts    ${scan.stranded.length} body ${plural(scan.stranded.length, "object", "objects")} with no drafts row, `
     + `${report.draftBodiesDeleted} deleted, ${scan.tooFreshToJudge} too fresh to judge, `
     + `out of ${scan.examined} examined under ${scan.prefix}`
     + (scan.truncated ? ` (truncated — more remain)` : ``);
@@ -762,7 +763,7 @@ function exportObjectLine(report: ReconcileReport): string {
     return `  UNREAD    ${scan.prefix} could not be read, so nothing under it was counted or collected`
       + (scan.because === null ? `` : `: ${scan.because}`);
   }
-  return `  exports   ${scan.stranded.length} staged object(s) with no exports row, `
+  return `  exports   ${scan.stranded.length} staged ${plural(scan.stranded.length, "object", "objects")} with no exports row, `
     + `${report.exportObjectsDeleted} deleted, ${scan.tooFreshToJudge} too fresh to judge, `
     + `out of ${scan.examined} examined under ${scan.prefix}`
     + (scan.truncated ? ` (truncated — more remain)` : ``);
@@ -782,7 +783,7 @@ function sentObjectLine(report: ReconcileReport): string {
     return `  UNREAD    ${scan.prefix} could not be read, so nothing under it was counted or collected`
       + (scan.because === null ? `` : `: ${scan.because}`);
   }
-  return `  sent      ${scan.stranded.length} staged object(s) with no send_manifests row, `
+  return `  sent      ${scan.stranded.length} staged ${plural(scan.stranded.length, "object", "objects")} with no send_manifests row, `
     + `${report.sentObjectsDeleted} deleted, ${scan.tooFreshToJudge} too fresh to judge, `
     + `out of ${scan.examined} examined under ${scan.prefix}`
     + (scan.truncated ? ` (truncated — more remain)` : ``);
@@ -792,8 +793,8 @@ function sentObjectLine(report: ReconcileReport): string {
 export function formatReconcile(report: ReconcileReport): string {
   const lines = [
     `evidence reconcile`,
-    `  scanned   ${report.scanned.objects} object(s)${report.scanned.truncated ? " (truncated — more remain)" : ""}, ` +
-      `${report.scanned.receipts} of ${report.scanned.receiptsTotal} receipt(s)`,
+    `  scanned   ${report.scanned.objects} ${plural(report.scanned.objects, "object", "objects")}${report.scanned.truncated ? " (truncated — more remain)" : ""}, ` +
+      `${report.scanned.receipts} of ${report.scanned.receiptsTotal} ${plural(report.scanned.receiptsTotal, "receipt", "receipts")}`,
     // Named, because "0 orphans" from a scan of one prefix reads exactly like "0 orphans" from a scan
     // of the bucket.
     //
@@ -833,7 +834,7 @@ export function formatReconcile(report: ReconcileReport): string {
   if (report.missing.length === 0) {
     lines.push(`  missing   none — every sampled receipt's evidence is present`);
   } else {
-    lines.push(`  MISSING   ${report.missing.length} receipt(s) reference absent evidence. This is lost mail.`);
+    lines.push(`  MISSING   ${report.missing.length} ${plural(report.missing.length, "receipt references", "receipts reference")} absent evidence. This is lost mail.`);
     for (const entry of report.missing) {
       lines.push(`            ${entry.receiptId}  accepted ${entry.acceptedAt}  ${entry.blobKey}`);
     }

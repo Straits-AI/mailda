@@ -1,4 +1,5 @@
 import { api, fail, flag, readSecret, run, sessionCookie } from "../support.mjs";
+import { plural } from "@mailda/runtime";
 /* ------------------------------------------------------------------ claim-secret ------------------- */
 
 /**
@@ -169,7 +170,7 @@ export async function recoveryCodes(argv) {
 
     if (installed > 0) {
       process.stdout.write(
-        `\n   ${installed} key generation(s) installed`
+        `\n   ${installed} key ${plural(installed, "generation", "generations")} installed`
         + (displaced > 0
           ? `, ${displaced} of them replacing a generation this Node had reserved and never sealed under`
           : "")
@@ -191,7 +192,7 @@ export async function recoveryCodes(argv) {
        * is mail that cannot be read, and an exit code is the only part of this a script notices.
        */
       fail(
-        `${collided} escrowed key generation(s) could NOT be installed`
+        `${collided} escrowed key ${plural(collided, "generation", "generations")} could NOT be installed`
         + (installed === 0 ? " — nothing was restored" : "") + ".\n\n"
         + "  what     content " + JSON.stringify(body.conflicted?.content ?? [])
         + ", credential " + JSON.stringify(body.conflicted?.credential ?? []) + "\n"

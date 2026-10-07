@@ -1,5 +1,6 @@
 import { deliveryActivity, isPauseReason, publishedButlerState } from "../butler/pause.ts";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * Says what a Butler can do here, which since #50 includes **running**.
  *
@@ -149,7 +150,7 @@ export async function checkButlerPauses(env: Env, orgId: string | null): Promise
     discloses: "data",
     ok: paused.length === 0,
     detail: paused.length === 0
-      ? `${report.butlers.length} published Butler(s), none paused.`
+      ? `${report.butlers.length} published ${plural(report.butlers.length, "Butler", "Butlers")}, none paused.`
       : paused.map((butler) =>
         `${butler.butlerName} (${butler.butlerId}) paused since ${butler.paused!.placedAt} `
         + `(${butler.paused!.pauseId}, ${butler.paused!.reason}`
@@ -249,7 +250,7 @@ export function silenceFinding(
       ? broken.join(" | ")
       : idle.length === 0
         ? "Every published Butler has run since it was published."
-        : `${idle.length} published Butler(s) have not run, and no mail has arrived at the addresses their `
+        : `${idle.length} published ${plural(idle.length, "Butler has", "Butlers have")} not run, and no mail has arrived at the addresses their `
           + `triggers name since they were published — nothing has triggered them, which is not a fault: `
           + idle.join(", "),
     ...(broken.length === 0 ? {} : {
@@ -289,11 +290,11 @@ export function loopDetectionFinding(visibility: { threadedInbound: number; butl
     discloses: "data",
     ok: !blind,
     detail: armed
-      ? `armed=true — ${visibility.threadedInbound} inbound message(s) carry an In-Reply-To this Node can `
-        + `read, and Butlers have proposed ${visibility.butlerSends} send(s). A reply to one of those is `
+      ? `armed=true — ${visibility.threadedInbound} inbound ${plural(visibility.threadedInbound, "message carries", "messages carry")} an In-Reply-To this Node can `
+        + `read, and Butlers have proposed ${visibility.butlerSends} ${plural(visibility.butlerSends, "send", "sends")}. A reply to one of those is `
         + "traceable back to it, which is what the detector counts."
       : `armed=false (no_threaded_replies) — no inbound message on this Node carries an In-Reply-To, and `
-        + `Butlers have proposed ${visibility.butlerSends} send(s). The loop detector matches an inbound `
+        + `Butlers have proposed ${visibility.butlerSends} ${plural(visibility.butlerSends, "send", "sends")}. The loop detector matches an inbound `
         + "In-Reply-To against a manifest this Node authored, so it is reading zero because it cannot see, "
         + "not because there is no loop. It is NOT a clean bill of health.",
     ...(blind ? {

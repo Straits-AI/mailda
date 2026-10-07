@@ -6,6 +6,7 @@ import { providerVerifiedDestinationsResponse } from "@mailda/contract/schemas";
 
 import { api, capture, choose, fail, wrapAt } from "../support.mjs";
 import { tokenFrom } from "../wrangler-config.mjs";
+import { plural } from "@mailda/runtime";
 
 /**
  * Setting a Node up to receive, send and observe outcomes, with the consent the operator already gave
@@ -81,7 +82,7 @@ export function verifiedDestinationLines(d) {
     ? `could not read: ${d.error}; ${d.readAt === null ? "until a read succeeds, those recipients show as unobserved" : `the read of ${d.readAt} stands`}`
     : d.recipients === 0
       ? `nothing to compare: this Node has handed mail to nobody yet (read ${d.readAt}, account ${d.accountId})`
-      : `${d.verified} of ${d.recipients} address(es) this Node has handed mail to (read ${d.readAt}, account ${d.accountId}); `
+      : `${d.verified} of ${d.recipients} ${plural(d.recipients, "address", "addresses")} this Node has handed mail to (read ${d.readAt}, account ${d.accountId}); `
         + "no outcome is reported for verified destinations, in the one case measured "
         + "(docs/receipts/email-sending-events.md)";
   const lines = wrapAt(said, 70).map((line, i) => `${i === 0 ? "verified destinations " : "                      "} ${line}`);
@@ -202,7 +203,7 @@ export async function zonesOf(accountId, token, fetchImpl = fetch) {
     const body = response instanceof Error ? null : await response.json().catch(() => null);
     if (response instanceof Error || !response.ok || !Array.isArray(body?.result)) {
       const why = response instanceof Error ? response.message : `answered ${response.status}`;
-      process.stdout.write(`   note: the zone list stopped at page ${page} (${why}); ${zones.length} zone(s) were read before it.\n`);
+      process.stdout.write(`   note: the zone list stopped at page ${page} (${why}); ${zones.length} ${plural(zones.length, "zone was", "zones were")} read before it.\n`);
       break;
     }
     zones.push(...body.result.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name })));

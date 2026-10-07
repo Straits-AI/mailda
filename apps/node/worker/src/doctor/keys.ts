@@ -4,6 +4,7 @@ import { mintAccessToken, verifyAccessToken } from "../auth/jwt.ts";
 import { vault } from "../keyvault.ts";
 import { pendingReseal } from "../reseal.ts";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * The vault (ADR 28).
  *
@@ -59,7 +60,7 @@ export async function checkVault(env: Env): Promise<Finding[]> {
       ok: false,
       // "Together with each one's row preview": `reseal.ts` re-seals a receipt's preview (0068) before it marks
       // the receipt current, so this count of receipts is also the count of previews behind.
-      detail: `${behind} receipt(s) reference evidence sealed under an older key generation, together with ` +
+      detail: `${behind} ${plural(behind, "receipt references", "receipts reference")} evidence sealed under an older key generation, together with ` +
         `each one's row preview. ` +
         `Generation 0 is a constant published in the Mailda repository, so that mail is not protected.`,
       fix: "POST /api/maintenance/reseal repeatedly until `remaining` reaches 0; it is resumable and " +

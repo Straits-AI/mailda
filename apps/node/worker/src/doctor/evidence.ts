@@ -5,6 +5,7 @@ import { bodyIndexState, searchIndexBacklog } from "../search.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../reconcile.ts";
 import { type Finding } from "../doctor.ts";
 import { PREVIEW_BACKFILL_LIMIT } from "../preview.ts";
+import { plural } from "@mailda/runtime";
 /**
  * Is the outbox draining? An unpublished row older than `STALLED_OUTBOX_MS` is one the sweeper should have
  * published long ago, and §22's guarantee is that events are *eventually* delivered: a stalled outbox turns
@@ -43,7 +44,7 @@ export async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
   const untried = stalled - failing;
   const fixes = [
     ...(failing > 0 ? [
-      `${failing} event(s) were tried and not published: when the handler threw, the log's `
+      `${failing} ${plural(failing, "event was", "events were")} tried and not published: when the handler threw, the log's `
       + "`outbox.handler_failed` entries carry the reason; an event with attempts and no entry was in a pass the "
       + "platform killed (a CPU or memory limit), which shows in the Worker's own invocation logs, not this one. "
       + "Each is retried on its backoff until it publishes",
@@ -59,7 +60,7 @@ export async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
     ok: stalled === 0,
     detail: stalled === 0
       ? `No unpublished outbox events older than ${STALLED_OUTBOX_MS / 1000}s.`
-      : `${stalled} unpublished event(s) older than ${STALLED_OUTBOX_MS / 1000}s (${failing} tried and failing, `
+      : `${stalled} unpublished ${plural(stalled, "event", "events")} older than ${STALLED_OUTBOX_MS / 1000}s (${failing} tried and failing, `
         + `${untried} never tried); oldest ${row?.oldest}.`,
     ...(stalled === 0 ? {} : { fix: fixes.join("; ") }),
   }];
@@ -129,10 +130,10 @@ export async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): P
   }
 
   const scope =
-    `${report.scanned.receipts} of ${report.scanned.receiptsTotal} receipt(s) and ` +
+    `${report.scanned.receipts} of ${report.scanned.receiptsTotal} ${plural(report.scanned.receiptsTotal, "receipt", "receipts")} and ` +
     // The prefixes, so "no orphans" cannot be read as a statement about the whole bucket. The truncation
     // clause goes last rather than inside the phrase "examined under", which it used to split.
-    `${report.scanned.objects} object(s) examined under ${report.scanned.prefixes.join(", ")}` +
+    `${report.scanned.objects} ${plural(report.scanned.objects, "object", "objects")} examined under ${report.scanned.prefixes.join(", ")}` +
     (report.scanned.truncated ? `, listing truncated — more objects remain unexamined` : ``);
 
   const findings: Finding[] = [{
@@ -142,7 +143,7 @@ export async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): P
     ok: report.missing.length === 0,
     detail: report.missing.length === 0
       ? `Every sampled receipt's evidence object exists (${scope}).`
-      : `${report.missing.length} receipt(s) reference an evidence object that is absent — accepted ` +
+      : `${report.missing.length} ${plural(report.missing.length, "receipt references", "receipts reference")} an evidence object that is absent — accepted ` +
         `mail that cannot be read (${scope}): ${report.missing.map((m) => m.receiptId).join(", ")}.`,
     ...(report.missing.length === 0 ? {} : {
       fix: "this is lost mail, not a bookkeeping error. Do not delete the receipts. Check R2 lifecycle " +
@@ -157,7 +158,7 @@ export async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): P
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `${report.orphans.length} object(s) have no receipt and are past the grace period — ` +
+      detail: `${report.orphans.length} ${plural(report.orphans.length, "object has no receipt and is", "objects have no receipt and are")} past the grace period — ` +
         `writes that lost their transaction. They cost storage and reveal nothing.`,
       // The caveat is unconditional rather than computed, so this check spends no query on holds and the
       // advice cannot be wrong: collection is suppressed org-wide while any hold stands (#64), and the
@@ -251,7 +252,7 @@ export function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[]
   // `formatReconcile`: a judgement withheld on N objects is part of the scope of the answer, and a
   // count that appears only when non-zero cannot be relied on by the reader who sees it absent.
   const examined =
-    `${scan.examined} object(s) examined under ${scan.prefix}, ` +
+    `${scan.examined} ${plural(scan.examined, "object", "objects")} examined under ${scan.prefix}, ` +
     `${scan.tooFreshToJudge} too fresh to judge` +
     (scan.truncated ? `, listing truncated — more objects remain unexamined` : ``);
   // Whether this pass judged everything under the prefix. It is the success branch that needs it:
@@ -299,7 +300,7 @@ export function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[]
         (judgedEverything
           ? ` Every object under the prefix was listed and judged.`
           : ` Not every draft body was judged, so this is a clean sample rather than a clean prefix.`)
-      : `${stranded} draft body object(s) have no drafts row (${examined}). ` +
+      : `${stranded} draft body ${plural(stranded, "object has", "objects have")} no drafts row (${examined}). ` +
         `A draft is deleted when its message is sealed, and deleting it removes the row only — so ` +
         `these are the bodies of messages already sent and of drafts somebody abandoned. The ` +
         `reconciler collects them under its own referent rule, through the same single R2 delete as ` +
@@ -403,7 +404,7 @@ export async function checkEvidenceChanged(env: Env, orgId: string | null): Prom
     severity: "degraded",
     discloses: "data",
     ok: false,
-    detail: `${affected.results.length} send(s) were withheld because a stored body no longer hashed to what `
+    detail: `${affected.results.length} ${plural(affected.results.length, "send was", "sends were")} withheld because a stored body no longer hashed to what `
       + `the manifest recorded. This is not a policy decision: the archive disagrees with its own record, `
       + `which is corruption or tampering. `
       + shown.map((row) => `${row.id} at ${row.state_at}: ${row.last_error ?? "no reason recorded"}`)
@@ -470,7 +471,7 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
      */
     detail: backlog === 0
       ? "Every message on this Node is in the search index, in its current form."
-      : `${backlog} message(s) are waiting for the search index to write their subject and sender in its `
+      : `${backlog} ${plural(backlog, "message is", "messages are")} waiting for the search index to write their subject and sender in its `
         + "current form. One that was never indexed is not found by its subject; one indexed in an older form "
         + "(before this version, or by the previous one during a deploy) is found by its words in Latin and "
         + "other spaced scripts, but by Chinese, Japanese or Korean only when the search is the first one or two "
@@ -502,7 +503,7 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
       ? "The catalog could not be read, so this report cannot say how much mail is searchable by its contents."
       : bodies.pending === 0 && bodies.olderForm === 0
         ? "Every message on this Node has been through the body index, in its current form."
-        : `${bodies.pending + bodies.olderForm} message(s) are waiting for the body index: ${bodies.pending} in `
+        : `${bodies.pending + bodies.olderForm} ${plural(bodies.pending + bodies.olderForm, "message is", "messages are")} waiting for the body index: ${bodies.pending} in `
           + `its queue and ${bodies.olderForm} indexed in an older form that it has not requeued yet. So a `
           + "search may not match words in their text: one never indexed matches none, and one indexed in an "
           + "older form (before this version, or by the previous one during a deploy) matches its words in "
@@ -536,7 +537,7 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
         + "anything."
       : bodies.unindexable === 0 && bodies.retryable === 0
         ? "The body index has failed on nothing."
-        : `${bodies.unindexable} message(s) the body index has given up on and ${bodies.retryable} it is `
+        : `${bodies.unindexable} ${plural(bodies.unindexable, "message", "messages")} the body index has given up on and ${bodies.retryable} it is `
           + "still retrying. A message it gave up on is unsearchable by its text and is otherwise "
           + "untouched — listed, readable, and findable by subject and sender. Some are simply unparseable "
           + "and will stay that way; the rest are reads that failed on every attempt and are worth retrying "
@@ -563,7 +564,7 @@ export async function checkSearchIndex(env: Env, orgId: string | null): Promise<
       ? "The catalog could not be read, so this report cannot say whether any body is indexed only in part."
       : bodies.cut === 0
         ? "Every indexed body is in the body index whole."
-        : `${bodies.cut} message(s) have a body whose search text is longer than the body index can hold: `
+        : `${bodies.cut} ${plural(bodies.cut, "message has", "messages have")} a body whose search text is longer than the body index can hold: `
           + `d1.max_row_bytes=${BUDGETS["d1.max_row_bytes"]} (one D1 string), and the longest asked for `
           + `${bodies.cutLargestBytes} bytes. The index holds the first ${BUDGETS["d1.max_row_bytes"]} bytes `
           + "of each, so words after that point in those bodies are not found by search. Their subjects and "
@@ -617,7 +618,7 @@ export async function checkPreviews(env: Env, orgId: string | null): Promise<Fin
       ? "Every message on this Node has its row preview and sender name."
       : [
         pending === 0 ? null
-          : `${pending} message(s) have no row preview or sender name yet; they list with their subject and `
+          : `${pending} ${plural(pending, "message has", "messages have")} no row preview or sender name yet; they list with their subject and `
             + `address. The backfill projects up to ${PREVIEW_BACKFILL_LIMIT} on each scheduled pass that finds the `
             + "body and authentication backfills idle.",
         failed === 0 ? null

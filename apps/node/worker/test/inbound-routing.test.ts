@@ -126,7 +126,7 @@ describe("once mail has arrived, it says so as history and not as a live status"
      */
     const finding = await routing();
     expect(finding.ok).toBe(true);
-    expect(finding.detail).toMatch(/3 message\(s\) have been accepted/);
+    expect(finding.detail).toMatch(/3 messages have been accepted/);
     expect(finding.detail).toMatch(/history rather than a live status/);
     expect(finding.detail).not.toMatch(/routing is live/i);
   });

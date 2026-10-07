@@ -193,6 +193,6 @@ describe("the account's zones, every page of them", () => {
     } finally {
       process.stdout.write = original;
     }
-    expect(written.join("")).toContain("stopped at page 2 (answered 500); 50 zone(s) were read");
+    expect(written.join("")).toContain("stopped at page 2 (answered 500); 50 zones were read");
   });
 });

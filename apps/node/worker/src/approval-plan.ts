@@ -5,6 +5,7 @@ import { BUDGETS } from "@mailda/budgets";
 import type { AuditEvent, AuditGate } from "./audit.ts";
 import { adminsOf, decidersOf, type TeamRoster } from "./deciders.ts";
 import { noticesForApprovalRequest } from "./notifications.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * The `send_manifests.state_reason` tokens an approval produces, with the **words** in the catalog
@@ -421,8 +422,8 @@ export function describeShortfall(
     ? ""
     : ` and in team ${shortfall.team.name === null ? shortfall.team.id : `${shortfall.team.name} `
       + `(${shortfall.team.id})`}`;
-  return `stage ${shortfall.ordinal} needs ${shortfall.required} distinct approver(s) holding `
-    + `${holding}${inTeam}, and ${shortfall.available} remain after the earlier stages `
+  return `stage ${shortfall.ordinal} needs ${shortfall.required} distinct ${plural(shortfall.required, "approver", "approvers")} holding `
+    + `${holding}${inTeam}, and ${shortfall.available} ${plural(shortfall.available, "remains", "remain")} after the earlier stages `
     + `take theirs — ${shortfall.short} short. The stages need ${shortfall.needed} distinct people in total; `
     + `${shortfall.eligible} are eligible.`;
 }

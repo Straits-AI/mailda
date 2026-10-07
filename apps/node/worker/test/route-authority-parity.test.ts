@@ -1375,4 +1375,19 @@ describe("closing a matter is the opener's or an administrator's, and nobody els
     expect(await close(adminCookie), "an administrator could not close somebody else's matter").toBe(200);
     expect(await closedAt()).not.toBeNull();
   });
+
+  it("lists a member only the matters they opened, as an answer rather than a refusal", async () => {
+    // What Matters' empty state stands on (`matters.empty`): a member with none sees an empty list, never a
+    // 403, while the organization may hold matters they cannot see. So the screen says "No matters you can
+    // see", and not that none have been opened.
+    await matterOpenedBy(ADMIN);
+    const list = async (cookie: string) => {
+      const response = await SELF.fetch("https://node/api/matters", { headers: { cookie: `${ACCESS_COOKIE}=${cookie}` } });
+      return { status: response.status, ids: ((await response.json()) as { matters?: { id: string }[] }).matters?.map((one) => one.id) };
+    };
+    expect(await list(memberCookie), "a member was shown, or refused, a matter somebody else opened").toEqual({ status: 200, ids: [] });
+    expect((await list(adminCookie)).ids, "an administrator did not see every matter").toContain(MATTER);
+    await matterOpenedBy(MEMBER);
+    expect(await list(memberCookie), "a member did not see the matter they opened").toEqual({ status: 200, ids: [MATTER] });
+  });
 });

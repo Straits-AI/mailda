@@ -148,7 +148,7 @@ describe("doctor's kept_forwards finding", () => {
     await attempt("rcpt_a", "outcome_unknown", 60_000);
     const [finding] = await checkKeptForwards(testEnv, clock, ORG);
     expect(finding).toMatchObject({ ok: false, severity: "degraded" });
-    expect(finding!.detail).toContain("1 kept forward attempt(s) have no recorded answer");
+    expect(finding!.detail).toContain("1 kept forward attempt has no recorded answer");
   });
 
   it("degrades for an address whose latest forward was refused, and not for one refused before a later hand-over", async () => {

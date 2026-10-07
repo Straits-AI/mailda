@@ -9,6 +9,7 @@ import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
 import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
+import { plural } from "@mailda/runtime";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -66,8 +67,8 @@ export async function upgrade(argv) {
    * its own gate compares the canary with what is serving, and deploying code that is already serving costs
    * one deployment entry and changes nothing.
    */
-  process.stdout.write(`\n   code      ${where.behind === 0 ? "current with the release" : `${where.behind} release commit(s) behind`}`
-    + `${where.ahead > 0 ? `, ${where.ahead} local commit(s) ahead` : ""}\n`);
+  process.stdout.write(`\n   code      ${where.behind === 0 ? "current with the release" : `${where.behind} release ${plural(where.behind, "commit", "commits")} behind`}`
+    + `${where.ahead > 0 ? `, ${where.ahead} local ${plural(where.ahead, "commit", "commits")} ahead` : ""}\n`);
   if (where.behind > 0) {
     if (git(["status", "--porcelain"]).text.trim() !== "") {
       fail("this clone has uncommitted changes, so the release cannot be pulled over them.\n\n"

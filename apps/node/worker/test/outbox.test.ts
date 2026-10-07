@@ -361,7 +361,7 @@ describe("doctor tells a failing event from a sweeper that is not running", () =
 
     const [finding] = await checkOutbox(testEnv, createSystemCtx());
     expect(finding!.ok).toBe(false);
-    expect(finding!.detail).toContain("2 unpublished event(s) older than 600s (1 tried and failing, 1 never tried)");
+    expect(finding!.detail).toContain("2 unpublished events older than 600s (1 tried and failing, 1 never tried)");
     expect(finding!.fix).toContain("outbox.handler_failed");
     // A pass the platform killed leaves an attempt and no log entry, so the log is not the whole answer.
     expect(finding!.fix).toContain("no entry");

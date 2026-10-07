@@ -9,6 +9,7 @@ import { whoamiFrom } from "./wrangler-config.mjs";
 import { BUDGETS } from "@mailda/budgets";
 import { path as fillPath, route } from "@mailda/contract/routes";
 import { deriveConfig, outputEntries, workerNameIn } from "./deploy-parse.mjs";
+import { plural } from "@mailda/runtime";
 export const here = dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -528,7 +529,7 @@ export async function runPreflight(argv, { announce = true, needsUrl = true } = 
       ok: false,
       accountId: null,
       origin,
-      report: `${problems.length} thing(s) must be settled before a deploy can run — nothing has been `
+      report: `${problems.length} ${plural(problems.length, "thing", "things")} must be settled before a deploy can run — nothing has been `
         + `changed.\n\n${rendered}`,
     };
   }

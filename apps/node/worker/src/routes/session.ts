@@ -1,4 +1,4 @@
-import { ID_PREFIXES, idPattern } from "@mailda/runtime";
+import { ID_PREFIXES, idPattern, plural } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { assertRoomForAnother, credentialsOf, forgetCredential, mintChallenge, relyingPartyFor } from "../auth/passkey.ts";
 import { finishPasskeyAuthentication, finishPasskeyRegistration } from "../auth/passkey-verify.ts";
@@ -249,7 +249,7 @@ export const session = {
 
   "POST /api/auth/logout-everywhere": async ({ env, clock, who }) => {
     const revoked = await revokeAllSessions(env, clock, who.orgId, who.userId);
-    return signedOutResponse("signed_out", `Signed out of ${revoked} session(s).`);
+    return signedOutResponse("signed_out", `Signed out of ${revoked} ${plural(revoked, "session", "sessions")}.`);
   },
 
   // Public keys. Verification never requires a secret — that is the point of ES256 over

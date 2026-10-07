@@ -2,6 +2,7 @@ import { recordedInName } from "@mailda/contract/routing-rule-name";
 import { MAX_MAILBOX_NAME_CHARS } from "@mailda/contract/schemas";
 
 import { api, choose as chooseInTerminal, fail, wrapAt } from "../support.mjs";
+import { plural } from "@mailda/runtime";
 
 /**
  * The Email Routing rules that keep addresses from reaching this Node, shown on every setup and upgrade, with the
@@ -157,7 +158,7 @@ export async function routingRulesStep({ origin, cookie, accountId, token, yes, 
   const width = Math.max(0, ...plan.shown.map((rule) => rule.to.length));
   for (const rule of plan.shown) for (const line of ruleLines(rule, domain, origin, width)) out(line);
   if (plan.hidden.count > 0) {
-    for (const line of wrapAt(`${plan.hidden.count} rule(s) on ${plan.hidden.names.join(" and ")} are not shown: this Node does not `
+    for (const line of wrapAt(`${plan.hidden.count} ${plural(plan.hidden.count, "rule", "rules")} on ${plan.hidden.names.join(" and ")} ${plural(plan.hidden.count, "is", "are")} not shown: this Node does not `
       + "receive for those names. List them:", 96)) out(line);
     out(`  mailda provider --routing-rules ${plan.hidden.names[0]} --url ${origin}`);
   }

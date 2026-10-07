@@ -358,7 +358,7 @@ describe("a legal hold suppresses send-evidence collection org-wide (#64, #74)",
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: MAILBOX });
 
     const text = formatReconcile(await reconcileEvidence(testEnv, afterTheGraceWindow(), ORG, { collect: true }));
-    expect(text).toContain("HELD      3 collectable object(s) not collected");
+    expect(text).toContain("HELD      3 collectable objects not collected");
   });
 
   it("collects when nothing is held, so the suppression is the hold and not the code path", async () => {
@@ -376,7 +376,7 @@ describe("the report names the fourth prefix and stops hedging about it", () => 
     await anOrphanedSend("snd_00000000000000000000000001");
 
     const text = formatReconcile(await reconcileEvidence(testEnv, afterTheGraceWindow(), ORG));
-    expect(text).toContain("sent      3 staged object(s) with no send_manifests row");
+    expect(text).toContain("sent      3 staged objects with no send_manifests row");
     expect(text).toContain(`examined under ${sentPrefix(ORG)}`);
   });
 

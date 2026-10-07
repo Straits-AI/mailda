@@ -145,7 +145,7 @@ describe("the list, printed on every run", () => {
     expect(text).toMatch(new RegExp(`me@${DOMAIN} +forward to <personal-1>`));
     expect(text).toMatch(/off@whymelabs.test +forward to <personal-2> +\(disabled\)\n +not offered: the rule for off@ is disabled; enable it/);
     expect(text).toMatch(/admin@whymelabs.test +this Node\n +put back: mailda provider --put-back r_admin --domain whymelabs.test --url https:\/\/node.test/);
-    expect(text).toContain("3 rule(s) on shop.whymelabs.test and test.whymelabs.test are not shown");
+    expect(text).toContain("3 rules on shop.whymelabs.test and test.whymelabs.test are not shown");
     expect(text).toContain("mailda provider --routing-rules shop.whymelabs.test");
     expect(text).not.toContain("inbox@test.");
   });

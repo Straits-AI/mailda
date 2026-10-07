@@ -1,4 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
+import { plural } from "@mailda/runtime";
 
 import type { ButlerNode } from "./ast.ts";
 import { reachableFrom } from "./graph.ts";
@@ -374,7 +375,7 @@ export function describeCost(cost: ButlerCost): string {
   const floor = cost.saturated ? "at least " : "";
   const parts = [
     `${floor}${cost.total} subrequests per run against ${RUN_BUDGET_NAME}=${RUN_BUDGET}`,
-    `${cost.outsideLoopCount} node(s) outside a loop cost ${cost.outsideLoops}`,
+    `${cost.outsideLoopCount} ${plural(cost.outsideLoopCount, "node", "nodes")} outside a loop cost ${cost.outsideLoops}`,
     ...cost.loops.map(describeLoop),
   ];
   return parts.join("; ");

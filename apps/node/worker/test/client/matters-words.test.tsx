@@ -146,9 +146,13 @@ describe("Matters in English", () => {
   });
 
   it("renders the empty state, D9 fixed: no matter is called an investigation", async () => {
+    // `{ matters: [] }` is what a member who is not an administrator and opened none is answered: the list is
+    // filtered, not refused (`route-authority-parity.test.ts`), so the empty state says what they can see and
+    // never that no matter has been opened.
     node(MATTERS_EMPTY);
     const { container } = mount(<Matters />);
-    await screen.findByText(/No matters have been opened\./);
+    await screen.findByText("No matters you can see. An administrator sees every matter; anybody else sees the ones they opened.");
+    expect(container.textContent).not.toContain("have been opened");
     await screen.findByText(/No exports have been requested\./);
     await screen.findByText("0 open");
     await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.empty.en.html");
@@ -158,7 +162,7 @@ describe("Matters in English", () => {
     node({ ...MATTERS_EMPTY, "/api/holds": 404 });
     const { container } = mount(<Matters />);
     await screen.findByText(/No holds, or you do not hold org\.admin\./);
-    await screen.findByText(/No matters have been opened\./);
+    await screen.findByText(/No matters you can see\./);
     await expect(await matters(container)).toMatchFileSnapshot("./golden/matters.refused-read.en.html");
   });
 
@@ -393,7 +397,8 @@ describe("the same screens in Chinese", () => {
   it("calls a matter 事项, never an investigation, and marks the Node's refusal as English", async () => {
     node(MATTERS_EMPTY, () => Response.json({ error: "E_REFUSED_FOR_TEST", message: "Refused, for the test." }, { status: 409 }));
     const { container } = mount(<Matters />);
-    await screen.findByText("尚未开立任何事项。");
+    await screen.findByText("没有你能查看的事项。管理员能查看所有事项，其他人只能查看自己开立的事项。");
+    expect(container.textContent).not.toContain("尚未开立");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("事项");
     // Every word the screen writes about a matter, less the kinds' own descriptions (a security incident is
     // investigated, `api.matter.security_incident`), which are the one place an investigation is meant.

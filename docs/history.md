@@ -4583,3 +4583,309 @@ matching on codes is unaffected; text matched on "Restart a stopped Butler", "Bu
 "This Node stopped a Butler" or "restarted a paused Butler" no longer appears. The audit vocabulary's `says` is the
 code's description of an action and no entry stores it; a stored `butler_pauses.detail`, and the `said` an audit entry
 recorded, are records and are not rewritten (both already said paused).
+
+## The Node's English counts in words now (3 October 2026)
+
+**For agents that match the Node's English: about 120 sentences changed, and no code, field or event name did.**
+The Worker, the CLI and the Butler compiler wrote counts as `message(s)`, `address(es)` or `person(s)`, often
+followed by a verb that agreed with neither ("1 message(s) have", "1 person(s) hold"). Each now reads in whole
+words, singular at exactly one and plural otherwise, zero included ("0 messages"). The verb agrees too, and so
+does the noun in a few irregular cases: person/people, address/addresses, batch/batches, query/queries. One helper does
+it, `plural(n, one, other)` in `packages/runtime/src/plural.ts`, with both forms written out because a suffix rule
+gets "person" and every verb wrong. The CLI imports it too, so `@mailda/cli` now depends on `@mailda/runtime`.
+Every stable code (`E_…`), finding `check`, log `event` and `detail` field is byte-for-byte what it was; only the
+prose around the numbers moved. Agents that match the old phrasing should match the code or the field instead.
+The interface's own catalog (`apps/node/worker/src/i18n/en/`) had no `(s)` left; its counts were already CLDR
+plurals (`docs/i18n.md`, D11 to D25). D36 there, `locked_out`'s "Try again in 5 minute(s).", was already fixed by H8's follow-up. Left as they were on purpose: development scripts that print to whoever runs them
+(`apps/node/worker/scripts/`, `packages/receipts/src/generate.ts`), and recorded output quoted in comments, receipts
+and drill write-ups. Those quote what was printed at the time.
+
+**Matters no longer claims that nobody has opened one.** For anyone who is not an administrator, `GET /api/matters`
+lists only the matters they opened. It answers with that filtered list, never a refusal. So a member with none saw
+"No matters have been opened." while the organization could hold several. The empty state now says "No matters you
+can see. An administrator sees every matter; anybody else sees the ones they opened." (没有你能查看的事项。管理员能查看所有事项，其他人只能查看自己开立的事项。).
+The screen does not know whether the viewer is an administrator, so it states the rule rather than a guess.
+`test/route-authority-parity.test.ts` now holds the behaviour the sentence relies on, over HTTP. A member gets 200 and
+an empty list for a matter somebody else opened, and 200 and that matter for one they opened. An administrator sees both.
+
+The changed sentences, by file. `N` is a count, and `{one|other}` is the form at one and at any other count:
+
+```text
+apps/node/worker/src/approval-plan.ts
+  - needs N distinct approver(s) holding X, and N remain after
+  + needs N distinct {approver|approvers} holding X, and N {remains|remain} after
+apps/node/worker/src/authz-read.ts
+  - N row preview(s) on a page
+  + N row {preview|previews} on a page
+apps/node/worker/src/butler/pause.ts
+  - re-triggered N time(s) by
+  + re-triggered N {time|times} by
+apps/node/worker/src/butler/simulate.ts
+  - this Butler has N problem(s):
+  + this Butler has N {problem|problems}:
+apps/node/worker/src/butlers.ts
+  - this Butler has N problem(s):
+  + this Butler has N {problem|problems}:
+apps/node/worker/src/doctor.ts
+  - N subrequest(s): N D1 query/queries, N R2 read(s).
+  + N {subrequest|subrequests}: N D1 {query|queries}, N R2 {read|reads}.
+  - <reason> N finding(s) that would describe this organization's mail are withheld.
+  + <reason> N {finding that would describe this organization's mail is|findings that would describe this organization's mail are} withheld.
+apps/node/worker/src/doctor/butlers.ts
+  - N published Butler(s), none paused.
+  + N published {Butler|Butlers}, none paused.
+  - N published Butler(s) have not run
+  + N published {Butler has|Butlers have} not run
+  - N inbound message(s) carry an
+  + N inbound {message carries|messages carry} an
+  - read, and Butlers have proposed N send(s).
+  + read, and Butlers have proposed N {send|sends}.
+  - Butlers have proposed N send(s). The loop
+  + Butlers have proposed N {send|sends}. The loop
+apps/node/worker/src/doctor/delivery.ts
+  - N of M handed-over recipient(s) have an observed outcome, from N attributed event(s).
+  + N of M handed-over {recipient|recipients} {has|have} an observed outcome, from N attributed {event|events}.   (the noun agrees with M, the verb with N)
+  - N delivery event(s) reached
+  + N delivery {event|events} reached
+  - N recipient(s) that a read
+  + N {recipient|recipients} that a read
+  - N delivery event(s) this Node could not tie to a send were for
+  + N delivery {event|events} this Node could not tie to a send {was|were} for
+  - N recipient(s) handed over more than N minutes ago were not shown
+  + N {recipient|recipients} handed over more than N minutes ago {was|were} not shown
+  - N recipient(s) were handed over
+  + N {recipient was|recipients were} handed over
+  - N recipient(s) were handed over
+  + N {recipient was|recipients were} handed over
+  - N older one(s) are also unattributed and are not counted here:
+  + N {older one is also unattributed and is|older ones are also unattributed and are} not counted here:
+  - N delivery event(s) were never matched
+  + N delivery {event was|events were} never matched
+  - N delivery event(s) in the last N minute(s) could not be matched
+  + N delivery {event|events} in the last N {minute|minutes} could not be matched
+  - N observation(s)
+  + N {observation|observations}
+  - N address(es) keep a forward
+  + N {address keeps|addresses keep} a forward
+  - N kept forward attempt(s) have no recorded answer
+  + N kept forward {attempt has|attempts have} no recorded answer
+  - N address(es) whose latest
+  + N {address|addresses} whose latest
+apps/node/worker/src/doctor/evidence.ts
+  - N event(s) were tried and not published
+  + N {event was|events were} tried and not published
+  - N unpublished event(s) older than
+  + N unpublished {event|events} older than
+  - of N receipt(s) and
+  + of N {receipt|receipts} and
+  - N object(s) examined under
+  + N {object|objects} examined under
+  - N receipt(s) reference an evidence object
+  + N {receipt references|receipts reference} an evidence object
+  - N object(s) have no receipt and are past the grace period
+  + N {object has no receipt and is|objects have no receipt and are} past the grace period
+  - N object(s) examined under
+  + N {object|objects} examined under
+  - N draft body object(s) have no drafts row
+  + N draft body {object has|objects have} no drafts row
+  - N send(s) were withheld
+  + N {send was|sends were} withheld
+  - N message(s) are waiting for the search index
+  + N {message is|messages are} waiting for the search index
+  - N message(s) are waiting for the body index
+  + N {message is|messages are} waiting for the body index
+  - N message(s) the body index
+  + N {message|messages} the body index
+  - N message(s) have a body
+  + N {message has|messages have} a body
+  - N message(s) have no row preview
+  + N {message has|messages have} no row preview
+apps/node/worker/src/doctor/governance.ts
+  - N day(s) ago
+  + N {day|days} ago
+  - N legal hold(s) in force.
+  + N legal {hold|holds} in force.
+  - N lift request(s) waiting
+  + N lift {request|requests} waiting
+  - N hold(s) name a mailbox that no longer exists, so they enforce nothing
+  + N {hold names|holds name} a mailbox that no longer exists, so {it enforces|they enforce} nothing
+  - N hold(s) in force cannot
+  + N {hold|holds} in force cannot
+  - <hold> on mailbox <m>, where N person(s) hold approval.decide
+  + <hold> on mailbox <m>, where N {person holds|people hold} approval.decide
+  - N notification(s) fell due and have not been delivered
+  + N {notification fell due and has|notifications fell due and have} not been delivered
+  - N notification(s) have no due date and cite a matter that has already closed, so they can never fall due
+  + N {notification has no due date and cites|notifications have no due date and cite} a matter that has already closed, so {it|they} can never fall due
+  - N supervised grant(s) taking effect
+  + N supervised {grant|grants} taking effect
+  - N notification(s) for them.
+  + N {notification|notifications} for them.
+  - N row(s) were removed outside the product.
+  + N {row was|rows were} removed outside the product.
+  - N live agent(s) hold capabilities
+  + N {live agent holds|live agents hold} capabilities
+apps/node/worker/src/doctor/keys.ts
+  - N receipt(s) reference evidence
+  + N {receipt references|receipts reference} evidence
+apps/node/worker/src/doctor/node.ts
+  - Missing N table(s):
+  + Missing N {table|tables}:
+  - N address(es) configured.
+  + N {address|addresses} configured.
+  - N message(s) have been accepted
+  + N {message has|messages have} been accepted
+  - Of N message(s) in the last
+  + Of N {message|messages} in the last
+apps/node/worker/src/doctor/recovery.ts
+  - N restore(s) collided
+  + N {restore|restores} collided
+  - N restore(s) collided
+  + N {restore|restores} collided
+  - installing N generation(s)
+  + installing N {generation|generations}
+  - installing N generation(s) with no collisions.
+  + installing N {generation|generations} with no collisions.
+  - **N generation(s) collided with a live key and were not installed**
+  + **N {generation|generations} collided with a live key and {was|were} not installed**
+apps/node/worker/src/exports.ts
+  - N message(s) were staged
+  + N {message was|messages were} staged
+apps/node/worker/src/index.ts
+  - N case(s) passed
+  + N {case|cases} passed
+  - for N message(s) not yet
+  + for N {message|messages} not yet
+  - sender of N message(s) that
+  + sender of N {message|messages} that
+  - for N message(s) (never
+  + for N {message|messages} (never
+  - of N message(s).
+  + of N {message|messages}.
+  - N message(s) could not be projected
+  + N {message|messages} could not be projected
+  - N notification(s) delivered.
+  + N {notification|notifications} delivered.
+  - on N send(s) neither
+  + on N {send|sends} neither
+  - on N cancelled send(s).
+  + on N cancelled {send|sends}.
+apps/node/worker/src/kept-forward.ts
+  - carries N attachment(s) this Node
+  + carries N {attachment|attachments} this Node
+apps/node/worker/src/outbound/manifest.ts
+  - carries N attachment(s) this Node
+  + carries N {attachment|attachments} this Node
+apps/node/worker/src/outbound/recheck.ts
+  - has N standing approval(s) and
+  + has N standing {approval|approvals} and
+  - N no longer hold(s) approval.decide on N, or is the author of
+  + N {no longer holds|no longer hold} approval.decide on <mailbox>, or {is|are} the author of
+  - The rule(s) that apply now: <rules>
+  + {The rule that applies|The rules that apply} now: <rules>
+apps/node/worker/src/policy.ts
+  - given N approval stage(s)
+  + given N {approval stage|approval stages}
+  - to N more person(s), or
+  + to N more {person|people}, or
+  - N more member(s) of team N have to hold
+  + N more {member|members} of team N {has|have} to hold
+apps/node/worker/src/reconcile.ts
+  - N collectable object(s) not collected
+  + N {collectable object|collectable objects} not collected
+  - N body object(s) with no drafts row
+  + N body {object|objects} with no drafts row
+  - N staged object(s) with no exports row
+  + N staged {object|objects} with no exports row
+  - N staged object(s) with no send_manifests row
+  + N staged {object|objects} with no send_manifests row
+  - scanned   N object(s), N of M receipt(s)
+  + scanned   N {object|objects}, N of M {receipt|receipts}
+  - N receipt(s) reference absent evidence.
+  + N {receipt references|receipts reference} absent evidence.
+apps/node/worker/src/recovery.ts
+  - N generation(s) were installed before it stopped.
+  + N {generation was|generations were} installed before it stopped.
+  - N escrowed key generation(s) could not be installed
+  + N escrowed key {generation|generations} could not be installed
+  - ; N was installed
+  + ; N {was|were} installed
+apps/node/worker/src/routes/node.ts
+  - Applied N migration(s).
+  + Applied N {migration|migrations}.
+  - Confirmed. N code(s) marked
+  + Confirmed. N {code|codes} marked
+apps/node/worker/src/routes/session.ts
+  - Too many failed sign-in attempts. Try again in N minute(s).
+  + Too many failed sign-in attempts. Try again in N {minute|minutes}.
+  - Signed out of N session(s).
+  + Signed out of N {session|sessions}.
+packages/butler-ast/src/cost.ts
+  - N node(s) outside a loop cost N
+  + N {node|nodes} outside a loop cost N
+packages/cli/src/backup.mjs
+  - holds N object(s), and
+  + holds N {object|objects}, and
+  - N object(s) in this backup are named by no live row.
+  + N {object in this backup is|objects in this backup are} named by no live row.
+  - N fault(s) were already present
+  + N {fault was|faults were} already present
+packages/cli/src/deploy-parse.mjs
+  - the canary has N finding(s) the version
+  + the canary has N {finding|findings} the version
+packages/cli/src/support.mjs
+  - N thing(s) must be settled
+  + N {thing|things} must be settled
+packages/cli/src/verbs/backup.mjs
+  - N table(s) to export
+  + N {table|tables} to export
+  - indexed. N object(s) had been listed.
+  + indexed. N {object|objects} had been listed.
+  - N object(s)
+  + N {object|objects}
+  - N object(s) listed
+  + N {object|objects} listed
+  - N checked, N fault(s)
+  + N checked, N {fault|faults}
+  - inventory N object(s), N
+  + inventory N {object|objects}, N
+  - N problem(s) with this backup.
+  + N {problem|problems} with this backup.
+packages/cli/src/verbs/deploy.mjs
+  - compared N finding(s)
+  + compared N {finding|findings}
+packages/cli/src/verbs/provision.mjs
+  - N of N address(es) this Node
+  + N of N {address|addresses} this Node
+  - N zone(s) were read before it.
+  + N {zone was|zones were} read before it.
+packages/cli/src/verbs/routing-step.mjs
+  - N rule(s) on N are not shown:
+  + N {rule|rules} on N {is|are} not shown:
+packages/cli/src/verbs/search.mjs
+  - == N message(s) the body
+  + == N {message|messages} the body
+  - N attempt(s)
+  + N {attempt|attempts}
+  - N message(s) re-queued.
+  + N {message|messages} re-queued.
+packages/cli/src/verbs/secrets.mjs
+  - N key generation(s) installed
+  + N key {generation|generations} installed
+  - N escrowed key generation(s) could NOT
+  + N escrowed key {generation|generations} could NOT
+packages/cli/src/verbs/upgrade.mjs
+  - N release commit(s) behind
+  + N release {commit|commits} behind
+  - N local commit(s) ahead
+  + N local {commit|commits} ahead
+packages/cli/src/verbs/verify-evidence.mjs
+  - covered N message(s) before this
+  + covered N {message|messages} before this
+  - N fault(s)
+  + N {fault|faults}
+  - N message(s) checked in N batch(es)
+  + N {message|messages} checked in N {batch|batches}
+  - N fault(s) across N object(s) checked:
+  + N {fault|faults} across N {object|objects} checked:
+```

@@ -39,7 +39,7 @@ describe("the deploy's closing report", () => {
     const printed = capture();
 
     const code = await closingReport("https://node.test", "v_old", async () => {
-      process.stdout.write("   verified destinations  1 of 2 address(es)\n");
+      process.stdout.write("   verified destinations  1 of 2 addresses\n");
     });
 
     const step = printed().indexOf("verified destinations  1 of 2");

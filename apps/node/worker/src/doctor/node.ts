@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 import { type Finding } from "../doctor.ts";
+import { plural } from "@mailda/runtime";
 /**
  * The evidence scan's bound now lives with the reconciler that performs it
  * (`reconcile.list_limit`, receipt: `evidence-lifecycle.md`). It was duplicated here while `doctor`
@@ -116,7 +117,7 @@ export async function checkSchema(env: Env): Promise<Finding[]> {
     ok: missing.length === 0,
     detail: missing.length === 0
       ? `All ${EXPECTED_TABLES.length} expected tables present.`
-      : `Missing ${missing.length} table(s): ${missing.join(", ")}.`,
+      : `Missing ${missing.length} ${plural(missing.length, "table", "tables")}: ${missing.join(", ")}.`,
     ...(missing.length === 0 ? {} : {
       fix: "POST /api/prepare — the Node applies its own migrations, idempotently. Or run `wrangler d1 migrations apply CATALOG --remote`. A Node with a partial schema accepts mail it cannot file",
     }),
@@ -269,12 +270,12 @@ export async function checkInboundRouting(env: Env, orgId: string | null): Promi
     detail: addresses === 0
       ? "No address is configured on this Node, so nothing can be delivered to it — `email()` refuses an "
         + "unknown recipient. Whatever the zone's DNS says, this Node cannot receive yet."
-      : `${addresses} address(es) configured. `
+      : `${addresses} ${plural(addresses, "address", "addresses")} configured. `
         + (received === 0
           ? "**Nothing has ever arrived.** That is consistent with correct setup and no mail yet, and equally "
             + "consistent with routing that was never enabled, MX records pointing elsewhere, or a catch-all "
             + "aimed at a different Worker. This Node cannot tell those apart from the inside."
-          : `${received} message(s) have been accepted, so routing did reach this Worker at least once. `
+          : `${received} ${plural(received, "message has", "messages have")} been accepted, so routing did reach this Worker at least once. `
             + "That is history rather than a live status: it does not establish that routing is still "
             + "pointing here, because the zone's configuration can have changed since the last one arrived."),
     // Spread rather than an explicit `undefined`, matching this file: a Node that has received mail has
@@ -389,7 +390,7 @@ export async function checkInboundAuthentication(
     ok: true,
     detail: row.total === 0
       ? "No message has arrived in the last seven days, so there is nothing to say about senders."
-      : `Of ${row.total} message(s) in the last seven days, DMARC: ${n(row.pass)} pass, ${n(row.fail)} fail`
+      : `Of ${row.total} ${plural(row.total, "message", "messages")} in the last seven days, DMARC: ${n(row.pass)} pass, ${n(row.fail)} fail`
         + `${n(row.fail_reject) > 0 ? ` (${n(row.fail_reject)} against a domain asking receivers to reject)` : ""}, `
         + `${n(row.none)} from domains publishing no policy, ${n(row.absent)} with no authentication header from `
         + `the receiving server${n(row.unevaluated) > 0 ? `, ${n(row.unevaluated)} from before this Node evaluated senders` : ""}. `

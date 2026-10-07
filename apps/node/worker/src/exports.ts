@@ -13,6 +13,7 @@ import { decidersOf } from "./deciders.ts";
 import { getEvidence, putEvidence, runKeyCache, sha256Hex, type RunKeyCache } from "./evidence-store.ts";
 import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 import { readMatter } from "./matters.ts";
+import { plural } from "@mailda/runtime";
 
 /**
  * eDiscovery export — the supervised bulk copy (#65, §7, §22, Layer 5).
@@ -864,7 +865,7 @@ async function abortAtBound(
     what: `max_messages=${row.maxMessages}, and export ${row.id} matches more than that`,
     why: "the approval binds a predicate hash and a count, and exceeding the count aborts rather than "
       + "exporting more than anyone agreed to or truncating to the bound and reporting success. "
-      + `${row.messagesEmitted} message(s) were staged before this stopped and they are left in place`,
+      + `${row.messagesEmitted} ${plural(row.messagesEmitted, "message was", "messages were")} staged before this stopped and they are left in place`,
     fix: "ask for a fresh export with a bound that fits, or a narrower window — POST /api/exports. Two "
       + "approvers have to agree to the new bound, which is the point",
   });

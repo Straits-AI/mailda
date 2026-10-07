@@ -170,6 +170,9 @@ importers:
       '@mailda/contract':
         specifier: workspace:*
         version: link:../contract
+      '@mailda/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
