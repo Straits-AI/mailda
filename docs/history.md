@@ -4936,3 +4936,17 @@ Each mailbox is now a card (its addresses, each with its forwards one per line a
 person-by-permission grid with one box per cell), the permissions are explained once per grid, *Invite somebody*
 comes first and offers the Node's addresses nobody signs in with yet, and an invitation names its sender by address.
 *Reading…* now has a pulsing dot beside it (still under reduced motion) and is announced to a screen reader.
+
+## A design audit of every screen, and People on one compact page (8 October 2026)
+
+The owner found People still hard to read with real data: eleven addresses in one mailbox, eight forwarding to the
+same two inboxes, each repeating its destination lines, its copy setting and the whole copy statement, with the
+access grid two thousand pixels down. An audit of all eighteen screens at desktop and phone width (with data shaped
+like the owner's) found the same habit elsewhere. Doctor said 1,745 words, its one warning below the fold under
+paragraphs explaining checks that passed, and on a phone its detail column stood one word to a line. The Queue put its
+settings above its work. Setup left an eight-row permission table open in an optional section. The Audit trail
+showed people as `usr_01M…`. People is now a folding card per mailbox with an address table and the copy statement
+once; Doctor leads with what needs attention and folds passing detail; record tables stack on a phone; the Queue's
+and Setup's settings fold; the Audit names people. Visible words fell to 410 on People (from 620), 876 on Doctor,
+343 on Setup and 143 on the Queue. The design-review harness could not start its own Chromium here (the OS blocks its
+sandbox), so the audit ran on the repository's Playwright.
