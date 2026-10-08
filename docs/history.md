@@ -4950,3 +4950,13 @@ once; Doctor leads with what needs attention and folds passing detail; record ta
 and Setup's settings fold; the Audit names people. Visible words fell to 410 on People (from 620), 876 on Doctor,
 343 on Setup and 143 on the Queue. The design-review harness could not start its own Chromium here (the OS blocks its
 sandbox), so the audit ran on the repository's Playwright.
+
+## Install, upgrade and setup say which step they are on, and how many are left (8 October 2026)
+
+`mailda upgrade` printed some forty `==` headers of equal weight (its own, the backup's, the deploy's), so an
+operator could not tell how far along a run was. Each of `mailda install`, `mailda upgrade` and `mailda setup` now
+lists its steps first, numbered, and prints a banner as each begins, `━━ Step 3 of 7 · Back up the Node ━━━`
+(`packages/cli/src/progress.mjs`). The deploy's and the backup's own `==` lines stay, as the parts of the step they
+sit under; the headers a banner now says (`== backing up first`, `== what this does to the catalog`, `== setting up`)
+are gone. Every banner a command asks for is checked against its declared steps by
+`apps/node/worker/test/node/cli-progress.test.ts`, which reads the commands with the TypeScript parser.
