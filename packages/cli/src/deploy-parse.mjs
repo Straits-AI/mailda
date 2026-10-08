@@ -271,8 +271,13 @@ export function deriveConfig(source, name, hostname = null) {
    * first `wrangler deploy` attaches it, the canary path keeps it, `wrangler triggers deploy` adds one to an
    * existing Worker). Placed before the object's closing brace, after the last top-level key, which the
    * source ends without a trailing comma.
+   *
+   * `workers_dev: true` beside it, said rather than left to the default: wrangler turns the workers.dev address off
+   * when a config has routes and does not say (observed 8 October 2026 on whymelabs.com, where an upgrade attached
+   * mail.whymelabs.com and the next one's canary answered 1042 "No Workers script was found for this host on
+   * workers.dev"). The address is the one the install remembers and the canary is first checked on, so it stays.
    */
-  return renamed.replace(/\n}\s*$/, `,\n  "routes": [{ "pattern": "${hostname}", "custom_domain": true }]\n}\n`);
+  return renamed.replace(/\n}\s*$/, `,\n  "workers_dev": true,\n  "routes": [{ "pattern": "${hostname}", "custom_domain": true }]\n}\n`);
 }
 
 /** The custom domain a config carries, or null: the `pattern` beside `custom_domain: true`. */

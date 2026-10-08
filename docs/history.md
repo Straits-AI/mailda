@@ -4995,3 +4995,12 @@ only at the end of a run. On whymelabs.com a run attached `mail.whymelabs.com` a
 later upgrade offered the hostname again. It now reads the Worker's custom domains from Cloudflare first
 (`attachedHostnames` in `packages/cli/src/verbs/provision.mjs`), says which are attached, and asks only when there are
 none; when Cloudflare cannot be read it falls back to the remembered URL, as before.
+
+## A custom domain no longer turns the workers.dev address off (8 October 2026)
+
+The config `--hostname` derives carried the custom-domain route and no `workers_dev` key, and wrangler treats a
+config with routes and no `workers_dev` as turning workers.dev off. So attaching `mail.whymelabs.com` by upgrade
+switched off the address the clone remembered, and the next upgrade's canary check there answered 1042 and stopped
+(safely: the new version sat at 0%, the old one kept serving at the custom domain). The derived config now says
+`"workers_dev": true` beside its route, and an upgrade that finds a custom domain on the Worker checks the canary there
+and carries the domain into the config, so each deploy restates the Worker's triggers and turns workers.dev back on.

@@ -702,7 +702,7 @@ const FIGURES: Record<string, Classification> = {
       + "`triggers deploy` adds one to a Worker already deployed. Custom domains are a Workers feature on "
       + "every plan, and the scratch Worker that measured them was deleted afterwards",
     "deploy.custom_domain_attached_by_first_deploy", "deploy.custom_domain_kept_across_versions",
-    "deploy.triggers_deploy_adds_custom_domain",
+    "deploy.triggers_deploy_adds_custom_domain", "deploy.routes_turn_workers_dev_off_unless_said",
   ),
 
   // docs/receipts/wrangler-list-pagination.md

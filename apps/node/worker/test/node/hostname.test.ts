@@ -17,6 +17,9 @@ describe("a hostname in the derived config", () => {
     expect(hostnameIn(derived)).toBe("mail.example.test");
     expect(derived.trimEnd().endsWith("}")).toBe(true);
     expect((derived.match(/"custom_domain": true/g) ?? []).length).toBe(1);
+    // Said, or wrangler turns workers.dev off beside a route (8 October 2026, whymelabs.com).
+    expect(derived).toMatch(/\n {2}"workers_dev": true,\n {2}"routes": \[/);
+    expect(JSON.parse(derived.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")).workers_dev).toBe(true);
     // The name derivation is unchanged by the hostname.
     expect(derived).toContain('"name": "mailda-support"');
   });
