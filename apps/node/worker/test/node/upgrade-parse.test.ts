@@ -80,3 +80,26 @@ describe("whether an upgrade backs the Node up first (8 October 2026)", () => {
     expect(backupWanted({ expand: [], contract: ["0079_y.sql"] }, false)).toBe(true);
   });
 });
+
+describe("an upgrade asks Cloudflare which hostname the Worker has (8 October 2026)", () => {
+  it("does not ask for one when Cloudflare lists one, whatever this clone remembers; asks as before when it lists none or cannot say", async () => {
+    const { asksHostname } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
+    const remembered = "https://mailda-whymelabs.someone.workers.dev";
+    expect(asksHostname({ given: null, yes: false, remembered, attached: ["mail.whymelabs.com"] })).toBe(false);
+    expect(asksHostname({ given: null, yes: false, remembered, attached: [] })).toBe(true);
+    expect(asksHostname({ given: null, yes: false, remembered, attached: null })).toBe(true);
+  });
+
+  it("reads the Worker's own custom domains, and says it could not when Cloudflare does not answer", async () => {
+    const { attachedHostnames } = await import(`${import.meta.dirname}/../../../../../packages/cli/src/verbs/provision.mjs`) as {
+      attachedHostnames: (a: string, t: string, w: string, f: typeof fetch) => Promise<string[] | null>;
+    };
+    const asked: string[] = [];
+    const answer = (body: unknown, status = 200) => (async (url: string) => { asked.push(url); return new Response(JSON.stringify(body), { status }); }) as unknown as typeof fetch;
+    expect(await attachedHostnames("acc", "tok", "mailda-x", answer({ success: true, result: [
+      { hostname: "mail.example.com", service: "mailda-x" }, { hostname: "other.example.com", service: "another-worker" },
+    ] }))).toEqual(["mail.example.com"]);
+    expect(asked[0]).toBe("https://api.cloudflare.com/client/v4/accounts/acc/workers/domains?service=mailda-x");
+    expect(await attachedHostnames("acc", "tok", "mailda-x", answer({ success: false, errors: [] }, 403))).toBeNull();
+  });
+});

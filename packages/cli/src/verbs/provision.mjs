@@ -195,6 +195,19 @@ export function domainChoices(zones) {
  * It pages on the API's own `result_info.total_pages` now. A page that fails is said, with how far the read
  * got, and what was read is still offered; nothing is dropped silently. `fetchImpl` is for the test.
  */
+/**
+ * The custom domains Cloudflare has attached to a Worker, or null when the list could not be read (8 October 2026):
+ * what an upgrade asks before offering a hostname, since the URL this clone remembers is only written at the end of a
+ * run, and a run that stopped after attaching one left it saying workers.dev.
+ */
+export async function attachedHostnames(accountId, token, worker, fetchImpl = fetch) {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/domains?service=${encodeURIComponent(worker)}`;
+  const response = await fetchImpl(url, { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
+  const body = response === null || !response.ok ? null : await response.json().catch(() => null);
+  if (!Array.isArray(body?.result)) return null;
+  return body.result.filter((one) => one?.service === worker && typeof one?.hostname === "string").map((one) => one.hostname);
+}
+
 export async function zonesOf(accountId, token, fetchImpl = fetch) {
   const zones = [];
   for (let page = 1; ; page += 1) {

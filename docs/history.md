@@ -4987,3 +4987,11 @@ opened on the first one whichever was clicked, and the others looked like they d
 mailbox in the address (`/queue?mailbox=<id>`), the Queue opens on the mailbox the address names (the first when it
 names none, or one this person cannot see), and the Queue's own picker changes the address too, so Back returns to the
 mailbox before.
+
+## An upgrade asks Cloudflare whether the Node already has a hostname (8 October 2026)
+
+The upgrade offered a hostname whenever the URL this clone remembered was a workers.dev one, and that file is written
+only at the end of a run. On whymelabs.com a run attached `mail.whymelabs.com` and stopped before writing it, so every
+later upgrade offered the hostname again. It now reads the Worker's custom domains from Cloudflare first
+(`attachedHostnames` in `packages/cli/src/verbs/provision.mjs`), says which are attached, and asks only when there are
+none; when Cloudflare cannot be read it falls back to the remembered URL, as before.

@@ -37,6 +37,9 @@ export function catchAllLine(catchAll: { action: string; destinations: string[];
 export function domainChoices(zones: ReadonlyArray<{ name: string }>): Array<{ label: string; value: string }>;
 
 /** Every page of the zones an account holds, as the token sees them; a failed page is printed as a note. */
+/** The custom domains Cloudflare has attached to a Worker, or null when the list could not be read. */
+export function attachedHostnames(accountId: string, token: string, worker: string, fetchImpl?: typeof fetch): Promise<string[] | null>;
+
 export function zonesOf(accountId: string, token: string, fetchImpl?: typeof fetch): Promise<Array<{ name: string }>>;
 
 /** How an address is routed, in the contract's words. */

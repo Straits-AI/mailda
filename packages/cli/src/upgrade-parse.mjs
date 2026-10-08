@@ -73,8 +73,10 @@ export function resolvePackageJson(ours, theirs) {
  * leave the Worker's triggers alone. Never under --yes, and never when the hostname was given (`--hostname`,
  * MAILDA_HOSTNAME).
  */
-export function asksHostname({ given, yes, remembered }) {
+export function asksHostname({ given, yes, remembered, attached = null }) {
   if (yes || given !== null) return false;
+  // What Cloudflare says the Worker already has outranks what this clone remembers (null: the list was not read).
+  if (attached !== null && attached.length > 0) return false;
   return remembered === null || /\.workers\.dev\/?$/i.test(remembered);
 }
 
