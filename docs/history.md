@@ -4971,3 +4971,11 @@ step, while the Node is still remembered by its workers.dev address (`asksHostna
 domain, since they upload versions and leave the Worker's triggers alone. Choosing one says what changes: sign in
 again at the new address (a session and a passkey belong to the address they were made on), and the workers.dev
 address keeps working.
+
+## A mailbox in the sidebar opens its own queue (8 October 2026)
+
+The sidebar's Workspace rows, one per mailbox, all linked to the Queue without saying which mailbox, so the Queue
+opened on the first one whichever was clicked, and the others looked like they did nothing. Each row now carries its
+mailbox in the address (`/queue?mailbox=<id>`), the Queue opens on the mailbox the address names (the first when it
+names none, or one this person cannot see), and the Queue's own picker changes the address too, so Back returns to the
+mailbox before.

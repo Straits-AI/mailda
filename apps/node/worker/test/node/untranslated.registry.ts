@@ -242,6 +242,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "col", reason: "a <th> scope token" },
   ],
   "src/client/app/screens/queue.tsx": [
+    { text: "/queue", reason: "the route the mailbox picker navigates to, a path, never shown" },
     { text: "cases", reason: "a react-query key" },
     { text: "mailboxes", reason: "a react-query key" },
     { text: "quarantine", reason: "a react-query key" },

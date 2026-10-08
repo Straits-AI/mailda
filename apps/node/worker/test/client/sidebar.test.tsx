@@ -130,6 +130,16 @@ describe("which row is current", () => {
     expect(mailbox.classList.contains("current"), "a mailbox row wore the Queue's fill").toBe(false);
   });
 
+  it("opens the Queue on the row's own mailbox (8 October 2026: every row opened the first mailbox's)", async () => {
+    answerMailboxes([
+      { id: "mbx_a", name: "Support", addresses: "support@example.test", unclaimed: 1 },
+      { id: "mbx_b", name: "Sales", addresses: "sales@example.test", unclaimed: 2 },
+    ]);
+    mount("/");
+    expect((await screen.findByText("Sales")).closest("a")!.getAttribute("href")).toBe("/queue?mailbox=mbx_b");
+    expect(screen.getByText("Support").closest("a")!.getAttribute("href")).toBe("/queue?mailbox=mbx_a");
+  });
+
   it("marks the current section tab", () => {
     route.pathname = "/rules";
     render(<SectionTabs label="Automations" tabs={tabsOf("/butlers")} />);
