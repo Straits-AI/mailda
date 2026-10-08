@@ -296,13 +296,15 @@ export function Rail({ onNavigate }: { onNavigate?: () => void } = {}) {
       <ul className="rail-list" aria-labelledby="rail-workspace">
         {/*
           The queues, one row per mailbox, with the count of **unclaimed** work: what the sidebar was chosen
-          over route tabs for (#32). They link to the Queue without selecting the mailbox (its picker is the
-          screen's own state), and never carry the current fill: the Queue row does.
+          over route tabs for (#32). Each opens the Queue on its own mailbox (`?mailbox=`, 8 October 2026: they
+          all opened the first mailbox's, so a row looked like it did nothing), and never carries the current
+          fill: the Queue row does.
         */}
         {(mailboxes.data?.mailboxes ?? []).map((box) => (
           <li key={box.id}>
             <Link
               to="/queue"
+              search={{ mailbox: box.id }}
               className="rail-row rail-mailbox"
               activeProps={{ className: "rail-row rail-mailbox" }}
               title={t("chrome.rail.mailbox", { unclaimed: box.unclaimed, claimed: box.claimed, mine: box.mine })}

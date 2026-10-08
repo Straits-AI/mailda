@@ -20,6 +20,8 @@
 
 export interface RouteState {
   pathname: string;
+  /** The address's query, as the router parses it (`?mailbox=…`); none by default. */
+  search?: Record<string, string>;
   navigate?: (to: unknown) => void;
   /** What `Outlet` renders: nothing unless a test needs to see where the screen sits in the layout. */
   outlet?: React.ReactNode;
@@ -31,12 +33,13 @@ function isActive(to: string, pathname: string): boolean {
 
 interface LinkProps extends Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
   to: string;
+  search?: Record<string, string>;
   activeProps?: React.AnchorHTMLAttributes<HTMLAnchorElement>;
   children?: React.ReactNode;
 }
 
 export function routerMock(state: RouteState) {
-  function Link({ to, activeProps, className, onClick, ...rest }: LinkProps) {
+  function Link({ to, search, activeProps, className, onClick, ...rest }: LinkProps) {
     const active = isActive(to, state.pathname);
     const extra = active ? activeProps ?? { className: "active" } : {};
     const joined = [className, extra.className].filter(Boolean).join(" ");
@@ -44,25 +47,25 @@ export function routerMock(state: RouteState) {
       <a
         {...rest}
         {...extra}
-        href={to}
+        href={search === undefined ? to : `${to}?${new URLSearchParams(search)}`}
         {...(joined === "" ? {} : { className: joined })}
         onClick={(event) => {
           onClick?.(event);
           event.preventDefault();
-          state.navigate?.({ to });
+          state.navigate?.(search === undefined ? { to } : { to, search });
         }}
         {...(active ? { "data-status": "active", "aria-current": "page" as const } : {})}
       />
     );
   }
 
-  const routerState = () => ({ location: { pathname: state.pathname } });
+  const routerState = () => ({ location: { pathname: state.pathname, search: state.search ?? {} } });
 
   return {
     Link,
     Outlet: () => state.outlet ?? null,
     useNavigate: () => state.navigate ?? (() => {}),
-    useRouterState: (options?: { select?: (routerState: { location: { pathname: string } }) => unknown }) =>
+    useRouterState: (options?: { select?: (routerState: { location: { pathname: string; search: Record<string, string> } }) => unknown }) =>
       options?.select === undefined ? routerState() : options.select(routerState()),
   };
 }

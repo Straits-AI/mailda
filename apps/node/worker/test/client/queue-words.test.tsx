@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { install } from "/app/locale.js";
 import { fullTime } from "../../src/client/app/format.ts";
 import { CATALOGS } from "../../src/i18n/catalog.ts";
-import { answerWith, reset } from "./session-stub.ts";
+import { answerWith, calls, reset } from "./session-stub.ts";
 
 /**
  * The Queue's words (ADR 46), English character for character and Chinese where it must differ.
@@ -16,7 +16,7 @@ import { answerWith, reset } from "./session-stub.ts";
  * ("under a minute"), which a translation would have silently broken.
  */
 
-const route = vi.hoisted(() => ({ pathname: "/queue" }));
+const route = vi.hoisted((): { pathname: string; search?: Record<string, string> } => ({ pathname: "/queue" }));
 vi.mock("@tanstack/react-router", async () => (await import("./router-mock.tsx")).routerMock(route));
 
 const { Queue } = await import("../../src/client/app/screens/queue.tsx");
@@ -79,6 +79,7 @@ function node(acted: (path: string) => Response | undefined = () => undefined, t
     const bodies: Record<string, unknown> = {
       "/api/mailboxes": { mailboxes: [mailbox, { ...mailbox, id: "mbx_other", name: "Sales", unclaimed: 12 }] },
       "/api/mailboxes/mbx_test/cases": { cases },
+      "/api/mailboxes/mbx_other/cases": { cases: [] },
       "/api/me": { signedIn: true, principalId: "usr_me", principalKind: "user", userId: "usr_me", delegatorUserId: null, organizationId: "org_x", email: "me@example.test" },
       "/api/quarantine": { quarantined, truncated: true },
     };
@@ -102,6 +103,22 @@ const cells = (table: HTMLTableElement): string[][] =>
   Array.from(table.rows).map((tr) => Array.from(tr.cells).map((cell) => cell.textContent ?? ""));
 
 beforeEach(reset);
+
+describe("the mailbox the Queue opens on", () => {
+  afterEach(() => { delete route.search; });
+
+  it("is the one the address names, so a sidebar row opens its own; otherwise the first", async () => {
+    route.search = { mailbox: "mbx_other" };
+    node();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Queue /></QueryClientProvider>);
+    await waitFor(() => expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("mbx_other"));
+    await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/mailboxes/mbx_other/cases"))).toBe(true));
+    cleanup();
+    route.search = { mailbox: "mbx_gone" };
+    await mounted();
+    expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("mbx_test");
+  });
+});
 
 describe("the Queue in English, unchanged by the catalog", () => {
   it("words each case's state, holder and clock as before", async () => {

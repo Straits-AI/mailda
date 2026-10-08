@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { t } from "/app/locale.js";
@@ -250,7 +251,6 @@ function CaseRowView({
 export function Queue() {
   const mailboxes = useMailboxes();
   const me = useMe();
-  const [selected, setSelected] = useState<string | null>(null);
   const [lost, setLost] = useState<Held | null>(null);
   /** The Node's refusal, or this interface's fallback when it said nothing (`Said`), shown through `marked()`. */
   const [problem, setProblem] = useState<Said | null>(null);
@@ -259,9 +259,11 @@ export function Queue() {
   const [picked, setPicked] = useState<string[]>([]);
   const queryClient = useQueryClient();
 
-  // The first mailbox this person may work, until they pick another. Not persisted: which queue somebody is
-  // looking at is not a decision worth remembering wrongly across sessions.
-  const mailboxId = selected ?? mailboxes.data?.mailboxes[0]?.id ?? null;
+  // The mailbox the address names (`?mailbox=`, which the sidebar's mailbox rows and this picker set), or the first
+  // this person may work. In the address, not in state, so the sidebar can choose it and Back returns to it.
+  const navigate = useNavigate();
+  const wanted = useRouterState({ select: (state) => String((state.location.search as { mailbox?: unknown } | undefined)?.mailbox ?? "") });
+  const mailboxId = mailboxes.data?.mailboxes.find((box) => box.id === wanted)?.id ?? mailboxes.data?.mailboxes[0]?.id ?? null;
   const cases = useCases(mailboxId);
   const current = mailboxes.data?.mailboxes.find((box) => box.id === mailboxId);
   // Fetched only when the count says there is something to list: the route is administrators-only, and a
@@ -372,7 +374,7 @@ export function Queue() {
           <span className="dim mono">{t("queue.mailbox")}</span>
           <select
             value={mailboxId ?? ""}
-            onChange={(event) => setSelected(event.target.value)}
+            onChange={(event) => void navigate({ to: "/queue", search: { mailbox: event.target.value } })}
           >
             {mailboxes.data.mailboxes.map((box) => (
               <option key={box.id} value={box.id}>
