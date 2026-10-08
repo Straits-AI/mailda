@@ -61,8 +61,8 @@ chose: it appears in the inbox, and that is the proof.
 
 **Adding people.** On *People*, mint an invitation for the person's sign-in address: the link is shown to
 you once and not mailed, you hand it over however you already trust, and the person opens it and chooses
-a password. They hold nothing until you grant them a relation on a mailbox, on the same screen, where each
-relation is written as what it lets them do. Tick *Also give them a mailbox at* to make a mailbox for them at
+a password. They hold nothing until you grant them a relation on a mailbox, on the same screen: each mailbox is a
+card with a grid of people and permissions, one box each, and *What each permission means* under it. Tick *Also give them a mailbox at* to make a mailbox for them at
 an address on your domain as you invite them; it is granted to nobody but you, as the creator of any mailbox
 is, and they hold nothing on it. Once they have an account with that address and hold nothing on it directly,
 *People* asks whether to give it to them, naming the two relations it grants, and never asks again about a
@@ -73,13 +73,13 @@ whose catch-all points at the Node nothing else is needed, unless the address ha
 its own sending it elsewhere or disabled, which the screen names; on a subdomain the Node writes the routing
 rule in the same act, or says exactly what to run if it could not. The composer shows the address a message
 goes out from, the mailbox's and never the email you sign in with, and says so when it cannot read it. Each
-mailbox lists its addresses there, with *remove* beside each: the rule goes with it when this Node wrote it
+mailbox lists its addresses there as a table, with where each forwards, *Change forwards* and *Remove*: the rule goes with it when this Node wrote it
 (one it took over is left, and the screen names the put-back), and an address that has received mail stays,
 by name, because every message under it is filed through that address. Mailboxes and teams are renamed on
 the same screen.
 
 The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
-below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
+below, because an update also has to pull the release and, when a migration is pending, back the Node up first. It lists the Nodes the account already has (every
 Node registers a `ButlerRun` Workflow under its own name), and the name you give decides: an existing name
 is upgraded through the canary, which needs the Node's URL once and remembers it in a git-ignored
 `.mailda/nodes.json`; a new name deploys another Node beside the first, with every resource named from it.
@@ -185,9 +185,10 @@ curl -fsSL https://mailda.site/update.sh | bash
 
 It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It fetches the release remote,
 fast-forwards when the clone is behind and says so, reinstalls, asks which Node
-if the account has several and, while the Node still answers only at its workers.dev address, whether to give it a
-hostname of your own (the install's question: a zone, then a label such as `mail`, so `mail.example.com`; Enter keeps
-workers.dev, and `--hostname` answers it ahead). It lists every
+if the account has several and, when Cloudflare lists no custom domain on the Node, whether to give it a hostname of
+your own (the install's question: a zone, then a label such as `mail`, so `mail.example.com`; Enter keeps workers.dev,
+and `--hostname` answers it ahead). A Node that has one is checked at it, and keeps its workers.dev address too. Each
+command prints its steps first, numbered, then `Step 3 of 7 · …` as each begins. It lists every
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
 refused unless `--contract`), and asks once. When a migration is pending it then takes a `mailda backup` into a
 git-ignored `.mailda/backups/<node>/<time>` directory before the schema is touched, refusing to go on without one;

@@ -39,7 +39,7 @@ replaced the shape around it:
   long mailbox name ends in an ellipsis with its counts kept. The groups render from `SIDEBAR_HOME` in
   `chrome.tsx`, a `Record<AppRoute, …>`, so a route with no home is a compile error rather than a page the
   navigation cannot reach (AGENTS.md §2c). The per-mailbox rows are #32's argument surviving: they carry the
-  *unclaimed* count and how many you hold as *mine*, and they link to the queue. Nothing is hidden by role, the
+  *unclaimed* count and how many you hold as *mine*, and each opens the queue on its own mailbox. Nothing is hidden by role, the
   Admin group included: the screens answer 404 by §5C, and a hidden link would be a weaker copy of that decision
   (`/butlers` below said it first). Admin is collapsed until somebody opens it, and opens by itself when the
   route is one of its own.
@@ -333,8 +333,8 @@ Five decisions worth having written down:
 - **It is a control on this screen, not a sidebar row.** The sidebar lists mailboxes, so a filter here looks
   like a duplicate. It is not: the sidebar's per-mailbox rows sit under Workspace and carry *unclaimed*
   counts, work nobody has taken, which is Layer 3's subject. Repointing them at a filtered inbox would change
-  what they mean rather than give them a meaning. They link to the queue and select nothing there; a
-  `?mailbox=` on `/queue` is a separate change.
+  what they mean rather than give them a meaning. Each opens the queue on its own mailbox (`/queue?mailbox=<id>`,
+  8 October 2026; until then they all opened the first mailbox's), and the Queue's picker changes the address too.
 - **It defaults, and Compose's chooser must not** (#94). That one picks a mailbox to *send as*: per mailbox
   `send.propose`, a governance consequence, and an invisible default puts somebody's name on an address they
   did not choose. This one picks what to *look at*, so "all mailboxes" is a truthful description of an
