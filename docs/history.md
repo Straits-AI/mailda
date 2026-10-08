@@ -4971,3 +4971,12 @@ step, while the Node is still remembered by its workers.dev address (`asksHostna
 domain, since they upload versions and leave the Worker's triggers alone. Choosing one says what changes: sign in
 again at the new address (a session and a passkey belong to the address they were made on), and the workers.dev
 address keeps working.
+
+## An upgrade backs up only when a migration is pending (8 October 2026)
+
+`mailda upgrade` took a backup before every deploy, before it had even read whether any migration was pending, so a
+code-only release cost a minute and the backup's sign-in for a copy no migration needed. The pending migrations are
+now read first; with none, the deploy changes no table and the backup step says it was skipped (`--backup` takes one
+anyway). With any, the backup is taken after the operator agrees and before the schema is touched, and an upgrade
+that cannot take one still does not proceed. The administrator sign-in stays: the canary gate reads the whole doctor
+report with it on every upgrade.

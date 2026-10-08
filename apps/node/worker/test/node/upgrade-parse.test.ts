@@ -69,3 +69,14 @@ describe("whether an upgrade asks for a hostname of the operator's own (8 Octobe
     expect(asksHostname({ given: "", yes: false, remembered })).toBe(false);
   });
 });
+
+describe("whether an upgrade backs the Node up first (8 October 2026)", () => {
+  it("backs up when a migration is pending or a backup was asked for, and not for code alone", async () => {
+    const { backupWanted } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
+    const none = { expand: [], contract: [] };
+    expect(backupWanted(none, false)).toBe(false);
+    expect(backupWanted(none, true)).toBe(true);
+    expect(backupWanted({ expand: ["0078_x.sql"], contract: [] }, false)).toBe(true);
+    expect(backupWanted({ expand: [], contract: ["0079_y.sql"] }, false)).toBe(true);
+  });
+});

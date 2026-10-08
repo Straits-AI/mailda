@@ -96,9 +96,10 @@ const USAGE = `mailda — operate a Mailda Node
                                      MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN.
                                      Then lists the Email Routing rules on the name it receives at and
                                      offers to point each here; --yes or no terminal changes none.
-  mailda upgrade [--name <worker>] [--url <origin>] [--hostname <host>] [--yes] [--contract]
-                                     pull the release, back the Node up, list what its schema will do to
-                                     the catalog, deploy through the canary, attach --hostname if given, and
+  mailda upgrade [--name <worker>] [--url <origin>] [--hostname <host>] [--yes] [--contract] [--backup]
+                                     pull the release, list what its schema will do to the catalog, back
+                                     the Node up when a migration is pending (--backup: always), deploy
+                                     through the canary, attach --hostname if given, and
                                      finish a Node's setup if it was never set up to receive.
                                      Then lists the Email Routing rules on the name it receives at and
                                      offers to point each here; --yes or no terminal changes none.
