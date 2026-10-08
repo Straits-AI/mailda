@@ -5,12 +5,13 @@ measured_on: 2026-09-26
 stale_when: >
   wrangler stops attaching `routes: [{ custom_domain: true }]` on a first `wrangler deploy`; `versions
   upload` or `versions deploy` starts dropping a Worker's custom domains; `wrangler triggers deploy` stops
-  applying route changes to an existing Worker; or deleting a Worker starts leaving its custom-domain DNS
-  record behind
+  applying route changes to an existing Worker; deleting a Worker starts leaving its custom-domain DNS
+  record behind; or wrangler stops turning workers.dev off beside a route when `workers_dev` is unsaid
 values:
   deploy.custom_domain_attached_by_first_deploy: 1
   deploy.custom_domain_kept_across_versions: 1
   deploy.triggers_deploy_adds_custom_domain: 1
+  deploy.routes_turn_workers_dev_off_unless_said: 1
 ---
 
 # A Node can have its own hostname, attached by the deploy
@@ -41,3 +42,11 @@ remembered in `.mailda/nodes.json` is then `https://<hostname>`.
 rename, neither of which the install does. And the earlier reason a custom hostname was dashboard-only,
 that changing it changed the OAuth client's redirect URI too, is gone with the OAuth client (ADR 42,
 amended 26 September 2026).
+
+
+**Observed 8 October 2026 on whymelabs.com, not measured on the scratch Worker above.** A config carrying `routes`
+and no `workers_dev` key, applied by `wrangler triggers deploy`, attached the custom domain and turned the Worker's
+workers.dev address off: the Worker's `subdomain` setting read `enabled: false`, and the next upgrade's canary at
+workers.dev answered 1042, "No Workers script was found for this host on workers.dev". So the derived config says
+`"workers_dev": true` beside its route (`deriveConfig`), and an upgrade checks the canary at the custom domain when
+Cloudflare lists one.

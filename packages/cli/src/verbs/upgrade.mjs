@@ -120,10 +120,14 @@ export async function upgrade(argv) {
   const attached = yes || given !== null ? null
     : await attachedHostnames(accountId, await wranglerToken(), name);
   if (attached !== null && attached.length > 0) process.stdout.write(`   hostname  ${attached.join(", ")}  (attached)\n`);
+  /*
+   * An attached hostname is carried into the derived config (8 October 2026), so each deploy states the Worker's
+   * triggers as they are: the custom domain, and workers.dev kept on beside it (`deriveConfig`).
+   */
   const hostname = asksHostname({ given, yes, remembered, attached })
     ? await hostnameQuestion(argv)
-    : (given ?? "").trim().toLowerCase() || null;
-  if (hostname !== null && given === null) {
+    : (given ?? attached?.[0] ?? "").trim().toLowerCase() || null;
+  if (hostname !== null && given === null && (attached === null || attached.length === 0)) {
     for (const line of wrapAt(`${hostname} is attached to the Node after the deploy. Sign in again there: a session and a `
       + "passkey belong to the address they were made on. The workers.dev address keeps working.", 90)) {
       process.stdout.write(`   ${line}\n`);
@@ -134,7 +138,9 @@ export async function upgrade(argv) {
   if (firstInstall()) {
     fail(`\`${name}\` is not a Node in this account, and an upgrade never creates one.\n\n  fix      mailda install, which does`);
   }
-  const givenUrl = flag(argv, "url") ?? process.env.MAILDA_URL ?? remembered ?? "";
+  // The Node's own hostname when Cloudflare lists one: it answers whatever became of workers.dev.
+  const givenUrl = flag(argv, "url") ?? process.env.MAILDA_URL
+    ?? (attached !== null && attached.length > 0 ? `https://${attached[0]}` : remembered) ?? "";
   const url = (givenUrl !== "" || yes ? givenUrl : (await ask("   its URL (https://<your-node>): ")).trim()).replace(/\/$/, "");
   if (!/^https:\/\/\S+$/.test(url)) fail(`"${url}" is not a URL; the backup and the canary both need the Node's own hostname.`);
   process.env.MAILDA_URL = url;
