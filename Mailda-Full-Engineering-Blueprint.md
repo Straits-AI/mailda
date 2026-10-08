@@ -580,6 +580,8 @@ The former "or is marked receive-only" escape is withdrawn: ADR 25 requires Work
 3. A verified checkpoint precedes destructive migration; health and no-effect synthetic tests gate traffic promotion.
 4. Restore plans a clean target, validates manifests/hashes/secrets/DNS and reaches readiness before cutover; all interventions are audited.
 
+*Amended 8 October 2026:* what `mailda upgrade` builds of points 2 and 3. It numbers its steps; it lists the pending migrations by phase and says before asking whether a backup will be taken, which it is whenever any migration is pending (a code-only release takes none, `--backup` takes one anyway); the canary is gated on doctor at the Node's own hostname when Cloudflare lists one, workers.dev otherwise; and a Node without a hostname of its own is offered one.
+
 ### Emergency containment and recovery
 
 1. Authorized operator can pause one Butler, mailbox sender, connector or entire domain external sending without stopping inbound receipt unnecessarily.

@@ -1,7 +1,7 @@
 ---
 translated_from: docs/cloudflare-settings.md
-source_sha256: cdc20882b9b0442fd0b2226129e4ee9f060f0ab66b7977d6baf7ade38d6e3e88
-source_commit: bb5f130
+source_sha256: cbcc024ea0105a5635ed44bba9b707258ca9ed1bc76fdd4dbc31b0a9f0c4aecd
+source_commit: 56be3f0
 ---
 # 淼达需要你的 Cloudflare 账户提供什么
 
@@ -25,7 +25,7 @@ source_commit: bb5f130
 | **`send_email` 绑定**，或 REST 凭据 | 发信通道 | 绑定随 `wrangler.jsonc` 提供；REST 凭据是无法重新部署的节点的后备：`PUT /api/transport` | Workers → Settings → Bindings，或把一个 Email Sending API 令牌粘贴进 `PUT /api/transport` | `transport_adapters` |
 | **投递结果**：发布到 `SENDING_EVENTS` 的 `email.sending` 事件订阅，以及该队列上的一个消费者 | 两者缺一，每次发信都会永远停在*未观测到*，而且看上去没有任何异常 | 安装时借用 wrangler 的登录（`mailda install`；`mailda upgrade`）。之后的订阅：通过授权调用 `POST /api/provider/subscription`（`/setup` → *投递结果*；`mailda provider --subscribe <domain>`），先提出、再凭摘要确认，适用于已经为发信接入的域名（[测量记录](../receipts/email-sending-events.md)）。`GET /api/provider/delivery-events` 会指出三者中缺了哪一个。同一次确认会在队列没有消费者时把这个 Worker 挂为它的消费者（2026 年 9 月 16 日测量：`POST /accounts/{id}/queues/{id}/consumers`）；没有授权的节点仍可用 `queue:attach-consumer`。有一种情况任何订阅都解决不了：在测量过的那一个案例中，发往本账户已验证的目标地址的邮件根本没有产生投递事件（[测量记录](../receipts/email-sending-events.md)，2026 年 9 月 28 日）。`POST /api/provider/verified-destinations` 会读出节点的收件人中哪些是这种地址并记录下来（`mailda setup` 和 `mailda upgrade` 借用 wrangler 的登录；或 `/setup` → *投递结果*，使用带有可选权限 Email Routing Addresses Read 的令牌），于是发件箱把它们标为 `verified destination`（已验证的目标地址），`delivery_visibility` 也不会把那种静默算作看不见 | Queues → `SENDING_EVENTS` 队列 → Settings → consumer：这个 Worker。订阅：Email → Email Sending → 该域名 → events → 这个队列 | `sending_events_consumer`、`delivery_visibility`、`delivery_attribution`、`delivery_explanation_void` |
 | **一个域名**，如果你还没有 | 可选 | `GET /api/provider/domains` 查询价格，`POST /api/provider/domains/purchase` 凭摘要确认（`mailda provider --buy`） | Domain Registration | 无 |
-| **节点的主机名** | 节点默认在 `<worker>.<account>.workers.dev` 上响应；用你自己的名称，节点发出的每个链接都更好读 | 安装和升级都会询问主机名（先从列表中选一个区域，再填标签），并写入节点的派生配置；首次部署时挂上它，金丝雀路径保留它，新增主机名的升级会运行 `wrangler triggers deploy`（[测量记录](../receipts/worker-custom-domain.md)）。记录在 `.mailda/nodes.json` 中 | Workers → Settings → Domains & Routes | 无：访问节点所用的主机名就是响应的那一个；节点中没有任何东西依赖于是哪一个 |
+| **节点的主机名** | 节点默认在 `<worker>.<account>.workers.dev` 上响应；用你自己的名称，节点发出的每个链接都更好读 | 安装和升级都会询问主机名（先从列表中选一个区域，再填标签），并写入节点的派生配置；首次部署时挂上它，金丝雀路径保留它，新增主机名的升级会运行 `wrangler triggers deploy`（[测量记录](../receipts/worker-custom-domain.md)），并在旁边写上 `workers_dev: true`，让 workers.dev 地址继续可用。只有当 Cloudflare 显示该 Worker 还没有自定义域名时，升级才会询问；有自定义域名时，金丝雀版本在该域名上检查。记录在 `.mailda/nodes.json` 中 | Workers → Settings → Domains & Routes | 无：访问节点所用的主机名就是响应的那一个；节点中没有任何东西依赖于是哪一个 |
 
 ## 如何阅读这张表
 
