@@ -7,7 +7,7 @@ import { RELEASE_URL, asksHostname, backupWanted, distance, onlyPackageJson, pen
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, hostnameQuestion, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
+import { attachedHostnames, printNext, provisionNode, receivingDomain, receivingOf, verifiedDestinationsStep, wranglerToken, wranglerTokenRead } from "./provision.mjs";
 import { routingRulesStep } from "./routing-step.mjs";
 import { plural } from "@mailda/runtime";
 import { askAdministrator } from "../credentials.mjs";
@@ -116,7 +116,11 @@ export async function upgrade(argv) {
    * same question `mailda install` asks. It goes into the derived config, and the deploy attaches it after promotion.
    */
   const given = flag(argv, "hostname") ?? process.env.MAILDA_HOSTNAME ?? null;
-  const hostname = asksHostname({ given, yes, remembered })
+  // Asked of Cloudflare only when the answer could change the question: a hostname given, or --yes, asks nothing.
+  const attached = yes || given !== null ? null
+    : await attachedHostnames(accountId, await wranglerToken(), name);
+  if (attached !== null && attached.length > 0) process.stdout.write(`   hostname  ${attached.join(", ")}  (attached)\n`);
+  const hostname = asksHostname({ given, yes, remembered, attached })
     ? await hostnameQuestion(argv)
     : (given ?? "").trim().toLowerCase() || null;
   if (hostname !== null && given === null) {

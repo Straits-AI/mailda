@@ -26,7 +26,7 @@ export function onlyPackageJson(conflicted: string): boolean;
 export function resolvePackageJson(ours: string, theirs: string): string;
 
 /** Whether an upgrade asks for a hostname of the operator's own: only while the Node is known by its workers.dev address. Pure. */
-export function asksHostname(input: { given: string | null; yes: boolean; remembered: string | null }): boolean;
+export function asksHostname(input: { given: string | null; yes: boolean; remembered: string | null; attached?: readonly string[] | null }): boolean;
 
 /** Whether an upgrade backs the Node up first: a migration pending, or asked for. Pure. */
 export function backupWanted(phases: { expand: readonly string[]; contract: readonly string[] }, forced: boolean): boolean;
