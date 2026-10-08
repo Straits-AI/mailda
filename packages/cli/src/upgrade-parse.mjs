@@ -64,3 +64,16 @@ export function resolvePackageJson(ours, theirs) {
   if (typeof name === "string" && name !== "") merged.name = name;
   return `${JSON.stringify(merged, null, 2)}\n`;
 }
+
+/**
+ * Whether an upgrade asks for a hostname of the operator's own (8 October 2026, the owner's: "can we add a step to
+ * customize the mailda deployment domain? Like I want it at mailda.whymelabs.com"). Pure. Only while the Node is
+ * still known by its workers.dev address (or not remembered at all): once it answers on a name of its own, the
+ * question has been answered, and the custom domain stays attached across later deploys, which upload versions and
+ * leave the Worker's triggers alone. Never under --yes, and never when the hostname was given (`--hostname`,
+ * MAILDA_HOSTNAME).
+ */
+export function asksHostname({ given, yes, remembered }) {
+  if (yes || given !== null) return false;
+  return remembered === null || /\.workers\.dev\/?$/i.test(remembered);
+}
