@@ -187,10 +187,11 @@ It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It
 fast-forwards when the clone is behind and says so, reinstalls, asks which Node
 if the account has several and, while the Node still answers only at its workers.dev address, whether to give it a
 hostname of your own (the install's question: a zone, then a label such as `mail`, so `mail.example.com`; Enter keeps
-workers.dev, and `--hostname` answers it ahead), and then, before the schema is touched, takes a `mailda backup` into a
-git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
+workers.dev, and `--hostname` answers it ahead). It lists every
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
-refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as
+refused unless `--contract`), and asks once. When a migration is pending it then takes a `mailda backup` into a
+git-ignored `.mailda/backups/<node>/<time>` directory before the schema is touched, refusing to go on without one;
+a code-only release takes none, and says so (`--backup` takes one anyway). Then it runs the same expand, canary, gate, promote sequence as
 `mailda deploy`. A Node that was never set up to receive is offered the install's setup step afterwards,
 with the same sign-in. Whenever it can sign in to the Node, it then reads, with the same login, which of the
 Node's recipients are verified destinations of the account, and prints how many; when wrangler gives it no token
