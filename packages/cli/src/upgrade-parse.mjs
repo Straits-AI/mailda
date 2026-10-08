@@ -77,3 +77,11 @@ export function asksHostname({ given, yes, remembered }) {
   if (yes || given !== null) return false;
   return remembered === null || /\.workers\.dev\/?$/i.test(remembered);
 }
+
+/**
+ * Whether an upgrade backs the Node up first (8 October 2026): when a migration is pending, since that is what the
+ * deploy applies to the live catalog, or when asked (`--backup`, `--backup-out`). Pure.
+ */
+export function backupWanted(phases, forced) {
+  return forced || phases.expand.length + phases.contract.length > 0;
+}

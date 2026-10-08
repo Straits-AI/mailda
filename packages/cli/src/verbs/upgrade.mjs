@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
 import { WRANGLER_ARGS, api, capture, choose, configFor, fail, flag, readSecret, run, sessionCookie, useConfig, workerDir, wrapAt } from "../support.mjs";
-import { RELEASE_URL, asksHostname, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
+import { RELEASE_URL, asksHostname, backupWanted, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, hostnameQuestion, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
@@ -16,7 +16,7 @@ import { progress } from "../progress.mjs";
 const REPO = resolve(workerDir, "../../..");
 
 /**
- * `mailda upgrade`: bring a Node that exists up to the code this clone can have, with a backup first.
+ * `mailda upgrade`: bring a Node that exists up to the code this clone can have, with a backup first when a migration is pending.
  *
  * `mailda install` already upgrades when given an existing name, and it does so with whatever code is in
  * the clone. That is the landmine this verb removes: an operator who never pulled gets a canary, a gate, a
@@ -26,21 +26,23 @@ const REPO = resolve(workerDir, "../../..");
  *
  * The second thing it adds is the backup. The deploy applies expand-phase migrations to the live catalog
  * before the canary is even uploaded, and a backfill runs in place on the customer's only copy of their
- * mail. `mailda backup` exists for exactly the day one of those is wrong, so it runs here, before, every
- * time, into a git-ignored directory under `.mailda/`; an upgrade that cannot take one does not proceed.
+ * mail. `mailda backup` exists for exactly the day one of those is wrong, so it runs here, before any is applied,
+ * into a git-ignored directory under `.mailda/`; an upgrade that cannot take one does not proceed. Only then: with no
+ * migration pending the deploy changes no table, and a backup every time cost each code-only release a minute and a
+ * sign-in (8 October 2026, the owner's: "why backup when there is no changes to the db?"). `--backup` takes one anyway.
  *
- * Then the pending migrations are listed by phase, because "what will this do to my data" is a question
+ * The pending migrations are listed by phase first, because "what will this do to my data" is a question
  * the operator is entitled to have answered on screen before agreeing, and the deploy proper runs: expand,
  * canary, gate, promote. Nothing in the mechanism is new; `mailda deploy` is called, not copied.
  */
 /** What an upgrade does, in order: each prints its banner as it begins (`progress.mjs`). */
 export const UPGRADE_STEPS = [
-  "Get the release", "Choose the Node", "Back up the Node", "Review what changes", "Deploy through the canary",
+  "Get the release", "Choose the Node", "Review what changes", "Back up the Node", "Deploy through the canary",
   "Receiving, sending and delivery outcomes", "Email Routing rules",
 ];
 
 export async function upgrade(argv) {
-  process.stdout.write("\n== mailda upgrade\n   Pull the release, back the Node up, list what its schema will do, then deploy through the canary.\n");
+  process.stdout.write("\n== mailda upgrade\n   Pull the release, list what its schema will do, back the Node up if that changes a table, then deploy through the canary.\n");
   const yes = argv.includes("--yes");
   const steps = progress(UPGRADE_STEPS);
 
@@ -135,22 +137,16 @@ export async function upgrade(argv) {
   rememberUrl(accountId, name, url);
   process.stdout.write(`   node      ${name}  ${url}\n`);
 
-  steps.step("Back up the Node");
-  // 3. The backup, before anything touches the catalog. Administrator credentials, because the inventory it
-  //    indexes is administrator-only; they also let the canary gate below see the whole doctor report.
+  // Administrator credentials, for the backup's inventory (administrator-only) and the canary gate's whole doctor
+  // report, which every upgrade has, backup or not.
   if (process.env.MAILDA_EMAIL === undefined || process.env.MAILDA_PASSWORD === undefined) {
     if (yes) fail("--yes needs MAILDA_EMAIL and MAILDA_PASSWORD, for the backup and the canary gate.");
-    process.stdout.write("\n== an administrator, for the backup\n");
+    process.stdout.write("\n== an administrator of the Node\n");
     await askAdministrator(url, { ask, readSecret, fail });
   }
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const out = flag(argv, "backup-out") ?? resolve(REPO, ".mailda", "backups", name, stamp);
-  process.stdout.write(`   into ${out}\n`);
-  await backup(["--url", url, "--out", out, ...nameArgs]);
-  process.stdout.write(`   backup    ${out}\n   restore   docs/disaster-recovery.md, if the upgrade goes wrong\n`);
 
   steps.step("Review what changes");
-  // 4. What the schema will do to the data, on screen, before agreeing.
+  // 3. What the schema will do to the data, on screen, before agreeing, and so whether a backup is taken.
   const listed = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...WRANGLER_ARGS], { quiet: true });
   if (listed.status !== 0) fail(`could not list pending migrations:\n${listed.text}`);
   const migrationsDir = resolve(workerDir, "migrations");
@@ -161,9 +157,26 @@ export async function upgrade(argv) {
   for (const one of phases.contract) process.stdout.write(`   contract  ${one}  (drops or narrows; refused unless --contract)\n`);
   process.stdout.write("   The expansions run on the live catalog before the new version is uploaded; the canary is\n"
     + "   then checked and promoted only if doctor is no worse than today's. Contractions wait for --contract.\n");
+  const backingUp = backupWanted(phases, argv.includes("--backup") || flag(argv, "backup-out") !== null);
+  process.stdout.write(backingUp ? "   a backup is taken first, before anything touches the catalog\n"
+    : "   no backup: nothing changes the catalog's schema (--backup takes one anyway)\n");
 
   const go = yes ? "y" : await ask("\n   upgrade now? [y/N]: ");
-  if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed; the backup stays.\n\n"); return; }
+  if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed.\n\n"); return; }
+
+  steps.step("Back up the Node");
+  // 4. The backup, before anything touches the catalog, when a migration will (8 October 2026: a code-only release
+  //    took one every time, a minute and a sign-in for a copy no migration needed).
+  let out = null;
+  if (!backingUp) {
+    process.stdout.write("   skipped: no migration is pending, so the deploy changes no table\n");
+  } else {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    out = flag(argv, "backup-out") ?? resolve(REPO, ".mailda", "backups", name, stamp);
+    process.stdout.write(`   into ${out}\n`);
+    await backup(["--url", url, "--out", out, ...nameArgs]);
+    process.stdout.write(`   backup    ${out}\n   restore   docs/disaster-recovery.md, if the upgrade goes wrong\n`);
+  }
   /*
    * The read of verified destinations runs after promotion and before the deploy's closing report (28 September
    * 2026), because it changes what that report says: it used to come after, and every upgrade that refreshed it
@@ -197,7 +210,7 @@ export async function upgrade(argv) {
     domain: receivingDomain(session.state?.provisioned, setUp),
   });
   process.stdout.write(
-    `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
+    `\n== upgraded\n   ${name} at ${url}; ${out === null ? "no backup (no migration was pending)" : `backup from before it at ${out}`}\n`
     + `   receiving   ${setUp.receiving === null
       ? setUp.routing === null ? "not set up" : `${setUp.address ?? "?"} is not routed here (below)`
       : `${setUp.address ?? "?"} on ${setUp.receiving}`}\n`
