@@ -6,7 +6,7 @@ import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
   answeredNotFound, createButler, publishButlerVersion, resumeButler, saveButlerDraft,
-  useButler, useButlerRuns, useButlers,
+  useButler, useButlerRuns, useButlers, useNamed,
   replayButlerRun, runFacts, simulateButler,
   type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Said, type Simulation,
 } from "../api.ts";
@@ -121,6 +121,7 @@ function Standing({ butler }: { butler: ButlerRow }) {
 /** The editor for one Butler: its versions, its draft, and the two acts. */
 function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) {
   const detail = useButler(butler.id);
+  const named = useNamed();
   const queryClient = useQueryClient();
   const [source, setSource] = useState<string | null>(null);
   const [format, setFormat] = useState<ButlerSourceFormat | null>(null);
@@ -429,7 +430,8 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
               <td className="mono">{row.version ?? "—"}</td>
               <td>{oneOf(BUTLER_VERSION_STATES, row.state) ? t(`butlers.version.${row.state}`) : <NodeWords>{row.state}</NodeWords>}</td>
               <td className="mono">{when(row.published_at)}</td>
-              <td className="mono">{row.published_by ?? "—"}</td>
+              {/* Who published it by address, as the Audit trail names an actor (it said `usr_01M4…` until 9 October 2026). */}
+              <td className="mono" title={row.published_by ?? undefined}>{row.published_by === null ? "—" : named(row.published_by)}</td>
               <td className="mono dim">{row.ast_sha256.slice(0, 12)}</td>
             </tr>
           ))}
