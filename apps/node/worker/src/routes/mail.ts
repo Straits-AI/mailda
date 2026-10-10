@@ -10,7 +10,7 @@ import { mergeConversations } from "../merge.ts";
 import { setResponseTarget } from "../mailbox-policy.ts";
 import { deleteDraft, DRAFT_LIST_CAP, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
 import { capped } from "../list-cap.ts";
-import { percentEncoded, safeFilename, undisguised } from "../outbound/headers.ts";
+import { safeFilename } from "../outbound/headers.ts";
 import { unprocessable } from "../errors.ts";
 import { addressList, isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
@@ -431,33 +431,9 @@ export const mail = {
     if (part === undefined) return notFound();
     const allowed = await authorizeExport(env, clock, request, params.receiptId);
     if (!allowed.ok) return allowed.response;
-    const { classifyAttachment, DANGEROUS } = await import("../attachments.ts");
-    const bytes = typeof part.content === "string" ? new TextEncoder().encode(part.content) : new Uint8Array(part.content);
-    const verdict = classifyAttachment(part.filename, bytes);
-    const mediaType = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/.test(part.mimeType) && !DANGEROUS.has(verdict)
-      ? part.mimeType.toLowerCase() : "application/octet-stream";
-    const name = part.filename ?? `part-${ordinal}`;
-    const dot = name.lastIndexOf(".");
-    const filename = safeFilename(dot > 0 ? name.slice(0, dot) : name, dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]/g, "").slice(0, 11) : "");
-    // The sender's name, less what would make the saved file lie about itself: control characters, line
-    // separators, and the direction controls that make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf` (the
-    // list the seal refuses, `undisguised`). The sender wrote it, so this saved name is the only place the reader
-    // can be protected from it.
-    const shown = undisguised(name);
-    return new Response(bytes, {
-      headers: {
-        "content-type": mediaType,
-        // RFC 6266: the ASCII `filename` for a client that knows nothing else, and `filename*` with the sender's
-        // own name, so `合同.pdf` saves as `合同.pdf` and not as `__.pdf`. Only when the ASCII one had to change the name,
-        // so a name that was already safe is served as it always was. Percent-encoded, so nothing in the
-        // name can end the parameter or the header.
-        "content-disposition": filename === name
-          ? `attachment; filename="${filename}"`
-          : `attachment; filename="${filename}"; filename*=UTF-8''${percentEncoded(shown)}`,
-        "x-content-type-options": "nosniff",
-        "cache-control": "no-store",
-      },
-    });
+    const { attachmentResponse } = await import("../attachments.ts");
+    const bytes = new Uint8Array(typeof part.content === "string" ? new TextEncoder().encode(part.content) : part.content);
+    return await attachmentResponse(bytes, part.filename ?? `part-${ordinal}`, part.mimeType);
   },
 
   /**

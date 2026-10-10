@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
-import { ROUTES, machineUseful, methodNameFor, type RouteSpec } from "@mailda/contract";
+import { ROUTES, agentCapabilities, machineUseful, methodNameFor, type RouteSpec } from "@mailda/contract";
 
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { tools } from "../src/mcp.ts";
@@ -372,7 +372,7 @@ describe("the catalogue depends on which class of caller is asking", () => {
   }
 
   /** A delegated credential whose ceiling is exactly `mail.read`'s routes. */
-  async function agentToken(): Promise<string> {
+  async function agentToken(): Promise<{ token: string; actions: readonly string[] }> {
     const ctx = createSystemCtx();
     const at = new Date(ctx.now()).toISOString();
     const mailbox = "mbx_mcpagent0000000000000000";
@@ -393,7 +393,7 @@ describe("the catalogue depends on which class of caller is asking", () => {
         { mailboxId: mailbox, relation: "message.export" },
       ],
     });
-    return minted.token;
+    return { token: minted.token, actions: minted.agent.actions };
   }
 
   const SIMULATE = "postButlersByButlerIdSimulate";
@@ -406,35 +406,67 @@ describe("the catalogue depends on which class of caller is asking", () => {
     ).toContain(SIMULATE);
   });
 
-  it("refuses a delegated credential the endpoint itself, which is why the agent branch is unreachable", async () => {
-    /*
-     * **The finding that came out of building this**, recorded rather than papered over.
-     *
-     * `POST /mcp` is tier `surface` — *"a surface is not a capability on itself"* — so it is in no agent's
-     * pinned ceiling and `authz-read.ts` refuses the token before any catalogue is consulted. A delegated
-     * credential cannot list MCP tools at all today.
-     *
-     * So the agent branch of `tools()` is correct and currently **unreachable**. It is kept rather than
-     * deleted because the intersection it performs — machine-useful ∩ pinned ceiling — is the right answer
-     * the moment somebody decides `/mcp` should be reachable by a credential, and that is a product decision
-     * about what a long-lived machine identity may do, not something to settle inside a catalogue. This test
-     * is what will fail on the day it changes, with the reason attached.
-     */
-    const response = await SELF.fetch(`${ORIGIN}/mcp`, {
+  async function asAgent(token: string, method: string, params?: unknown): Promise<Response> {
+    return await SELF.fetch(`${ORIGIN}/mcp`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${await agentToken()}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
     });
-    expect(response.status, "a delegated credential reached /mcp, so the agent catalogue is now live and "
-      + "needs the offered/ceiling assertions this test replaced").toBe(403);
+  }
+
+  it("lists a delegated credential exactly its ceiling's tools, over HTTP", async () => {
+    /*
+     * `POST /mcp` refused every agent token until 10 October 2026: it is tier `surface`, so no ceiling can hold
+     * it, and `authz-read.ts` checked the ceiling before anything else. The Blueprint said a delegated agent uses
+     * its token there the same way a session does. The surface tier is now admitted, and the catalogue is the
+     * intersection the seam test below proves — driven here end to end.
+     */
+    const minted = await agentToken();
+    const response = await asAgent(minted.token, "tools/list");
+    expect(response.status, "a delegated credential is still refused at /mcp").toBe(200);
+    const offered = ((await response.json()) as { result: { tools: { name: string }[] } }).result.tools
+      .map((one) => one.name);
+    expect(offered, "a mail.read agent is not offered the message listing").toContain("getMessages");
+    expect(offered, "an agent is offered the administrator's dry run, which it can never complete")
+      .not.toContain(SIMULATE);
+    // Against the minted ceiling itself, not `tools()`, which is the function under test.
+    const inCeiling = new Set((ROUTES as readonly RouteSpec[])
+      .filter((spec) => minted.actions.includes(`${spec.method} ${spec.path}`)).map(methodNameFor));
+    expect(offered.filter((name) => !inCeiling.has(name)), "a tool outside this agent's pinned ceiling is offered")
+      .toEqual([]);
+    expect(offered.length, "the agent is offered as much as a session, so its ceiling is not applied")
+      .toBeLessThan(tools({ kind: "session" }).length);
+  });
+
+  it("runs a tool inside the ceiling, and treats one outside it as not on the list", async () => {
+    const minted = await agentToken();
+    const inside = await asAgent(minted.token, "tools/call", { name: "getMessages", arguments: {} });
+    const answer = (await inside.json()) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(answer.result.isError, `a tool inside the ceiling was refused: ${answer.result.content[0]?.text}`)
+      .toBe(false);
+
+    // A tool a machine may be offered, outside this agent's ceiling: offered to a stranger, not to this agent.
+    const ceiling = new Set(minted.actions);
+    const elsewhere = agentCapabilities(methodNameFor)
+      .find((one) => one.method === "GET" && !one.path.includes(":") && !ceiling.has(`${one.method} ${one.path}`))!;
+    const outside = await asAgent(minted.token, "tools/call", { name: elsewhere.name, arguments: {} });
+    const refused = (await outside.json()) as { error?: { code: number } };
+    expect(refused.error?.code, "a tool outside the ceiling was dispatched rather than unknown to this caller")
+      .toBe(-32602);
+  });
+
+  it("opens the surface only: the routes behind it still meet the ceiling", async () => {
+    // Admitting `/mcp` must not admit anything else. A route outside the ceiling, asked directly, is refused as before.
+    const minted = await agentToken();
+    const response = await SELF.fetch(`${ORIGIN}/api/butlers`, { headers: { authorization: `Bearer ${minted.token}` } });
+    expect(response.status, "a delegated credential reached a route outside its ceiling").toBe(403);
     expect((await response.json() as { error: string }).error).toBe("E_AGENT_ACTION_NOT_PERMITTED");
   });
 
-  it("intersects a delegated ceiling with the machine-useful set, for when the endpoint opens", () => {
+  it("intersects a delegated ceiling with the machine-useful set", () => {
     /*
-     * The agent branch driven at the seam instead of over HTTP, since the endpoint refuses the credential.
-     * Asserting it directly is weaker than an integration test and stronger than nothing: it proves the
-     * intersection is real, so the unreachable branch is not quietly wrong.
+     * The agent branch driven at the seam, beside the HTTP tests above: it pins the intersection to two named
+     * routes, which the HTTP tests cannot do without restating the curation.
      */
     const ceiling = ["GET /api/messages", "GET /api/messages/:receiptId/body"];
     const offered = tools({ kind: "agent", ceiling }).map((one) => one.name);

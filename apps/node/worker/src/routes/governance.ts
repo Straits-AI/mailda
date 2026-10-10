@@ -5,7 +5,7 @@ import { closeMatter, listMatters, openMatter } from "../matters.ts";
 import { grantsForReport, requestSupervisedRead } from "../supervised.ts";
 import { holdsForReport, placeHold, requestHoldLift } from "../holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy } from "../policy.ts";
-import { approvalContent } from "../approval-content.ts";
+import { approvalAttachment, approvalContent } from "../approval-content.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "../approvals.ts";
 import { safeFilename } from "../outbound/headers.ts";
 import { conditionsFrom, stagesFrom } from "./support.ts";
@@ -430,6 +430,23 @@ export const governance = {
       );
     }
     return Response.json(content);
+  },
+
+  /**
+   * One attachment of that send, as a download: the same rule and the same 404, recorded per file
+   * (`approvalAttachment`). Served by `attachmentResponse`, always `attachment` with `nosniff`, because a file
+   * somebody else wrote must never render on this origin under the approver's session.
+   */
+  "GET /api/approvals/:approvalId/attachments/:attachmentId": async ({ env, clock, params, who }) => {
+    const file = await approvalAttachment(env, clock, who.orgId, who.userId, params.approvalId, params.attachmentId);
+    if (file === null) {
+      return Response.json(
+        { error: "not_found", message: "No such attachment on an approval waiting on you." },
+        { status: 404 },
+      );
+    }
+    const { attachmentResponse } = await import("../attachments.ts");
+    return await attachmentResponse(file.bytes, file.filename, file.contentType);
   },
 
   "POST /api/approvals/:approvalId/decide": async ({ request, env, clock, params, who }) => {

@@ -36,16 +36,18 @@ import {
  * could disagree about.
  *
  * **Nothing needing two people is a tool here.** §18 counts distinct people, and an agent inside somebody's
- * session is that person — so the Node already refuses. What this withholds is the *offer*, because a tool
+ * session is that person, as one acting on a token is bounded by its sponsor — so the Node already refuses. What this withholds is the *offer*, because a tool
  * a caller can never complete teaches it to keep trying.
  *
- * ## Authentication is the session, and there is no third credential
+ * ## Authentication is a session or an agent token, and there is no MCP-specific credential
  *
- * The request carries the caller's cookies like any other. That is deliberate: an MCP-specific token would
- * be a third credential kind for this Node to hold, after passwords and passkeys (#84), and every act would
- * land in the audit trail under a machine rather than under the person who set it going. Acting as the
- * person is what makes the trail honest — and what makes the `governed` tier's reasoning true rather than
- * aspirational.
+ * The request carries the caller's cookies or bearer like any other. An MCP-specific token would be one more
+ * credential kind for this Node to hold, after passwords and passkeys (#84), and every act would land in the
+ * audit trail under a machine rather than under the person who set it going. A delegated `agt_` token is not
+ * that: it is the Node's own agent principal, minted on `/agents` under a named sponsor, and its acts land
+ * under the agent *and* the sponsor (#109). It reaches `/mcp` since 10 October 2026 (`authz-read.ts` admits the
+ * `surface` tier); every tool call it makes re-enters the router and meets its pinned ceiling there. Neither
+ * caller can be a second person, which is what keeps the `governed` tier's reasoning true.
  */
 
 /** MCP's JSON-RPC 2.0 envelope. Only the members this server reads. */
@@ -240,7 +242,7 @@ export async function handleMcp(
         "This Node's mail belongs to the customer whose Cloudflare account it runs in. Tools here read, draft "
         + "and place mail; they do not send. Sealing a send, approving one, publishing a Butler, lifting a hold and "
         + "granting access are deliberately absent — each needs a person, and several need two distinct "
-        + "people, which you cannot be while acting in one person's session. Refusals carry what happened, "
+        + "people, which you cannot be while acting for one person. Refusals carry what happened, "
         + "why, and what would change it: read the fix before retrying, because most are not transient.",
     });
   }

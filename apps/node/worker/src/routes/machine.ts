@@ -20,8 +20,8 @@ export const machine = {
    * which is the shape ADR 7's custody premise exists to rule out. Here, the mail never leaves the Node
    * that holds it and no account resource is added. `src/mcp.ts` carries the full argument and the cost.
    *
-   * Authenticated by the caller's own session, deliberately: every act lands in the audit trail under the
-   * person who set it going rather than under a machine.
+   * Authenticated by the caller's own session or a delegated agent token, never by an MCP-specific credential:
+   * every act lands in the audit trail under the person who set it going, or under the agent and its sponsor.
    */
   "POST /mcp": async ({ request, env, clock, reenter }) => {
     const { handleMcp } = await import("../mcp.ts");

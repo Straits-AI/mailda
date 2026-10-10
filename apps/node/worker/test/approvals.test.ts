@@ -1,6 +1,7 @@
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { utf8 } from "@mailda/evidence";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { SEND_REASONS } from "@mailda/contract/schemas";
 
@@ -10,7 +11,7 @@ import {
   APPROVAL_REASONS, decideApproval, openStage, pendingApprovals, shortfallFor,
   stageOf, stagesOfApproval, withdrawApproval, type Decision, type Stages,
 } from "../src/approvals.ts";
-import { approvalContent } from "../src/approval-content.ts";
+import { approvalAttachment, approvalContent } from "../src/approval-content.ts";
 import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
@@ -1138,5 +1139,74 @@ describe("an approver sees the send they are asked to approve", () => {
     expect(await read(ANN)).not.toBeNull();
     await decideApproval(testEnv, atTime(AUGUST_10 + 3000), ORG, ANN, approval.id, "deny");
     expect(await read(ANN)).toBeNull(); // only while it is being asked
+  });
+  /*
+   * The file an approver is asked to let leave (§18, amended 10 October 2026). A name and a size do not show what
+   * is in a contract, so each attachment is a download under the body's rule, recorded per file.
+   */
+  const QUOTE = utf8("%PDF-1.7\nthe quote\n");
+
+  it("gives an eligible approver an attachment's bytes, and records which file they opened", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const sealed = await seal({ attachments: [{ filename: "quote.pdf", contentType: "application/pdf", content: QUOTE }] });
+    const approval = (await approvalRow(sealed.id))!;
+    const content = await approvalContent(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id);
+    const [listed] = content!.attachments;
+    expect(listed, "the content does not name its attachment by id").toMatchObject({ filename: "quote.pdf" });
+    expect(listed!.id).toMatch(/^sat_/);
+
+    const file = await approvalAttachment(testEnv, atTime(AUGUST_10 + 3000), ORG, ANN, approval.id, listed!.id);
+    expect(file?.filename).toBe("quote.pdf");
+    expect(new TextDecoder().decode(file!.bytes), "the bytes are not the attachment's").toBe("%PDF-1.7\nthe quote\n");
+    const read = await testEnv.CATALOG.prepare(
+      "SELECT actor_user_id, subject, detail FROM audit_entries WHERE org_id = ? AND action = 'approval.attachment_read'",
+    ).bind(ORG).all<{ actor_user_id: string; subject: string; detail: string }>();
+    expect(read.results.map(({ actor_user_id, subject }) => ({ actor_user_id, subject })))
+      .toEqual([{ actor_user_id: ANN, subject: approval.id }]);
+    expect(JSON.parse(read.results[0]!.detail), "the record does not name the file opened")
+      .toMatchObject({ attachmentId: listed!.id });
+  });
+
+  it("gives an attachment to nobody else, and none from another send", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await tuple(AUTHOR, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const one = await seal({ attachments: [{ filename: "a.pdf", contentType: "application/pdf", content: QUOTE }] });
+    const other = await seal({ attachments: [{ filename: "b.pdf", contentType: "application/pdf", content: QUOTE }] });
+    const approval = (await approvalRow(one.id))!;
+    const ids = async (manifestId: string) => (await testEnv.CATALOG.prepare(
+      "SELECT id FROM send_attachments WHERE manifest_id = ?",
+    ).bind(manifestId).first<{ id: string }>())!.id;
+    const open = (who: string, attachmentId: string) =>
+      approvalAttachment(testEnv, atTime(AUGUST_10 + 2000), ORG, who, approval.id, attachmentId);
+    expect(await open(ANN, await ids(one.id))).not.toBeNull(); // the control: the rule admits this one
+    expect(await open(AUTHOR, await ids(one.id))).toBeNull(); // decides nothing of their own
+    expect(await open(BOB, await ids(one.id))).toBeNull(); // holds nothing here
+    expect(await open(ADMIN, await ids(one.id))).toBeNull(); // org.admin confers no approval.decide
+    expect(await open(ANN, await ids(other.id)), "a file from another send was served under this approval").toBeNull();
+  });
+
+  it("serves it as a download that cannot render on this origin", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    // An HTML file is the case that matters: rendered inline here, it would run with the approver's session.
+    const page = utf8("<script>alert(1)</script>");
+    const sealed = await seal({ attachments: [{ filename: "notes.html", contentType: "text/html", content: page }] });
+    const approval = (await approvalRow(sealed.id))!;
+    const attachmentId = (await testEnv.CATALOG.prepare("SELECT id FROM send_attachments WHERE manifest_id = ?")
+      .bind(sealed.id).first<{ id: string }>())!.id;
+    const response = await SELF.fetch(`https://node/api/approvals/${approval.id}/attachments/${attachmentId}`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${await sessionFor(ANN)}` },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition"), "the file can render inline").toMatch(/^attachment;/);
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toBe("<script>alert(1)</script>");
+
+    const stranger = await SELF.fetch(`https://node/api/approvals/${approval.id}/attachments/${attachmentId}`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${await sessionFor(BOB)}` },
+    });
+    expect(stranger.status, "somebody not asked to decide was given the file").toBe(404);
   });
 });

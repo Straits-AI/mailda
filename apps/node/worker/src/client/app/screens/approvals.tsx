@@ -4,7 +4,9 @@ import { useState } from "react";
 import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
 import { count, dateTime, list } from "../format.ts";
-import { decide, useApprovalContent, useApprovals, withdrawDecision, type ApprovalRow, type Said } from "../api.ts";
+import {
+  approvalAttachmentHref, decide, useApprovalContent, useApprovals, withdrawDecision, type ApprovalRow, type Said,
+} from "../api.ts";
 import { marked } from "../words.tsx";
 
 /**
@@ -222,7 +224,9 @@ export function Approvals() {
 /**
  * The send an approver is asked to decide (§18, amended 10 October 2026): its addresses and subject from the queue,
  * its body and attachments' names from `GET /api/approvals/:id/content`, read when the card is shown and recorded as
- * a disclosure, which the card says. The body is the author's text and is shown as text, never as markup.
+ * a disclosure, which the card says. The body is the author's text and is shown as text, never as markup. Each
+ * attachment's name is a link to its bytes, recorded per file when followed; no `download` attribute, because the
+ * route sends content-disposition itself, as the reader's attachments do.
  */
 function SendUnderReview({ approvalId, send }: { approvalId: string; send: NonNullable<ApprovalRow["send"]> }) {
   const content = useApprovalContent(approvalId, true);
@@ -255,9 +259,9 @@ function SendUnderReview({ approvalId, send }: { approvalId: string; send: NonNu
           <pre className="approval-body">{content.data.body}</pre>
           {content.data.attachments.length === 0 ? null : (
             <ul className="approval-attachments" aria-label={t("approvals.send.attachments")}>
-              {content.data.attachments.map((one, i) => (
-                <li key={i}>
-                  <span className="mono">{one.filename}</span>{" "}
+              {content.data.attachments.map((one) => (
+                <li key={one.id}>
+                  <a className="mono" href={approvalAttachmentHref(approvalId, one.id)}>{one.filename}</a>{" "}
                   <span className="dim">{t("composer.size.kb", { size: String(Math.max(1, Math.round(one.bytes / 1024))) })}</span>
                 </li>
               ))}

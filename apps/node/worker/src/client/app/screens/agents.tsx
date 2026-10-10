@@ -123,7 +123,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
   const [days, setDays] = useState("30");
   /** Chosen resource authority, keyed `mailboxId::relation` so a set is the whole state. */
   const [reach, setReach] = useState<Set<string>>(new Set());
-  const [token, setToken] = useState<{ value: string; notice: string } | null>(null);
+  const [token, setToken] = useState<{ value: string; expiresAt: string } | null>(null);
   const [refusal, setRefusal] = useState<Said | null>(null);
 
   if (capabilities.isPending) return <Nothing kind="loading" />;
@@ -144,7 +144,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       lifetimeDays: Number(days),
     });
     if (outcome.ok) {
-      setToken({ value: outcome.token, notice: outcome.notice });
+      setToken({ value: outcome.token, expiresAt: outcome.agent.expiresAt });
       setName("");
       setChosen(new Set());
       setReach(new Set());
@@ -337,8 +337,11 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       {refusal === null ? null : <p className="notice">{marked(refusal)}</p>}
       {token === null ? null : (
         <div className="notice">
-          {/* The Node's own notice about the token, so it stays English. */}
-          <p><NodeWords>{token.notice}</NodeWords></p>
+          {/*
+            Said here rather than shown as the Node's `notice`, which is English and carries the expiry as a raw
+            ISO instant: the date is the viewer's, in their language, from the agent the mint returned.
+          */}
+          <p>{t("agents.mint.token", { at: dateTime(token.expiresAt) })}</p>
           <p className="mono">{token.value}</p>
         </div>
       )}

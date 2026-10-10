@@ -278,7 +278,7 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
       ]),
     },
     // The send απρ_1 asks about, as the content route answers its approver.
-    "GET /api/approvals/απρ_1/content": { approvalId: "απρ_1", manifestId: "σνδ_3", body: "Γεια σας,\n\nη προσφορά επισυνάπτεται.", attachments: [{ filename: "προσφορά.πδφ", contentType: "εφαρμογή/πδφ", bytes: 52000 }] },
+    "GET /api/approvals/απρ_1/content": { approvalId: "απρ_1", manifestId: "σνδ_3", body: "Γεια σας,\n\nη προσφορά επισυνάπτεται.", attachments: [{ id: "σατ_1", filename: "προσφορά.πδφ", contentType: "εφαρμογή/πδφ", bytes: 52000 }] },
     "GET /api/policies": {
       policies: list([
         { policy_id: "πολ_1", name: "εξωτερικοί-παραλήπτες", version_id: "πω_1", version: 1, state: "published", outcome: "require_approval", when_mailbox_id: "μβχ_1", when_actor_user_id: null, when_recipient_external: 1, when_is_reply: null, when_org_daily_volume_min: 500, when_reply_to_dmarc_fail: null, created_at: EARLIER, published_at: AT, superseded_at: null },
