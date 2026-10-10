@@ -135,6 +135,21 @@ async function matters(container: HTMLElement): Promise<string> {
 }
 
 describe("Matters in English", () => {
+  it("names the mailbox, the matter and the people in each table, keeping each id as the title", async () => {
+    node({
+      ...MATTERS,
+      "/api/me": { signedIn: true, principalId: "usr_me", principalKind: "user", userId: "usr_me", delegatorUserId: null, organizationId: "org_1", email: "me@example.test" },
+      "/api/people/usr_me/mailboxes": { mailboxes: [{ mailboxId: "mbx_test", mailboxName: "Support", relations: [] }] },
+      "/api/people": { people: [{ id: "usr_wang", email: "wang@example.test", created_at: AT[0], relations: [] }, { id: "usr_me", email: "me@example.test", created_at: AT[0], relations: [] }] },
+    });
+    mount(<Matters />);
+    // These tables said mbx_test, mat_open and usr_wang until 10 October 2026.
+    await waitFor(() => { expect(screen.getAllByTitle("mbx_test").map((one) => one.textContent)).toContain("Support"); });
+    expect(screen.getAllByTitle("mat_open").map((one) => one.textContent)).toContain("Phished invoice");
+    await waitFor(() => { expect(screen.getAllByTitle("usr_wang").map((one) => one.textContent)).toContain("wang@example.test"); });
+    expect(screen.getAllByTitle("usr_me").map((one) => one.textContent)).toContain("me@example.test");
+  });
+
   it("renders every row shape: open and closed matters, a lift waiting and a mailbox gone, three grant states, three exports", async () => {
     node(MATTERS);
     const { container } = mount(<Matters />);

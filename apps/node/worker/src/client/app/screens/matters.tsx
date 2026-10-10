@@ -9,7 +9,7 @@ import { NodeWords, marked } from "../words.tsx";
 import {
   type ExportManifest, type Refused, type Said, MATTER_TYPES, ReadFailure, answeredNotFound, askToLiftHold, askToRead, closeMatter, exportObjectHref, openMatter,
   placeHold, readExportManifest, requestExport, runExport, useExports, useHolds, useMailboxes, useMatters,
-  useSupervised,
+  useMe, useNamed, useSponsorMailboxes, useSupervised,
 } from "../api.ts";
 
 /**
@@ -52,6 +52,17 @@ export function Matters() {
   const supervised = useSupervised();
   const exports = useExports();
   const mailboxes = useMailboxes();
+  /*
+   * The ids in the three tables below, as a reader knows them (10 October 2026): a person by address, a mailbox by
+   * name, a matter by its description. The tables said `usr_…`, `mbx_…` and `mtr_…`, found while recording the
+   * product. Every mailbox, not the work queue above, because a hold can be on a mailbox the reader does not work.
+   * Each falls back to the id, which stays as the title.
+   */
+  const named = useNamed();
+  const me = useMe();
+  const catalogue = useSponsorMailboxes(me.data?.userId ?? null);
+  const mailboxName = (id: string) => catalogue.data?.mailboxes?.find((box) => box.mailboxId === id)?.mailboxName ?? id;
+  const matterName = (id: string) => matters.data?.matters?.find((matter) => matter.id === id)?.description ?? id;
   const queryClient = useQueryClient();
 
   /** The Node's refusal, or this interface's fallback when it said nothing (`Said`), shown through `marked()`. */
@@ -263,13 +274,13 @@ export function Matters() {
               <tbody>
                 {(holds.data?.holds ?? []).map((hold) => (
                   <tr key={hold.id}>
-                    <td className="mono">
-                      {hold.mailboxId}
+                    <td title={hold.mailboxId}>
+                      {mailboxName(hold.mailboxId)}
                       {/* A hold on a mailbox that no longer exists still preserves; saying so avoids a
                           reader concluding the row is stale and lifting it. */}
                       {hold.mailboxExists ? null : <span className="dim">{t("join.sentence")}{t("matters.holds.gone")}</span>}
                     </td>
-                    <td className="mono dim">{hold.matterId ?? t("matters.holds.noMatter")}</td>
+                    <td title={hold.matterId ?? undefined}>{hold.matterId === null ? t("matters.holds.noMatter") : matterName(hold.matterId)}</td>
                     <td className="mono">{when(hold.placedAt)}</td>
                     <td>
                       {hold.pendingLift !== null ? (
@@ -366,8 +377,8 @@ export function Matters() {
               <tbody>
                 {(supervised.data?.supervised ?? []).map((row) => (
                   <tr key={row.id}>
-                    <td className="mono">{row.subjectId}</td>
-                    <td className="mono">{row.mailboxId}</td>
+                    <td className="mono" title={row.subjectId}>{named(row.subjectId)}</td>
+                    <td title={row.mailboxId}>{mailboxName(row.mailboxId)}</td>
                     <td><NodeWords>{row.scope}</NodeWords></td>
                     <td className="mono">{when(row.expiresAt)}</td>
                     <td>
@@ -437,9 +448,9 @@ export function Matters() {
               <tbody>
                 {(exports.data?.exports ?? []).map((row) => (
                   <tr key={row.id}>
-                    <td className="mono dim">{row.matterId}</td>
-                    <td className="mono">{row.mailboxId}</td>
-                    <td className="mono">{row.requestedBy}</td>
+                    <td title={row.matterId}>{matterName(row.matterId)}</td>
+                    <td title={row.mailboxId}>{mailboxName(row.mailboxId)}</td>
+                    <td className="mono" title={row.requestedBy}>{named(row.requestedBy)}</td>
                     <td>
                       {oneOf(EXPORT_STATES, row.state) ? t(`matters.export.${row.state}`) : <NodeWords>{row.state}</NodeWords>}
                       {row.stateReason === null ? null : <span className="dim"> · <NodeWords>{row.stateReason}</NodeWords></span>}
