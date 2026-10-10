@@ -1,16 +1,38 @@
 {
   "name": "@mailda/runtime",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Mailda's ambient primitives: the ctx seam for time and randomness, typed-prefix ids, plurals.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Straits-AI/mailda.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://mailda.site",
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepack": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260804.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   }
 }

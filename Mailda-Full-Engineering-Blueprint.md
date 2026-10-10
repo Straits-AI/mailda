@@ -2453,6 +2453,7 @@ mailda butler kill but_sales --reason incident-4821 --wait
 ### SDKs
 
 - Amended 20 September 2026: TypeScript only, generated from the route registry (`packages/sdk/src/generate.ts`, checked by `pnpm sdk:check`). No Python or Go client and no OpenAPI document exist; a second language is generated from the same registry when somebody needs one.
+- Amended 10 October 2026: publishable to npm as `@mailda/sdk`, with the two packages it imports, `@mailda/contract` and `@mailda/runtime`, all three Apache-2.0 at one version. In the workspace they are read as source; `prepack` builds each to `dist` and `publishConfig` points the published `exports` there, held equal to the workspace's by `packages/sdk/test/publishable.test.ts`. Publishing is a maintainer's act (`CONTRIBUTING.md`).
 - Shared error, pagination, receipt and webhook types.
 - Provider/connector SDK for extensions.
 

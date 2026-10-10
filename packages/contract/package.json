@@ -1,13 +1,21 @@
 {
   "name": "@mailda/contract",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Mailda's route registry and its schemas: the one contract the API, SDK, CLI, Agent Skill and MCP are built from.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Straits-AI/mailda.git",
+    "directory": "packages/contract"
+  },
+  "homepage": "https://mailda.site",
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
     "bench": "node --experimental-strip-types bench/validator.bench.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepack": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@mailda/runtime": "workspace:*",
@@ -33,5 +41,59 @@
     "./naming": "./src/naming.ts",
     "./routing-rule-name": "./src/routing-rule-name.ts",
     "./preauth-errors": "./src/preauth-errors.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./routes": {
+        "types": "./dist/routes.d.ts",
+        "default": "./dist/routes.js"
+      },
+      "./send-mail": {
+        "types": "./dist/send-mail.d.ts",
+        "default": "./dist/send-mail.js"
+      },
+      "./schemas": {
+        "types": "./dist/schemas.d.ts",
+        "default": "./dist/schemas.js"
+      },
+      "./agent": {
+        "types": "./dist/agent.d.ts",
+        "default": "./dist/agent.js"
+      },
+      "./capability": {
+        "types": "./dist/capability.d.ts",
+        "default": "./dist/capability.js"
+      },
+      "./relations": {
+        "types": "./dist/relations.d.ts",
+        "default": "./dist/relations.js"
+      },
+      "./authority": {
+        "types": "./dist/authority.d.ts",
+        "default": "./dist/authority.js"
+      },
+      "./naming": {
+        "types": "./dist/naming.d.ts",
+        "default": "./dist/naming.js"
+      },
+      "./routing-rule-name": {
+        "types": "./dist/routing-rule-name.d.ts",
+        "default": "./dist/routing-rule-name.js"
+      },
+      "./preauth-errors": {
+        "types": "./dist/preauth-errors.d.ts",
+        "default": "./dist/preauth-errors.js"
+      }
+    }
   }
 }
