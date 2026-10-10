@@ -170,7 +170,9 @@ try {
     case "install": await install(rest); break;
     case "upgrade": await upgrade(rest); break;
     case "setup": await setup(rest); break;
-    case "api": process.exit(await apiVerb(rest)); break;
+    // `exitCode`, not `exit()`: the answer may be a large JSON document or a file piped to another process, and
+    // `process.exit` can end the process before a pipe has taken the last of it.
+    case "api": process.exitCode = await apiVerb(rest); break;
     default:
       process.stdout.write(USAGE);
       process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);

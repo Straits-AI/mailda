@@ -679,6 +679,11 @@ export const AUDIT_ACTIONS = {
     says: "Somebody asked to decide a send read it before deciding: its body and its attachments' names.",
     disclosure: true,
   },
+  /** The same rule and record for one attachment's bytes, recorded per file and naming it. */
+  "approval.attachment_read": {
+    says: "Somebody asked to decide a send opened one of its attachments before deciding.",
+    disclosure: true,
+  },
 
   /*
    * Layer 5: send circuit breakers (#66, §18). Three actions, and each of the three exists for a reason the
