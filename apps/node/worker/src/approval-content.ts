@@ -60,10 +60,11 @@ export async function approvalContent(
     detail: { manifestId: approval.manifest_id, mailboxId: approval.scope_id, attachments: attachments.length },
   }], {
     code: "E_APPROVAL_CONTENT_UNRECORDABLE",
+    logEvent: "approval.record_failed",
     what: `this Node could not record that you read send ${approval.manifest_id}, so it did not show it to you`,
     why: "an approver may read a send they hold no read on, only because the read is recorded; a read that is not "
       + "recorded is the one outcome that permission depends on not happening",
-    fix: "read the log for supervised.record_failed — GET /api/logs — and check GET /api/doctor. A Node that cannot "
+    fix: "read the log for approval.record_failed — GET /api/logs — and check GET /api/doctor. A Node that cannot "
       + "append to audit_entries cannot record any act, not only this one",
   });
 

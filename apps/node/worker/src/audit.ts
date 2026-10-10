@@ -1505,8 +1505,11 @@ export async function recordDisclosure(
   ctx: Ctx,
   orgId: string,
   events: ReadonlyArray<AuditEvent<DisclosureAction>>,
-  /** The refusal's code and words for a disclosure other than a supervised read; a supervised read's by default. */
-  refusal?: { code: string; what: string; why: string; fix: string },
+  /**
+   * The refusal's code and words, and the operational log's event name, for a disclosure other than a supervised
+   * read; a supervised read's by default.
+   */
+  refusal?: { code: string; logEvent: string; what: string; why: string; fix: string },
 ): Promise<AppendedEntry[]> {
   if (events.length === 0) return [];
   try {
@@ -1517,7 +1520,7 @@ export async function recordDisclosure(
     // was refused for. Both halves are needed — one for the operator, one for the person holding the grant.
     await log(env, ctx, {
       level: "error",
-      event: "supervised.record_failed",
+      event: refusal?.logEvent ?? "supervised.record_failed",
       message: `Could not record ${events[0]!.action}: ${(error as Error).message.split("\n")[0]}`,
       orgId,
       detail: { action: events[0]!.action, subject: events[0]!.subject ?? null, entries: events.length },

@@ -2193,7 +2193,11 @@ export const approvalRow = z.object({
   subjectKind: z.enum(APPROVAL_SUBJECT_KINDS),
   subjectId: z.string().min(1),
   scopeId: z.string().min(1),
-  actorUserId: userId,
+  /**
+   * Whose act is gated: a person, or a Butler whose proposed send a `require_approval` policy matched. Accepted as
+   * either since 10 October 2026; a Butler's `btl_` failed this schema before, though the Node could send one.
+   */
+  actorUserId: z.union([userId, z.string().regex(idPattern(ID_PREFIXES.butler))]),
   state: z.string().min(1),
   requestedAt: isoDate,
   resolvedAt: isoDate.nullable(),

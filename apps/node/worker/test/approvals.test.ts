@@ -1093,6 +1093,20 @@ describe("an approver sees the send they are asked to approve", () => {
     });
   });
 
+  it("names a Butler that asked by its name", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const sealed = await seal();
+    // A Butler's proposed send is gated like a person's; its actor is the btl_, which no users row names.
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO butlers (id, org_id, name, created_by, created_at) VALUES (?,?,?,?,?)")
+        .bind("btl_appr_triage", ORG, "invoice-triage", ADMIN, new Date(AUGUST_10).toISOString()),
+      testEnv.CATALOG.prepare("UPDATE approvals SET actor_user_id = ? WHERE subject_id = ?").bind("btl_appr_triage", sealed.id),
+    ]);
+    const [row] = await pendingApprovals(testEnv, ORG, ANN);
+    expect(row).toMatchObject({ actorUserId: "btl_appr_triage", actorLabel: "invoice-triage" });
+  });
+
   it("gives an eligible approver the body, and records that they read it", async () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await requireApproval("gate");
