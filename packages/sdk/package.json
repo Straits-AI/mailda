@@ -1,7 +1,14 @@
 {
   "name": "@mailda/sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "A typed client for a Mailda Node, generated from its route contract, with responses validated against it.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Straits-AI/mailda.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://mailda.site",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -10,7 +17,8 @@
     "generate": "node --experimental-strip-types src/write.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "skill": "node --experimental-strip-types src/write-skill.ts"
+    "skill": "node --experimental-strip-types src/write-skill.ts",
+    "prepack": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@mailda/contract": "workspace:*",
@@ -20,5 +28,18 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   }
 }
