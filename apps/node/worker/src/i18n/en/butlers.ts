@@ -61,6 +61,12 @@ export const butlers = {
   "butlers.format.hint": "which parser reads the source below. Switching it does not rewrite your text",
   "butlers.source": "Source",
   "butlers.saveDraft": "Save draft",
+  "butlers.access.heading": "Mailboxes it may act on",
+  "butlers.access.note":
+    "A Butler acts with its own access, never yours: only where its program declares the capability, where it holds the permission here, and never beyond what the person who published it holds. Each box takes effect when you tick it.",
+  "butlers.access.col.mailbox": "Mailbox",
+  "butlers.access.box": "{permission} on {mailbox}, for {butler}",
+  "butlers.access.none": "No mailbox on this Node yet.",
   "butlers.publish": "Publish",
   "butlers.draft.none": "nothing saved yet",
   "butlers.draft.showingLive": "showing live v{version} — save a draft to change it",

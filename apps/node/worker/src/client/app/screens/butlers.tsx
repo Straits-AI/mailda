@@ -6,7 +6,7 @@ import { t } from "/app/locale.js";
 import { Nothing, Scroller } from "../chrome.tsx";
 import {
   answeredNotFound, createButler, publishButlerVersion, resumeButler, saveButlerDraft,
-  useButler, useButlerRuns, useButlers, useNamed,
+  grant, revokeAccess, useAccessOf, useButler, useButlerRuns, useButlers, useMe, useNamed, useSponsorMailboxes,
   replayButlerRun, runFacts, simulateButler,
   type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Said, type Simulation,
 } from "../api.ts";
@@ -411,6 +411,8 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         )}
       </section>
 
+      <ButlerAccess butlerId={butler.id} name={butler.name} />
+
       <table>
         <caption className="dim">{t("butlers.versions.caption")}</caption>
         <thead>
@@ -442,6 +444,85 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
 }
 
 /** Lifting a machine-placed pause, with the reason it was placed shown and a reason required to lift it. */
+/**
+ * The three mailbox permissions a Butler may declare and be granted, in the order People shows them. Equal to
+ * `CAPABILITY_ACTIONS` in `@mailda/butler-ast`, held by `butlers-words.test.tsx`; restated here because importing
+ * that module would bring its schemas into the shell's bundle for three strings.
+ */
+export const BUTLER_RELATIONS = ["mailbox.metadata.read", "mailbox.content.read", "send.propose"] as const;
+
+/**
+ * Which mailboxes this Butler may act on (10 October 2026): its own grants, one box per mailbox and permission,
+ * each taking effect when it is ticked, as People's grid does. A Butler is its own principal (§16) and acts only
+ * where its program declares the capability, it holds the grant, and whoever published it holds it too. Until this
+ * the grant was an API call and the Butler's id was on no screen, so a Butler published here refused its every
+ * effect with `case_not_actionable`, found while recording the product.
+ */
+function ButlerAccess({ butlerId, name }: { butlerId: string; name: string }) {
+  const me = useMe();
+  // Every mailbox: the catalogue the agent form uses, read here for its names, not for what the reader holds.
+  const mailboxes = useSponsorMailboxes(me.data?.userId ?? null);
+  const access = useAccessOf(butlerId);
+  const queryClient = useQueryClient();
+  const [problem, setProblem] = useState<Said | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const held = new Set((access.data?.relations ?? []).map((one) => `${one.objectId} ${one.relation}`));
+
+  async function toggle(mailboxId: string, relation: string, on: boolean) {
+    setBusy(`${mailboxId} ${relation}`);
+    setProblem(null);
+    const outcome = on ? await grant(butlerId, relation, mailboxId) : await revokeAccess(butlerId, relation, mailboxId);
+    setBusy(null);
+    if (!outcome.ok) { setProblem(outcome); return; }
+    await queryClient.invalidateQueries({ queryKey: ["access", butlerId] });
+  }
+
+  return (
+    <section className="butler-access" aria-label={t("butlers.access.heading")}>
+      <h3>{t("butlers.access.heading")}</h3>
+      <p className="dim">{t("butlers.access.note")}</p>
+      {problem === null ? null : <p className="notice bad" role="alert">{marked(problem)}</p>}
+      {mailboxes.isPending || access.isPending ? <Nothing kind="loading" /> : null}
+      {mailboxes.isError ? <Nothing kind="failed" detail={marked(mailboxes.error)} /> : null}
+      {access.isError ? <Nothing kind="failed" detail={marked(access.error)} /> : null}
+      {mailboxes.isSuccess && mailboxes.data.mailboxes.length === 0 ? <p className="dim">{t("butlers.access.none")}</p> : null}
+      {mailboxes.isSuccess && access.isSuccess && mailboxes.data.mailboxes.length > 0 ? (
+        <Scroller label={t("butlers.access.heading")}>
+          <table className="grant-grid">
+            <thead>
+              <tr>
+                <th scope="col">{t("butlers.access.col.mailbox")}</th>
+                {/* People's words for the three, the code kept as the title: the grid reads like People's. */}
+                {BUTLER_RELATIONS.map((relation) => (
+                  <th key={relation} scope="col" title={relation}>{t(`people.relation.${relation}`)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {mailboxes.data.mailboxes.map((box) => (
+                <tr key={box.mailboxId}>
+                  <th scope="row">{box.mailboxName}</th>
+                  {BUTLER_RELATIONS.map((relation) => (
+                    <td key={relation}>
+                      <input
+                        type="checkbox"
+                        aria-label={t("butlers.access.box", { permission: t(`people.relation.${relation}`), mailbox: box.mailboxName, butler: name })}
+                        checked={held.has(`${box.mailboxId} ${relation}`)}
+                        disabled={busy === `${box.mailboxId} ${relation}`}
+                        onChange={(event) => void toggle(box.mailboxId, relation, event.target.checked)}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Scroller>
+      ) : null}
+    </section>
+  );
+}
+
 function Paused({ butler }: { butler: ButlerRow }) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");

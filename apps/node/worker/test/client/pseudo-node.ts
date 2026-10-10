@@ -297,6 +297,8 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
       capabilities: [{ id: "mailbox.metadata.read", says: NODE_SAYS.says, reachesContent: false, requires: ["mailbox.metadata.read"], routes: ["GET /api/messages"] }],
     },
     "GET /api/agents": { agents: list([AGENT, { ...AGENT, id: "αγτ_2", revokedAt: AT, unnamed: [] }]) },
+    // What a Butler holds, for its access grid (`?subject=` is a query, so the key is the path alone).
+    "GET /api/access": { subjectId: "βτλ_1", relations: [{ relation: "send.propose", objectType: "mailbox", objectId: "μβχ_1", createdAt: AT }] },
     "GET /api/butlers": {
       butlers: list([
         butler("βτλ_1"),
