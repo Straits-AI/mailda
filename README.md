@@ -259,7 +259,8 @@ What exists today:
   `handed_over`, never `sent`, until a delivery event says otherwise.
 - **Contracts before channels.** Routes are declared once in `packages/contract`. The SDK, the Agent Skill
   and the MCP surface are generated from it, the CLI resolves every path through it, and a route that
-  exists in one channel and not another fails a test.
+  exists in one channel and not another fails a test. `mailda api <method>` calls any route from the terminal
+  by the SDK's method name, with an agent token (`MAILDA_TOKEN`) or a person's sign-in.
 - **A list that stops says so.** Every capped listing (quarantine, suppressions, the outbox, drafts,
   notifications, audit, log) reads one row past its cap and returns `truncated`, and the screen that shows
   the list says so in a sentence, so nobody mistakes the newest N for all of them.
@@ -436,7 +437,8 @@ packages/contract                      the route registry, its schemas, and comm
 packages/sdk                           GENERATED from the registry, one method per route; publishable to npm as
                                        `@mailda/sdk`, built from source on pack (CONTRIBUTING.md)
 packages/cli                           `mailda`: the dispatcher, `support.mjs`, one module per verb under
-                                       `verbs/`, and the pure parsers beside them (deploy-plan, preflight, backup)
+                                       `verbs/`, and the pure parsers beside them (deploy-plan, preflight, backup,
+                                       api-call, which builds `mailda api` requests from the registry)
 skills/mailda                          GENERATED, the Agent Skill, from the curated list
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail

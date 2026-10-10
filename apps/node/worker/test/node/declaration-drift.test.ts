@@ -63,6 +63,11 @@ const PAIRS = [
     declaration: "packages/cli/src/verbs/provision.d.mts",
   },
   {
+    what: "`mailda api`, the contract from the terminal",
+    module: "packages/cli/src/api-call.mjs",
+    declaration: "packages/cli/src/api-call.d.mts",
+  },
+  {
     what: "the setup step's routing rules",
     module: "packages/cli/src/verbs/routing-step.mjs",
     declaration: "packages/cli/src/verbs/routing-step.d.mts",

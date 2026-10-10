@@ -2413,6 +2413,15 @@ mailda backup
 mailda restore
 ```
 
+Amended 10 October 2026: the families after `mailda doctor`'s operator verbs are not separate commands yet. Every
+route is reachable as `mailda api <method>` (`packages/cli/src/api-call.mjs`), named as the SDK and MCP name it and
+built from the route registry, so a route is a command the moment it is registered: `mailda api getMessages`,
+`mailda api putDrafts --body -`, `mailda api postButlersByButlerIdSimulate --butlerId but_… --body -`.
+Credentials come from the environment, an agent token (`MAILDA_TOKEN`) or a person's sign-in, never an argument. The
+result is JSON on stdout and a refusal goes to stderr whole. Exit codes are the table below where an HTTP status says
+the category for certain (2, 3, 4, 5, 6, 8, 9); 7 and 10 are said in the refusal's body, not yet in the code. The
+family spellings in the example below remain the target shape.
+
 CLI requirements:
 
 - Deterministic behavior and stable exit codes.
