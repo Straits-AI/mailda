@@ -54,6 +54,8 @@ export interface PendingApproval extends ApprovalRow {
      * than as a blank.
      */
     matter: { type: string; description: string } | null;
+    /** Whose mail would be read, by address: the person the two approvers are being asked about. */
+    subjectEmail: string | null;
     expiresAt: string;
   } | null;
   /**
@@ -78,6 +80,8 @@ export interface PendingApproval extends ApprovalRow {
     maxMessages: number;
     matterId: string;
     destination: string;
+    /** The matter the export is for, by its kind and words, as `supervised.matter` is. */
+    matter: { type: string; description: string } | null;
   } | null;
   /**
    * #66's domain pause: which domain this would stop, and the reason its requester gave.
@@ -88,6 +92,20 @@ export interface PendingApproval extends ApprovalRow {
    * particular.
    */
   domainPause: { pauseId: string; domain: string; reason: string } | null;
+  /**
+   * Who asked, as a reader knows them: the person's address, or a Butler's name when a Butler's proposed send is
+   * what is gated, or null for an actor this Node has no record of (`actorUserId` is beside it either way).
+   * Added 10 October 2026 with `send` and `scopeName`, when the card said `Asked by usr_01M4…` (§18, amended).
+   */
+  actorLabel: string | null;
+  /** The mailbox the request is about, by name; null for an organization-scoped one (a domain pause). */
+  scopeName: string | null;
+  /**
+   * What a `send_manifest` approval asks to release, and null for every other kind: the addresses and subject §18
+   * binds, from the sealed manifest. The body and the attachment names are `approvalContent` below, read when an
+   * approver opens the request, because this list is what the sidebar's count polls.
+   */
+  send: { manifestId: string; from: string; to: string[]; cc: string[]; bcc: string[]; subject: string } | null;
 }
 
 /**
@@ -142,7 +160,11 @@ export async function pendingApprovals(
             x.id AS export_id, x.requested_by AS export_requested_by, x.predicate AS export_predicate,
             x.predicate_sha256 AS export_predicate_sha256, x.max_messages AS export_max_messages,
             x.matter_id AS export_matter_id, x.destination AS export_destination,
-            dp.id AS pause_id, dp.domain AS pause_domain, dp.reason AS pause_reason
+            dp.id AS pause_id, dp.domain AS pause_domain, dp.reason AS pause_reason,
+            au.email AS actor_email, ab.name AS actor_butler, mb.name AS scope_name, gu.email AS grant_subject_email,
+            mx.type AS export_matter_type, mx.description AS export_matter_description,
+            sm.id AS send_id, sm.envelope_from AS send_from, sm.envelope_to AS send_to, sm.envelope_cc AS send_cc,
+            sm.envelope_bcc AS send_bcc, sm.subject AS send_subject
        FROM approvals a
        LEFT JOIN hold_lifts l ON a.subject_kind = 'hold_lift' AND l.id = a.subject_id AND l.org_id = a.org_id
        LEFT JOIN supervised_grants g ON a.subject_kind = 'supervised_read' AND g.id = a.subject_id
@@ -159,6 +181,16 @@ export async function pendingApprovals(
       -- every other subject kind produces all-null here.
       LEFT JOIN domain_pauses dp ON a.subject_kind = 'domain_pause' AND dp.id = a.subject_id
                                 AND dp.org_id = a.org_id
+      -- Who asked and about which mailbox, by the names a reader knows (10 October 2026): the card said
+      -- usr_01M4… and snd_01M4…. A Butler's proposed send has a btl_ actor, so its name is the fallback.
+      LEFT JOIN users au ON au.id = a.actor_user_id
+      LEFT JOIN butlers ab ON ab.id = a.actor_user_id AND ab.org_id = a.org_id
+      LEFT JOIN mailboxes mb ON mb.id = a.scope_id AND mb.org_id = a.org_id
+      LEFT JOIN users gu ON gu.id = g.subject_id
+      LEFT JOIN matters mx ON mx.org_id = x.org_id AND mx.id = x.matter_id
+      -- The send itself: the addresses and subject §18 binds, on the same query, outer like every join above.
+      LEFT JOIN send_manifests sm ON a.subject_kind = 'send_manifest' AND sm.id = a.subject_id
+                                 AND sm.org_id = a.org_id
       WHERE a.org_id = ? AND a.state = 'pending' AND a.scope_id IN (${placeholders})
         AND a.actor_user_id != ?
       ORDER BY a.requested_at, a.id`,
@@ -181,6 +213,18 @@ export async function pendingApprovals(
     pause_id: string | null;
     pause_domain: string | null;
     pause_reason: string | null;
+    actor_email: string | null;
+    actor_butler: string | null;
+    scope_name: string | null;
+    grant_subject_email: string | null;
+    export_matter_type: string | null;
+    export_matter_description: string | null;
+    send_id: string | null;
+    send_from: string | null;
+    send_to: string | null;
+    send_cc: string | null;
+    send_bcc: string | null;
+    send_subject: string | null;
   }>();
 
   const out: PendingApproval[] = [];
@@ -210,6 +254,7 @@ export async function pendingApprovals(
           matter: row.matter_type === null || row.matter_description === null
             ? null
             : { type: row.matter_type, description: row.matter_description },
+          subjectEmail: row.grant_subject_email,
           expiresAt: row.grant_expires_at,
         },
       // Every field or none, like `supervised` above: the bound is the field this exists for, and a
@@ -227,13 +272,36 @@ export async function pendingApprovals(
           maxMessages: row.export_max_messages,
           matterId: row.export_matter_id,
           destination: row.export_destination,
+          matter: row.export_matter_type === null || row.export_matter_description === null
+            ? null
+            : { type: row.export_matter_type, description: row.export_matter_description },
         },
       // Every field or none, for the third time and the same reason: the reason is the field this exists
       // for, and a half-populated object would let a caller render "pause null because null".
       domainPause: row.pause_id === null || row.pause_domain === null || row.pause_reason === null
         ? null
         : { pauseId: row.pause_id, domain: row.pause_domain, reason: row.pause_reason },
+      actorLabel: row.actor_email ?? row.actor_butler,
+      scopeName: row.scope_name,
+      send: row.send_id === null || row.send_from === null || row.send_to === null || row.send_subject === null
+        ? null
+        : {
+          manifestId: row.send_id,
+          from: row.send_from,
+          to: addresses(row.send_to),
+          cc: addresses(row.send_cc),
+          bcc: addresses(row.send_bcc),
+          subject: row.send_subject,
+        },
     });
   }
   return out;
 }
+
+/** A manifest's recipient column, a JSON array of addresses (0007), as a list; an absent Cc or Bcc is empty. */
+function addresses(column: string | null): string[] {
+  if (column === null) return [];
+  const parsed = JSON.parse(column) as unknown;
+  return Array.isArray(parsed) ? parsed.filter((one): one is string => typeof one === "string") : [];
+}
+

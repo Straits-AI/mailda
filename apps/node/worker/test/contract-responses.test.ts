@@ -1314,6 +1314,26 @@ describe("dual control, with the second and third people it needs", () => {
     return opened.matter.id;
   }
 
+  it("a send a rule held: listed with its addresses, and read by the approver before deciding", async () => {
+    const author = await cookieFor(USER);
+    const drafted = await answers("POST", "/api/policies", {
+      body: { name: "two eyes", outcome: "require_approval", conditions: { mailboxId } }, cookie: author,
+    }) as { policy: { policyId: string } };
+    await answers("POST", "/api/policies/:policyId/publish", { params: { policyId: drafted.policy.policyId }, cookie: author });
+    await answers("POST", "/api/sends", {
+      body: { mailboxId, to: ["customer@example.net"], subject: "Your quote", body: "The quote is attached." }, cookie: author,
+    });
+
+    const waiting = await answers("GET", "/api/approvals", { cookie: await cookieFor(OTHER) }) as {
+      approvals: Array<{ id: string; send: { subject: string; to: string[] } | null }>;
+    };
+    expect(waiting.approvals[0]!.send).toMatchObject({ subject: "Your quote", to: ["customer@example.net"] });
+    const read = await answers("GET", "/api/approvals/:approvalId/content", {
+      params: { approvalId: waiting.approvals[0]!.id }, cookie: await cookieFor(OTHER),
+    }) as { body: string };
+    expect(read.body).toContain("The quote is attached.");
+  });
+
   it("a supervised read: requested, approved twice, and live", async () => {
     const asker = await cookieFor(USER);
     const matterId = await matter(asker);
@@ -2586,8 +2606,11 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      *
      * The 145th is `POST /api/forwards` (ADR 47 amended, 7 October 2026): every destination an address forwards to,
      * set as one list, answering the list as stored.
+     *
+     * The 146th is `GET /api/approvals/:approvalId/content` (§18 amended, 10 October 2026): the send an approver is
+     * asked to decide, read before deciding and recorded as a disclosure.
      */
-    expect(coverage.total).toBe(145);
+    expect(coverage.total).toBe(146);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

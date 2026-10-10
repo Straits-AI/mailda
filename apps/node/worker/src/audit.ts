@@ -670,6 +670,15 @@ export const AUDIT_ACTIONS = {
   "approval.withdrawn": {
     says: "An approver took back their own approval while the request was still incomplete.",
   },
+  /*
+   * §18 as amended 10 October 2026: a person who may decide a send may read it, and only it, while they are being
+   * asked, whether or not they read that mailbox. A disclosure, so recorded the way a supervised read is, and the
+   * body is not returned if the entry cannot be written.
+   */
+  "approval.content_read": {
+    says: "Somebody asked to decide a send read it before deciding: its body and its attachments' names.",
+    disclosure: true,
+  },
 
   /*
    * Layer 5: send circuit breakers (#66, §18). Three actions, and each of the three exists for a reason the
@@ -1496,6 +1505,11 @@ export async function recordDisclosure(
   ctx: Ctx,
   orgId: string,
   events: ReadonlyArray<AuditEvent<DisclosureAction>>,
+  /**
+   * The refusal's code and words, and the operational log's event name, for a disclosure other than a supervised
+   * read; a supervised read's by default.
+   */
+  refusal?: { code: string; logEvent: string; what: string; why: string; fix: string },
 ): Promise<AppendedEntry[]> {
   if (events.length === 0) return [];
   try {
@@ -1506,11 +1520,12 @@ export async function recordDisclosure(
     // was refused for. Both halves are needed — one for the operator, one for the person holding the grant.
     await log(env, ctx, {
       level: "error",
-      event: "supervised.record_failed",
+      event: refusal?.logEvent ?? "supervised.record_failed",
       message: `Could not record ${events[0]!.action}: ${(error as Error).message.split("\n")[0]}`,
       orgId,
       detail: { action: events[0]!.action, subject: events[0]!.subject ?? null, entries: events.length },
     });
+    if (refusal !== undefined) throw unavailable(refusal.code, { what: refusal.what, why: refusal.why, fix: refusal.fix });
     throw unavailable("E_SUPERVISED_UNRECORDABLE", {
       what: `this Node could not record the ${events[0]!.action} entry for supervised grant `
         + `${events[0]!.subject ?? "(unnamed)"}, so it did not perform the read`,

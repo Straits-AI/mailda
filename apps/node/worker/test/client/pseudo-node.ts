@@ -272,11 +272,13 @@ export function FIXTURES(kind: "populated" | "empty" | "first-run", connected: b
     "GET /api/auth/passkeys": { passkeys: list([{ id: "πκ_1", label: "Φορητός υπολογιστής", createdAt: EARLIER, lastUsedAt: AT, transports: ["internal"] }]) },
     "GET /api/approvals": {
       approvals: list([
-        { id: "απρ_1", subjectKind: "send_manifest", subjectId: "σνδ_3", scopeId: "μβχ_1", actorUserId: "υσρ_βοβ", state: "pending", requestedAt: AT, resolvedAt: null, expiresAt: LATER, stages: [{ count: 1, teamId: null }], openStage: 0, decidedByMe: false, reason: "Χρειάζεται δεύτερη ματιά" },
+        { id: "απρ_1", subjectKind: "send_manifest", subjectId: "σνδ_3", scopeId: "μβχ_1", actorUserId: "υσρ_βοβ", state: "pending", requestedAt: AT, resolvedAt: null, expiresAt: LATER, stages: [{ count: 1, teamId: null }], openStage: 0, decidedByMe: false, reason: "Χρειάζεται δεύτερη ματιά", actorLabel: "βοβ@παράδειγμα.δοκ", scopeName: "Υποστήριξη", send: { manifestId: "σνδ_3", from: "υποστήριξη@παράδειγμα.δοκ", to: ["πελάτης@παράδειγμα.δοκ"], cc: [], bcc: ["έλεγχος@παράδειγμα.δοκ"], subject: "Η προσφορά σας" } },
         { id: "απρ_2", subjectKind: "domain_pause", subjectId: "δπ_1", scopeId: "οργ_χ", actorUserId: "υσρ_βοβ", state: "pending", requestedAt: AT, resolvedAt: null, expiresAt: LATER, stages: [{ count: 2, teamId: "τμ_1" }], openStage: 0, decidedByMe: false, reason: null, domainPause: { pauseId: "δπ_1", domain: DOMAIN, reason: "Πολλές αναπηδήσεις" } },
-        { id: "απρ_3", subjectKind: "supervised_read", subjectId: "σγρ_1", scopeId: "μβχ_1", actorUserId: "υσρ_ανα", state: "pending", requestedAt: AT, resolvedAt: null, expiresAt: LATER, stages: [{ count: 1, teamId: null }], openStage: 0, decidedByMe: true, reason: null, supervised: { grantId: "σγρ_1", subjectId: "υσρ_βοβ", scope: "content", matterId: "ματ_1" } },
+        { id: "απρ_3", subjectKind: "supervised_read", subjectId: "σγρ_1", scopeId: "μβχ_1", actorUserId: "υσρ_ανα", state: "pending", requestedAt: AT, resolvedAt: null, expiresAt: LATER, stages: [{ count: 1, teamId: null }], openStage: 0, decidedByMe: true, reason: null, supervised: { grantId: "σγρ_1", subjectId: "υσρ_βοβ", subjectEmail: "βοβ@παράδειγμα.δοκ", scope: "content", matterId: "ματ_1", matter: { type: "security_incident", description: "Κανόνας προώθησης που δεν όρισε κανείς" }, expiresAt: LATER } },
       ]),
     },
+    // The send απρ_1 asks about, as the content route answers its approver.
+    "GET /api/approvals/απρ_1/content": { approvalId: "απρ_1", manifestId: "σνδ_3", body: "Γεια σας,\n\nη προσφορά επισυνάπτεται.", attachments: [{ filename: "προσφορά.πδφ", contentType: "εφαρμογή/πδφ", bytes: 52000 }] },
     "GET /api/policies": {
       policies: list([
         { policy_id: "πολ_1", name: "εξωτερικοί-παραλήπτες", version_id: "πω_1", version: 1, state: "published", outcome: "require_approval", when_mailbox_id: "μβχ_1", when_actor_user_id: null, when_recipient_external: 1, when_is_reply: null, when_org_daily_volume_min: 500, when_reply_to_dmarc_fail: null, created_at: EARLIER, published_at: AT, superseded_at: null },

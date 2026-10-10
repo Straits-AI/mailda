@@ -1559,6 +1559,11 @@ tr.detail dd { margin: 0; word-break: break-all; }
 .approval > p { margin: 0 0 12px; }
 /* The requester's own words, set apart from the Node's: whose sentence it is matters when deciding. */
 .approval-reason { margin: 0 0 12px; padding: 6px 12px; border-left: 2px solid var(--border); font-style: italic; }
+/* The send under review (§18, amended 10 October 2026): its body as the author's text, never markup, scrolled within
+   the card so a long message does not push the decision off the screen. */
+.approval-send { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: var(--r-card); background: var(--bg-reader); }
+.approval-body { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 14px/1.55 var(--body); max-height: 360px; overflow: auto; }
+.approval-attachments { margin: 6px 0; padding-left: 18px; }
 .approval > p.approval-actions { margin: 12px 0 0; }
 /* A request's facts: a term and its value, side by side. */
 .headers { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 4px 12px; margin: 0 0 12px; }

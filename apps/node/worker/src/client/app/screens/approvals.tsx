@@ -3,9 +3,9 @@ import { useState } from "react";
 
 import { t } from "/app/locale.js";
 import { Nothing } from "../chrome.tsx";
-import { dateTime } from "../format.ts";
-import { decide, useApprovals, withdrawDecision, type ApprovalRow, type Said } from "../api.ts";
-import { marked, sentence } from "../words.tsx";
+import { count, dateTime, list } from "../format.ts";
+import { decide, useApprovalContent, useApprovals, withdrawDecision, type ApprovalRow, type Said } from "../api.ts";
+import { marked } from "../words.tsx";
 
 /**
  * What is waiting on you (#81).
@@ -71,10 +71,15 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
       <h2>{title}</h2>
       <p>{t(`approvals.kind.${row.subjectKind}.what`)}</p>
       <dl className="headers">
-        <dt>{t("approvals.subject")}</dt>
-        <dd className="mono">{row.subjectId}</dd>
+        {row.scopeName == null ? null : (
+          <>
+            <dt>{t("approvals.mailbox")}</dt>
+            <dd>{row.scopeName}</dd>
+          </>
+        )}
         <dt>{t("approvals.askedBy")}</dt>
-        <dd className="mono">{row.actorUserId}</dd>
+        {/* By address, or a Butler's name; the id stays as the title, and is all a Node before 10 October 2026 sends. */}
+        <dd className="mono" title={row.actorUserId}>{row.actorLabel ?? row.actorUserId}</dd>
         <dt>{t("approvals.asked")}</dt>
         <dd className="mono">{when(row.requestedAt)}</dd>
         <dt>{t("approvals.lapses")}</dt>
@@ -86,7 +91,12 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
         <dd className="mono">{row.expiresAt === null ? t("approvals.noLapse") : when(row.expiresAt)}</dd>
         <dt>{t("approvals.needs")}</dt>
         <dd>{progress(row)}</dd>
+        {/* The id last and quiet: a reference to quote, not what is being decided. */}
+        <dt>{t("approvals.subject")}</dt>
+        <dd className="mono dim">{row.subjectId}</dd>
       </dl>
+
+      {row.send == null ? null : <SendUnderReview approvalId={row.id} send={row.send} />}
 
       {(row.reason ?? row.domainPause?.reason ?? null) === null ? null : (
         // The requester's own words. Present for a hold lift and a supervised read; a domain pause's are on the pause
@@ -96,14 +106,29 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
       )}
 
       {row.supervised == null ? null : (
-        <p className="dim mono">
-          {row.supervised.matterId === null
-            // The scope is the Node's token (`metadata`, `content`), an identifier in every locale.
-            ? sentence("approvals.supervised.noMatter", { scope: <code>{row.supervised.scope}</code>, subject: row.supervised.subjectId })
-            : sentence("approvals.supervised.matter", {
-              scope: <code>{row.supervised.scope}</code>, subject: row.supervised.subjectId, matter: row.supervised.matterId,
-            })}
-        </p>
+        <dl className="headers">
+          <dt>{t("approvals.read.whose")}</dt>
+          <dd className="mono" title={row.supervised.subjectId}>{row.supervised.subjectEmail ?? row.supervised.subjectId}</dd>
+          <dt>{t("approvals.read.scope")}</dt>
+          {/* The scope is the Node's token (`metadata`, `content`), an identifier in every locale. */}
+          <dd><code>{row.supervised.scope}</code></dd>
+          <dt>{t("approvals.read.until")}</dt>
+          <dd className="mono">{when(row.supervised.expiresAt)}</dd>
+          <dt>{t("approvals.matter")}</dt>
+          <dd>{row.supervised.matter == null ? t("approvals.noMatter") : row.supervised.matter.description}</dd>
+        </dl>
+      )}
+      {row.exportRequest == null ? null : (
+        <dl className="headers">
+          <dt>{t("approvals.matter")}</dt>
+          <dd>{row.exportRequest.matter == null ? row.exportRequest.matterId : row.exportRequest.matter.description}</dd>
+          <dt>{t("approvals.export.which")}</dt>
+          <dd><code>{row.exportRequest.predicate}</code></dd>
+          <dt>{t("approvals.export.most")}</dt>
+          <dd>{t("approvals.export.messages", { n: row.exportRequest.maxMessages, count: count(row.exportRequest.maxMessages) })}</dd>
+          <dt>{t("approvals.export.to")}</dt>
+          <dd className="mono">{row.exportRequest.destination}</dd>
+        </dl>
       )}
       {row.domainPause == null ? null : (
         <p className="dim mono">{t("approvals.domain", { domain: row.domainPause.domain })}</p>
@@ -191,5 +216,56 @@ export function Approvals() {
         {rows.map((row) => <Waiting key={row.id} row={row} onDone={refresh} />)}
       </div>
     </>
+  );
+}
+
+/**
+ * The send an approver is asked to decide (§18, amended 10 October 2026): its addresses and subject from the queue,
+ * its body and attachments' names from `GET /api/approvals/:id/content`, read when the card is shown and recorded as
+ * a disclosure, which the card says. The body is the author's text and is shown as text, never as markup.
+ */
+function SendUnderReview({ approvalId, send }: { approvalId: string; send: NonNullable<ApprovalRow["send"]> }) {
+  const content = useApprovalContent(approvalId, true);
+  return (
+    <section className="approval-send" aria-label={t("approvals.send.label")}>
+      <dl className="headers">
+        <dt>{t("approvals.send.from")}</dt>
+        <dd className="mono">{send.from}</dd>
+        <dt>{t("approvals.send.to")}</dt>
+        <dd className="mono">{list(send.to)}</dd>
+        {send.cc.length === 0 ? null : (
+          <>
+            <dt>{t("approvals.send.cc")}</dt>
+            <dd className="mono">{list(send.cc)}</dd>
+          </>
+        )}
+        {send.bcc.length === 0 ? null : (
+          <>
+            <dt>{t("approvals.send.bcc")}</dt>
+            <dd className="mono">{list(send.bcc)}</dd>
+          </>
+        )}
+        <dt>{t("approvals.send.subject")}</dt>
+        <dd>{send.subject}</dd>
+      </dl>
+      {content.isPending ? <Nothing kind="loading" /> : null}
+      {content.isError ? <Nothing kind="failed" detail={marked(content.error)} /> : null}
+      {content.isSuccess ? (
+        <>
+          <pre className="approval-body">{content.data.body}</pre>
+          {content.data.attachments.length === 0 ? null : (
+            <ul className="approval-attachments" aria-label={t("approvals.send.attachments")}>
+              {content.data.attachments.map((one, i) => (
+                <li key={i}>
+                  <span className="mono">{one.filename}</span>{" "}
+                  <span className="dim">{t("composer.size.kb", { size: String(Math.max(1, Math.round(one.bytes / 1024))) })}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="dim">{t("approvals.send.recorded")}</p>
+        </>
+      ) : null}
+    </section>
   );
 }

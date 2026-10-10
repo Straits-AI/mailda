@@ -2193,7 +2193,11 @@ export const approvalRow = z.object({
   subjectKind: z.enum(APPROVAL_SUBJECT_KINDS),
   subjectId: z.string().min(1),
   scopeId: z.string().min(1),
-  actorUserId: userId,
+  /**
+   * Whose act is gated: a person, or a Butler whose proposed send a `require_approval` policy matched. Accepted as
+   * either since 10 October 2026; a Butler's `btl_` failed this schema before, though the Node could send one.
+   */
+  actorUserId: z.union([userId, z.string().regex(idPattern(ID_PREFIXES.butler))]),
   state: z.string().min(1),
   requestedAt: isoDate,
   resolvedAt: isoDate.nullable(),
@@ -2204,7 +2208,37 @@ export const approvalRow = z.object({
   /** Whether *this* caller has already decided. §18 counts distinct people, so it is per-reader. */
   decidedByMe: z.boolean(),
   reason: z.string().nullable(),
+  /**
+   * What an approver reads before deciding (§18, amended 10 October 2026): who asked, by address or a Butler's
+   * name; the mailbox, by name; and for a send, the addresses and subject the manifest binds. The body is
+   * `approvalContentResponse`, read separately because this list is what the sidebar's count polls.
+   */
+  actorLabel: z.string().nullable(),
+  scopeName: z.string().nullable(),
+  send: z.object({
+    manifestId: z.string().min(1),
+    from: z.string().min(1),
+    to: z.array(z.string()),
+    cc: z.array(z.string()),
+    bcc: z.array(z.string()),
+    subject: z.string(),
+  }).strict().nullable(),
 }).loose();
+
+/**
+ * The send an approver is asked to decide, for them to read first (§18, amended 10 October 2026): the normalized
+ * body §18 binds, and the attachments by name, type and size. Recorded as a disclosure before it is returned.
+ */
+export const approvalContentResponse = z.object({
+  approvalId: z.string().min(1),
+  manifestId: z.string().min(1),
+  body: z.string(),
+  attachments: z.array(z.object({
+    filename: z.string(),
+    contentType: z.string(),
+    bytes: z.number().int().nonnegative(),
+  }).strict()),
+}).strict();
 
 /**
  * Deciding.

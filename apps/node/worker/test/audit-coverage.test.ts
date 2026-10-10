@@ -611,7 +611,11 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // manifest to a subject (0021): a hold lift is requested, decided and withdrawn by the same three acts,
     // so the trail grew one action for the lift's *effect* (`hold.lifted`, on `holds`) and none for its
     // lifecycle.
-    actions: ["approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled"],
+    //
+    // `approval.content_read` (10 October 2026, §18 amended) hangs off this table for the reason the supervised
+    // disclosures hang off grants: its subject is the approval a person was asked to decide, which is what makes
+    // "everything read under request R" one filter. It writes no row here; it is a read, recorded as a disclosure.
+    actions: ["approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled", "approval.content_read"],
   },
   approval_stages: {
     exempt:
@@ -824,8 +828,10 @@ describe("audit coverage", () => {
      * the easy reading and the wrong one: a probe recorded on a best-effort basis is a probe that goes
      * unrecorded precisely when the trail is under pressure.
      */
+    // `approval.content_read`: an approver reading the send they are asked to decide, which they may hold no read
+    // on. If that cannot be recorded, it must not happen, for the same reason a supervised read must not.
     expect(disclosure).toEqual([
-      "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
+      "approval.content_read", "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
       "supervised.query_empty",
     ]);
   });
