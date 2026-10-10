@@ -40,6 +40,7 @@ export const agents: Twin<typeof source> = {
   "agents.review.bounded": "只要委托人失去相应的访问权限，其中每一项都会随之停止——代理受其所代表的人约束，在每次请求时检查，而不是只在此刻检查。",
   "agents.review.unmet": "{capability} 需要在其其他关系所在的同一个邮箱上拥有 {missing}——这里没有一个邮箱同时具备全部关系，所以代理能通过认证，但会被拒绝。",
   "agents.mint.renewal": "没有刷新，以后也无法放宽上限——重新签发就是续期，它会发出一个新令牌。",
+  "agents.mint.token": "此令牌只显示这一次，之后无法再次显示。它将于 {at} 过期，没有刷新——重新签发即可续期。",
   "agents.mint.submit": "签发代理",
 
   "capability.mail.read": "阅读邮件：列出你可以阅读的邮箱，分页浏览其中的邮件，打开一封或阅读它的邮件头，并获取原始字节。原始 `.eml` 除了内容读取权限之外还需要 `message.export`——该路由会同时检查两者。",
