@@ -379,7 +379,11 @@ describe("Agents in English", () => {
     fireEvent.change(screen.getByPlaceholderText("what this agent is for"), { target: { value: "nightly triage" } });
     await act(async () => { screen.getByRole("button", { name: "Mint agent" }).click(); });
     await screen.findByText("tok_secret_once");
-    const minted = Array.from(container.querySelectorAll("form .notice")).map((one) => one.outerHTML).join("\n");
+    // The expiry is formatted in the runner's time zone, so the golden holds a placeholder for it; the agents screen's
+    // own test asserts the format.
+    const { dateTime } = await import("../../src/client/app/format.ts");
+    const minted = Array.from(container.querySelectorAll("form .notice")).map((one) => one.outerHTML).join("\n")
+      .replace(dateTime(agent("agt_new").expiresAt as string), "{expiry}");
     owned(container, ["h1", "form"]);
     await expect(`${review}\n${whole}\n${minted}\n`.replaceAll("><", ">\n<")).toMatchFileSnapshot("./golden/agents.mint.en.html");
   });
@@ -520,7 +524,7 @@ describe("People, Agents and Approvals in Chinese", () => {
     expect((await within(added).findByRole("status")).innerHTML).toBe('x@example.test：<span lang="en">Run mailda route add.</span>');
   });
 
-  it("counts an agent's ceiling in its own units, describes a known capability in Chinese, and keeps an unknown one and the notice English", async () => {
+  it("counts an agent's ceiling in its own units, describes a known capability in Chinese, keeps an unknown one English, and says the token's notice in Chinese", async () => {
     const { container } = agentsNode([]);
     await screen.findByText("Legal");
     tick("mail.read");
@@ -534,7 +538,11 @@ describe("People, Agents and Approvals in Chinese", () => {
     expect(says[1]).toBe('<span lang="en">Read the legal holds in force.</span>');
     fireEvent.change(screen.getByPlaceholderText("这个代理的用途"), { target: { value: "nightly triage" } });
     await act(async () => { screen.getByRole("button", { name: "签发代理" }).click(); });
-    expect((await screen.findByText("Shown once: only its hash is stored.")).outerHTML).toBe('<span lang="en">Shown once: only its hash is stored.</span>');
+    // The screen's own sentence, not the Node's English notice, with the expiry in the viewer's format.
+    const { dateTime } = await import("../../src/client/app/format.ts");
+    const said = (await screen.findByText(/^此令牌只显示这一次/)).textContent!;
+    expect(said).toContain(dateTime(agent("agt_new").expiresAt));
+    expect(screen.queryByText("Shown once: only its hash is stored."), "the Node's English notice is still shown").toBeNull();
   });
 
   it("marks a relation and a capability as the Node's tokens, says a live agent as a live Butler is, and dates its expiry (G8, G7, G4)", async () => {
