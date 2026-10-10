@@ -116,12 +116,14 @@ the caller it was built for.
 whether a caller who could complete the call is told the tool exists. Every tool call still re-enters the
 ordinary router and meets `principalFor`, the route's own check and its audit entry.
 
-**A delegated credential cannot reach `/mcp` today**, and that is worth stating rather than implying
-otherwise: `POST /mcp` is tier `surface` (a surface is not a capability on itself), so it is in no agent's
-pinned ceiling and the token is refused before any catalogue is consulted. The agent branch is therefore
-correct and unreachable. It is kept because the intersection is the right answer the moment somebody decides
-a credential should reach the endpoint, and `test/mcp.test.ts` asserts the 403 so that decision announces
-itself rather than arriving silently.
+**A delegated credential reaches `/mcp`** (10 October 2026). It could not before: `POST /mcp` is tier `surface`
+(a surface is not a capability on itself), so it is in no agent's pinned ceiling, and `authz-read.ts` refused the
+token before any catalogue was consulted, while the Blueprint said an agent uses its token there as a session does.
+`authz-read.ts` now admits an agent on the `surface` tier, read from the registry rather than the path. That widens
+nothing: the endpoint answers the catalogue for the token's ceiling, and every tool call re-enters the router with
+the same bearer and meets the ceiling on the route the tool wraps. `test/mcp.test.ts` drives it over HTTP: the
+listing is the ceiling's tools, a tool inside it runs, one outside it is `-32602`, and the REST route outside it is
+still `E_AGENT_ACTION_NOT_PERMITTED`.
 
 ## `governed` is not about permission
 
@@ -178,14 +180,16 @@ counts, and fails outright in workerd. It also re-enters at `handler.fetch` rath
 the second attempt skipped the `catch` that turns a `CallerError` into a four-part refusal, so a tool call
 that should have answered 422 with a remedy answered 500 with nothing.
 
-## Authentication is the caller's session
+## Authentication is the caller's session or agent token
 
 No MCP-specific token. That would be a third credential kind after passwords and passkeys (#84), and every
 act would land in the audit trail under a machine rather than under the person who set it going. The test
-asserts the trail: a Butler drafted through MCP names the **person** as its actor.
+asserts the trail: a Butler drafted through MCP in a session names the **person** as its actor. A delegated
+`agt_` token is the Node's own agent principal, not an MCP credential, and its acts land under the agent and
+its sponsor (below).
 
-It is also what makes the `governed` tier's reasoning true rather than aspirational. An agent is that
-person, so it cannot be the second one.
+It is also what makes the `governed` tier's reasoning true rather than aspirational. Neither caller can be a
+second person: a session is that person, and an agent is bounded by its sponsor.
 
 ## Refusals are results, not protocol errors
 

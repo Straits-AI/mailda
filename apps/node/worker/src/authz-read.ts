@@ -1,5 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
-import { agentGrantableActions } from "@mailda/contract/agent";
+import { agentGrantableActions, exposureOf } from "@mailda/contract/agent";
 import { MESSAGE_PAGE_PARAMS, PLACES, specFor } from "@mailda/contract/routes";
 import { type Ctx, ID_PREFIXES, idPattern, plural } from "@mailda/runtime";
 import {
@@ -218,6 +218,19 @@ export async function principalFor(env: Env, ctx: Ctx, request: Request): Promis
    * are different facts, and an operator reading the second one needs to know the ceiling is not the problem.
    */
   const spec = specFor(request.method, new URL(request.url).pathname);
+  /*
+   * **The machine surface itself is not in any ceiling, and needs not be** (10 October 2026).
+   *
+   * `POST /mcp` is the one route of tier `surface`: a surface is not a capability on itself, so no mint can pin it
+   * and this check refused every agent at the door — while the Blueprint (§19, MCP) said a delegated agent uses its
+   * token there the same way a session does. Admitting it widens nothing. The endpoint answers the catalogue for
+   * this ceiling, and every tool call re-enters the router with this same bearer and meets this function again,
+   * with the route the tool wraps as `wanted`. Decided by the registry's tier, not by the path, so a second
+   * surface would be classified before it was admitted.
+   */
+  if (spec !== null && exposureOf(spec).tier === "surface") {
+    return { orgId: agent.orgId, userId: agent.userId, delegatorUserId: agent.delegatorUserId };
+  }
   const wanted = spec === null ? null : `${spec.method} ${spec.path}`;
   if (wanted !== null && agent.actions.includes(wanted) && !agentGrantableActions().includes(wanted)) {
     throw new CallerError("E_AGENT_ACTION_WITHDRAWN", 403, {
