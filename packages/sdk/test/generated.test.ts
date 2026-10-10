@@ -60,13 +60,14 @@ describe("the committed client is what the generator produces", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("types the five non-JSON routes as Response, not as a parsed shape", () => {
+  it("types the six non-JSON routes as Response, not as a parsed shape", () => {
     /*
-     * They answer the interface shell, stored bytes, submitted bytes and an export object. Handing back a
+     * They answer the interface shell, stored bytes, a received attachment, a held send's attachment, submitted
+     * bytes and an export object. Handing back a
      * parsed shape would be a description of the message rather than the message.
      */
     const source = readFileSync(GENERATED, "utf8");
-    expect(NOT_JSON).toHaveLength(5);
+    expect(NOT_JSON).toHaveLength(6);
     for (const entry of NOT_JSON) {
       const [method, path] = entry.split(" ");
       const spec = ALL.find((one) => one.method === method && one.path === path)!;

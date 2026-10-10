@@ -69,7 +69,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postQuarantineByMessageIdHold` | Hold a received message back from its mailbox's queue, with the reason in words. The act a customer's own classifier reaches; an administrator releases it from GET /api/quarantine |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 122 withheld
+## What you cannot do, and why — 123 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -174,7 +174,7 @@ so you are that one person and can never be the second. These are not permission
 
   The last resort. A recovery code IS the credential — redeem is unauthenticated on purpose, because the state it exists for is one where session keys are unopenable — so an agent able to call these holds this Node's escrow. There are ten codes, single-use: an agent retrying a mistyped one burns the escrow it was trying to use, and rotate destroys the operator's paper set to return successors into a transcript. A second person cannot make any of it safe for a machine, which is why it is `operator` rather than `governed`.
 
-### Out of reach — an ordinary act, and no credential can be provisioned for it (26)
+### Out of reach — an ordinary act, and no credential can be provisioned for it (27)
 
 These are not governed and not operator acts. They are reads and reversible writes a machine could perfectly
 well be trusted with, and there is **no credential that satisfies them**: they require `org.admin`, or they
@@ -185,7 +185,7 @@ They are listed because the alternative is worse. Until now they were counted as
 nowhere, which reads as an omission somebody will try to work around. Asking an administrator to grant one of
 these does not help; the answer is a person doing it, or a change to what Mailda is willing to delegate.
 
-- **`getApprovals`, `getApprovalsByApprovalIdContent`**
+- **`getApprovals`, `getApprovalsByApprovalIdAttachmentsByAttachmentId`, `getApprovalsByApprovalIdContent`**
 
   it answers any authenticated caller and narrows the result to what approval.decide reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever
 

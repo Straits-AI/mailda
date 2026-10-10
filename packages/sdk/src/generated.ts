@@ -792,6 +792,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * One attachment of the send an approval asks you to decide, as a download; recorded as a disclosure
+   *
+   * `GET /api/approvals/:approvalId/attachments/:attachmentId`
+   */
+  async getApprovalsByApprovalIdAttachmentsByAttachmentId(params: { approvalId: string; attachmentId: string }): Promise<Response> {
+    return await this.raw("GET", "/api/approvals/:approvalId/attachments/:attachmentId", params, undefined);
+  }
+
+  /**
    * Approve or refuse a send
    *
    * `POST /api/approvals/:approvalId/decide`
