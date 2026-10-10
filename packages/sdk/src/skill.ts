@@ -61,12 +61,23 @@ document is, so a capability listed here exists and one that is not listed does 
 
 ## How to call it
 
+You need two things from the person you work for: the Node's address, and an **agent token** they mint on
+the Node's Agents screen (\`/agents\`). It is shown once, acts under that person, and can never do more than
+they can; what it may do was chosen when it was minted. Never ask for their password.
+
 \`\`\`ts
 import { createClient } from "@mailda/sdk";
 
-const mailda = createClient({ origin: "https://mail.example.com", headers: { cookie } });
+const mailda = createClient({
+  origin: "https://mail.example.com",
+  headers: { authorization: \`Bearer \${process.env.MAILDA_TOKEN}\` },
+});
 const inbox = await mailda.getMessages();
 \`\`\`
+
+The method names below are the same everywhere: as MCP tools at \`https://mail.example.com/mcp\` with the same
+bearer token, and in a terminal as \`mailda api <method>\` with the token in \`MAILDA_TOKEN\`. A refusal that
+names your ceiling means the token was not minted for that act; ask the person, do not look for another route.
 
 Responses are validated against the contract, so a field you read is a field the Node returned. A refusal
 arrives as a \`MaildaError\` carrying \`code\`, and its message has three parts — what happened, why, and what
@@ -92,8 +103,9 @@ them independently of this document.
 
 ### Governed — needs more than one person, or cannot be undone (${byTier("governed").length})
 
-You are acting inside one person's session. Mailda counts **distinct people**, not credentials or requests,
-so you are that one person and can never be the second. These are not permissions you might be granted.
+You act for one person, inside their session or with a token minted under them. Mailda counts **distinct
+people**, not credentials or requests, so you are that one person and can never be the second. These are not
+permissions you might be granted.
 
 ${[...reasons.entries()]
     .filter(([, names]) => names.some((name) => byTier("governed").some((entry) => entry.name === name)))

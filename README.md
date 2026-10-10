@@ -220,6 +220,38 @@ trail.
 
 ---
 
+## Connecting your AI, a script or a terminal
+
+Everything goes through one credential: an **agent token**. A person who administers the Node mints one on its
+Agents screen, under a named person (the sponsor), with the capabilities and mailboxes it may use. It is shown
+once, it can never do more than its sponsor can, it stops when the sponsor's access does, and every act it takes
+is recorded under both. Sealing a send, approving, publishing a Butler and anything else that needs a person are
+not available to it at all.
+
+- **MCP**, for Claude Code or any client that speaks MCP's Streamable HTTP transport. The endpoint is `/mcp` on
+  the Node, with the token as a bearer. In Claude Code:
+
+  ```sh
+  claude mcp add --transport http mailda-node https://mail.example.com/mcp \
+    --header "Authorization: Bearer $MAILDA_TOKEN"
+  ```
+
+  It lists only the tools the token's ceiling allows.
+- **The Agent Skill**, which teaches an agent what it can do, what it cannot and why. It is the folder
+  [`skills/mailda`](./skills/mailda/SKILL.md); copy it where your agent reads skills, for Claude Code
+  `~/.claude/skills/` for every project or `.claude/skills/` in one:
+
+  ```sh
+  cp -r skills/mailda ~/.claude/skills/
+  ```
+
+  The Skill grants nothing. The agent still needs the token, by MCP above or the SDK.
+- **The terminal**, as `mailda api <method>` from a clone, with the token in `MAILDA_TOKEN` and the Node in
+  `MAILDA_URL`. `mailda api --list` shows every method.
+- **The SDK**, `@mailda/sdk`, for a program of your own, generated from the same contract (`packages/sdk`).
+
+The method names are the same in all four, because all four are built from one route contract.
+
 ## Status: functional alpha, not production-ready
 
 **Do not make this the only copy of mail you care about.** It receives, stores, reads, replies, governs and
