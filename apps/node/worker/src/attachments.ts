@@ -217,7 +217,7 @@ export function summariseAttachments(
  * it is a token/token and the file is not a program, which is served as octet-stream whatever it claimed, so a
  * browser saves rather than runs it.
  */
-export async function attachmentResponse(bytes: Uint8Array, name: string, mimeType: string): Promise<Response> {
+export async function attachmentResponse(bytes: Uint8Array<ArrayBuffer>, name: string, mimeType: string): Promise<Response> {
   const { percentEncoded, safeFilename, undisguised } = await import("./outbound/headers.ts");
   const verdict = classifyAttachment(name, bytes);
   const mediaType = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/.test(mimeType) && !DANGEROUS.has(verdict)

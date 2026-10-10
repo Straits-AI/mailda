@@ -432,7 +432,7 @@ export const mail = {
     const allowed = await authorizeExport(env, clock, request, params.receiptId);
     if (!allowed.ok) return allowed.response;
     const { attachmentResponse } = await import("../attachments.ts");
-    const bytes = typeof part.content === "string" ? new TextEncoder().encode(part.content) : new Uint8Array(part.content);
+    const bytes = new Uint8Array(typeof part.content === "string" ? new TextEncoder().encode(part.content) : part.content);
     return await attachmentResponse(bytes, part.filename ?? `part-${ordinal}`, part.mimeType);
   },
 

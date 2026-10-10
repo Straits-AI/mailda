@@ -80,7 +80,7 @@ export async function approvalAttachment(
   userId: string,
   approvalId: string,
   attachmentId: string,
-): Promise<{ bytes: Uint8Array; filename: string; contentType: string } | null> {
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; filename: string; contentType: string } | null> {
   const approval = await decidableSend(env, orgId, userId, approvalId);
   if (approval === null) return null;
   const attachment = await env.CATALOG.prepare(
