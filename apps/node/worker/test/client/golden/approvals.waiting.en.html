@@ -7,17 +7,42 @@
 <h2>A message waiting to go out</h2>
 <p>A rule asked for a second pair of eyes before this leaves.</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_send</dd>
+<dt>Mailbox</dt>
+<dd>Support</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">bob@example.test</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">does not lapse</dd>
 <dt>Needs</dt>
 <dd>one approval needed</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_send</dd>
 </dl>
+<section class="approval-send" aria-label="The message you are asked to approve">
+<dl class="headers">
+<dt>From</dt>
+<dd class="mono">support@example.test</dd>
+<dt>To</dt>
+<dd class="mono">dana@example.net and eve@example.net</dd>
+<dt>Bcc</dt>
+<dd class="mono">audit@example.test</dd>
+<dt>Subject</dt>
+<dd>Your quote</dd>
+</dl>
+<pre class="approval-body">Hi Dana,
+
+&lt;script&gt;alert(1)&lt;/script&gt; &lt;b&gt;not bold&lt;/b&gt;
+
+Bob</pre>
+<ul class="approval-attachments" aria-label="Attachments">
+<li>
+<span class="mono">quote.pdf</span> <span class="dim">51 KB</span>
+</li>
+</ul>
+<p class="dim">Your reading it is recorded in the audit trail, as every read of mail you do not otherwise hold is.</p>
+</section>
 <p class="notice bad" role="alert">Refused, for the test.</p>
 <p class="approval-actions">
 <button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
@@ -27,16 +52,16 @@
 <h2>Lifting a legal hold</h2>
 <p>Approving this ends the hold, and the mail it preserved becomes deletable again.</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_hold</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">usr_bob</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">[clock]</dd>
 <dt>Needs</dt>
 <dd>1 approval needed</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_hold</dd>
 </dl>
 <blockquote class="approval-reason">The matter closed on Friday.</blockquote>
 <p class="approval-actions">
@@ -47,19 +72,30 @@
 <h2>Reading somebody else's mail</h2>
 <p>Approving this lets the requester read a mailbox they hold no standing relation to. The person whose mailbox it is will be told when the matter closes (§7).</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_read</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">usr_bob</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">[clock]</dd>
 <dt>Needs</dt>
 <dd>stage 1 of 2 · 3 approvals in total</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_read</dd>
 </dl>
 <blockquote class="approval-reason">Investigating a complaint.</blockquote>
-<p class="dim mono">scope <code>metadata</code> · subject usr_cleo · no matter cited</p>
+<dl class="headers">
+<dt>Whose mail</dt>
+<dd class="mono" title="usr_cleo">cleo@example.test</dd>
+<dt>Scope</dt>
+<dd>
+<code>metadata</code>
+</dd>
+<dt>Until</dt>
+<dd class="mono">[clock]</dd>
+<dt>Matter</dt>
+<dd>no matter cited</dd>
+</dl>
 <p class="approval-actions">
 <button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
 </p>
@@ -68,18 +104,29 @@
 <h2>Reading somebody else's mail</h2>
 <p>Approving this lets the requester read a mailbox they hold no standing relation to. The person whose mailbox it is will be told when the matter closes (§7).</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_read2</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">usr_bob</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">[clock]</dd>
 <dt>Needs</dt>
 <dd>stage 2 of 2 · 2 approvals in total</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_read2</dd>
 </dl>
-<p class="dim mono">scope <code>content</code> · subject usr_dan · matter mtr_1</p>
+<dl class="headers">
+<dt>Whose mail</dt>
+<dd class="mono" title="usr_dan">usr_dan</dd>
+<dt>Scope</dt>
+<dd>
+<code>content</code>
+</dd>
+<dt>Until</dt>
+<dd class="mono">[clock]</dd>
+<dt>Matter</dt>
+<dd>A forwarding rule nobody set.</dd>
+</dl>
 <p class="approval-actions">
 <button type="button" class="primary">Approve</button> <button class="quiet" type="button">Deny</button>
 </p>
@@ -88,16 +135,28 @@
 <h2>Exporting mail out of this Node</h2>
 <p>Approving this produces a copy of matching mail that leaves the system's own controls.</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_export</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">usr_bob</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">[clock]</dd>
 <dt>Needs</dt>
 <dd>2 approvals needed</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_export</dd>
+</dl>
+<dl class="headers">
+<dt>Matter</dt>
+<dd>Initech contract dispute</dd>
+<dt>Which mail</dt>
+<dd>
+<code>mailbox=mbx_support</code>
+</dd>
+<dt>At most</dt>
+<dd>50 messages</dd>
+<dt>Copied to</dt>
+<dd class="mono">r2://exports/exp_1</dd>
 </dl>
 <p class="approval-actions">
 <span class="dim">You have decided this. </span>
@@ -108,16 +167,16 @@
 <h2>Pausing a domain's mail</h2>
 <p>Approving this pauses every message to that domain until somebody lifts the pause.</p>
 <dl class="headers">
-<dt>Subject</dt>
-<dd class="mono">sub_apr_pause</dd>
 <dt>Asked by</dt>
-<dd class="mono">usr_bob</dd>
+<dd class="mono" title="usr_bob">usr_bob</dd>
 <dt>Asked</dt>
 <dd class="mono">[clock]</dd>
 <dt>Lapses</dt>
 <dd class="mono">[clock]</dd>
 <dt>Needs</dt>
 <dd>one approval needed</dd>
+<dt>Reference</dt>
+<dd class="mono dim">sub_apr_pause</dd>
 </dl>
 <blockquote class="approval-reason">Bouncing everything.</blockquote>
 <p class="dim mono">domain example.org</p>

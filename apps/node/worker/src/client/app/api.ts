@@ -1435,9 +1435,47 @@ export interface ApprovalRow {
   decidedByMe: boolean;
   /** The requester's own words, where the subject kind carries any. NULL for a send. */
   reason: string | null;
-  supervised?: { grantId: string; subjectId: string; scope: string; matterId: string | null } | null;
+  supervised?: {
+    grantId: string; subjectId: string; scope: string; matterId: string | null;
+    matter: { type: string; description: string } | null; subjectEmail?: string | null; expiresAt: string;
+  } | null;
   /** The field `src/approval-pending.ts` sends. Read as `pause` until 1 October 2026, so no card showed the domain. */
   domainPause?: { pauseId: string; domain: string; reason: string } | null;
+  /** An export's bound: what it matches, how many at most, where to, and for which matter. Sent and unread until 10 October 2026. */
+  exportRequest?: {
+    exportId: string; predicate: string; predicateSha256: string; maxMessages: number; destination: string;
+    matterId: string; matter?: { type: string; description: string } | null;
+  } | null;
+  /**
+   * Who asked and about which mailbox, by name, and a send's addresses and subject (§18, amended 10 October 2026).
+   * Optional, because a Node before that sends none of them and the card falls back to the ids.
+   */
+  actorLabel?: string | null;
+  scopeName?: string | null;
+  send?: { manifestId: string; from: string; to: string[]; cc: string[]; bcc: string[]; subject: string } | null;
+}
+
+export interface ApprovalContent {
+  approvalId: string;
+  manifestId: string;
+  body: string;
+  attachments: Array<{ filename: string; contentType: string; bytes: number }>;
+}
+
+/**
+ * The send an approval asks this person to decide: its body and attachments' names, for the card to show before
+ * they decide. Each read is recorded by the Node as a disclosure, so it is fetched once per card, not polled.
+ */
+export function useApprovalContent(approvalId: string, enabled: boolean): UseQueryResult<ApprovalContent, Error> {
+  return useQuery({
+    queryKey: ["approval-content", approvalId],
+    enabled,
+    queryFn: () => read<ApprovalContent>(GET("/api/approvals/:approvalId/content", { approvalId })),
+    // Not AUTHORIZATION_SENSITIVE: refetching on focus would record a fresh disclosure each time the tab is
+    // revisited. Whether the person may still decide is the decision route's question, asked when they decide.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
 }
 
 export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Error> {

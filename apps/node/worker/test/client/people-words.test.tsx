@@ -412,17 +412,23 @@ function approval(id: string, subjectKind: string, overrides: Record<string, unk
 }
 
 const APPROVALS = [
-  approval("apr_send", "send_manifest", { expiresAt: null }),
+  approval("apr_send", "send_manifest", {
+    expiresAt: null, scopeId: "mbx_support", scopeName: "Support", actorLabel: "bob@example.test",
+    send: { manifestId: "snd_1", from: "support@example.test", to: ["dana@example.net", "eve@example.net"], cc: [], bcc: ["audit@example.test"], subject: "Your quote" },
+  }),
   approval("apr_hold", "hold_lift", { stages: [{ count: 1, teamId: null }], openStage: 1, reason: "The matter closed on Friday." }),
   approval("apr_read", "supervised_read", {
     stages: [{ count: 1, teamId: "team_fin" }, { count: 2, teamId: "team_legal" }], openStage: 1, reason: "Investigating a complaint.",
-    supervised: { grantId: "sgr_1", subjectId: "usr_cleo", scope: "metadata", matterId: null },
+    supervised: { grantId: "sgr_1", subjectId: "usr_cleo", subjectEmail: "cleo@example.test", scope: "metadata", matterId: null, matter: null, expiresAt: INSTANTS[3] },
   }),
   approval("apr_read2", "supervised_read", {
     stages: [{ count: 1, teamId: null }, { count: 1, teamId: null }], openStage: null,
-    supervised: { grantId: "sgr_2", subjectId: "usr_dan", scope: "content", matterId: "mtr_1" },
+    supervised: { grantId: "sgr_2", subjectId: "usr_dan", scope: "content", matterId: "mtr_1", matter: { type: "security_incident", description: "A forwarding rule nobody set." }, expiresAt: INSTANTS[3] },
   }),
-  approval("apr_export", "ediscovery_export", { stages: [{ count: 2, teamId: null }], openStage: 1, decidedByMe: true }),
+  approval("apr_export", "ediscovery_export", {
+    stages: [{ count: 2, teamId: null }], openStage: 1, decidedByMe: true,
+    exportRequest: { exportId: "exp_1", predicate: "mailbox=mbx_support", predicateSha256: "ab12", maxMessages: 50, destination: "r2://exports/exp_1", matterId: "mtr_2", matter: { type: "legal_hold", description: "Initech contract dispute" } },
+  }),
   // As the Node sends it: the approval's own reason is null, and the requester's words are on the pause.
   approval("apr_pause", "domain_pause", { domainPause: { pauseId: "dpz_1", domain: "example.org", reason: "Bouncing everything." } }),
 ];
@@ -430,6 +436,11 @@ const APPROVALS = [
 function approvalsNode(approvals: unknown[]) {
   answerWith((call) => {
     if (call.method !== "GET") return REFUSED();
+    if (call.path === "/api/approvals/apr_send/content") {
+      // The author's text, with markup in it that must arrive as text.
+      return Response.json({ approvalId: "apr_send", manifestId: "snd_1", body: "Hi Dana,\n\n<script>alert(1)</script> <b>not bold</b>\n\nBob",
+        attachments: [{ filename: "quote.pdf", contentType: "application/pdf", bytes: 52_000 }] });
+    }
     return call.path === "/api/approvals" ? Response.json({ approvals }) : undefined;
   });
   return mount(<Approvals />);
@@ -440,7 +451,22 @@ describe("Approvals in English", () => {
     const { container } = approvalsNode(APPROVALS);
     await act(async () => { (await screen.findAllByRole("button", { name: "Approve" }))[0]!.click(); });
     await screen.findByRole("alert");
+    await screen.findByText(/not bold/); // the send's message, read before the snapshot
     await expect(html(owned(container, ["h1", ".approval-list", "blockquote", "[role=alert]"]))).toMatchFileSnapshot("./golden/approvals.waiting.en.html");
+  });
+
+  it("shows a send's addresses, its message as text never markup, and that reading it is recorded", async () => {
+    const { container } = approvalsNode(APPROVALS);
+    const body = await screen.findByText(/not bold/);
+    // Until 10 October 2026 an approver saw `snd_…` and `usr_…` and nothing of the message.
+    expect(body.textContent).toBe("Hi Dana,\n\n<script>alert(1)</script> <b>not bold</b>\n\nBob");
+    expect(container.querySelector(".approval-body script, .approval-body b")).toBeNull();
+    const send = screen.getByRole("region", { name: "The message you are asked to approve" });
+    expect(send.textContent).toContain("dana@example.net and eve@example.net");
+    expect(send.textContent).toContain("audit@example.test");
+    expect(send.textContent).toContain("quote.pdf");
+    expect(send.textContent).toContain("recorded in the audit trail");
+    expect(screen.getAllByTitle("usr_bob").map((one) => one.textContent)).toContain("bob@example.test");
   });
 
   it("says nothing is waiting on you", async () => {

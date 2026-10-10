@@ -10,6 +10,7 @@ import {
   APPROVAL_REASONS, decideApproval, openStage, pendingApprovals, shortfallFor,
   stageOf, stagesOfApproval, withdrawApproval, type Decision, type Stages,
 } from "../src/approvals.ts";
+import { approvalContent } from "../src/approval-content.ts";
 import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
@@ -1073,5 +1074,55 @@ describe("clearing a gate is not enough on its own; something has to sweep", () 
 
     const swept = await manifestRow(sealed.id);
     expect(swept?.state, JSON.stringify(swept)).toBe("handed_over");
+  });
+});
+
+/* ------------------------------------------------- what an approver sees (§18, 10 October 2026) ---- */
+
+describe("an approver sees the send they are asked to approve", () => {
+  it("lists its addresses and subject, the mailbox by name, and who asked by address", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const sealed = await seal({ cc: ["copy@example.net"], bcc: ["quiet@example.net"] });
+    const [row] = await pendingApprovals(testEnv, ORG, ANN);
+    // The card said `Subject snd_01M4…` and `Asked by usr_01M4…` until this.
+    expect(row).toMatchObject({
+      actorLabel: `${AUTHOR}@acme.example`,
+      scopeName: "Support",
+      send: { manifestId: sealed.id, from: ADDRESS, to: ["customer@example.net"], cc: ["copy@example.net"], bcc: ["quiet@example.net"], subject: "Needs approval" },
+    });
+  });
+
+  it("gives an eligible approver the body, and records that they read it", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const sealed = await seal({ bodyTyped: "Please find the quote attached." });
+    const approval = (await approvalRow(sealed.id))!;
+    const content = await approvalContent(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id);
+    expect(content?.manifestId).toBe(sealed.id);
+    expect(content?.body).toContain("Please find the quote attached.");
+    expect(content?.attachments).toEqual([]);
+    const read = await testEnv.CATALOG.prepare(
+      "SELECT actor_user_id, subject FROM audit_entries WHERE org_id = ? AND action = 'approval.content_read'",
+    ).bind(ORG).all<{ actor_user_id: string; subject: string }>();
+    expect(read.results).toEqual([{ actor_user_id: ANN, subject: approval.id }]);
+  });
+
+  it("gives it to nobody else: the author, a non-holder, an administrator alone, a settled request, another kind", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await tuple(AUTHOR, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate");
+    const sealed = await seal();
+    const approval = (await approvalRow(sealed.id))!;
+    const read = (who: string) => approvalContent(testEnv, atTime(AUGUST_10 + 2000), ORG, who, approval.id);
+    expect(await read(AUTHOR)).toBeNull(); // decides nothing of their own
+    expect(await read(BOB)).toBeNull(); // holds nothing here
+    expect(await read(ADMIN)).toBeNull(); // org.admin confers no approval.decide
+    await testEnv.CATALOG.prepare("UPDATE approvals SET subject_kind = 'hold_lift' WHERE id = ?").bind(approval.id).run();
+    expect(await read(ANN)).toBeNull(); // only a send is read this way
+    await testEnv.CATALOG.prepare("UPDATE approvals SET subject_kind = 'send_manifest' WHERE id = ?").bind(approval.id).run();
+    expect(await read(ANN)).not.toBeNull();
+    await decideApproval(testEnv, atTime(AUGUST_10 + 3000), ORG, ANN, approval.id, "deny");
+    expect(await read(ANN)).toBeNull(); // only while it is being asked
   });
 });

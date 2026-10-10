@@ -5,6 +5,7 @@ import { closeMatter, listMatters, openMatter } from "../matters.ts";
 import { grantsForReport, requestSupervisedRead } from "../supervised.ts";
 import { holdsForReport, placeHold, requestHoldLift } from "../holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy } from "../policy.ts";
+import { approvalContent } from "../approval-content.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "../approvals.ts";
 import { safeFilename } from "../outbound/headers.ts";
 import { conditionsFrom, stagesFrom } from "./support.ts";
@@ -413,6 +414,22 @@ export const governance = {
    */
   "GET /api/approvals": async ({ env, who }) => {
     return Response.json({ approvals: await pendingApprovals(env, who.orgId, who.userId) });
+  },
+
+  /*
+   * The send an approver is asked to decide, read before deciding (§18, amended 10 October 2026). The same 404 for
+   * every refusal, in the queue's words, because whether an approval exists that you may not see is itself not
+   * yours to learn.
+   */
+  "GET /api/approvals/:approvalId/content": async ({ env, clock, params, who }) => {
+    const content = await approvalContent(env, clock, who.orgId, who.userId, params.approvalId);
+    if (content === null) {
+      return Response.json(
+        { error: "not_found", message: "No such approval waiting on you, or it is not a send." },
+        { status: 404 },
+      );
+    }
+    return Response.json(content);
   },
 
   "POST /api/approvals/:approvalId/decide": async ({ request, env, clock, params, who }) => {

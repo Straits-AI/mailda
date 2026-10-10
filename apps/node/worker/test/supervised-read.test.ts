@@ -342,6 +342,8 @@ describe("dual approval, and the requester is never one of the two", () => {
       // A grant citing no matter shows a null rather than a blank: absent is a real answer (#63), and an
       // approver should see it as such rather than as a description somebody forgot to write.
       matter: null,
+      // Whose mail, by address (10 October 2026): the approvers are asked about a person, not an id.
+      subjectEmail: `${INVESTIGATOR}@acme.example`,
       expiresAt: requested.expiresAt,
     });
   });

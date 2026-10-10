@@ -783,6 +783,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * The send an approval asks you to decide, to read before deciding; recorded as a disclosure
+   *
+   * `GET /api/approvals/:approvalId/content`
+   */
+  async getApprovalsByApprovalIdContent(params: { approvalId: string }): Promise<z.infer<typeof S.approvalContentResponse>> {
+    return await this.json("GET", "/api/approvals/:approvalId/content", params, undefined) as z.infer<typeof S.approvalContentResponse>;
+  }
+
+  /**
    * Approve or refuse a send
    *
    * `POST /api/approvals/:approvalId/decide`

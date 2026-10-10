@@ -134,6 +134,24 @@ than the author, which is the least the words can mean, and which is also what e
 migration 0020 means. Writing `[1]` explicitly normalises to the same thing, so one rule has exactly one stored
 form.
 
+## What a person deciding sees
+
+Added 10 October 2026 (Blueprint §18, amended). An approval binds exact content, so the person deciding has to be
+able to read it. `pendingApprovals` carries, beside each request:
+
+- **who asked**, by address (`actorLabel`), or a Butler's name when a Butler's proposed send is gated, with the id kept;
+- **the mailbox** by name (`scopeName`);
+- for a **send**, its From, To, Cc, Bcc and subject (`send`), read from the sealed manifest on the same query;
+- for a **supervised read**, whose mail by address (`supervised.subjectEmail`), the scope, the deadline and the matter;
+- for an **export**, the predicate, the hard `maxMessages`, the destination and the matter (`exportRequest.matter`).
+
+A send's **body and attachments' names** come from `GET /api/approvals/:approvalId/content`
+(`src/approval-content.ts`), not the list, because the list is what the sidebar's count polls and the body is an R2
+read. Its rule is the list's: the mailbox's deciders (`decidersByMailbox`), minus the actor, the approval pending, the
+subject a send; everything else is the same 404. Each read is recorded as `approval.content_read` before the body is
+returned, and refused if it cannot be. The screen fetches it once per card and never on window focus, so revisiting
+the tab does not record a second read. The body is shown as the author's text, never as markup.
+
 ## Who may decide
 
 ```

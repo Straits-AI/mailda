@@ -64,7 +64,7 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
       "butler", "butler-runs", "transport", "search-failed", "passkeys", "approvals", "policies", "people",
       "teams", "team-members", "breakers", "domain-pauses", "suppressions", "matters", "holds", "supervised",
       "exports", "invitations", "agent-capabilities", "agents", "sponsor-mailboxes", "provider", "provider-delivery-events", "provider-routing",
-      "forwards", "access",
+      "forwards", "access", "approval-content",
     ].map((text) => ({ text, reason: "a TanStack Query cache key: compared and invalidated, never shown" })),
     ...["POST", "PUT", "PATCH", "DELETE"].map((text) => ({ text, reason: "an HTTP method" })),
     { text: "application/json", reason: "a media type in a content-type header" },

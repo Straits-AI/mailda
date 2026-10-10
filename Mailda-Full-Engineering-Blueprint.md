@@ -2079,6 +2079,17 @@ Mail approval is a specialized single-use effect envelope that additionally bind
 
 Any material edit invalidates approval. Separation-of-duty policies prevent self-approval and support sequential/parallel/dual review.
 
+**An approver reads what they are asked to approve.** Amended 10 October 2026. Binding an approval to exact content
+means nothing if the person deciding cannot see that content, and the queue showed a send as its `snd_` id and its
+author as a `usr_` id. So holding `approval.decide` on a mailbox now lets a person read **the one send they are being
+asked to decide, and nothing else in that mailbox**: its From, To, Cc, Bcc and subject in the queue, and its normalized
+body (the bytes this section binds and dispatch sends) with its attachments' names and sizes from
+`GET /api/approvals/:approvalId/content`. The rule is the queue's exactly: the eligible deciders on the mailbox, minus
+the actor; only while the approval is pending; only a send. `org.admin` alone confers none of it, as it confers no
+`approval.decide`. Every read is **recorded as a disclosure** (`approval.content_read`, through `recordDisclosure`), and
+the body is not returned if the record cannot be written: a person can read and never decide, so the decision's own
+entry would not show the read. Attachment bytes are not part of this; the names and sizes are.
+
 ### Separation of duty, and the shape Layer 5 fixes
 
 Amended 20 August 2026 (#61). The sentence above names three review shapes; this subsection is the contract,
