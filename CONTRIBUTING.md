@@ -35,6 +35,18 @@ same PR: `README.md`, the relevant file under `docs/`, and any receipt whose cla
 
 CI runs `check`, and a PR merges only when it passes. Squash merges only.
 
+## Publishing the SDK
+
+`@mailda/sdk` goes to npm with `@mailda/contract` and `@mailda/runtime`, which it imports, at one version. Bump
+`version` in all three `package.json` files together, then, signed in to npm as a member of the `mailda` scope:
+
+```sh
+corepack pnpm -r --filter @mailda/runtime --filter @mailda/contract --filter @mailda/sdk publish
+```
+
+pnpm publishes them in dependency order, replaces `workspace:*` with the version, and runs each one's `prepack`,
+which builds `dist`. `pnpm pack` in a package directory makes the same tarball without publishing it.
+
 ## Security problems
 
 Not here, and not in a public issue. See [`SECURITY.md`](./SECURITY.md).

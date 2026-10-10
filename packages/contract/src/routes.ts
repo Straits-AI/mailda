@@ -584,6 +584,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/policies/:policyId/publish", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, response: S.approvalListResponse },
   { method: "GET", path: "/api/approvals/:approvalId/content", summary: "The send an approval asks you to decide, to read before deciding; recorded as a disclosure", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, response: S.approvalContentResponse },
+  { method: "GET", path: "/api/approvals/:approvalId/attachments/:attachmentId", summary: "One attachment of the send an approval asks you to decide, as a download; recorded as a disclosure", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] } },
   { method: "POST", path: "/api/approvals/:approvalId/decide", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", authority: { scope: "filtered", by: "self" }, summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.holdListResponse },
@@ -1080,6 +1081,7 @@ export const NOT_JSON: readonly string[] = [
   "GET /index.html",
   "GET /api/messages/:receiptId/raw",
   "GET /api/messages/:receiptId/attachments/:ordinal",
+  "GET /api/approvals/:approvalId/attachments/:attachmentId",
   "GET /api/sends/:sendId/submitted",
   "GET /api/exports/:exportId/objects/:objectId",
 ];

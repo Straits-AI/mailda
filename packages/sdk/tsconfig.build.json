@@ -1,0 +1,12 @@
+{
+  "//": "What `pnpm pack` and `pnpm publish` emit (prepack): src only, to dist, with .ts specifiers rewritten to .js. Development and the worker read src directly.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": false,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src/index.ts"]
+}

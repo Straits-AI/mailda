@@ -434,7 +434,8 @@ packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED, do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      the route registry, its schemas, and command schemas
-packages/sdk                           GENERATED from the registry, one method per route
+packages/sdk                           GENERATED from the registry, one method per route; publishable to npm as
+                                       `@mailda/sdk`, built from source on pack (CONTRIBUTING.md)
 packages/cli                           `mailda`: the dispatcher, `support.mjs`, one module per verb under
                                        `verbs/`, and the pure parsers beside them (deploy-plan, preflight, backup,
                                        api-call, which builds `mailda api` requests from the registry)

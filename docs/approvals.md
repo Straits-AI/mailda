@@ -152,6 +152,14 @@ subject a send; everything else is the same 404. Each read is recorded as `appro
 returned, and refused if it cannot be. The screen fetches it once per card and never on window focus, so revisiting
 the tab does not record a second read. The body is shown as the author's text, never as markup.
 
+Each attachment's **bytes** come from `GET /api/approvals/:approvalId/attachments/:attachmentId`, the `id` the content
+lists (`approvalAttachment`, same module). The rule is the content's, through the same `decidableSend`, and the
+attachment must belong to the send that approval gates; anything else is the same 404. Each file opened is recorded as
+`approval.attachment_read`, naming the attachment, before any byte is read, and refused if it cannot be. The response is
+`attachmentResponse` in `src/attachments.ts`, shared with a received message's attachments: always `attachment` with
+`nosniff`, and a program as `application/octet-stream`, so an HTML or SVG file somebody wrote never renders on the
+Node's origin under the approver's session. On the card each name is a link to it.
+
 ## Who may decide
 
 ```

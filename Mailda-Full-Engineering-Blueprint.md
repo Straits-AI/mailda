@@ -2088,7 +2088,10 @@ body (the bytes this section binds and dispatch sends) with its attachments' nam
 the actor; only while the approval is pending; only a send. `org.admin` alone confers none of it, as it confers no
 `approval.decide`. Every read is **recorded as a disclosure** (`approval.content_read`, through `recordDisclosure`), and
 the body is not returned if the record cannot be written: a person can read and never decide, so the decision's own
-entry would not show the read. Attachment bytes are not part of this; the names and sizes are.
+entry would not show the read. Each attachment's bytes are a download of their own, under the same rule, from
+`GET /api/approvals/:approvalId/attachments/:attachmentId` (amended again the same day: a name and a size do not show
+what a contract says). Each file opened is recorded on its own (`approval.attachment_read`, naming the attachment)
+before any byte is read, and it is always served as `attachment` with `nosniff`, never rendered on the Node's origin.
 
 ### Separation of duty, and the shape Layer 5 fixes
 
@@ -2459,6 +2462,7 @@ mailda butler kill but_sales --reason incident-4821 --wait
 ### SDKs
 
 - Amended 20 September 2026: TypeScript only, generated from the route registry (`packages/sdk/src/generate.ts`, checked by `pnpm sdk:check`). No Python or Go client and no OpenAPI document exist; a second language is generated from the same registry when somebody needs one.
+- Amended 10 October 2026: publishable to npm as `@mailda/sdk`, with the two packages it imports, `@mailda/contract` and `@mailda/runtime`, all three Apache-2.0 at one version. In the workspace they are read as source; `prepack` builds each to `dist` and `publishConfig` points the published `exports` there, held equal to the workspace's by `packages/sdk/test/publishable.test.ts`. Publishing is a maintainer's act (`CONTRIBUTING.md`).
 - Shared error, pagination, receipt and webhook types.
 - Provider/connector SDK for extensions.
 
@@ -2479,7 +2483,7 @@ The skill grants nothing. OAuth/delegation supplies authority.
 
 ### MCP
 
-The remote MCP server maps narrow typed tools such as `search_messages`, `create_draft`, `propose_send`, `get_approval` and `run_butler` onto the same API. It does not expose a general shell/`execute_cli` tool. Amended 20 September 2026: it authenticates with the Node's own session, exactly as the browser does, and there is no third credential kind after passwords and passkeys (`apps/node/worker/src/mcp.ts`). An MCP-specific token would be one more thing to mint, revoke and leak, and every act it authorized is already authorized for the person whose session it is; the tool list offered is the session's capabilities, and a delegated agent uses its agent token the same way. There is no upstream token passthrough, content-size bypass or separate authorization semantics.
+The remote MCP server maps narrow typed tools such as `search_messages`, `create_draft`, `propose_send`, `get_approval` and `run_butler` onto the same API. It does not expose a general shell/`execute_cli` tool. Amended 20 September 2026: it authenticates with the Node's own session, exactly as the browser does, and there is no third credential kind after passwords and passkeys (`apps/node/worker/src/mcp.ts`). An MCP-specific token would be one more thing to mint, revoke and leak, and every act it authorized is already authorized for the person whose session it is; the tool list offered is the session's capabilities, and a delegated agent uses its agent token the same way. Amended 10 October 2026: the code had refused that token at `/mcp`, because the endpoint is tier `surface` and no ceiling can pin it; `authz-read.ts` now admits an agent on that tier, and each tool call still meets the agent's pinned ceiling on the route it wraps. There is no upstream token passthrough, content-size bypass or separate authorization semantics.
 
 ### Surface-parity contract
 

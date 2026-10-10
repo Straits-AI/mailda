@@ -5,8 +5,8 @@ import type { Area } from "../areas.ts";
 /**
  * Agents (`src/client/app/screens/agents.tsx`): agent principals, their capabilities and sponsor mailboxes. Its
  * heading is the route's name, `route./agents`. A capability's description is `capability.<id>` (layer 3), and a
- * capability id this interface does not know shows the Node's `says` in `<NodeWords>`; the mint's notice is the
- * Node's words; a relation's description is `api.agent.*`. Capability ids and relation tokens stay Latin, in mono.
+ * capability id this interface does not know shows the Node's `says` in `<NodeWords>`; the mint's notice is
+ * `agents.mint.token`, with the expiry in the viewer's format; a relation's description is `api.agent.*`. Capability ids and relation tokens stay Latin, in mono.
  */
 export const agents = {
   "agents.lede":
@@ -53,6 +53,8 @@ export const agents = {
     "{capability} needs {missing} on the same mailbox as its other relations — no mailbox here carries all of them, so the agent will authenticate and be refused.",
   "agents.mint.renewal":
     "There is no refresh and no way to widen a ceiling later — re-minting is the renewal, and it issues a new token.",
+  /** Shown once with a freshly minted token; `{at}` is its expiry. */
+  "agents.mint.token": "This token is shown once and cannot be shown again. It expires on {at} and there is no refresh — re-mint to renew.",
   "agents.mint.submit": "Mint agent",
 
   // A capability's description, keyed by its id (`CAPABILITY_IDS`). The English is the Node's `says`, byte for byte:

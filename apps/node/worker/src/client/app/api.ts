@@ -1459,7 +1459,12 @@ export interface ApprovalContent {
   approvalId: string;
   manifestId: string;
   body: string;
-  attachments: Array<{ filename: string; contentType: string; bytes: number }>;
+  attachments: Array<{ id: string; filename: string; contentType: string; bytes: number }>;
+}
+
+/** One attachment of that send, as a download the Node records per file. A link, so the browser saves it. */
+export function approvalAttachmentHref(approvalId: string, attachmentId: string): string {
+  return GET("/api/approvals/:approvalId/attachments/:attachmentId", { approvalId, attachmentId });
 }
 
 /**

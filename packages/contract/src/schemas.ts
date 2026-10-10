@@ -2227,13 +2227,15 @@ export const approvalRow = z.object({
 
 /**
  * The send an approver is asked to decide, for them to read first (§18, amended 10 October 2026): the normalized
- * body §18 binds, and the attachments by name, type and size. Recorded as a disclosure before it is returned.
+ * body §18 binds, and the attachments by id, name, type and size; each one's bytes are a route of their own. Recorded as a disclosure before it is returned.
  */
 export const approvalContentResponse = z.object({
   approvalId: z.string().min(1),
   manifestId: z.string().min(1),
   body: z.string(),
   attachments: z.array(z.object({
+    /** `sat_`: what `GET /api/approvals/:approvalId/attachments/:attachmentId` takes. */
+    id: z.string().min(1),
     filename: z.string(),
     contentType: z.string(),
     bytes: z.number().int().nonnegative(),

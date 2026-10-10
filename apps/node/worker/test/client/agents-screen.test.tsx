@@ -228,7 +228,14 @@ describe("the ceiling is chosen and shown as capabilities", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     expect(await screen.findByText("tok_shown_once")).toBeTruthy();
-    expect(screen.getByText("This token is shown once and cannot be shown again.")).toBeTruthy();
+    /*
+     * The screen's own sentence, with the expiry in the viewer's date format. It used to print the Node's
+     * English notice verbatim, which carried the expiry as a raw ISO instant in every language.
+     */
+    const { dateTime } = await import("../../src/client/app/format.ts");
+    const said = screen.getByText(/This token is shown once and cannot be shown again\./).textContent ?? "";
+    expect(said, "the token's expiry is not in the viewer's date format").toContain(dateTime("2099-01-01T00:00:00.000Z"));
+    expect(said, "the token's expiry is a raw ISO instant").not.toContain("2099-01-01T");
   });
 
   it("refuses to mint with nothing chosen", async () => {
