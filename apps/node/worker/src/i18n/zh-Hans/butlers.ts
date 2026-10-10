@@ -40,6 +40,12 @@ export const butlers: Twin<typeof source> = {
   "butlers.format.hint": "决定用哪种解析器读取下面的源代码。切换它不会改写你的文本",
   "butlers.source": "源代码",
   "butlers.saveDraft": "保存草稿",
+  "butlers.access.heading": "它可以作用的邮箱",
+  "butlers.access.note":
+    "管家用它自己的权限行事，从不借用你的：只在它的程序声明了这项能力、它在这里持有这项权限、而且发布它的人也持有时才生效。每个勾选框在勾选时立即生效。",
+  "butlers.access.col.mailbox": "邮箱",
+  "butlers.access.box": "{mailbox} 上的 {permission}，授予 {butler}",
+  "butlers.access.none": "本节点还没有邮箱。",
   "butlers.publish": "发布",
   "butlers.draft.none": "尚未保存任何内容",
   "butlers.draft.showingLive": "显示的是生效中的 v{version}：保存一份草稿才能修改它",

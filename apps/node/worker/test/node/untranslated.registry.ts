@@ -64,11 +64,11 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
       "butler", "butler-runs", "transport", "search-failed", "passkeys", "approvals", "policies", "people",
       "teams", "team-members", "breakers", "domain-pauses", "suppressions", "matters", "holds", "supervised",
       "exports", "invitations", "agent-capabilities", "agents", "sponsor-mailboxes", "provider", "provider-delivery-events", "provider-routing",
-      "forwards",
+      "forwards", "access",
     ].map((text) => ({ text, reason: "a TanStack Query cache key: compared and invalidated, never shown" })),
     ...["POST", "PUT", "PATCH", "DELETE"].map((text) => ({ text, reason: "an HTTP method" })),
     { text: "application/json", reason: "a media type in a content-type header" },
-    ...["?conversation=", "?action=access.revoked", "?collect=1", "?after=", "?domain="]
+    ...["?conversation=", "?action=access.revoked", "?collect=1", "?after=", "?domain=", "?subject="]
       .map((text) => ({ text, reason: "a URL query string the route reads" })),
     { text: "register", reason: "the passkey challenge's purpose token, sent to the Node" },
     { text: "re-run", reason: "the replay mode token, sent to the Node" },
@@ -134,6 +134,10 @@ export const NOT_PROSE: Readonly<Record<string, readonly NotProse[]>> = {
     { text: "new butler", reason: "a new Butler's name, written into the Node with its source: data, as STARTER is" },
     ...["butlers", "butler", "butler-runs"].map((text) => ({ text, reason: "a TanStack Query cache key: invalidated, never shown" })),
     { text: "col", reason: "a <th> scope token" },
+    ...["mailbox.metadata.read", "mailbox.content.read", "send.propose"]
+      .map((text) => ({ text, reason: "a capability a Butler declares, sent to the Node and shown as the code it is" })),
+    { text: "access", reason: "a TanStack Query cache key: compared and invalidated, never shown" },
+    { text: "row", reason: "a header cell's scope attribute in the access grid, never shown" },
   ],
   "src/client/app/screens/composer.tsx": [
     {

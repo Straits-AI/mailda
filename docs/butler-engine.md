@@ -84,6 +84,14 @@ until it is granted something, and revoking stops it on the next node. `0001_ini
 column by design (identifiers are typed-prefix ULIDs) and `grant` validates the *object*, never the subject,
 so this needed no migration.
 
+**Where the administrator writes it** (10 October 2026): the Butler's editor on `/butlers` has a grid,
+*Mailboxes it may act on*, one box per mailbox and declarable permission, ticked where the Butler holds it and
+granting or revoking for the `btl_` the moment it is ticked (`ButlerAccess` in `src/client/app/screens/butlers.tsx`,
+through the same `POST`/`DELETE /api/access` and `GET /api/access?subject=` as everybody else). Until then it was an
+API call and no screen showed the Butler's id, so a Butler published from that screen refused every effect with
+`case_not_actionable` and nothing there said why. Ticking a box is not enough on its own: the program must declare the
+capability, and the publisher must hold it too.
+
 **The audit trail says `actor_kind = butler`**, and that is derived from the id's own prefix rather than
 passed by each call site. `node` and `installer` exist as kinds because they have **no id**; a Butler has
 one, so `kindOfActor` in `src/audit.ts` reads it. That is what makes attribution structural: every Layer 5

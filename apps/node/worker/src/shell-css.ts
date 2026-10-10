@@ -1502,6 +1502,7 @@ tr.detail dd { margin: 0; word-break: break-all; }
 
 .butler-detail { margin-top: 24px; border-top: 1px solid var(--border-soft); padding-top: 16px; }
 .butler-detail h2 { margin: 0; }
+.butler-access { margin: 20px 0; }
 .butler-source {
   width: 100%;
   font-size: 12px;

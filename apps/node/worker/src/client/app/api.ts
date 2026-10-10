@@ -1575,6 +1575,20 @@ export function useTeams(): UseQueryResult<{ teams: TeamRow[] }, Error> {
 }
 
 
+/**
+ * What one principal holds, by id: a person's `usr_`, a team's, a Butler's `btl_`. Anybody's but your own is an
+ * administrator's read, answered 404 for anybody else.
+ */
+export interface AccessOf { subjectId: string; relations: Array<{ relation: string; objectType: string; objectId: string }> }
+
+export function useAccessOf(subjectId: string): UseQueryResult<AccessOf, Error> {
+  return useQuery({
+    queryKey: ["access", subjectId],
+    queryFn: () => read<AccessOf>(`${GET("/api/access")}?subject=${encodeURIComponent(subjectId)}`),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export const grant = (subjectId: string, relation: string, objectId: string) =>
   act(at("POST", "/api/access"), "POST", { subjectId, relation, objectId });
 

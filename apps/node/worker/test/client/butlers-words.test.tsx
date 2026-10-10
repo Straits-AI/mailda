@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { install } from "/app/locale.js";
+import { CAPABILITY_ACTIONS } from "@mailda/butler-ast";
 import { CATALOGS } from "../../src/i18n/catalog.ts";
 import { answerWith, reset, type Call } from "./session-stub.ts";
 
@@ -23,7 +24,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: unknown }) => children,
 }));
 
-const { Butlers } = await import("../../src/client/app/screens/butlers.tsx");
+const { Butlers, BUTLER_RELATIONS } = await import("../../src/client/app/screens/butlers.tsx");
 const { Policies } = await import("../../src/client/app/screens/policies.tsx");
 
 const AT = "2026-09-28T04:36:51.379Z";
@@ -119,6 +120,10 @@ const BUTLER_DETAIL: Record<string, unknown> = {
   },
   "/api/butlers/btl_live": { butler: { id: "btl_live", name: "auto-ack" }, versions: [version("bv_9", 3, "published", { source_text: "entry: ack\n" })] },
   "/api/butlers/btl_draft": { butler: { id: "btl_draft", name: "new butler" }, versions: [] },
+  // The access grid's three reads: who is asking, every mailbox, and what the Butler itself holds.
+  "/api/me": { signedIn: true, principalId: "usr_me", principalKind: "user", userId: "usr_me", delegatorUserId: null, organizationId: "org_1", email: "me@example.test" },
+  "/api/people/usr_me/mailboxes": { mailboxes: [{ mailboxId: "mbx_support", mailboxName: "Support", relations: [] }] },
+  "/api/access": { subjectId: "btl_paused", relations: [{ relation: "send.propose", objectType: "mailbox", objectId: "mbx_support", createdAt: AT }] },
   // The dry run's input: the first run of each Butler, one with facts and one opened before they were recorded.
   "/api/butler-runs/run_done/inspect": { facts: { a: 1 } },
   "/api/butler-runs/run_failed/inspect": { facts: null },
@@ -145,10 +150,38 @@ describe("Butlers in English", () => {
     await screen.findByText("triage");
     fireEvent.click(screen.getAllByRole("button", { name: "Open" })[0]!);
     await screen.findByText("unpublished draft", { exact: false });
+    await screen.findAllByRole("checkbox", { name: /, for / }); // the access grid, read before the snapshot
     await act(async () => { screen.getAllByRole("button", { name: /^Dry run over / })[0]!.click(); });
     await waitFor(() => { expect(container.querySelector(".butler-dry-result")).not.toBeNull(); });
     await expect(html(container, [".butler-detail", ".butler-dry-result", ".butler-dry-limits", "caption"]))
       .toMatchFileSnapshot("./golden/butlers.editor.en.html");
+  });
+
+  it("offers the three permissions a Butler may declare, as the Butler package lists them", () => {
+    expect([...BUTLER_RELATIONS]).toEqual([...CAPABILITY_ACTIONS]);
+  });
+
+  it("shows what the Butler holds on each mailbox, and grants or revokes it for the Butler, not the reader", async () => {
+    const acted: Call[] = [];
+    butlers((call) => {
+      if (!call.path.startsWith("/api/access")) return undefined;
+      acted.push(call);
+      return Response.json(call.method === "POST" ? { granted: true, alreadyHeld: false } : { revoked: true });
+    });
+    mount(<Butlers />);
+    await screen.findByText("triage");
+    fireEvent.click(screen.getAllByRole("button", { name: "Open" })[0]!);
+    // Until 10 October 2026 there was no screen for this: a Butler published here refused every effect.
+    const send = await screen.findByRole("checkbox", { name: "Send on Support, for triage" });
+    const read = screen.getByRole("checkbox", { name: "Read on Support, for triage" });
+    expect((send as HTMLInputElement).checked).toBe(true);
+    expect((read as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(read);
+    await waitFor(() => { expect(acted).toHaveLength(1); });
+    expect(acted[0]).toMatchObject({ method: "POST", body: { subjectId: "btl_paused", relation: "mailbox.content.read", objectId: "mbx_support" } });
+    fireEvent.click(send);
+    await waitFor(() => { expect(acted).toHaveLength(2); });
+    expect(acted[1]).toMatchObject({ method: "DELETE", body: { subjectId: "btl_paused", relation: "send.propose", objectId: "mbx_support" } });
   });
 
   it("renders a live Butler with no draft, and a run that recorded no facts", async () => {
@@ -157,6 +190,7 @@ describe("Butlers in English", () => {
     await screen.findByText("auto-ack");
     fireEvent.click(screen.getAllByRole("button", { name: "Open" })[1]!);
     await screen.findByText("showing live v3", { exact: false });
+    await screen.findAllByRole("checkbox", { name: /, for / }); // the access grid, read before the snapshot
     await act(async () => { screen.getAllByRole("button", { name: /^Dry run over / })[0]!.click(); });
     await screen.findByText(/recorded no trigger facts/);
     await expect(html(container, [".butler-detail", ".butler-findings"])).toMatchFileSnapshot("./golden/butlers.editor-live.en.html");
@@ -168,6 +202,7 @@ describe("Butlers in English", () => {
     await screen.findByText("draft only, never published");
     fireEvent.click(screen.getAllByRole("button", { name: "Open" })[2]!);
     await screen.findByText("nothing saved yet", { exact: false });
+    await screen.findAllByRole("checkbox", { name: /, for / }); // the access grid, read before the snapshot
     const detail = container.querySelector<HTMLElement>(".butler-detail")!;
     await expect(html(detail, ["h2", ".butler-dry"])).toMatchFileSnapshot("./golden/butlers.editor-new.en.html");
   });
