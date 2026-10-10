@@ -3,7 +3,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { failedBodyIndex, repairBodyIndex } from "../search.ts";
 import { getEvidence, streamEvidence } from "../evidence-store.ts";
 import { listMessages, authorize, authorizeExport, readableSubjects, readableMailboxes } from "../authz-read.ts";
-import { claim, close, mailboxQueues, queueFor, release, steal } from "../cases.ts";
+import { claim, close, heldBody, mailboxQueues, queueFor, release, steal } from "../cases.ts";
 import { assertAdmin } from "../access.ts";
 import { NOTIFICATION_LIST_CAP, notificationsFor } from "../notifications.ts";
 import { mergeConversations } from "../merge.ts";
@@ -202,16 +202,7 @@ export const mail = {
           { status: 409 },
         );
       }
-      return Response.json(
-        {
-          claimed: false,
-          error: "held",
-          heldBy: outcome.by,
-          heldSince: outcome.since,
-          message: `Held by ${outcome.by} since ${outcome.since}. You can take it, and they will be told.`,
-        },
-        { status: 409 },
-      );
+      return Response.json(heldBody(outcome, clock.now(), ". You can take it, and they will be told."), { status: 409 });
     }
 
     const outcome = action === "release"
@@ -254,10 +245,7 @@ export const mail = {
     }
     if (outcome.kind === "closed") return Response.json({ claimed: false, error: "closed", message: "This case is closed." }, { status: 409 });
     if (outcome.kind === "held") {
-      return Response.json({
-        claimed: false, error: "held", heldBy: outcome.by, heldSince: outcome.since,
-        message: `Held by ${outcome.by} since ${outcome.since}; it changed hands while you looked.`,
-      }, { status: 409 });
+      return Response.json(heldBody(outcome, clock.now(), "; it changed hands while you looked."), { status: 409 });
     }
     return Response.json({ claimed: false, error: "not_found", message: "No such case, or you do not have access to it." }, { status: 404 });
   },
