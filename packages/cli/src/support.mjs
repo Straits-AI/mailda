@@ -193,7 +193,7 @@ export function flag(argv, name) {
  * is reduced with a different reason and the same 9 findings. Said plainly, because supplying a non-admin
  * account and believing the check widened is worse than knowing it did not.
  */
-export async function sessionCookie(origin) {
+export async function sessionCookie(origin, { canaryNote = true } = {}) {
   const email = process.env.MAILDA_EMAIL;
   const password = process.env.MAILDA_PASSWORD;
   if (email === undefined || password === undefined) return null;
@@ -234,7 +234,8 @@ export async function sessionCookie(origin) {
      * failure than a narrower gate. It says so, because a silent downgrade is the thing this file keeps
      * removing.
      */
-    process.stdout.write(
+    // `canaryNote: false` for a caller that is not a deploy, where the sentence would be false (`mailda api`).
+    if (canaryNote) process.stdout.write(
       `   note: sign-in failed (${signIn === null ? "unreachable" : signIn.status}), so the canary is checked\n`
       + "         anonymously and the gate compares only the findings an anonymous caller may see.\n",
     );

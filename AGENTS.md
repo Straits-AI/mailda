@@ -200,7 +200,8 @@ Developers will not read our code. Their agents read our errors. An agent can fi
 that arrived and vanished.
 
 Every budget failure names **the budget, the limit, and the ask**. At compile time if it
-is knowable there (`mailda butler compile`, `mailda deploy --plan`, `--dry-run`), loudly at
+is knowable there (saving a Butler's draft compiles it: `mailda api putButlersByButlerIdDraft`;
+`mailda deploy --plan`, `--dry-run`), loudly at
 runtime if it is not. A silent budget is worse than no budget.
 
 The shape:

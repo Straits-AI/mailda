@@ -40,9 +40,10 @@ import { claimSecret, setPassword, recoveryCodes } from "./verbs/secrets.mjs";
 import { search } from "./verbs/search.mjs";
 import { verifyEvidence } from "./verbs/verify-evidence.mjs";
 import { backup, verifyBackup } from "./verbs/backup.mjs";
+import { apiVerb } from "./verbs/api.mjs";
 
 
-const USAGE = `mailda — operate a Mailda Node
+const USAGE = `mailda — operate and use a Mailda Node
 
   mailda provider [--url <origin>]   this Node's own Cloudflare token: its state, and the permissions one needs
   mailda provider --token            hold an API token for the Node; the token is read from stdin
@@ -125,6 +126,16 @@ const USAGE = `mailda — operate a Mailda Node
   mailda preflight [--url <origin>]  what a deploy needs, checked before it changes anything
   mailda verify-evidence --url <o>   open every stored message and check it against its ingress hash
 
+Using the Node: mail, drafts, cases, Butlers, approvals, by the SDK's method names
+
+  mailda api [--list <word>]         every method, with the route it calls
+  mailda api <method> --url <origin> [--<parameter> <value> …] [--body <json>|@<file>|-] [--out <file>]
+                                     call one, e.g. mailda api getMessages --url <o> --q invoice
+                                     credentials from the environment: MAILDA_TOKEN (an agent token from
+                                     /agents) or MAILDA_EMAIL and MAILDA_PASSWORD. The answer goes to stdout
+                                     as JSON; a refusal to stderr. Exit 0 ok, 2 usage, 3 not signed in,
+                                     4 refused, 5 not found, 6 conflict, 8 rate limit, 9 any other failure
+
 Two things this cannot verify, said here rather than discovered later:
 
   the Workers plan            a Worker cannot read its account's plan and there is no documented API
@@ -159,6 +170,7 @@ try {
     case "install": await install(rest); break;
     case "upgrade": await upgrade(rest); break;
     case "setup": await setup(rest); break;
+    case "api": process.exit(await apiVerb(rest)); break;
     default:
       process.stdout.write(USAGE);
       process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);
