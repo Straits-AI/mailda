@@ -184,6 +184,19 @@ describe("Butlers in English", () => {
     expect(acted[1]).toMatchObject({ method: "DELETE", body: { subjectId: "btl_paused", relation: "send.propose", objectId: "mbx_support" } });
   });
 
+  it("names who published a version by address when the directory has them, by id when it does not", async () => {
+    node({
+      "/api/butlers": { butlers: BUTLERS }, "/api/butler-runs": { runs: RUNS }, ...BUTLER_DETAIL,
+      "/api/people": { people: [{ id: "usr_me", email: "me@example.test", created_at: AT, relations: [] }] },
+    });
+    const { container } = mount(<Butlers />);
+    await screen.findByText("triage");
+    fireEvent.click(screen.getAllByRole("button", { name: "Open" })[0]!);
+    // The By column said `usr_01M4…` until 9 October 2026, found by looking at it while recording the product.
+    await waitFor(() => { expect(container.querySelector(".butler-detail > table tbody")?.textContent).toContain("me@example.test"); });
+    expect(container.querySelector(".butler-detail > table tbody")?.textContent).not.toContain("usr_me");
+  });
+
   it("renders a live Butler with no draft, and a run that recorded no facts", async () => {
     butlers();
     const { container } = mount(<Butlers />);

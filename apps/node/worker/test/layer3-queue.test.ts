@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
-import { claim, close, mailboxQueues, queueFor, release, steal } from "../src/cases.ts";
+import { claim, close, heldBody, heldFor, mailboxQueues, queueFor, release, steal } from "../src/cases.ts";
 import { grant, isAdmin, revoke } from "../src/access.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { CallerError } from "../src/errors.ts";
@@ -487,6 +487,41 @@ describe("the rail's per-mailbox depths (#42)", () => {
   it("shows nothing at all to somebody who may work no mailbox", async () => {
     await aCase(MAILBOX, "<rail-e@example.net>");
     expect(await mailboxQueues(testEnv, ORG, OUTSIDER)).toEqual([]);
+  });
+
+  it("names the holder of a lost claim by address, keeping their id", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO users (id, org_id, email, created_at, password_hash, password_iterations,
+         password_updated_at) VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ANA, ORG, "ana@acme.example", new Date(ctx.now()).toISOString(), "x", 1,
+      new Date(ctx.now()).toISOString()).run();
+    const caseId = await aCase(MAILBOX, "<held-name@example.net>");
+    await claim(testEnv, atTime(7_200_000_000_000), ORG, ANA, caseId);
+
+    const lost = await claim(testEnv, atTime(7_200_000_060_000), ORG, BO, caseId);
+    // Until 9 October 2026 the refusal named `usr_01M4…` and an ISO instant, which nobody deciding whether to take
+    // a case can weigh. The id stays, for a caller that acts on it.
+    expect(lost).toMatchObject({ kind: "held", by: ANA, byEmail: "ana@acme.example" });
+  });
+
+  it("answers a held claim naming the holder by address and how long, or by id when they have none", () => {
+    const since = "2026-10-09T04:00:00.000Z", now = Date.parse(since) + 3 * 60_000;
+    expect(heldBody({ kind: "held", by: ANA, byEmail: "ana@acme.example", since }, now, ". Take it?")).toEqual({
+      claimed: false, error: "held", heldBy: ANA, heldByEmail: "ana@acme.example", heldSince: since,
+      message: "Held by ana@acme.example for 3 minutes. Take it?",
+    });
+    expect(heldBody({ kind: "held", by: ANA, byEmail: null, since }, now, ".").message).toBe(`Held by ${ANA} for 3 minutes.`);
+  });
+
+  it("says how long a case has been held, as the queue shows its age", () => {
+    const since = "2026-10-09T04:00:00.000Z", at = Date.parse(since);
+    expect(heldFor(since, at + 30_000)).toBe("under a minute");
+    expect(heldFor(since, at + 60_000)).toBe("1 minute");
+    expect(heldFor(since, at + 59 * 60_000)).toBe("59 minutes");
+    expect(heldFor(since, at + 60 * 60_000)).toBe("1 hour");
+    expect(heldFor(since, at + 47 * 3_600_000)).toBe("47 hours");
+    expect(heldFor(since, at + 48 * 3_600_000)).toBe("2 days");
   });
 
   it("names the holder as a person, not an identifier", async () => {

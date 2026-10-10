@@ -13,7 +13,7 @@ import {
   acknowledgeConflict, applyMigrations, type AuditRow, configureTransport, confirmRecoveryCode,
   type DoctorFinding, type EvidenceVerdict, type RecoveryCodesMinted, reconcileEvidence, type Refused, repairSearch,
   requeuePreviews, resealEvidence, rotateRecoveryCodes, type SendRow, useAudit, useDoctor, useLogs, useSearchFailed,
-  usePeople, useSends, useTransport, verifyAudit, verifyEvidence,
+  useNamed, useSends, useTransport, verifyAudit, verifyEvidence,
 } from "../api.ts";
 
 /**
@@ -412,9 +412,7 @@ function Named({ id, named }: { id: string | null; named: (id: string) => string
 export function Audit() {
   const audit = useAudit();
   // The directory is an administrator's read, as the trail is; for anybody else it answers nothing and ids stay ids.
-  const people = usePeople();
-  const emails = new Map((people.data?.people ?? []).map((person) => [person.id, person.email]));
-  const named = (id: string) => emails.get(id) ?? id;
+  const named = useNamed();
   const [verdict, setVerdict] = useState<{ said: ReactNode; refused: boolean } | null>(null);
 
   if (audit.isPending || audit.isError) {

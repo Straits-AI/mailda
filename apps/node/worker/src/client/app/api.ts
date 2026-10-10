@@ -1564,6 +1564,17 @@ export function usePeople(): UseQueryResult<{ people: PersonRow[] }, Error> {
   });
 }
 
+/**
+ * A user id as a reader knows it: the address they sign in with when the directory has them, the id itself
+ * otherwise (an agent, a team, somebody who left). The directory is an administrator's read, so for anybody else
+ * ids stay ids. Audit's actor column and a Butler version's "by" both read through it.
+ */
+export function useNamed(): (id: string) => string {
+  const people = usePeople();
+  const emails = new Map((people.data?.people ?? []).map((person) => [person.id, person.email]));
+  return (id) => emails.get(id) ?? id;
+}
+
 export interface TeamRow { id: string; name: string; createdAt: string; memberCount: number }
 
 export function useTeams(): UseQueryResult<{ teams: TeamRow[] }, Error> {

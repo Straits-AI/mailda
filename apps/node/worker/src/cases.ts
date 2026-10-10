@@ -60,9 +60,45 @@ export type ClaimRefusal =
   // unreachable when it was declared, which is the decision enforcing itself.
   | { kind: "not_found" }
   | { kind: "closed" }
-  | { kind: "held"; by: string; since: string };
+  // `by` is the holder's id; `byEmail` the address they sign in with, which is what a colleague can weigh.
+  | { kind: "held"; by: string; byEmail: string | null; since: string };
 
 export type ClaimOutcome = { kind: "claimed"; case: CaseRow } | ClaimRefusal;
+
+/**
+ * A held answer, read back from the row, naming the holder by address as the queue's "held by" column does
+ * (`assignee_email` below). The refusal said `Held by usr_01M4… since 2026-10-09T04:46:20.488Z` until 9 October 2026,
+ * found by looking at it while recording the product; a person deciding whether to take a case cannot weigh an id.
+ */
+async function heldAnswer(env: Env, row: CaseRow, nobody: string): Promise<ClaimRefusal> {
+  const email = row.assignee === null ? null
+    : (await env.CATALOG.prepare("SELECT email FROM users WHERE id = ? LIMIT 1").bind(row.assignee).first<{ email: string }>())?.email ?? null;
+  return { kind: "held", by: row.assignee ?? nobody, byEmail: email, since: row.claimed_at ?? row.state_at };
+}
+
+/**
+ * The answer a person gets when a case is held by somebody else: the holder's id and address, the instant, and a
+ * sentence in the Node's English naming them by address (by id when they have none) and how long, with `then` saying
+ * what may happen next.
+ */
+export function heldBody(held: Extract<ClaimRefusal, { kind: "held" }>, now: number, then: string) {
+  // `heldBy` stays the id: callers compare it with the holder they saw (contract-responses, R5).
+  const who = held.byEmail ?? held.by;
+  return {
+    claimed: false, error: "held", heldBy: held.by, heldByEmail: held.byEmail, heldSince: held.since,
+    message: `Held by ${who} for ${heldFor(held.since, now)}${then}`,
+  };
+}
+
+/** How long a case has been held, in the Node's English: a claim's age is the fact a colleague weighs (#42). */
+export function heldFor(since: string, now: number): string {
+  const minutes = Math.floor((now - Date.parse(since)) / 60_000);
+  if (!(minutes >= 1)) return "under a minute";
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return `${Math.floor(hours / 24)} days`;
+}
 
 /**
  * Creates the case for a delivery, if the mailbox does not already have one for this conversation.
@@ -163,7 +199,7 @@ export async function claim(
   const now = await caseById(env, orgId, caseId);
   if (now === null) return { kind: "not_found" };
   if (now.state === "closed") return { kind: "closed" };
-  return { kind: "held", by: now.assignee ?? "(unknown)", since: now.claimed_at ?? now.state_at };
+  return heldAnswer(env, now, "(unknown)");
 }
 
 /**
@@ -190,7 +226,7 @@ export async function steal(
   if (existing.state === "closed") return { kind: "closed" };
   // Nothing to take. Reported as its own answer rather than silently succeeding, because "I stole this" and
   // "it was free" are different things to have done.
-  if (existing.assignee === null) return { kind: "held", by: "(nobody)", since: existing.state_at };
+  if (existing.assignee === null) return { kind: "held", by: "(nobody)", byEmail: null, since: existing.state_at };
 
   const at = new Date(ctx.now()).toISOString();
   const { results } = await auditedBatch<never>(
@@ -219,9 +255,7 @@ export async function steal(
 
   if ((results[1]?.meta.changes ?? 0) === 0) {
     const now = await caseById(env, orgId, caseId);
-    return now === null
-      ? { kind: "not_found" }
-      : { kind: "held", by: now.assignee ?? "(nobody)", since: now.claimed_at ?? now.state_at };
+    return now === null ? { kind: "not_found" } : heldAnswer(env, now, "(nobody)");
   }
   return { kind: "claimed", case: (await caseById(env, orgId, caseId))! };
 }
@@ -276,7 +310,7 @@ export async function assign(
   );
   if ((results[1]?.meta.changes ?? 0) === 0) {
     const now = await caseById(env, orgId, caseId);
-    return now === null ? { kind: "not_found" } : { kind: "held", by: now.assignee ?? "(nobody)", since: now.claimed_at ?? now.state_at };
+    return now === null ? { kind: "not_found" } : heldAnswer(env, now, "(nobody)");
   }
   return { kind: "claimed", case: (await caseById(env, orgId, caseId))! };
 }
