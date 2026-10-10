@@ -207,3 +207,40 @@ export function summariseAttachments(
     };
   });
 }
+
+/**
+ * One attachment's bytes as a download, for the two routes that hand one over: a received message's part
+ * (`GET /api/messages/:receiptId/attachments/:ordinal`) and a held send's (`GET /api/approvals/:approvalId/attachments/:attachmentId`).
+ *
+ * Always `attachment`, never inline, with `nosniff`: the bytes are somebody else's, and an HTML or SVG file
+ * rendered on this Node's origin would run with the reader's session. The part's own media type goes out only if
+ * it is a token/token and the file is not a program, which is served as octet-stream whatever it claimed, so a
+ * browser saves rather than runs it.
+ */
+export async function attachmentResponse(bytes: Uint8Array, name: string, mimeType: string): Promise<Response> {
+  const { percentEncoded, safeFilename, undisguised } = await import("./outbound/headers.ts");
+  const verdict = classifyAttachment(name, bytes);
+  const mediaType = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/.test(mimeType) && !DANGEROUS.has(verdict)
+    ? mimeType.toLowerCase() : "application/octet-stream";
+  const dot = name.lastIndexOf(".");
+  const filename = safeFilename(dot > 0 ? name.slice(0, dot) : name, dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]/g, "").slice(0, 11) : "");
+  // The writer's name, less what would make the saved file lie about itself: control characters, line
+  // separators, and the direction controls that make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf` (the
+  // list the seal refuses, `undisguised`). Somebody else wrote it, so this saved name is the only place the reader
+  // can be protected from it.
+  const shown = undisguised(name);
+  return new Response(bytes, {
+    headers: {
+      "content-type": mediaType,
+      // RFC 6266: the ASCII `filename` for a client that knows nothing else, and `filename*` with the writer's
+      // own name, so `合同.pdf` saves as `合同.pdf` and not as `__.pdf`. Only when the ASCII one had to change the name,
+      // so a name that was already safe is served as it always was. Percent-encoded, so nothing in the
+      // name can end the parameter or the header.
+      "content-disposition": filename === name
+        ? `attachment; filename="${filename}"`
+        : `attachment; filename="${filename}"; filename*=UTF-8''${percentEncoded(shown)}`,
+      "x-content-type-options": "nosniff",
+      "cache-control": "no-store",
+    },
+  });
+}

@@ -439,7 +439,7 @@ function approvalsNode(approvals: unknown[]) {
     if (call.path === "/api/approvals/apr_send/content") {
       // The author's text, with markup in it that must arrive as text.
       return Response.json({ approvalId: "apr_send", manifestId: "snd_1", body: "Hi Dana,\n\n<script>alert(1)</script> <b>not bold</b>\n\nBob",
-        attachments: [{ filename: "quote.pdf", contentType: "application/pdf", bytes: 52_000 }] });
+        attachments: [{ id: "sat_quote", filename: "quote.pdf", contentType: "application/pdf", bytes: 52_000 }] });
     }
     return call.path === "/api/approvals" ? Response.json({ approvals }) : undefined;
   });
@@ -465,6 +465,9 @@ describe("Approvals in English", () => {
     expect(send.textContent).toContain("dana@example.net and eve@example.net");
     expect(send.textContent).toContain("audit@example.test");
     expect(send.textContent).toContain("quote.pdf");
+    // The file itself, not only its name: a link to the route that serves it and records the read.
+    expect(within(send).getByRole("link", { name: "quote.pdf" }).getAttribute("href"), "the attachment is a name and no file")
+      .toBe("/api/approvals/apr_send/attachments/sat_quote");
     expect(send.textContent).toContain("recorded in the audit trail");
     expect(screen.getAllByTitle("usr_bob").map((one) => one.textContent)).toContain("bob@example.test");
   });

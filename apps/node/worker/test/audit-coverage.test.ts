@@ -615,7 +615,10 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // `approval.content_read` (10 October 2026, §18 amended) hangs off this table for the reason the supervised
     // disclosures hang off grants: its subject is the approval a person was asked to decide, which is what makes
     // "everything read under request R" one filter. It writes no row here; it is a read, recorded as a disclosure.
-    actions: ["approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled", "approval.content_read"],
+    actions: [
+      "approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled", "approval.content_read",
+      "approval.attachment_read",
+    ],
   },
   approval_stages: {
     exempt:
@@ -829,9 +832,10 @@ describe("audit coverage", () => {
      * unrecorded precisely when the trail is under pressure.
      */
     // `approval.content_read`: an approver reading the send they are asked to decide, which they may hold no read
-    // on. If that cannot be recorded, it must not happen, for the same reason a supervised read must not.
+    // on, and `approval.attachment_read`, one of its files. If that cannot be recorded, it must not happen, for the
+    // same reason a supervised read must not.
     expect(disclosure).toEqual([
-      "approval.content_read", "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
+      "approval.attachment_read", "approval.content_read", "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
       "supervised.query_empty",
     ]);
   });

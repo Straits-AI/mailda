@@ -2088,7 +2088,10 @@ body (the bytes this section binds and dispatch sends) with its attachments' nam
 the actor; only while the approval is pending; only a send. `org.admin` alone confers none of it, as it confers no
 `approval.decide`. Every read is **recorded as a disclosure** (`approval.content_read`, through `recordDisclosure`), and
 the body is not returned if the record cannot be written: a person can read and never decide, so the decision's own
-entry would not show the read. Attachment bytes are not part of this; the names and sizes are.
+entry would not show the read. Each attachment's bytes are a download of their own, under the same rule, from
+`GET /api/approvals/:approvalId/attachments/:attachmentId` (amended again the same day: a name and a size do not show
+what a contract says). Each file opened is recorded on its own (`approval.attachment_read`, naming the attachment)
+before any byte is read, and it is always served as `attachment` with `nosniff`, never rendered on the Node's origin.
 
 ### Separation of duty, and the shape Layer 5 fixes
 

@@ -260,6 +260,7 @@ const NOT_DRIVEN_AS_MEMBER: Readonly<Record<string, string>> = {
   // Driven for real by contract-responses' "a send a rule held", as an eligible approver; a member with no approval
   // waiting on them is answered 404 by design, which is the queue's rule and not a refusal of the route.
   "GET /api/approvals/:approvalId/content": "an approval on a send, waiting on the member, which needs the above",
+  "GET /api/approvals/:approvalId/attachments/:attachmentId": "an attachment on such a send, which needs the above",
   "POST /api/approvals/:approvalId/withdraw": "a decision of the member's own on such an approval",
 };
 
