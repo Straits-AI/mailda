@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-delegated: Astro with Starlight for the docs, static output, deployed as a Cloudflare Worker with static assets from the same account as the Node (`swmengappdev`), at `mailda.site`. Chosen because the docs are Markdown already in `docs/` and Starlight renders Markdown with navigation and search for no runtime; a Worker rather than Pages because every other Mailda artefact deploys with `wrangler` and one toolchain is one thing to learn. Lives at `apps/site` in the monorepo so a PR moves code and its docs together (AGENTS.md).
+delegated: Astro with Starlight for the docs, static output, deployed as a Cloudflare Worker with static assets (and one script, for `/videos/*` only, that answers the byte ranges Safari needs to play a video) from the same account as the Node (`swmengappdev`), at `mailda.site`. Chosen because the docs are Markdown already in `docs/` and Starlight renders Markdown with navigation and search for no runtime; a Worker rather than Pages because every other Mailda artefact deploys with `wrangler` and one toolchain is one thing to learn. Lives at `apps/site` in the monorepo so a PR moves code and its docs together (AGENTS.md).
 
 ## Users
 

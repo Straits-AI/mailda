@@ -2,7 +2,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mailda-site",
   "compatibility_date": "2026-08-01",
-  // Static assets only: no script, no bindings, nothing at runtime. A landing page and the rendered docs.
-  "assets": { "directory": "./dist", "not_found_handling": "404-page" },
+  // Static assets, a landing page and the rendered docs, plus one script that runs for `/videos/*` only: it answers
+  // byte ranges, which the assets do not and Safari needs to play a video (worker/index.mjs). Every other path never
+  // reaches it. No other bindings, nothing else at runtime.
+  "main": "worker/index.mjs",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "404-page", "run_worker_first": ["/videos/*"] },
   "routes": [{ "pattern": "mailda.site", "custom_domain": true }, { "pattern": "www.mailda.site", "custom_domain": true }]
 }
