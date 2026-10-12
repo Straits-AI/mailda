@@ -9,7 +9,7 @@
     "build": "pnpm docs:generate && astro build",
     "preview": "astro preview",
     "test": "pnpm build && node --experimental-strip-types --test",
-    "deploy": "pnpm build && wrangler deploy"
+    "deploy": "pnpm build && node scripts/fetch-videos.mjs && wrangler deploy"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.36.0",

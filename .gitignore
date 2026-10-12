@@ -74,6 +74,9 @@ apps/site/src/content/i18n/
 apps/site/public/install.sh
 apps/site/public/update.sh
 apps/site/.astro/
+# The landing pages' videos, fetched from the release by `apps/site/scripts/fetch-videos.mjs`, which says why they are
+# not committed.
+apps/site/.videos/
 
 # `mailda install` remembers each Node's URL here, per account and name, so an upgrade does not ask twice.
 .mailda/

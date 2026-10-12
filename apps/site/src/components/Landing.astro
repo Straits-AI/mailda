@@ -2,6 +2,8 @@
 import mark from "../assets/mark.svg?raw";
 import "../styles/site.css";
 import { SITE_LOCALES, WORDS, type SiteLocale } from "../landing-words.ts";
+import manifest from "../videos.json";
+import Video from "./Video.astro";
 
 interface Props { gaps: { title: string; detail: string }[]; locale: SiteLocale }
 const { gaps, locale } = Astro.props;
@@ -29,6 +31,10 @@ const checks = [
 ] as const;
 const status = `${base}/docs/readme/#status-functional-alpha-not-production-ready`;
 /** A value's `backticked` identifiers, drawn as <code> (the Register: a token is never bare beside Han). */
+/** The explainer in this page's language leads; the rest are English, on both pages (`src/videos.json`). */
+const videos = manifest.videos;
+const lead = videos.find((one) => one.id === (locale === "en" ? "explainer" : "explainer-zh"))!;
+const more = videos.filter((one) => !one.id.startsWith("explainer"));
 const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part, i) => (i % 2 === 1 ? { code: part } : part));
 ---
 <html lang={locale}>
@@ -97,6 +103,7 @@ const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part
         <a class="primary" href={`${base}/docs/readme/#installing-it`}>{w["action.install"]}</a>
         <a class="quiet" href={`${base}/docs/operating/machine-surfaces/`}>{w["action.ai"]}</a>
       </p>
+      <div class="lead-video"><Video video={lead} locale={locale} /></div>
     </section>
 
     <section class="report" aria-labelledby="report-title">
@@ -146,6 +153,14 @@ const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part
       <p class="dim">
         {w["update.before"]}<code>curl -fsSL https://mailda.site/update.sh | bash</code>{words(w["update.after"]).map((part) => typeof part === "string" ? part : <code>{part.code}</code>)}
       </p>
+    </section>
+
+    <section class="videos" aria-labelledby="videos-title">
+      <h2 id="videos-title">{w["videos.title"]}</h2>
+      {w["videos.note"] !== null && <p class="dim">{w["videos.note"]}</p>}
+      <div class="video-grid">
+        {more.map((one) => <Video video={one} locale={locale} />)}
+      </div>
     </section>
 
     <section class="values" aria-label={w["values.label"]}>
@@ -222,6 +237,10 @@ const words = (text: string | null) => (text ?? "").split(/`([^`]+)`/).map((part
   }
 
   .install { margin-top: 3rem; max-width: 46rem; }
+  .lead-video { margin-top: 2rem; }
+  .videos { margin-top: 3rem; }
+  .videos h2 { font: 700 1.4rem/1.2 var(--display); letter-spacing: -0.02em; margin: 0 0 .8rem; }
+  .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 2rem; align-items: start; }
   .install h2, .values h2 { font: 700 1.4rem/1.2 var(--display); letter-spacing: -0.02em; margin: 0 0 .8rem; }
   .terminal { position: relative; background: var(--ink); color: #E8EDF3; font: 400 .82rem/1.65 var(--mono); border-left: 2px solid var(--blue); margin: 0 0 .9rem; }
   .terminal pre { margin: 0; padding: 1rem 5rem 1rem 1.2rem; overflow-x: auto; }
