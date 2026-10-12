@@ -1,0 +1,40 @@
+---
+import type { SiteLocale } from "../landing-words.ts";
+import { WORDS } from "../landing-words.ts";
+
+/**
+ * One video from `src/videos.json`, served from this site's own `/videos/` (scripts/fetch-videos.mjs). It loads
+ * nothing until it is played: `preload="none"` and a poster. There is no voice, so the words on screen are written
+ * out under it, in the video's own language, for a reader who cannot watch it and for search.
+ */
+interface Props {
+  video: { id: string; lang: string; seconds: number; title: Record<SiteLocale, string>; video: { file: string }; poster: { file: string }; lines: string[] };
+  locale: SiteLocale;
+}
+const { video, locale } = Astro.props;
+const w = WORDS[locale];
+const lang = video.lang === locale ? undefined : video.lang;
+---
+<figure class="video">
+  <video controls preload="none" playsinline width="1920" height="1080" poster={`/videos/${video.poster.file}`} aria-label={video.title[locale]} lang={lang}>
+    <source src={`/videos/${video.video.file}`} type="video/mp4" />
+  </video>
+  <figcaption>
+    <span class="title">{video.title[locale]}</span> <span class="dim">{video.seconds} {w["video.seconds"]}</span>
+    <details>
+      <summary>{w["video.transcript"]}</summary>
+      <ol lang={lang}>{video.lines.map((line) => <li>{line}</li>)}</ol>
+    </details>
+  </figcaption>
+</figure>
+
+<style>
+  .video { margin: 0; }
+  video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--rule); }
+  figcaption { margin-top: .55rem; font-size: .92rem; }
+  .title { font-family: var(--display); font-weight: 600; }
+  .dim { color: var(--dim); font: 400 .74rem/1 var(--mono); }
+  details { margin-top: .35rem; color: var(--dim); font-size: .85rem; }
+  summary { cursor: pointer; width: fit-content; }
+  ol { margin: .5rem 0 0; padding-left: 1.2rem; display: grid; gap: .3rem; }
+</style>

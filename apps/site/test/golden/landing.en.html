@@ -37,6 +37,20 @@
 <a class="primary" href="/docs/readme/#installing-it">Install it</a>
 <a class="quiet" href="/docs/operating/machine-surfaces/">Put it in your AI</a>
 </p>
+<div class="lead-video"><figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-explainer.jpg" aria-label="Mailda in 41 seconds">
+<source src="/videos/mailda-explainer.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">Mailda in 41 seconds</span>
+<span class="dim">41 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>Got a domain on Cloudflare?</li><li>Mailda turns it into your own mail system.</li><li>Mail to your domain arrives… and is kept in your own Cloudflare account… where your team reads and answers it together.</li><li>From anyone → your Cloudflare account (Email Routing receives it, a Worker runs Mailda, D1 and R2 store it) → your team: read · assign · reply.</li><li>Shared inboxes: assign mail, see who replied, and never answer the same message twice.</li><li>Yours, even without us: your domain, messages and keys stay in your account. No Mailda account, no telemetry.</li><li>One command to install: runs on Cloudflare’s Workers Paid plan, from $5 a month, paid to Cloudflare.</li><li>This is the real app. Reply claims it, so nobody answers it twice. Every draft is saved on your Node.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>
+</div>
 </section>
 <section class="report" aria-labelledby="report-title">
 <h2 id="report-title" class="report-head">
@@ -95,6 +109,74 @@
 <p class="dim"> It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, asks which domain it should receive at, and with that same sign-in enables routing, onboards sending and subscribes delivery outcomes, reading each back and refusing if a record is not there. The Node receives when the command ends. No dashboard, no API token, no OAuth client. Open the Node: until it has an address and mail routed to it, it shows the next step and the command that does it, and only then the inbox. A hostname of your own is one more question, attached by the deploy. A credential of the Node&#39;s own, one API token pasted on Setup, is optional and only for changing that setup from the browser later. If you would rather arrange the account by hand, the dashboard path is written down too. <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
 </p>
 <p class="dim"> Later, in the same directory, <code>curl -fsSL https://mailda.site/update.sh | bash</code> pulls the release, backs the Node up, says what its schema will do, and redeploys through the canary. No git command is yours to type, including for a Node the deploy button made. </p>
+</section>
+<section class="videos" aria-labelledby="videos-title">
+<h2 id="videos-title">See it work</h2>  <div class="video-grid">
+<figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-team-inbox.jpg" aria-label="A shared inbox">
+<source src="/videos/mailda-team-inbox.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">A shared inbox</span>
+<span class="dim">63 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>Two people answer the same customer. Nobody can say whether invoices@ got a reply.</li><li>Mailda: shared inboxes that know who replied. In your own Cloudflare account.</li><li>One queue per mailbox. Who holds each conversation, and for how long. A first-response clock. Overdue says so.</li><li>Somebody already answering it? Mailda names who, before you write a word. Take it anyway, and they’re told.</li><li>Hand a conversation to a colleague. In their queue now, and the trail names you both.</li><li>Reply from the shared address. Every send waits 15 seconds, so you can stop it.</li><li>Who can read, send and decide, at a glance.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>
+<figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-butlers.jpg" aria-label="Butlers: automation without AI">
+<source src="/videos/mailda-butlers.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">Butlers: automation without AI</span>
+<span class="dim">79 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>Butlers are small programs that act on your mail. They run on your Node, when mail arrives. No AI inside: the same mail gets the same result.</li><li>How you set one up: write it, in the editor · save: it is checked · publish: version 1, frozen · give it a mailbox · mail arrives: it runs.</li><li>1 · Write it in the editor, in YAML or JSON. Make a mistake… 2 · Saving checks it: the step, the reason, the fix. 3 · Publish freezes it as version 1. 4 · Give it a mailbox. It never borrows your access.</li><li>5 · An invoice email arrives. It is stored before anything else happens. Filed, then one run starts. Never twice for one message. Each step checks the Butler’s own access. Every effect is recorded, and audited.</li><li>The invoice is with Chen. The run says what it did, and what it was refused.</li><li>A Butler can propose a reply. It waits, sealed, until a person releases it. A machine never sends on its own.</li><li>Whose resources does it use? Yours: your Cloudflare account, your Workers plan. Each step has a ceiling price, in subrequests. A run may spend up to 10,000. A Butler that can’t afford a run is refused when you save it. No AI model is called, so no AI tokens.</li><li>A loop pauses it: three runs it caused itself, within an hour. An administrator resumes it, and has to say why. Every version is frozen; every run is on the record.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>
+<figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-build-on-it.jpg" aria-label="Build on it: agents, SDK, MCP and CLI">
+<source src="/videos/mailda-build-on-it.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">Build on it: agents, SDK, MCP and CLI</span>
+<span class="dim">67 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>Your app in your AI. Never AI in your app.</li><li>How your software reaches it: an agent, your AI with a ceiling · the SDK, typed, from the contract · Skill and MCP, for AI tools · the CLI: run it, and use it.</li><li>1 · Mint an agent: who it acts for, what it may do. 2 · Which mailboxes. Never beyond the person it acts for. 3 · Its token is shown once. Keep it like a password.</li><li>Your AI does the thinking, on your AI provider’s bill. It calls your Node with its token. Every call is checked against its ceiling and its sponsor, live. It can draft. Sealing a send is withheld from every machine. Every act is audited: the agent, and the person it acts for.</li><li>The SDK: typed, generated from the contract. Every route is a method. A refusal is a MaildaError with its code. @mailda/sdk ships in the repository. It is not on npm yet.</li><li>An Agent Skill, generated from the contract: what an agent may call, and why the rest is withheld. An MCP server on your Node, at /mcp. The same agent token, and only the tools it may use.</li><li>The CLI runs the Node. Install, upgrade, check it, back it up, verify the backup. And uses it: every route, by the SDK’s names, with an agent token.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>
+<figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-own-and-run.jpg" aria-label="Own it and run it">
+<source src="/videos/mailda-own-and-run.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">Own it and run it</span>
+<span class="dim">55 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>No Mailda service to depend on. No licence server. No telemetry. Disconnect us and nothing stops working.</li><li>mailda install: one command, in your own account. Nothing changes before the deploy step. It receives mail when it ends.</li><li>mailda upgrade: every step numbered. Keeps your own domain. Backs up only when a table changes.</li><li>Doctor: problems first. What needs you leads. The long detail of what passed folds away.</li><li>What it costs: $5 a month. Workers Paid: 3,000 emails included, then $0.35 per thousand. A twenty-person team sending ten thousand a month pays about $7.45. Inbound mail is unlimited. The bill is yours, paid to Cloudflare.</li><li>Your keys, your backups: evidence sealed under keys only your Node holds. Escrowed to ten recovery codes. A backup you can verify offline. A restore drilled three times, once through to receiving mail.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>
+<figure class="video">
+<video controls preload="none" playsinline width="1920" height="1080" poster="/videos/mailda-governed.jpg" aria-label="Governed mail (alpha)">
+<source src="/videos/mailda-governed.mp4" type="video/mp4">
+</video>
+<figcaption>
+<span class="title">Governed mail (alpha)</span>
+<span class="dim">41 s</span>
+<details>
+<summary>On-screen text. No voice; music only.</summary>
+<ol><li>Functional alpha · looking for design partners. Who approved that send? Who read that mailbox, and why? Mailda keeps the answer.</li><li>A rule: outside mail from Support needs two sign-offs. The approver reads exactly what would leave. One approves. It still waits for the second.</li><li>An audit trail nothing trims.</li><li>Matters, and legal holds it takes two people to lift.</li><li>Also in the box: supervised reads that leave a record. E-discovery exports approved before they run.</li><li>Install it in your own Cloudflare account: curl -fsSL https://mailda.site/install.sh | bash</li><li>mailda.site · Functional alpha · open source, Apache-2.0</li></ol>
+</details>
+</figcaption>
+</figure>  </div>
 </section>
 <section class="values" aria-label="What the product is built to be">
 <ul>

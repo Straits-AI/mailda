@@ -18,6 +18,9 @@ const dist = join(site, "dist");
 
 const page = (path) => readFileSync(join(dist, path), "utf8");
 
+/** The videos' files: not in the build, which stays offline, but put into dist/videos/ at deploy (scripts/fetch-videos.mjs). */
+const videoFiles = new Set(JSON.parse(readFileSync(join(site, "src", "videos.json"), "utf8")).videos.flatMap((one) => [one.video.file, one.poster.file]).map((file) => `/videos/${file}`));
+
 test("every doc and receipt in the repository is a page, in English and under /zh-cn/", () => {
   for (const root of [dist, join(dist, "zh-cn")]) {
     for (const file of readdirSync(join(repo, "docs")).filter((one) => one.endsWith(".md"))) {
@@ -104,6 +107,7 @@ test("every link on both landing pages resolves to a page this build wrote, the 
     const hrefs = [...html.matchAll(/(?:href|src)="(\/[^"#]*)/g)].map((m) => m[1]);
     assert.ok(hrefs.length >= 15, `${path}: too few links found`);
     for (const href of hrefs) {
+      if (videoFiles.has(href)) continue;
       const file = href.endsWith("/") ? join(dist, href, "index.html") : join(dist, href);
       assert.ok(existsSync(file), `${path} links ${href}, which is not in dist`);
     }
@@ -184,6 +188,23 @@ test("a first visit asking for Simplified Chinese goes to /zh-cn/, and nothing e
   assert.equal(firstVisit({ languages: ["not a tag!", "zh-CN"] }), "/zh-cn/", "a malformed tag is skipped");
   // /zh-cn/ redirects nowhere, so the two pages cannot send a reader back and forth.
   assert.doesNotMatch(page("zh-cn/index.html"), /data-first-visit|location\.replace/);
+});
+
+test("each landing page plays the videos src/videos.json names, from this site's own /videos/, loading none before a press", () => {
+  const { videos } = JSON.parse(readFileSync(join(site, "src", "videos.json"), "utf8"));
+  const lead = { "index.html": "explainer", "zh-cn/index.html": "explainer-zh" };
+  for (const [path, own] of Object.entries(lead)) {
+    const html = page(path);
+    for (const one of videos) {
+      const shown = one.id === own || !one.id.startsWith("explainer");
+      assert.equal(html.includes(`src="/videos/${one.video.file}"`), shown, `${path} ${shown ? "lacks" : "shows"} ${one.id}`);
+      if (shown) assert.ok(html.includes(`poster="/videos/${one.poster.file}"`), `${path}: ${one.id} has no poster`);
+    }
+    // Nothing loads before a visitor asks: every player waits for a press.
+    const players = html.match(/<video [^>]*>/g) ?? [];
+    assert.equal(players.length, 6, `${path} has ${players.length} players`);
+    for (const player of players) assert.match(player, /preload="none"/, `${path}: ${player}`);
+  }
 });
 
 test("nothing on the site is fetched from another origin", () => {
