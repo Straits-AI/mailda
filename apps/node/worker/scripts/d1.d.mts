@@ -7,6 +7,7 @@
  */
 export function sqlLiteral(value: string | number | null): string;
 export function fill(sql: string, params?: ReadonlyArray<string | number | null>): string;
+export function rowsFrom(stdout: string, stderr: string): Array<Record<string, unknown>>;
 export function d1(
   workerDir: string,
   sql: string,

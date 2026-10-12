@@ -111,7 +111,7 @@ export async function install(argv) {
       process.stdout.write(`\n   This Node already has a claim secret or an owner. Open ${url ?? "your Node"} to continue.\n\n`);
       return;
     }
-    fail("could not seed the claim secret; `mailda claim-secret` retries it.");
+    fail(`could not seed the claim secret; \`mailda claim-secret${name === base ? "" : ` --name ${name}`}\` retries it, then open ${url ?? "the Node"} to claim it.`);
   }
 
   // 5. The claim, from here. Skipped when the Node's URL is unknown or the operator declines; then the
