@@ -14,7 +14,7 @@
  * is used as it is, which is also how a build works before the release is published: put the files there by hand.
  */
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const site = resolve(import.meta.dirname, "..");
@@ -39,6 +39,10 @@ for (const asset of manifest.videos.flatMap((one) => [one.video, one.poster])) {
     }
     writeFileSync(kept, bytes);
     console.log(`fetch-videos: ${asset.file} downloaded and verified`);
+  }
+  // The site's Worker answers byte ranges from this number (worker/index.mjs), so it must be the file's.
+  if (statSync(kept).size !== asset.bytes) {
+    throw new Error(`fetch-videos: ${asset.file} is ${statSync(kept).size} bytes, and src/videos.json records ${asset.bytes}. Record its size.`);
   }
   copyFileSync(kept, join(out, asset.file));
 }

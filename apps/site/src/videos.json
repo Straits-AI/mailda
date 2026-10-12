@@ -4,8 +4,8 @@
     {
       "id": "explainer", "lang": "en", "seconds": 41,
       "title": { "en": "Mailda in 41 seconds", "zh-Hans": "41 秒了解 Mailda" },
-      "video": { "file": "mailda-explainer.mp4", "sha256": "bc3598edd14e5f5224846a56b6575005c6b4bf7ec5c5b3cb08835fff318c1248" },
-      "poster": { "file": "mailda-explainer.jpg", "sha256": "65da6cb295b1d0bfe0610b5218e33aa53eb58ee690bb99689e63d9b290be3434" },
+      "video": { "file": "mailda-explainer.mp4", "sha256": "bc3598edd14e5f5224846a56b6575005c6b4bf7ec5c5b3cb08835fff318c1248", "bytes": 8671638 },
+      "poster": { "file": "mailda-explainer.jpg", "sha256": "65da6cb295b1d0bfe0610b5218e33aa53eb58ee690bb99689e63d9b290be3434", "bytes": 38540 },
       "lines": [
         "Got a domain on Cloudflare?",
         "Mailda turns it into your own mail system.",
@@ -22,8 +22,8 @@
     {
       "id": "explainer-zh", "lang": "zh-Hans", "seconds": 41,
       "title": { "en": "淼达 in 41 seconds (Simplified Chinese)", "zh-Hans": "41 秒了解淼达" },
-      "video": { "file": "mailda-explainer-zh.mp4", "sha256": "179cabfea93ad1143615abc6d46221fed7da2b57c701127abeece31a8a956fb7" },
-      "poster": { "file": "mailda-explainer-zh.jpg", "sha256": "12700c277c750629869932ae72c841984469f294ce78809e24f2c7b1e9f3dc34" },
+      "video": { "file": "mailda-explainer-zh.mp4", "sha256": "179cabfea93ad1143615abc6d46221fed7da2b57c701127abeece31a8a956fb7", "bytes": 8651589 },
+      "poster": { "file": "mailda-explainer-zh.jpg", "sha256": "12700c277c750629869932ae72c841984469f294ce78809e24f2c7b1e9f3dc34", "bytes": 38108 },
       "lines": [
         "你的域名在 Cloudflare 上？",
         "淼达把它变成你自己的邮件系统。",
@@ -40,8 +40,8 @@
     {
       "id": "team-inbox", "lang": "en", "seconds": 63,
       "title": { "en": "A shared inbox", "zh-Hans": "共享收件箱" },
-      "video": { "file": "mailda-team-inbox.mp4", "sha256": "b6ed5d7a416a3f1c3ca857fad8f00c8a0757159fc8666dd4af61b5ecb15806d4" },
-      "poster": { "file": "mailda-team-inbox.jpg", "sha256": "562ea0756a547568050f08aa752ccc3f4fbd6f0e5db9e4f0f05acf2a81887b65" },
+      "video": { "file": "mailda-team-inbox.mp4", "sha256": "b6ed5d7a416a3f1c3ca857fad8f00c8a0757159fc8666dd4af61b5ecb15806d4", "bytes": 14880889 },
+      "poster": { "file": "mailda-team-inbox.jpg", "sha256": "562ea0756a547568050f08aa752ccc3f4fbd6f0e5db9e4f0f05acf2a81887b65", "bytes": 35039 },
       "lines": [
         "Two people answer the same customer. Nobody can say whether invoices@ got a reply.",
         "Mailda: shared inboxes that know who replied. In your own Cloudflare account.",
@@ -57,8 +57,8 @@
     {
       "id": "butlers", "lang": "en", "seconds": 79,
       "title": { "en": "Butlers: automation without AI", "zh-Hans": "管家：不用 AI 的自动化" },
-      "video": { "file": "mailda-butlers.mp4", "sha256": "580f3c00599253078d160ebc6b69e7fe94c4f26b51e54976703578a8fbc0e7e2" },
-      "poster": { "file": "mailda-butlers.jpg", "sha256": "cdcc512c41e243905f033c1b60412d7b8c003e5b759f958e15a7f67958ccd04b" },
+      "video": { "file": "mailda-butlers.mp4", "sha256": "580f3c00599253078d160ebc6b69e7fe94c4f26b51e54976703578a8fbc0e7e2", "bytes": 16334642 },
+      "poster": { "file": "mailda-butlers.jpg", "sha256": "cdcc512c41e243905f033c1b60412d7b8c003e5b759f958e15a7f67958ccd04b", "bytes": 49667 },
       "lines": [
         "Butlers are small programs that act on your mail. They run on your Node, when mail arrives. No AI inside: the same mail gets the same result.",
         "How you set one up: write it, in the editor · save: it is checked · publish: version 1, frozen · give it a mailbox · mail arrives: it runs.",
@@ -75,8 +75,8 @@
     {
       "id": "build-on-it", "lang": "en", "seconds": 67,
       "title": { "en": "Build on it: agents, SDK, MCP and CLI", "zh-Hans": "在它之上构建：代理、SDK、MCP 和 CLI" },
-      "video": { "file": "mailda-build-on-it.mp4", "sha256": "383a6340404319efeba247056fb649ec45039afd5d5a1924337e302d58082255" },
-      "poster": { "file": "mailda-build-on-it.jpg", "sha256": "7a244fae8735eb6d59ed71e3af5f39b619525cce39b25d875735bb3e33642dac" },
+      "video": { "file": "mailda-build-on-it.mp4", "sha256": "383a6340404319efeba247056fb649ec45039afd5d5a1924337e302d58082255", "bytes": 13520697 },
+      "poster": { "file": "mailda-build-on-it.jpg", "sha256": "7a244fae8735eb6d59ed71e3af5f39b619525cce39b25d875735bb3e33642dac", "bytes": 31004 },
       "lines": [
         "Your app in your AI. Never AI in your app.",
         "How your software reaches it: an agent, your AI with a ceiling · the SDK, typed, from the contract · Skill and MCP, for AI tools · the CLI: run it, and use it.",
@@ -92,8 +92,8 @@
     {
       "id": "own-and-run", "lang": "en", "seconds": 55,
       "title": { "en": "Own it and run it", "zh-Hans": "拥有它，运行它" },
-      "video": { "file": "mailda-own-and-run.mp4", "sha256": "3819c1f5c49f0f3f3b655d82947604cea53996d1963374abb452d2e3e27e9f44" },
-      "poster": { "file": "mailda-own-and-run.jpg", "sha256": "5d5b0e2c2fb58d614bf927c6e21e515020375f96a9bc54a0334e3e148f3869b5" },
+      "video": { "file": "mailda-own-and-run.mp4", "sha256": "3819c1f5c49f0f3f3b655d82947604cea53996d1963374abb452d2e3e27e9f44", "bytes": 10216707 },
+      "poster": { "file": "mailda-own-and-run.jpg", "sha256": "5d5b0e2c2fb58d614bf927c6e21e515020375f96a9bc54a0334e3e148f3869b5", "bytes": 46825 },
       "lines": [
         "No Mailda service to depend on. No licence server. No telemetry. Disconnect us and nothing stops working.",
         "mailda install: one command, in your own account. Nothing changes before the deploy step. It receives mail when it ends.",
@@ -108,8 +108,8 @@
     {
       "id": "governed", "lang": "en", "seconds": 41,
       "title": { "en": "Governed mail (alpha)", "zh-Hans": "受治理的邮件（alpha）" },
-      "video": { "file": "mailda-governed.mp4", "sha256": "963dc9a875f85a4b14460c07d6ec5266d05a169eb17f40335d155af7da8f67e7" },
-      "poster": { "file": "mailda-governed.jpg", "sha256": "f00083e834247c8d5db6839f3a832445b1ffb8b39290019a34863cd72173fb02" },
+      "video": { "file": "mailda-governed.mp4", "sha256": "963dc9a875f85a4b14460c07d6ec5266d05a169eb17f40335d155af7da8f67e7", "bytes": 11084974 },
+      "poster": { "file": "mailda-governed.jpg", "sha256": "f00083e834247c8d5db6839f3a832445b1ffb8b39290019a34863cd72173fb02", "bytes": 43868 },
       "lines": [
         "Functional alpha · looking for design partners. Who approved that send? Who read that mailbox, and why? Mailda keeps the answer.",
         "A rule: outside mail from Support needs two sign-offs. The approver reads exactly what would leave. One approves. It still waits for the second.",
