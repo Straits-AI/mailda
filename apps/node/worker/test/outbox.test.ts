@@ -7,7 +7,7 @@ import { createFrozenCtx, createSystemCtx } from "@mailda/runtime";
 
 import { STALLED_OUTBOX_MS } from "../src/doctor/evidence.ts";
 import worker from "../src/index.ts";
-import { drainOutbox, nextWake, pendingEvents, retryDelay } from "../src/outbox.ts";
+import { alarmToSet, drainOutbox, nextWake, pendingEvents, retryDelay } from "../src/outbox.ts";
 import { dispatch } from "../src/pipeline.ts";
 import { armSweeper } from "../src/routes/support.ts";
 
@@ -179,6 +179,19 @@ describe("one publisher, and it starts at once", () => {
       return state.storage.getAlarm();
     });
     expect(after).toBe(earlier);
+  });
+
+  it("re-arms an alarm left past due, which the platform stops running after six failed retries", () => {
+    const now = 1_000_000;
+    // The dead alarm of 12 October 2026: set at the Node's first minutes, still answered by getAlarm(), never run.
+    const dead = now - 2 * 24 * 60 * 60 * 1000;
+    expect(alarmToSet(dead, now, now)).toBe(now);
+    // A pass re-arming for a backoff with a past-due alarm standing: now, not the backoff, since it was due.
+    expect(alarmToSet(dead, now + 5_000, now)).toBe(now);
+    // Unchanged: nothing set, or an earlier wake asked for, is set; a later wake than a live alarm is not.
+    expect(alarmToSet(null, now + 5_000, now)).toBe(now + 5_000);
+    expect(alarmToSet(now + 60_000, now, now)).toBe(now);
+    expect(alarmToSet(now + 2_000, now + 5_000, now)).toBeNull();
   });
 
   it("re-arms at a failed event's backoff, not sooner and not never", async () => {
