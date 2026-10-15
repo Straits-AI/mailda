@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  type ErrorComponentProps,
   RouterProvider,
   createRootRoute,
   createRoute,
@@ -118,7 +119,23 @@ const SCREENS: Record<AppRoute, () => React.JSX.Element> = {
 const routes = APP_ROUTES.map((path) =>
   createRoute({ getParentRoute: () => rootRoute, path, component: SCREENS[path] }));
 
-const router = createRouter({ routeTree: rootRoute.addChildren(routes) });
+/**
+ * What a screen that threw shows, in this interface's words rather than the router's own English "Something went
+ * wrong!". The error's own words stay on screen (never swallowed): they are the browser's, and what a report needs.
+ * Reload rather than the router's `reset`, because a render that threw can leave the page's tree half-replaced, and
+ * a reload is the step that always brings it back; drafts are saved on the Node, so it loses no mail.
+ */
+export function ScreenFailed({ error }: ErrorComponentProps) {
+  return (
+    <div className="notice bad" role="alert">
+      <p>{t("shell.failed")}</p>
+      <pre>{error instanceof Error ? error.message : String(error)}</pre>
+      <button type="button" onClick={() => location.reload()}>{t("shell.failed.reload")}</button>
+    </div>
+  );
+}
+
+const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultErrorComponent: ScreenFailed });
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -137,10 +154,14 @@ let root: Root | null = null;
  * Mounts the application into an element the framework-free script already owns.
  *
  * Idempotent, because the script may call it on load *and* on a later sign-in, and two roots over one
- * element would render the shell twice.
+ * element would render the shell twice. The element is cleared here, behind the same guard, and not by the
+ * caller: signing in hands over twice at once (the `signed-in` event, then `route()`), and a caller that
+ * cleared the element before calling a mount that then did nothing deleted the nodes React had just
+ * committed, so its next update threw `removeChild` ("The node to be removed is not a child of this node").
  */
 export function mount(element: HTMLElement): void {
   if (root !== null) return;
+  element.replaceChildren();
   root = createRoot(element);
   root.render(
     <QueryClientProvider client={queryClient}>

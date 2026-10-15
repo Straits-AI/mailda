@@ -657,7 +657,7 @@ async function handOverToShell() {
     // surface is still here and still works, which is why this is recoverable at all.
     return show(notice(rich("preauth.shell.failed", { reason: reason(error) }), "bad"));
   }
-  app.replaceChildren();
+  // `mount` clears `app` itself, and only when it mounts: this runs twice on a sign-in.
   return shell.mount(app);
 }
 

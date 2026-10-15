@@ -10,9 +10,19 @@
  * does not have, and every screen it mounts is already driven by the React tests. What is untested is
  * everything *before* it loads, which is what this unblocks.
  */
-export function mount(): void {
-  throw new Error(
-    "the React shell is stubbed in this suite. A test that needs it belongs in test/client/*.test.tsx, "
-    + "which drives the real screens.",
-  );
+export function mount(element: HTMLElement): void {
+  stand.mount(element);
 }
+
+/**
+ * What `mount` does. A test that watches the handover itself, not a screen, replaces it
+ * (`shell-handover.test.ts`): `vi.mock` does not reach a module the script imports dynamically by an alias.
+ */
+export const stand = {
+  mount(_element: HTMLElement): void {
+    throw new Error(
+      "the React shell is stubbed in this suite. A test that needs it belongs in test/client/*.test.tsx, "
+      + "which drives the real screens.",
+    );
+  },
+};
