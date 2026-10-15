@@ -114,7 +114,8 @@ const USAGE = `mailda — operate and use a Mailda Node
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
-  mailda claim-secret [--local]      write the install secret and print it once
+  mailda claim-secret [--local] [--name <worker>]
+                                     write the install secret and print it once
   mailda set-password <email>        set a password from the terminal, never echoed
   mailda recovery-codes rotate       mint ten replacement recovery codes, printed once
   mailda recovery-codes confirm      prove you hold one; compared, never spent

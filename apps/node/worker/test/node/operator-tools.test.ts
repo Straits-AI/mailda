@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { fill, sqlLiteral } from "../../scripts/d1.mjs";
+import { fill, rowsFrom, sqlLiteral } from "../../scripts/d1.mjs";
 
 /**
  * The operator tools, which are the only way to recover a Node nobody can sign into.
@@ -44,6 +44,16 @@ describe("values reach D1 as themselves", () => {
     expect(() => loose(new Date())).toThrow(/refusing to write a object/);
     expect(() => loose(Number.NaN)).toThrow(/refusing to write NaN/);
     expect(() => loose(undefined)).toThrow(/refusing to write a undefined/);
+  });
+
+  it("reads wrangler's rows from stdout, whatever npm prints on stderr", () => {
+    // The output that stopped `mailda install` at the claim on 12 October 2026: the JSON on stdout, then
+    // npm's warning on stderr, which the old reader joined on and handed to JSON.parse.
+    const stdout = '[\n  {\n    "results": [{ "id": 1, "claimed_at": null }],\n    "success": true\n  }\n]\n';
+    const stderr = 'npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.\n';
+    expect(rowsFrom(stdout, stderr)).toEqual([{ id: 1, claimed_at: null }]);
+    // No answer at all: the error carries what both streams said, since stderr is then the diagnosis.
+    expect(() => rowsFrom("", "✘ [ERROR] Authentication error\n")).toThrow(/did not return a result:\n✘ \[ERROR\] Authentication error/);
   });
 
   it("substitutes each placeholder once, and counts them", () => {
