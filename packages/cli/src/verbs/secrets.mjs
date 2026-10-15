@@ -11,9 +11,13 @@ import { plural } from "@mailda/runtime";
  * whoever finds its URL first.
  */
 export function claimSecret(argv) {
+  // `--name` for a second Node in the account: without it the script seeds the first Node's catalog, which
+  // `mailda install` told the operator of a second Node to retry with when its own claim step failed.
+  const name = flag(argv, "name");
   process.exit(run("node", [
     "--experimental-strip-types", "scripts/seed-claim-secret.mjs",
     ...(argv.includes("--local") ? ["--local"] : []),
+    ...(name === null ? [] : ["--name", name]),
   ]));
 }
 

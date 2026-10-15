@@ -94,10 +94,21 @@ export function d1(workerDir, sql, params = [], { local = false, config = null }
     ...(config === null ? [] : ["--config", config]),
     "--command", fill(sql, params)];
   const run = spawnSync("npx", args, { cwd: workerDir, encoding: "utf8", env: process.env });
-  const text = `${run.stdout ?? ""}${run.stderr ?? ""}`;
-  const start = text.indexOf("[");
+  return rowsFrom(run.stdout ?? "", run.stderr ?? "");
+}
+
+/**
+ * The rows out of `wrangler d1 execute --json`, read from stdout alone.
+ *
+ * It used to read stdout and stderr joined, from the first `[`, and so died on whatever followed the JSON. On
+ * 12 October 2026 that was npm's `npm warn Unknown env config "verify-deps-before-run"`, which pnpm's own
+ * environment provokes in any `npx` it starts, and it stopped `mailda install` at the claim of a freshly deployed
+ * Node. The JSON is wrangler's answer on stdout; stderr is only for the error message, when there is no answer.
+ */
+export function rowsFrom(stdout, stderr) {
+  const start = stdout.indexOf("[");
   if (start === -1) {
-    throw new Error(`wrangler did not return a result:\n${text.slice(-800)}`);
+    throw new Error(`wrangler did not return a result:\n${`${stdout}${stderr}`.slice(-800)}`);
   }
-  return JSON.parse(text.slice(start))[0].results;
+  return JSON.parse(stdout.slice(start))[0].results;
 }
