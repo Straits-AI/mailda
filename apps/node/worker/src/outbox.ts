@@ -231,6 +231,23 @@ export async function drainOutbox(
 }
 
 /**
+ * What `wakeBy` sets the alarm to, given the one already set (`existing`, from `getAlarm()`), or null to keep it.
+ *
+ * The earlier of two wakes wins, so a later request never pushes back an earlier one. With one exception: an
+ * alarm already past due is set again, for now. Usually it is about to run and this changes nothing. But an
+ * alarm whose handler threw through all six of the platform's retries is never run again until the next
+ * `setAlarm`, and `getAlarm()` still answers its old time, so comparing against it kept a dead alarm forever:
+ * every wake, the cron's backstop included, saw an earlier alarm and left it. Observed on a Node installed on
+ * 12 October 2026, whose alarm threw eight times in its first minutes, before it was claimed, and then filed
+ * no mail for two days: one accepted message, its event never claimed, the cron arming nothing every minute.
+ */
+export function alarmToSet(existing: number | null, at: number, now: number): number | null {
+  if (existing === null || at < existing) return at;
+  if (existing <= now) return Math.min(at, now);
+  return null;
+}
+
+/**
  * The Durable Object that owns the sweep. One instance per Node: the outbox is a single ordered resource, so
  * serialising its drain is the point rather than a limitation. The platform runs one `alarm()` at a time per
  * object, which is what makes it the only publisher.
@@ -242,7 +259,8 @@ export class OutboxSweeper extends DurableObject<Env> {
    */
   async schedule(): Promise<void> {
     const { createSystemCtx } = await import("@mailda/runtime");
-    await this.wakeBy(createSystemCtx().now());
+    const now = createSystemCtx().now();
+    await this.wakeBy(now, now);
   }
 
   /**
@@ -253,9 +271,9 @@ export class OutboxSweeper extends DurableObject<Env> {
    * one for now, and the pass's own re-arm below, going through here, keeps it rather than overwriting it with
    * a later wake. A plain `setAlarm` there would have dropped that message's wake.
    */
-  private async wakeBy(at: number): Promise<void> {
-    const existing = await this.ctx.storage.getAlarm();
-    if (existing === null || at < existing) await this.ctx.storage.setAlarm(at);
+  private async wakeBy(at: number, now: number): Promise<void> {
+    const set = alarmToSet(await this.ctx.storage.getAlarm(), at, now);
+    if (set !== null) await this.ctx.storage.setAlarm(set);
   }
 
   override async alarm(): Promise<void> {
@@ -307,6 +325,6 @@ export class OutboxSweeper extends DurableObject<Env> {
      * can spin.
      */
     const next = nextWake(await nextDue(this.env), outboundNext, clock.now());
-    if (next !== null) await this.wakeBy(next);
+    if (next !== null) await this.wakeBy(next, clock.now());
   }
 }
