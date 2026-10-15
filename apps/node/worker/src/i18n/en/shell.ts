@@ -13,6 +13,9 @@ export const shell = {
   "shell.toast.dismiss": "Dismiss",
   "shell.sealing": "Still sealing the open message. Open this again once the Node has answered it.",
   "shell.no_mailbox": "Sending needs send.propose on a mailbox, and you hold it on none.",
+  /** A screen that threw (`ScreenFailed` in `src/client/app/main.tsx`); the browser's own words follow it. */
+  "shell.failed": "This screen stopped because of an error in this interface. Your mail is safe on your Node, and reloading the page brings the screen back.",
+  "shell.failed.reload": "Reload the page",
   /** The Z shortcut's description (`src/client/app/ui/shortcuts.ts`). */
   "shortcuts.undo": "Undo",
 } as const satisfies Area<"shell">;

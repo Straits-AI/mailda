@@ -2,6 +2,8 @@ import type { shell as source } from "../en/shell.ts";
 import type { Twin } from "../catalog.ts";
 
 export const shell: Twin<typeof source> = {
+  "shell.failed": "此界面出错，页面已停止。你的邮件安全地保存在你的节点上，重新加载页面即可恢复。",
+  "shell.failed.reload": "重新加载页面",
   "shell.chooser.label": "选择邮箱",
   "shell.chooser.from": "发件邮箱",
   "shell.chooser.none": "选择邮箱…",
